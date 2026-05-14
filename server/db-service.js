@@ -139,6 +139,16 @@ async function setAdminRole(id) {
   await pg().query("UPDATE users SET role = 'admin' WHERE id = $1", [id]);
 }
 
+async function updatePassword(id, rawPassword) {
+  const hashed = await bcrypt.hash(rawPassword, 12);
+  if (isMongoMode()) {
+    const { User } = M();
+    await User.findByIdAndUpdate(id, { password: hashed });
+    return;
+  }
+  await pg().query('UPDATE users SET password = $1 WHERE id = $2', [hashed, id]);
+}
+
 async function banUser(id, banned) {
   if (isMongoMode()) {
     const { User } = M();
@@ -486,7 +496,7 @@ async function setSiteSetting(key, value) {
 
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
-  createUser, updateUserLastActive, updateUsername, setAdminRole,
+  createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
   banUser, deleteUser, updateUserPlan, getAllUsers, getStats,
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
