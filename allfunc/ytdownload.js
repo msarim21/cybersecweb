@@ -1,112 +1,176 @@
 'use strict';
-const axios = require('axios');
+/**
+ * YouTube Downloader — Updated Nov 2025
+ * Replace: allfunc/ytdownload.js
+ *
+ * Exports:
+ *   ytDownload(url)            -> resolves { data: { title, thumbnail, video_formats:[], best_video, audio:{} } }
+ *   ytAudio(url)               -> shortcut for mp3
+ *   ytVideo(url, quality?)     -> shortcut for mp4 with desired quality (default 720p)
+ *
+ * Strategy: @distube/ytdl-core direct extract (most reliable in 2025)
+ *           + 3 public API fallbacks if YT signature breaks.
+ *
+ * Install (run once on server):
+ *   npm i @distube/ytdl-core@latest axios
+ */
 
-function extractVideoId(url) {
-  let videoId = '';
-  if (url.includes('youtu.be/')) {
-    videoId = url.split('youtu.be/')[1].split('?')[0];
-  } else if (url.includes('watch?v=')) {
-    videoId = url.split('watch?v=')[1].split('&')[0];
-  } else if (url.includes('/shorts/')) {
-    videoId = url.split('/shorts/')[1].split('?')[0];
-  }
-  return videoId;
+const axios = require('axios');
+const ytdl = require('@distube/ytdl-core');
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+const headers = { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' };
+
+/* ───── helpers ───── */
+
+function pickQualityLabel(itag) {
+  const map = { 17: '144P', 18: '360P', 22: '720P', 37: '1080P', 137: '1080P', 136: '720P', 135: '480P', 134: '360P', 133: '240P', 160: '144P' };
+  return map[itag] || 'AUTO';
 }
 
-async function ytDownload(videoUrl) {
-  if (!videoUrl) throw new Error('URL cannot be empty');
+function normaliseFromYtdl(info) {
+  const formats = info.formats || [];
+  const videoCombined = formats.filter((f) => f.hasVideo && f.hasAudio && f.url);
 
-  const headers = {
-    'accept': '*/*',
-    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-    'content-type': 'application/x-www-form-urlencoded',
-    'origin': 'https://vidssave.com',
-    'referer': 'https://vidssave.com/',
-    'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36',
-  };
+  const video_formats = videoCombined.map((f) => ({
+    quality: (f.qualityLabel || pickQualityLabel(f.itag)).toUpperCase(),
+    container: f.container,
+    download_url: f.url,
+    size_mb: f.contentLength ? +(f.contentLength / 1048576).toFixed(2) : null,
+  }));
 
-  const body = new URLSearchParams();
-  body.append('auth', '20250901majwlqo');
-  body.append('domain', 'api-ak.vidssave.com');
-  body.append('origin', 'cache');
-  body.append('link', videoUrl);
-
-  const res = await axios.post(
-    'https://api.vidssave.com/api/contentsite_api/media/parse',
-    body.toString(),
-    { headers, timeout: 30000 }
-  );
-
-  const data = res.data;
-  if (!data.data || data.status !== 1) {
-    throw new Error('Failed to fetch YouTube video info');
-  }
-
-  const info = data.data;
-  const resources = info.resources || [];
-
-  const videoFormats = resources
-    .filter(r => r.type === 'video')
-    .map(r => ({
-      resource_id: r.resource_id,
-      quality: r.quality,
-      format: r.format,
-      size: r.size,
-      size_mb: (r.size / 1024 / 1024).toFixed(2) + ' MB',
-      download_url: r.download_url,
-    }))
-    .sort((a, b) => {
-      const order = ['2160P', '1440P', '1080P', '720P', '480P', '240P', '144P'];
-      return order.indexOf(a.quality) - order.indexOf(b.quality);
-    });
-
-  const audioFormats = resources
-    .filter(r => r.type === 'audio')
-    .map(r => ({
-      resource_id: r.resource_id,
-      quality: r.quality,
-      format: r.format,
-      size: r.size,
-      size_mb: (r.size / 1024 / 1024).toFixed(2) + ' MB',
-      download_url: r.download_url,
-    }));
-
-  const bestVideo = videoFormats.find(v => v.quality === '720P') || videoFormats[0] || null;
-  const bestAudio = audioFormats.find(a => a.quality === '256KBPS') || audioFormats[0] || null;
+  const audio = formats
+    .filter((f) => f.hasAudio && !f.hasVideo && f.url)
+    .sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0))[0];
 
   return {
-    code: 200,
-    timestamp: Date.now(),
+    title: info.videoDetails.title,
+    thumbnail: info.videoDetails.thumbnails?.pop()?.url,
+    duration: +info.videoDetails.lengthSeconds,
+    youtube_id: info.videoDetails.videoId,
+    video_formats,
+    best_video: video_formats[0] || null,
+    audio: audio
+      ? { quality: 'AUDIO', container: audio.container, download_url: audio.url, bitrate: audio.audioBitrate }
+      : null,
+  };
+}
+
+/* ───── primary: ytdl-core direct ───── */
+
+async function viaYtdl(url) {
+  const info = await ytdl.getInfo(url, { requestOptions: { headers } });
+  return { data: normaliseFromYtdl(info) };
+}
+
+/* ───── fallback APIs ───── */
+
+async function viaVreden(url) {
+  const { data } = await axios.get('https://api.vreden.my.id/api/ytmp4', { params: { url }, timeout: 60000 });
+  const dl = data?.result?.download?.url || data?.result?.url;
+  if (!dl) throw new Error('vreden empty');
+  const meta = data?.result?.metadata || {};
+  return {
     data: {
-      id: info.id || null,
-      title: info.title || null,
-      thumbnail: info.thumbnail || null,
-      duration: info.duration || null,
-      duration_formatted: info.duration
-        ? new Date(info.duration * 1000).toISOString().slice(11, 19)
-        : null,
-      video_formats: videoFormats,
-      audio_formats: audioFormats,
-      best_video: bestVideo
-        ? {
-            quality: bestVideo.quality,
-            format: bestVideo.format,
-            size: bestVideo.size_mb,
-            url: bestVideo.download_url,
-            download_url: bestVideo.download_url,
-          }
-        : null,
-      best_audio: bestAudio
-        ? {
-            quality: bestAudio.quality,
-            format: bestAudio.format,
-            size: bestAudio.size_mb,
-            url: bestAudio.download_url,
-            download_url: bestAudio.download_url,
-          }
-        : null,
+      title: meta.title || 'video',
+      thumbnail: meta.thumbnail,
+      duration: meta.duration,
+      youtube_id: meta.videoId,
+      video_formats: [{ quality: '720P', container: 'mp4', download_url: dl }],
+      best_video: { quality: '720P', container: 'mp4', download_url: dl },
+      audio: null,
     },
   };
 }
 
-module.exports = { ytDownload, extractVideoId };
+async function viaDavidcyril(url) {
+  const { data } = await axios.get('https://api.davidcyriltech.my.id/download/ytmp4', { params: { url }, timeout: 60000 });
+  const dl = data?.result?.download_url;
+  if (!dl) throw new Error('davidcyril empty');
+  return {
+    data: {
+      title: data.result.title,
+      thumbnail: data.result.thumbnail,
+      youtube_id: data.result.videoId,
+      video_formats: [{ quality: '720P', container: 'mp4', download_url: dl }],
+      best_video: { quality: '720P', container: 'mp4', download_url: dl },
+      audio: null,
+    },
+  };
+}
+
+async function viaSiputzx(url) {
+  const { data } = await axios.get('https://api.siputzx.my.id/api/d/ytmp4', { params: { url }, timeout: 60000 });
+  const dl = data?.data?.dl;
+  if (!dl) throw new Error('siputzx empty');
+  return {
+    data: {
+      title: data.data.title,
+      thumbnail: data.data.thumbnail,
+      video_formats: [{ quality: '720P', container: 'mp4', download_url: dl }],
+      best_video: { quality: '720P', container: 'mp4', download_url: dl },
+      audio: null,
+    },
+  };
+}
+
+/* ───── audio fallback ───── */
+
+async function viaPrexzy(url) {
+  const { data } = await axios.get('https://apis.prexzyvilla.site/download/ytmp3', { params: { url }, timeout: 60000 });
+  if (!data?.success) throw new Error('prexzy empty');
+  return {
+    data: {
+      title: data.result.title,
+      thumbnail: data.result.thumbnail,
+      audio: { quality: 'AUDIO', container: 'mp3', download_url: data.result.download_url },
+      video_formats: [],
+      best_video: null,
+    },
+  };
+}
+
+/* ───── main entry ───── */
+
+async function ytDownload(url) {
+  if (!url) throw new Error('YouTube URL required');
+  if (!ytdl.validateURL(url)) throw new Error('Invalid YouTube URL');
+
+  const order = [viaYtdl, viaVreden, viaDavidcyril, viaSiputzx];
+  const errs = [];
+  for (const fn of order) {
+    try {
+      const r = await fn(url);
+      if (r?.data) return r;
+    } catch (e) {
+      errs.push(`${fn.name}: ${String(e.message).slice(0, 80)}`);
+    }
+  }
+  throw new Error('All YT video providers failed → ' + errs.join(' | '));
+}
+
+async function ytAudio(url) {
+  // try ytdl audio first
+  try {
+    const info = await ytdl.getInfo(url, { requestOptions: { headers } });
+    const data = normaliseFromYtdl(info);
+    if (data.audio) return { data };
+  } catch (_) { /* fall through */ }
+  return viaPrexzy(url);
+}
+
+async function ytVideo(url, quality = '720p') {
+  const result = await ytDownload(url);
+  const want = quality.toUpperCase();
+  const fmt =
+    result.data.video_formats.find((f) => f.quality === want) ||
+    result.data.best_video ||
+    result.data.video_formats[0];
+  if (!fmt) throw new Error('No video format available');
+  return { ...result, chosen: fmt };
+}
+
+module.exports = { ytDownload, ytAudio, ytVideo };
