@@ -3602,64 +3602,128 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
     return;
 }
 
-// ── Store messages for antidelete recovery ──
+// ── Store messages for antidelete recovery (ALWAYS store — mode-independent) ──
 (async () => {
     try {
-        const _adCfg2 = loadAntideleteCfg();
-        if (_adCfg2.mode && _adCfg2.mode !== 'off' && m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessage(m, devtrust)) {
+        if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessage(m, devtrust)) {
             const _adMsgId2 = m.key.id;
             const _adChatId2 = m.key.remoteJid;
             let _adContent = '';
             let _adMediaType = '';
             let _adMediaPath = '';
             const _adSender2 = m.key.participant || m.key.remoteJid;
-            if (m.message?.conversation) { _adContent = m.message.conversation; }
-            else if (m.message?.extendedTextMessage?.text) { _adContent = m.message.extendedTextMessage.text; }
-            else if (m.message?.imageMessage) {
-                _adMediaType = 'image'; _adContent = m.message.imageMessage.caption || '';
+            const msg = m.message || {};
+
+            // ── Text messages ──
+            if (msg.conversation) {
+                _adContent = msg.conversation;
+            } else if (msg.extendedTextMessage?.text) {
+                _adContent = msg.extendedTextMessage.text;
+            }
+            // ── Image ──
+            else if (msg.imageMessage) {
+                _adMediaType = 'image';
+                _adContent = msg.imageMessage.caption || '';
                 try {
                     const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(m.message.imageMessage, 'image');
+                    const _stream = await _dlc(msg.imageMessage, 'image');
                     let _buf = Buffer.from([]);
                     for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
                     _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.jpg`;
                     fs.writeFileSync(_adMediaPath, _buf);
                 } catch (e) {}
-            } else if (m.message?.videoMessage) {
-                _adMediaType = 'video'; _adContent = m.message.videoMessage.caption || '';
+            }
+            // ── Video ──
+            else if (msg.videoMessage) {
+                _adMediaType = 'video';
+                _adContent = msg.videoMessage.caption || '';
                 try {
                     const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(m.message.videoMessage, 'video');
+                    const _stream = await _dlc(msg.videoMessage, 'video');
                     let _buf = Buffer.from([]);
                     for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
                     _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.mp4`;
                     fs.writeFileSync(_adMediaPath, _buf);
                 } catch (e) {}
-            } else if (m.message?.audioMessage) {
+            }
+            // ── Audio / Voice note ──
+            else if (msg.audioMessage) {
                 _adMediaType = 'audio';
+                _adContent = msg.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio';
                 try {
                     const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(m.message.audioMessage, 'audio');
+                    const _stream = await _dlc(msg.audioMessage, 'audio');
                     let _buf = Buffer.from([]);
                     for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
                     _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.mp3`;
                     fs.writeFileSync(_adMediaPath, _buf);
                 } catch (e) {}
-            } else if (m.message?.stickerMessage) {
+            }
+            // ── Sticker ──
+            else if (msg.stickerMessage) {
                 _adMediaType = 'sticker';
+                _adContent = '🎭 Sticker';
                 try {
                     const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(m.message.stickerMessage, 'sticker');
+                    const _stream = await _dlc(msg.stickerMessage, 'sticker');
                     let _buf = Buffer.from([]);
                     for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
                     _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.webp`;
                     fs.writeFileSync(_adMediaPath, _buf);
                 } catch (e) {}
             }
+            // ── Document ──
+            else if (msg.documentMessage) {
+                _adMediaType = 'document';
+                const docName = msg.documentMessage.fileName || msg.documentMessage.title || 'File';
+                _adContent = `📄 Document: ${docName}`;
+            }
+            // ── Poll ──
+            else if (msg.pollCreationMessage || msg.pollCreationMessageV2 || msg.pollCreationMessageV3) {
+                const poll = msg.pollCreationMessage || msg.pollCreationMessageV2 || msg.pollCreationMessageV3;
+                const options = (poll.options || []).map((o, i) => `  ${i + 1}. ${o.optionName}`).join('\n');
+                _adContent = `📊 *Poll:* ${poll.name}\n${options}`;
+            }
+            // ── Location ──
+            else if (msg.locationMessage || msg.liveLocationMessage) {
+                const loc = msg.locationMessage || msg.liveLocationMessage;
+                _adContent = `📍 Location${loc.name ? ': ' + loc.name : ''}\nhttps://maps.google.com/?q=${loc.degreesLatitude},${loc.degreesLongitude}`;
+            }
+            // ── Contact ──
+            else if (msg.contactMessage) {
+                _adContent = `👤 Contact: ${msg.contactMessage.displayName || 'Unknown'}`;
+            } else if (msg.contactsArrayMessage) {
+                const names = (msg.contactsArrayMessage.contacts || []).map(c => c.displayName).join(', ');
+                _adContent = `👥 Contacts: ${names}`;
+            }
+            // ── Reaction ──
+            else if (msg.reactionMessage) {
+                _adContent = `${msg.reactionMessage.text || '❤️'} Reaction`;
+            }
+            // ── Button / List response ──
+            else if (msg.buttonsResponseMessage) {
+                _adContent = `🔘 Button reply: ${msg.buttonsResponseMessage.selectedDisplayText || msg.buttonsResponseMessage.selectedButtonId || ''}`;
+            } else if (msg.listResponseMessage) {
+                _adContent = `📋 List reply: ${msg.listResponseMessage.title || msg.listResponseMessage.singleSelectReply?.selectedRowId || ''}`;
+            }
+            // ── View once (mark as such, can't resend) ──
+            else if (msg.viewOnceMessage || msg.viewOnceMessageV2) {
+                const inner = msg.viewOnceMessage?.message || msg.viewOnceMessageV2?.message || {};
+                _adContent = inner.imageMessage ? '🔒 View once image' : inner.videoMessage ? '🔒 View once video' : '🔒 View once message';
+            }
+            // ── Fallback: unknown type ──
+            else {
+                const knownType = Object.keys(msg)[0];
+                if (knownType) _adContent = `[${knownType.replace('Message', '')} message]`;
+            }
+
             global._antideleteStore.set(antiStoreKey(_adChatId2, _adMsgId2), {
-                content: _adContent, mediaType: _adMediaType, mediaPath: _adMediaPath,
+                content: _adContent,
+                mediaType: _adMediaType,
+                mediaPath: _adMediaPath,
                 fromMe: Boolean(m.key.fromMe),
-                sender: _adSender2, group: (m.key.remoteJid || '').endsWith('@g.us') ? m.key.remoteJid : null,
+                sender: _adSender2,
+                group: (_adChatId2 || '').endsWith('@g.us') ? _adChatId2 : null,
                 timestamp: new Date().toISOString(),
                 sessionJid: getBotJid(devtrust)
             });
