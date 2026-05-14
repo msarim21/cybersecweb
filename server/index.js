@@ -12,7 +12,7 @@ const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit     = require('express-rate-limit');
 const bcrypt        = require('bcryptjs');
 
-const { initDb }  = require('./db');
+const { initDb, isDbReady }  = require('./db');
 const svc         = require('./db-service');
 
 const authRoutes    = require('./routes/auth');
@@ -28,9 +28,14 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
 // ── Allowed origins (CORS) ─────────────────────────────────────────────────
+// In production on Heroku, same-origin requests don't need CORS.
+// We allow '*' if ALLOWED_ORIGINS is not explicitly set in production.
+const isProduction = process.env.NODE_ENV === 'production';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:3000', 'http://localhost:5173'];
+  : isProduction
+    ? ['*']
+    : ['http://localhost:3000', 'http://localhost:5173'];
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -119,8 +124,18 @@ const UPLOADS_DIR = path.join(__dirname, '../uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+// ── DB ready check middleware for API routes ────────────────────────────────
+const requireDb = (req, res, next) => {
+  if (!isDbReady()) {
+    return res.status(503).json({
+      error: 'Database not connected. Please set MONGO_URL or DATABASE_URL in Heroku config vars.',
+    });
+  }
+  next();
+};
+
 // ── Public audio info endpoint (no auth required) ───────────────────────────
-app.get('/api/site/audio', async (req, res) => {
+app.get('/api/site/audio', requireDb, async (req, res) => {
   try {
     const filename = await svc.getSiteSetting('site_audio_filename');
     const original = await svc.getSiteSetting('site_audio_original');
@@ -131,14 +146,18 @@ app.get('/api/site/audio', async (req, res) => {
 });
 
 // ── API routes ──────────────────────────────────────────────────────────────
-app.use('/api/auth',    authRoutes);
-app.use('/api/user',    userRoutes);
-app.use('/api/numbers', numbersRoutes);
-app.use('/api/admin',   adminRoutes);
-app.use('/api/pairing', pairingRoutes);
+app.use('/api/auth',    requireDb, authRoutes);
+app.use('/api/user',    requireDb, userRoutes);
+app.use('/api/numbers', requireDb, numbersRoutes);
+app.use('/api/admin',   requireDb, adminRoutes);
+app.use('/api/pairing', requireDb, pairingRoutes);
 
 app.get('/api/health', (req, res) =>
-  res.json({ status: 'CYBERSECPRO API Online', db: process.env.MONGO_URL ? 'MongoDB' : 'PostgreSQL', timestamp: new Date() })
+  res.json({
+    status: 'CYBERSECPRO API Online',
+    db: isDbReady() ? (process.env.MONGO_URL ? 'MongoDB' : 'PostgreSQL') : 'Not connected',
+    timestamp: new Date(),
+  })
 );
 
 // ── 404 handler ─────────────────────────────────────────────────────────────
@@ -165,6 +184,8 @@ if (fs.existsSync(clientDist)) {
     }
   }));
   app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+} else {
+  console.warn('⚠️  client/dist not found — frontend will not be served. Run the build step first.');
 }
 
 // ── Auto-create admin from env vars ────────────────────────────────────────
@@ -195,17 +216,20 @@ async function ensureAdminAccount() {
 // ── Warn if JWT_SECRET is weak/default ─────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || '';
 if (!JWT_SECRET || JWT_SECRET.includes('default') || JWT_SECRET.length < 32) {
-  console.warn('⚠️  [SECURITY] JWT_SECRET is weak or not set! Set a strong random secret in your .env file.');
+  console.warn('⚠️  [SECURITY] JWT_SECRET is weak or not set! Set a strong random secret in your Heroku config vars.');
 }
 
 // ── Boot sequence ───────────────────────────────────────────────────────────
+// Start server immediately so Heroku's health check passes,
+// then connect to the database in the background.
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
+});
+
 initDb()
   .then(async () => {
     await ensureAdminAccount();
-
-    app.listen(PORT, '0.0.0.0', () =>
-      console.log(`🚀 CYBERSECPRO API running on port ${PORT}`)
-    );
+    console.log('✅ Database initialised successfully');
 
     setTimeout(async () => {
       try {
@@ -218,6 +242,7 @@ initDb()
     }, 5000);
   })
   .catch(err => {
-    console.error('❌ Failed to initialize database:', err.message);
-    process.exit(1);
+    console.error('❌ Database connection failed:', err.message);
+    console.error('   → Set MONGO_URL or DATABASE_URL in your Heroku config vars.');
+    console.error('   → The website frontend is still running but API features are disabled.');
   });
