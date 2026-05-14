@@ -42,9 +42,10 @@ const jimp = require("jimp")
 const latensi = speed() - timestampp
 const moment = require('moment-timezone')
 const yts = require('yt-search');
-const ytdl = require('ytdl-core');
+const ytdl = require('@distube/ytdl-core');
 const { ytDownload, extractVideoId } = require('./allfunc/ytdownload')
 const { igDownload } = require('./allfunc/igdownload')
+const { xnxxDownload } = require('./allfunc/xnxxdownload')
 const FormData = require('form-data');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 const { smsg, tanggal, getTime, isUrl, sleep, clockString, runtime, fetchJson, getBuffer, jsonformat, format, parseMention, getRandom, getGroupAdmins, generateProfilePicture } = require('./allfunc/storage')
@@ -11046,7 +11047,12 @@ case 'ytvideo': {
         let videoInfo = null;
         const yts = require('yt-search');
         if (text.includes('youtube.com') || text.includes('youtu.be')) {
-            const videoId = text.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i)?.[1];
+            let videoId = null;
+            if (text.includes('/shorts/')) {
+                videoId = text.split('/shorts/')[1].split('?')[0].split('/')[0].trim();
+            } else {
+                videoId = text.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i)?.[1];
+            }
             if (videoId) {
                 const result = await yts({ videoId });
                 videoInfo = ('videos' in result && Array.isArray(result.videos)) ? result.videos[0] : result;
@@ -12122,48 +12128,30 @@ console.log(`Error downloading video: ${e}`);
 }
 break;
   case "xnxxvideodl": {
-  if (!isCreator) return reply("Owner only"); 
-if (!text) return m.reply(example(`xnxx videolink`))
-// Check if link is from xvideo
-if (!text.includes("xnxx.com")) return m.reply("Link is not from xnxx.com")
-await devtrust.sendMessage(m.chat, {react: {text: '🍑', key: m.key}})
-// Fetching video data from API
-try {
-let res = await fetch(`https://apis.prexzyvilla.site/nsfw/xnxx-dl?url=${encodeURIComponent(text)}`);
-let json = await res.json();
+    if (!isCreator) return reply("🔒 *Owner only*");
+    if (!text) return reply("📌 *Usage:* .xnxxvideodl <xnxx link>\nExample: .xnxxvideodl https://www.xnxx.com/video-xxx/...");
+    if (!text.includes("xnxx.com")) return reply("❌ *Link must be from xnxx.com*");
 
-// Bad response from API
-if (json.status !== 200 || !json.data) {
-throw "Cannot find video for this URL.";
-}
+    await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
+    try {
+        const xdata = await xnxxDownload(text);
+        const videoUrl = xdata.best;
+        if (!videoUrl) throw new Error('No video URL found');
 
-// Retrieving video information from API
-let videoData = json.data;
+        const caption = `🍑 *XNXX Download*\n\n` +
+            `📽️ *Title:* ${xdata.title.slice(0, 100)}\n` +
+            `🎬 *Quality:* ${xdata.sources.high ? 'High (360p)' : 'Low (240p)'}`;
 
-// Download videos using URLs obtained from API
-const videoUrl = videoData.url;
-const videoResponse = await fetch(videoUrl);
-
-// Check if the video was downloaded successfully
-if (!videoResponse.ok) {
-throw "Failed to download video.";
-}
-
-// Send video
-await devtrust.sendMessage(m.chat, {
-video: {
-url: videoUrl,
-},
-caption: `*Title:* ${videoData.title || 'No title'}\n` +
-`*Views:* ${videoData.views || 'No view information'}\n` +
-`*Votes:* ${videoData.vote || 'No vote information'}\n` +
-`*Likes:* ${videoData.like_count || 'No like information'}\n` +
-`*Dislikes:* ${videoData.dislike_count || 'No dislike information'}`,
-});
-await devtrust.sendMessage(m.chat, {react: {text: '', key: m.key}})
-} catch (e) {
-console.log(`Error downloading video: ${e}`);
-}
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({ video: { url: videoUrl }, mimetype: 'video/mp4', caption }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    } catch (e) {
+        console.error('xnxxvideodl error:', e.message);
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        reply(`❌ *Failed:* ${e.message}`);
+    }
 }
 break;
 case 'xvideosearch':{
