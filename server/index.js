@@ -203,6 +203,10 @@ async function ensureAdminAccount() {
 
       user = await svc.createUser(username, email, password);
       console.log(`✅ Admin account created: ${email} (username: ${username})`);
+    } else {
+      // Always sync the password from env var so changing ADMIN_PASSWORD takes effect
+      await svc.updatePassword(user.id, password);
+      console.log(`🔑 Admin password synced for: ${email}`);
     }
     if (user.role !== 'admin') {
       await svc.setAdminRole(user.id);
