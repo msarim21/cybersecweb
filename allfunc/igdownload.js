@@ -17,71 +17,63 @@ function buildResult(caption, items) {
   return { caption: caption || '', medias };
 }
 
+function getShortcode(url) {
+  const m = url.match(/\/(?:p|reel|tv|reels)\/([A-Za-z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
 async function igDownload(url) {
   const errors = [];
+  const shortcode = getShortcode(url);
 
-  // ── 0. SaveFrom (most reliable) ──
-  try {
-    const r = await axios.post('https://worker.saveform.net/api/convert',
-      JSON.stringify({ url }),
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': UA,
-          'Referer': 'https://en.savefrom.net/',
-          'Origin': 'https://en.savefrom.net',
-        },
-        timeout: 15000,
-      }
-    );
-    const d = r.data;
-    const items = d?.result || d?.data || d?.links || [];
-    const filtered = Array.isArray(items) ? items.filter(x => (x.url || x.href || '').includes('mp4') || (x.type || '').includes('video')) : [];
-    if (filtered.length > 0) {
-      const best = filtered[0];
-      return buildResult('', [{ type: 'video', url: best.url || best.href }]);
-    }
-    throw new Error('no mp4');
-  } catch (e) { errors.push('savefrom:' + e.message.slice(0, 30)); }
-
-  // ── 0b. InstaDownloader ──
-  try {
-    const r = await axios.get('https://instadownloader.co/api.php', {
-      params: { url },
-      headers: { 'User-Agent': UA, 'Referer': 'https://instadownloader.co/' },
-      timeout: 15000,
-    });
-    const d = r.data;
-    const mediaUrl = d?.url || d?.video_url || d?.media;
-    if (mediaUrl) return buildResult(d?.caption || '', [{ type: 'video', url: mediaUrl }]);
-    throw new Error('no url');
-  } catch (e) { errors.push('instadownloader:' + e.message.slice(0, 30)); }
-
-  // ── 1. Ryzen ──
+  // ── 0. RyzenDesu ──
   try {
     const r = await axios.get('https://api.ryzendesu.vip/api/downloader/igdl', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
-    if (d?.data?.length > 0) return buildResult('', d.data);
+    if (d?.data?.length > 0) {
+      const vids = d.data.filter(i => i.url && (i.url.includes('.mp4') || i.type === 'video'));
+      return buildResult('', vids.length > 0 ? vids : d.data);
+    }
     throw new Error('empty');
-  } catch (e) { errors.push('ryzen:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('ryzen:' + e.message.slice(0, 40)); }
 
-  // ── 2. Vreden ──
+  // ── 1. Vreden ──
   try {
     const r = await axios.get('https://api.vreden.my.id/api/igdl', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
-    const items = d?.result?.response || d?.data || [];
-    if (items.length > 0) return buildResult(d?.result?.caption || '', items);
+    const items = d?.result?.response || d?.result || d?.data || [];
+    if (Array.isArray(items) && items.length > 0) return buildResult(d?.result?.caption || '', items);
     throw new Error('empty');
-  } catch (e) { errors.push('vreden:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('vreden:' + e.message.slice(0, 40)); }
 
-  // ── 3. PrinceTechn ──
+  // ── 2. Agatz ──
+  try {
+    const r = await axios.get('https://api.agatz.xyz/api/igdl', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    if (d?.status === 200 && d?.data?.length > 0) return buildResult('', d.data);
+    throw new Error('empty');
+  } catch (e) { errors.push('agatz:' + e.message.slice(0, 40)); }
+
+  // ── 3. Dreaded ──
+  try {
+    const r = await axios.get('https://api.dreaded.site/api/igdl', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    if (d?.status === 200 && d?.data?.length > 0) return buildResult('', d.data);
+    throw new Error('empty');
+  } catch (e) { errors.push('dreaded:' + e.message.slice(0, 40)); }
+
+  // ── 4. PrinceTechn ──
   try {
     const r = await axios.get('https://api.princetechn.com/api/download/instagram', {
-      params: { apikey: 'prince', url }, headers: { 'User-Agent': UA }, timeout: 15000,
+      params: { apikey: 'prince', url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
     if (d?.status === 200 && d.result) {
@@ -90,121 +82,88 @@ async function igDownload(url) {
       if (mediaUrl) return buildResult(res.caption || '', [{ type: res.video_url ? 'video' : detectType(mediaUrl), url: mediaUrl }]);
     }
     throw new Error('no media');
-  } catch (e) { errors.push('prince:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('prince:' + e.message.slice(0, 40)); }
 
-  // ── 4. GiftedTech ──
+  // ── 5. Nekorinn ──
   try {
-    const r = await axios.get('https://api.giftedtech.co.ke/api/download/igdl', {
-      params: { apikey: 'gifted', url }, headers: { 'User-Agent': UA }, timeout: 15000,
+    const r = await axios.get('https://api.nekorinn.my.id/downloader/ig', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
-    if (d?.result?.length > 0) return buildResult('', d.result);
-    throw new Error('empty/limit');
-  } catch (e) { errors.push('gifted:' + e.message.slice(0, 30)); }
-
-  // ── 5. Agatz ──
-  try {
-    const r = await axios.get('https://api.agatz.xyz/api/igdl', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
-    });
-    const d = r.data;
-    if (d?.status === 200 && d?.data?.length > 0) return buildResult('', d.data);
+    const items = d?.result || d?.data || [];
+    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
     throw new Error('empty');
-  } catch (e) { errors.push('agatz:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('nekorinn:' + e.message.slice(0, 40)); }
 
-  // ── 6. Dreaded ──
+  // ── 6. YanzBotz ──
   try {
-    const r = await axios.get('https://api.dreaded.site/api/igdl', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
+    const r = await axios.get('https://api.yanzbotz.live/api/downloader/ig', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
-    if (d?.status === 200 && d?.data?.length > 0) return buildResult('', d.data);
+    const items = d?.result || d?.data || [];
+    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
     throw new Error('empty');
-  } catch (e) { errors.push('dreaded:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('yanzbotz:' + e.message.slice(0, 40)); }
 
-  // ── 7. BotCahx ──
+  // ── 7. Cenominali ──
+  try {
+    const r = await axios.get('https://api.cenominali.my.id/api/downloader/igdl', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    const items = d?.result || d?.data || [];
+    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
+    throw new Error('empty');
+  } catch (e) { errors.push('cenominali:' + e.message.slice(0, 40)); }
+
+  // ── 8. Naufals ──
+  try {
+    const r = await axios.get('https://api.naufals.site/ig', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    const items = d?.result || d?.data || [];
+    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
+    throw new Error('empty');
+  } catch (e) { errors.push('naufals:' + e.message.slice(0, 40)); }
+
+  // ── 9. Webjsa ──
+  try {
+    const r = await axios.get('https://api.webjsa.my.id/igdl', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    const items = d?.result || d?.data || [];
+    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
+    throw new Error('empty');
+  } catch (e) { errors.push('webjsa:' + e.message.slice(0, 40)); }
+
+  // ── 10. BotCahx ──
   try {
     const r = await axios.get('https://api.botcahx.eu.org/api/download-url/instagram', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
     const items = d?.result || d?.data || [];
     const urls = Array.isArray(items) ? items : (typeof items === 'string' ? [items] : []);
     if (urls.length > 0) return buildResult('', urls.map(u => ({ url: u?.url || u, type: detectType(u?.url || u) })));
     throw new Error('empty');
-  } catch (e) { errors.push('botcahx:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('botcahx:' + e.message.slice(0, 40)); }
 
-  // ── 8. Nekorinn ──
-  try {
-    const r = await axios.get('https://api.nekorinn.my.id/downloader/ig', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
-    });
-    const d = r.data;
-    const items = d?.result || d?.data || [];
-    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
-    throw new Error('empty');
-  } catch (e) { errors.push('nekorinn:' + e.message.slice(0, 30)); }
-
-  // ── 9. YanzBotz ──
-  try {
-    const r = await axios.get('https://api.yanzbotz.live/api/downloader/ig', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
-    });
-    const d = r.data;
-    const items = d?.result || d?.data || [];
-    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
-    throw new Error('empty');
-  } catch (e) { errors.push('yanzbotz:' + e.message.slice(0, 30)); }
-
-  // ── 10. Cenominali ──
-  try {
-    const r = await axios.get('https://api.cenominali.my.id/api/downloader/igdl', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
-    });
-    const d = r.data;
-    const items = d?.result || d?.data || [];
-    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
-    throw new Error('empty');
-  } catch (e) { errors.push('cenominali:' + e.message.slice(0, 30)); }
-
-  // ── 11. Naufals ──
-  try {
-    const r = await axios.get('https://api.naufals.site/ig', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
-    });
-    const d = r.data;
-    const items = d?.result || d?.data || [];
-    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
-    throw new Error('empty');
-  } catch (e) { errors.push('naufals:' + e.message.slice(0, 30)); }
-
-  // ── 12. Webjsa ──
-  try {
-    const r = await axios.get('https://api.webjsa.my.id/igdl', {
-      params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
-    });
-    const d = r.data;
-    const items = d?.result || d?.data || [];
-    if (Array.isArray(items) && items.length > 0) return buildResult('', items);
-    throw new Error('empty');
-  } catch (e) { errors.push('webjsa:' + e.message.slice(0, 30)); }
-
-  // ── 13. SnapSave ajaxSearch (HTML parse) ──
+  // ── 11. SnapSave ajaxSearch (HTML parse) ──
   try {
     const enc = encodeURIComponent(url);
-    const r = await axios.post('https://v3.snapsave.app/api/ajaxSearch',
-      `q=${enc}&t=media&lang=en`,
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Referer': 'https://snapsave.app/',
-          'Origin': 'https://snapsave.app',
-          'User-Agent': UA,
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        timeout: 15000,
-      }
-    );
+    const r = await axios.post('https://v3.snapsave.app/api/ajaxSearch', `q=${enc}&t=media&lang=en`, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': 'https://snapsave.app/',
+        'Origin': 'https://snapsave.app',
+        'User-Agent': UA,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      timeout: 20000,
+    });
     const d = r.data;
     if (d?.data) {
       const cheerio = require('cheerio');
@@ -219,23 +178,20 @@ async function igDownload(url) {
       if (medias.length > 0) return { caption: '', medias };
     }
     throw new Error('no media in html');
-  } catch (e) { errors.push('snapsave:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('snapsave:' + e.message.slice(0, 40)); }
 
-  // ── 14. SaveIG ajaxSearch ──
+  // ── 12. SaveIG ajaxSearch ──
   try {
     const enc = encodeURIComponent(url);
-    const r = await axios.post('https://v3.saveig.app/api/ajaxSearch',
-      `q=${enc}&t=media&lang=en`,
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Referer': 'https://saveig.app/',
-          'User-Agent': UA,
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        timeout: 15000,
-      }
-    );
+    const r = await axios.post('https://v3.saveig.app/api/ajaxSearch', `q=${enc}&t=media&lang=en`, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': 'https://saveig.app/',
+        'User-Agent': UA,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      timeout: 20000,
+    });
     const d = r.data;
     if (d?.data) {
       const cheerio = require('cheerio');
@@ -250,20 +206,98 @@ async function igDownload(url) {
       if (medias.length > 0) return { caption: '', medias };
     }
     throw new Error('no media in html');
-  } catch (e) { errors.push('saveig:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('saveig:' + e.message.slice(0, 40)); }
 
-  // ── 15. Lolhuman ──
+  // ── 13. InstaDownloader ──
+  try {
+    const r = await axios.get('https://instadownloader.co/api.php', {
+      params: { url },
+      headers: { 'User-Agent': UA, 'Referer': 'https://instadownloader.co/' },
+      timeout: 20000,
+    });
+    const d = r.data;
+    const mediaUrl = d?.url || d?.video_url || d?.media;
+    if (mediaUrl) return buildResult(d?.caption || '', [{ type: 'video', url: mediaUrl }]);
+    throw new Error('no url');
+  } catch (e) { errors.push('instadownloader:' + e.message.slice(0, 40)); }
+
+  // ── 14. SaveFrom ──
+  try {
+    const r = await axios.post('https://worker.saveform.net/api/convert',
+      JSON.stringify({ url }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': UA,
+          'Referer': 'https://en.savefrom.net/',
+          'Origin': 'https://en.savefrom.net',
+        },
+        timeout: 20000,
+      }
+    );
+    const d = r.data;
+    const items = d?.result || d?.data || d?.links || [];
+    const filtered = Array.isArray(items) ? items.filter(x => (x.url || x.href || '').includes('mp4') || (x.type || '').includes('video')) : [];
+    if (filtered.length > 0) {
+      const best = filtered[0];
+      return buildResult('', [{ type: 'video', url: best.url || best.href }]);
+    }
+    throw new Error('no mp4');
+  } catch (e) { errors.push('savefrom:' + e.message.slice(0, 40)); }
+
+  // ── 15. Instagram embed page video extraction ──
+  if (shortcode) {
+    try {
+      const r = await axios.get(`https://www.instagram.com/p/${shortcode}/embed/`, {
+        headers: {
+          'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+        },
+        timeout: 20000,
+      });
+      const html = r.data;
+      const cdnMatch = html.match(/https:\/\/[^\s"'<>]*cdninstagram[^\s"'<>]*\.mp4[^\s"'<>]*/);
+      if (cdnMatch) return buildResult('', [{ type: 'video', url: cdnMatch[0].replace(/\\u0026/g, '&') }]);
+      const fbcdnMatch = html.match(/https:\/\/[^\s"'<>]*fbcdn[^\s"'<>]*\.mp4[^\s"'<>]*/);
+      if (fbcdnMatch) return buildResult('', [{ type: 'video', url: fbcdnMatch[0].replace(/\\u0026/g, '&') }]);
+      throw new Error('no video url in embed');
+    } catch (e) { errors.push('ig-embed:' + e.message.slice(0, 40)); }
+  }
+
+  // ── 16. GiftedTech ──
+  try {
+    const r = await axios.get('https://api.giftedtech.co.ke/api/download/igdl', {
+      params: { apikey: 'gifted', url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    if (d?.result?.length > 0) return buildResult('', d.result);
+    throw new Error('empty/limit');
+  } catch (e) { errors.push('gifted:' + e.message.slice(0, 40)); }
+
+  // ── 17. Tiklydown (multi-platform) ──
+  try {
+    const r = await axios.get('https://api.tiklydown.eu.org/api/download/social', {
+      params: { url }, headers: { 'User-Agent': UA }, timeout: 20000,
+    });
+    const d = r.data;
+    const videoUrl = d?.data?.play || d?.data?.wmplay || d?.video_url;
+    if (videoUrl) return buildResult(d?.data?.title || '', [{ type: 'video', url: videoUrl }]);
+    throw new Error('no url');
+  } catch (e) { errors.push('tiklydown:' + e.message.slice(0, 40)); }
+
+  // ── 18. Lolhuman ──
   try {
     const r = await axios.get('https://api.lolhuman.xyz/api/igdl', {
-      params: { apikey: 'lolhuman_free', url }, headers: { 'User-Agent': UA }, timeout: 15000,
+      params: { apikey: 'lolhuman_free', url }, headers: { 'User-Agent': UA }, timeout: 20000,
     });
     const d = r.data;
     const items = d?.result || d?.data || [];
     if (Array.isArray(items) && items.length > 0) return buildResult('', items);
     throw new Error('empty');
-  } catch (e) { errors.push('lolhuman:' + e.message.slice(0, 30)); }
+  } catch (e) { errors.push('lolhuman:' + e.message.slice(0, 40)); }
 
-  throw new Error('All Instagram providers failed. Try again later.\n' + errors.slice(0, 5).join(' | '));
+  throw new Error('Instagram download failed. Please try again later.\n' + errors.slice(0, 6).join(' | '));
 }
 
 module.exports = { igDownload };
