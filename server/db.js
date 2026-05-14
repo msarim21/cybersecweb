@@ -9,27 +9,31 @@ const PG_URL    = process.env.DATABASE_URL ||
 
 let _pool      = null;
 let _mongoMode = false;
+let _dbReady   = false;
 
 const isMongoMode = () => _mongoMode;
 const getPool     = () => _pool;
+const isDbReady   = () => _dbReady;
 
 const initDb = async () => {
   if (MONGO_URL) {
     _mongoMode = true;
     await mongoose.connect(MONGO_URL, { serverSelectionTimeoutMS: 10000 });
+    _dbReady = true;
     console.log('✅ MongoDB connected');
     return;
   }
 
   if (!PG_URL) {
-    console.error('❌ No database configured! Set MONGO_URL or DATABASE_URL.');
-    process.exit(1);
+    throw new Error('No database configured! Set MONGO_URL or DATABASE_URL in Heroku config vars.');
   }
 
   const { Pool } = require('pg');
   _pool = new Pool({
     connectionString: PG_URL,
-    ssl: PG_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : false,
+    ssl: PG_URL.includes('sslmode=require') || PG_URL.includes('amazonaws') || process.env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: false }
+      : false,
     max: 10,
     idleTimeoutMillis: 30000,
   });
@@ -85,10 +89,11 @@ const initDb = async () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    _dbReady = true;
     console.log('✅ PostgreSQL tables ready');
   } finally {
     client.release();
   }
 };
 
-module.exports = { initDb, isMongoMode, getPool };
+module.exports = { initDb, isMongoMode, getPool, isDbReady };
