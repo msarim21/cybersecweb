@@ -20,6 +20,43 @@ function buildResult(caption, items) {
 async function igDownload(url) {
   const errors = [];
 
+  // ── 0. SaveFrom (most reliable) ──
+  try {
+    const r = await axios.post('https://worker.saveform.net/api/convert',
+      JSON.stringify({ url }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': UA,
+          'Referer': 'https://en.savefrom.net/',
+          'Origin': 'https://en.savefrom.net',
+        },
+        timeout: 15000,
+      }
+    );
+    const d = r.data;
+    const items = d?.result || d?.data || d?.links || [];
+    const filtered = Array.isArray(items) ? items.filter(x => (x.url || x.href || '').includes('mp4') || (x.type || '').includes('video')) : [];
+    if (filtered.length > 0) {
+      const best = filtered[0];
+      return buildResult('', [{ type: 'video', url: best.url || best.href }]);
+    }
+    throw new Error('no mp4');
+  } catch (e) { errors.push('savefrom:' + e.message.slice(0, 30)); }
+
+  // ── 0b. InstaDownloader ──
+  try {
+    const r = await axios.get('https://instadownloader.co/api.php', {
+      params: { url },
+      headers: { 'User-Agent': UA, 'Referer': 'https://instadownloader.co/' },
+      timeout: 15000,
+    });
+    const d = r.data;
+    const mediaUrl = d?.url || d?.video_url || d?.media;
+    if (mediaUrl) return buildResult(d?.caption || '', [{ type: 'video', url: mediaUrl }]);
+    throw new Error('no url');
+  } catch (e) { errors.push('instadownloader:' + e.message.slice(0, 30)); }
+
   // ── 1. Ryzen ──
   try {
     const r = await axios.get('https://api.ryzendesu.vip/api/downloader/igdl', {
