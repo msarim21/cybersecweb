@@ -45,7 +45,7 @@ const yts = require('yt-search');
 const ytdl = require('@distube/ytdl-core');
 const { ytDownload, extractVideoId } = require('./allfunc/ytdownload')
 const { igDownload } = require('./allfunc/igdownload')
-const { xnxxDownload } = require('./allfunc/xnxxdownload')
+const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const FormData = require('form-data');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 const { smsg, tanggal, getTime, isUrl, sleep, clockString, runtime, fetchJson, getBuffer, jsonformat, format, parseMention, getRandom, getGroupAdmins, generateProfilePicture } = require('./allfunc/storage')
@@ -12206,13 +12206,11 @@ case 'xnxx': {
     if (!global.videoCache) global.videoCache = new Map();
     try {
         await devtrust.sendMessage(m.chat, { text: `🔍 *Searching for:* ${text}\n⏳ Please wait...` }, { quoted: m });
-        const apiUrl = `https://vima-downapi-e29779defe2e.herokuapp.com/vimamods/download/xnxx?q=${encodeURIComponent(text)}&tocken=VIMAMODS1`;
-        const apiRes = await fetch(apiUrl);
-        const data = await apiRes.json();
-        if (!data.status || !data.result || data.result.length === 0) {
-            return reply(`❌ *${text}* No videos found for.`);
+        const searchResults = await xnxxSearch(text);
+        if (!searchResults || searchResults.length === 0) {
+            return reply(`❌ No videos found for *${text}*`);
         }
-        const topResults = data.result.slice(0, 10);
+        const topResults = searchResults.slice(0, 10);
         let listMessage = `╭━━━━━━━━━━━━━━━╮\n`;
         listMessage += `┃ 📽️ *VIDEO SEARCH RESULTS*\n`;
         listMessage += `┃ 🔎 Query: ${text}\n`;
@@ -12249,11 +12247,13 @@ case 'xnxx': {
                 const selectedVideo = cached.videos[number - 1];
                 await devtrust.sendMessage(fromChat, { react: { text: '⏳', key: messageData.key } });
                 try {
-                    const videoUrl = selectedVideo.download_links?.medium || selectedVideo.download_links?.low || selectedVideo.download_links?.high;
-                    if (!videoUrl) throw new Error('No download URL available');
+                    await devtrust.sendMessage(fromChat, { text: '⏳ *Fetching video...*\nPlease wait...' }, { quoted: messageData });
+                    const videoData = await xnxxDownload(selectedVideo.url);
+                    const videoUrl = videoData.best || videoData.sources?.high || videoData.sources?.low || videoData.sources?.hls;
+                    if (!videoUrl) throw new Error('No download URL found');
                     await devtrust.sendMessage(fromChat, {
                         video: { url: videoUrl },
-                        caption: `🎬 *${selectedVideo.title}*\n\n📥 Downloaded successfully`,
+                        caption: `🎬 *${videoData.title || selectedVideo.title}*\n\n📥 Downloaded successfully`,
                         gifPlayback: false
                     }, { quoted: messageData });
                     await devtrust.sendMessage(fromChat, { react: { text: '✅', key: messageData.key } });
