@@ -6,7 +6,7 @@ A full-stack cyberpunk SaaS platform where users sign up, link their WhatsApp nu
 
 ## One-Click Heroku Deploy
 
-[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/mrfr8nk/cybersec)
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/msarim21/cybersecweb)
 
 ---
 
@@ -220,7 +220,7 @@ node -v   # must show v20.x.x
 
 ```bash
 cd /var/www
-git clone https://github.com/mrfr8nk/cybersec
+git clone https://github.com/msarim21/cybersecweb
 cd cybersec
 npm install --legacy-peer-deps
 cd server && npm install && cd ..
@@ -375,5 +375,10 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 ## Credits
 
-- Telegram: [@namelesztech](https://t.me/namelesztech)
-- Developer: [@DIGITALCYBER24](https://t.me/DIGITALCYBER24)
+- Telegram: [@gamechanger2007](https://t.me/gamechanger2007)
+- Developer: [@msarim21](https://www.instagram.com/msarim21)
+
+## Contributors
+
+- [@msarim21](https://www.instagram.com/msarim21) — Owner & Developer
+- CYBERSECPRO — AI System Architect
