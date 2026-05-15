@@ -10914,69 +10914,61 @@ break;
 
 case 'play':
 case 'ytmp3': {
-    if (!text) {
-        return reply(`🎵 *CYBER Play*\n\nUsage: ${prefix}play [song name]\nExample: ${prefix}play faded`);
-    }
-    
+    if (!text) return reply(`🎵 *CYBER Play*\n\nUsage: ${prefix}play [song name or YouTube URL]\nExample: ${prefix}play faded`);
     try {
-        // Use the correct socket variable (devtrust instead of bad)
-        await devtrust.sendMessage(m.chat, {react: {text: '🎧', key: m.key}});
-        
-        reply(`⏳ *CYBER Play*\n\nSearching: ${text}\nGive me a moment...`);
-        
-        const response = await axios.get(`https://apis.davidcyril.name.ng/play?query=${encodeURIComponent(text)}&apikey=`, {
-            timeout: 60000
-        });
-        
-        console.log('David Cyril API Response:', JSON.stringify(response.data, null, 2));
-        
-        const data = response.data;
-        
-        if (data.status && data.result?.download_url) {
-            reply(`🎵 *CYBER Play*\n\nTitle: ${data.result.title || 'N/A'}\nDuration: ${data.result.duration || 'N/A'}\nViews: ${data.result.views?.toLocaleString() || 'N/A'}\n\nDownloading audio...`);
-            
-            const audioResponse = await axios.get(data.result.download_url, {
-                responseType: 'arraybuffer',
-                timeout: 120000
-            });
-            
-            const audioBuffer = Buffer.from(audioResponse.data);
-            
-            // Use devtrust here too
-            await devtrust.sendMessage(m.chat, {
-                audio: audioBuffer,
-                mimetype: "audio/mpeg",
-                fileName: `${data.result.title}.mp3`,
-                contextInfo: { 
-                    externalAdReply: {
-                        thumbnailUrl: data.result.thumbnail, 
-                        title: data.result.title, 
-                        body: `👁️ ${data.result.views.toLocaleString()} views • ⏱️ ${data.result.duration}`, 
-                        sourceUrl: data.result.video_url, 
-                        renderLargerThumbnail: true, 
-                        mediaType: 1
-                    }
-                }
-            }, {quoted: m});
-            
-            // Use devtrust here too
-            await devtrust.sendMessage(m.chat, {react: {text: '✅', key: m.key}});
-            
+        await devtrust.sendMessage(m.chat, { react: { text: '🎧', key: m.key } });
+        reply(`🔍 Searching: ${text}...`);
+
+        const yts = require('yt-search');
+        let videoUrl = text;
+        let videoInfo = null;
+
+        if (text.includes('youtube.com') || text.includes('youtu.be')) {
+            videoUrl = text;
         } else {
-            throw new Error('No audio download link received from API');
+            const { videos } = await yts(text);
+            if (!videos?.length) {
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+                return reply(`❌ *"${text}"* nahi mila. Koi aur naam try karo.`);
+            }
+            videoInfo = videos.filter(v => !v.live)[0] || videos[0];
+            videoUrl = videoInfo.url;
         }
-        
+
+        const result = await ytDownload(videoUrl);
+        if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
+
+        const d = result.data;
+        if (!d.best_audio && !d.audio_formats?.length) throw new Error('No audio format found');
+
+        const audioFmt = d.best_audio || d.audio_formats[0];
+        const titleStr = d.title || videoInfo?.title || 'Unknown';
+        const thumb    = d.thumbnail || videoInfo?.thumbnail || null;
+        const dur      = d.duration_formatted || videoInfo?.timestamp || 'N/A';
+
+        reply(`🎵 *${titleStr}*\n⏱️ ${dur}\n⬇️ Downloading audio (${audioFmt.quality} ${audioFmt.format})...`);
+
+        const audioBuf = Buffer.from((await axios.get(audioFmt.url, {
+            responseType: 'arraybuffer',
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 180000,
+            maxContentLength: 200 * 1024 * 1024
+        })).data);
+
+        if (thumb) {
+            await devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}` }), { quoted: m });
+        }
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
+            audio: audioBuf,
+            mimetype: 'audio/mpeg',
+            fileName: `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.mp3`
+        }), { quoted: m });
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+
     } catch (error) {
-        console.error('Play Error:', error.response?.data || error.message);
-        
-        // Use devtrust here too
-        await devtrust.sendMessage(m.chat, {react: {text: '❌', key: m.key}});
-        
-        if (error.response?.status === 404) {
-            return reply(`❌ *CYBER Play*\n\nTrack "${text}" not found. Try a different song or check spelling.`);
-        }
-        
-        return reply(`⚠️ *CYBER Play*\n\nMusic service is napping. Try again in a moment.`);
+        console.error('Play Error:', error.message);
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        reply(`❌ *Play failed:* ${error.message}`);
     }
 }
 break;
@@ -11010,103 +11002,61 @@ case 'spam': {
     break;
 }
 
-case 'ytmp3': {
-    if (!text) {
-        return reply(`🎵 *Example:* ${prefix + command} YouTube URL`);
-    }
-
-    try {
-        reply('⏳ *Fetching audio...*');
-
-        const apiUrl = `https://apis.prexzyvilla.site/download/ytmp3?url=${encodeURIComponent(text)}`;
-        const { data } = await axios.get(apiUrl, { timeout: 15000 });
-
-        if (data && data.success) {
-            const { title, thumbnail, download_url } = data.result;
-            const audioBuffer = (await axios.get(download_url, { responseType: 'arraybuffer' })).data;
-
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: thumbnail },
-                    caption: `🎵 *${title}*`
-                }),
-                { quoted: m }
-            );
-
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    audio: audioBuffer,
-                    mimetype: 'audio/mpeg'
-                }),
-                { quoted: m }
-            );
-        } else {
-            reply("❌ *Couldn't fetch audio*");
-        }
-    } catch (error) {
-        reply("❌ *Error processing request*");
-    }
-}
-break;
-
 case 'play2': {
-    if (!text) {
-        return reply(`🎵 *CYBER Play2*\n\nUsage: ${prefix}play2 [song name]\nExample: ${prefix}play2 faded`);
-    }
-
+    if (!text) return reply(`🎵 *CYBER Play2*\n\nUsage: ${prefix}play2 [song name or YouTube URL]\nExample: ${prefix}play2 faded`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
-        
-        reply(`🔍 *CYBER Play2*\n\nSearching: ${text}`);
+        reply(`🔍 Searching: ${text}...`);
 
-        const response = await axios.get(`https://apis.davidcyril.name.ng/play?query=${encodeURIComponent(text)}&apikey=`, {
-            timeout: 30000
-        });
-        
-        const data = response.data;
-        
-        if (data.status && data.result?.download_url) {
-            // Send thumbnail first
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: data.result.thumbnail },
-                    caption: `🎵 *${data.result.title}*\n⏱️ ${data.result.duration} • 👁️ ${data.result.views?.toLocaleString() || 'N/A'}`
-                }),
-                { quoted: m }
-            );
-            
-            // Download and send audio
-            const audioResponse = await axios.get(data.result.download_url, {
-                responseType: 'arraybuffer',
-                timeout: 120000
-            });
-            
-            const audioBuffer = Buffer.from(audioResponse.data);
-            
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    audio: audioBuffer,
-                    mimetype: 'audio/mpeg',
-                    fileName: `${data.result.title}.mp3`
-                }),
-                { quoted: m }
-            );
-            
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-            
+        const yts = require('yt-search');
+        let videoUrl = text;
+        let videoInfo = null;
+
+        if (text.includes('youtube.com') || text.includes('youtu.be')) {
+            videoUrl = text;
         } else {
-            throw new Error('No download link received');
+            const { videos } = await yts(text);
+            if (!videos?.length) {
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+                return reply(`❌ *"${text}"* nahi mila. Koi aur naam try karo.`);
+            }
+            videoInfo = videos.filter(v => !v.live)[0] || videos[0];
+            videoUrl = videoInfo.url;
         }
-        
+
+        const result = await ytDownload(videoUrl);
+        if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
+
+        const d = result.data;
+        if (!d.best_audio && !d.audio_formats?.length) throw new Error('No audio format found');
+
+        const audioFmt = d.best_audio || d.audio_formats[0];
+        const titleStr = d.title || videoInfo?.title || 'Unknown';
+        const thumb    = d.thumbnail || videoInfo?.thumbnail || null;
+        const dur      = d.duration_formatted || videoInfo?.timestamp || 'N/A';
+
+        if (thumb) {
+            await devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}` }), { quoted: m });
+        }
+
+        const audioBuf = Buffer.from((await axios.get(audioFmt.url, {
+            responseType: 'arraybuffer',
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 180000,
+            maxContentLength: 200 * 1024 * 1024
+        })).data);
+
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
+            audio: audioBuf,
+            mimetype: 'audio/mpeg',
+            fileName: `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.mp3`
+        }), { quoted: m });
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+
     } catch (error) {
         console.error('Play2 Error:', error.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        
-        if (error.response?.status === 404) {
-            return reply(`❌ *CYBER Play2*\n\nTrack "${text}" not found. Try a different song.`);
-        }
-        
-        reply(`⚠️ *CYBER Play2*\n\nMusic service is busy. Try again in a moment.`);
+        reply(`❌ *Play2 failed:* ${error.message}`);
     }
 }
 break;
