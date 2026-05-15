@@ -446,6 +446,9 @@ const messageKontol = {
 module.exports = devtrust = async (devtrust, m, chatUpdate, store) => {
 const { from } = m
 try {
+
+// ✅ GUARD: If socket not fully authenticated yet, skip silently
+if (!devtrust || !devtrust.user) return;
       
 // Newsletter configuration
 const NEWSLETTER_JID = '120363408022768294@newsletter';
