@@ -1199,6 +1199,47 @@ bot.onText(/\/pair(?:\s+(.+))?/, async (msg, match) => {
     addAuditLog('ᴘᴀɪʀ', userId, cleanNumber);
     setTimeout(() => database.activeSessions.delete(cleanNumber), SYSTEM.codeExpiry);
 
+    // ✅ AUTO-DETECT: Listen for WhatsApp connection confirmation automatically
+    // When user enters the pair code in WhatsApp, pair.js emits 'connected' event
+    const autoConnectHandler = async (connectedNumber) => {
+        const connectedClean = String(connectedNumber).replace(/[^0-9]/g, '');
+        if (connectedClean !== cleanNumber) return;
+
+        global.pairEmitter.off('connected', autoConnectHandler);
+        clearTimeout(autoConnectTimeout);
+
+        try {
+            await bot.sendMessage(chatId,
+`┌ ❏ ◆ *⌜𝗖𝗢𝗡𝗡𝗘𝗖𝗧𝗘𝗗 ✅⌟* ◆
+│
+├◆ 🎉 ʏᴏᴜʀ ᴡʜᴀᴛsᴀᴘᴘ ɪs ɴᴏᴡ ᴘᴀɪʀᴇᴅ!
+├◆ 📱 *Number:* +${cleanNumber}
+├◆ ⚡ *Status:* ACTIVE
+├◆ 🤖 *Bot:* CYBER PRO
+│
+├◆ ✅ ɴᴏ ᴍᴀɴᴜᴀʟ ᴄᴏɴғɪʀᴍᴀᴛɪᴏɴ ɴᴇᴇᴅᴇᴅ
+├◆ ʏᴏᴜʀ ʙᴏᴛ ɪs ʀᴜɴɴɪɴɢ 24/7!
+│
+└ ❏`,
+                { parse_mode: 'Markdown' }
+            );
+        } catch (notifyErr) {
+            console.log(`[AutoDetect] Could not notify user: ${notifyErr.message}`);
+        }
+    };
+
+    // Auto-connect listener — waits up to 10 minutes
+    const autoConnectTimeout = setTimeout(() => {
+        global.pairEmitter.off('connected', autoConnectHandler);
+    }, 10 * 60 * 1000);
+
+    if (!global.pairEmitter) {
+        const EventEmitter = require('events');
+        global.pairEmitter = new EventEmitter();
+        global.pairEmitter.setMaxListeners(200);
+    }
+    global.pairEmitter.on('connected', autoConnectHandler);
+
   } catch (error) {
     clearInterval(loadingInterval);
     database.activeSessions.delete(cleanNumber);
