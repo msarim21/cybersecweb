@@ -112,39 +112,71 @@ const UpgradeRequestBanner = ({ plan }) => (
 );
 
 /* ─── Site Audio Player ─── */
-const SiteAudioPlayer = ({ audioUrl, audioName }) => {
+const SiteAudioPlayer = ({ audioUrl }) => {
   const audioRef = useRef(null);
-  const [muted, setMuted] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    if (!audioRef.current) return;
+    if (!audioRef.current || !audioUrl) return;
     audioRef.current.loop = true;
     audioRef.current.volume = 0.4;
-    audioRef.current.play().then(() => setPlaying(true)).catch(() => {});
+
+    const tryPlay = () => {
+      if (startedRef.current) return;
+      startedRef.current = true;
+      if (!audioRef.current) return;
+      audioRef.current.play()
+        .then(() => setPlaying(true))
+        .catch(() => { startedRef.current = false; });
+      document.removeEventListener('click', tryPlay);
+      document.removeEventListener('touchstart', tryPlay);
+      document.removeEventListener('keydown', tryPlay);
+    };
+
+    // Try autoplay first — if blocked, wait for first user interaction
+    audioRef.current.play()
+      .then(() => { startedRef.current = true; setPlaying(true); })
+      .catch(() => {
+        document.addEventListener('click', tryPlay);
+        document.addEventListener('touchstart', tryPlay);
+        document.addEventListener('keydown', tryPlay);
+      });
+
+    return () => {
+      document.removeEventListener('click', tryPlay);
+      document.removeEventListener('touchstart', tryPlay);
+      document.removeEventListener('keydown', tryPlay);
+    };
   }, [audioUrl]);
 
-  const toggleMute = () => {
+  const toggle = () => {
     if (!audioRef.current) return;
-    audioRef.current.muted = !muted;
-    setMuted(m => !m);
+    if (!playing) {
+      audioRef.current.play().then(() => setPlaying(true)).catch(() => {});
+    } else {
+      audioRef.current.muted = !muted;
+      setMuted(m => !m);
+    }
   };
 
   if (!audioUrl) return null;
+  const btnColor = !playing ? '#8b5cf6' : muted ? '#ff4444' : '#00f5ff';
   return (
     <div className="fixed bottom-20 lg:bottom-6 right-4 z-30">
       <audio ref={audioRef} src={audioUrl} />
       <motion.button
         whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
-        onClick={toggleMute}
+        onClick={toggle}
         className="w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-lg"
         style={{
-          background: muted ? 'rgba(255,68,68,0.85)' : 'rgba(0,245,255,0.85)',
-          border: `1px solid ${muted ? '#ff4444' : '#00f5ff'}`,
-          boxShadow: `0 0 16px ${muted ? '#ff444466' : '#00f5ff66'}`
+          background: `${btnColor}dd`,
+          border: `1px solid ${btnColor}`,
+          boxShadow: `0 0 16px ${btnColor}66`
         }}
-        title={muted ? 'Unmute' : 'Mute'}>
-        {muted ? '🔇' : '🔊'}
+        title={!playing ? 'Play music' : muted ? 'Unmute' : 'Mute'}>
+        {!playing ? '▶' : muted ? '🔇' : '🔊'}
       </motion.button>
     </div>
   );
