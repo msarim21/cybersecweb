@@ -454,6 +454,9 @@ async function startpairing(nexusDevNumber) {
     
     nexus.ev.on('messages.upsert', async chatUpdate => {
     try {
+        // ✅ GUARD: Skip if socket not authenticated yet
+        if (!nexus.user) return;
+
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
