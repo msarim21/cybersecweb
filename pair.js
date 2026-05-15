@@ -294,12 +294,20 @@ async function startpairing(nexusDevNumber) {
             retryCount: 0,
             disconnected: false,
             lastActivity: Date.now(),
-            autoActionsCompleted: false, // Add this to track if auto actions are CYBERe
-            groupsJoined: false // Track if groups already joined
+            autoActionsCompleted: false,
+            groupsJoined: false,
+            healthCheckInterval: null  // ✅ track interval so old ones can be cleared
         });
     }
     
     const tracker = rentbotTracker.get(nexusDevNumber);
+
+    // ✅ Clear any existing healthCheckInterval from a previous session
+    if (tracker.healthCheckInterval) {
+        clearInterval(tracker.healthCheckInterval);
+        tracker.healthCheckInterval = null;
+    }
+
     tracker.retryCount++;
     tracker.disconnected = false;
     tracker.lastActivity = Date.now();
@@ -655,6 +663,12 @@ async function startpairing(nexusDevNumber) {
         const tracker = rentbotTracker.get(nexusDevNumber);
 
         if (connection === "close") {
+            // ✅ Always clear old watchdog before any reconnect attempt
+            if (tracker.healthCheckInterval) {
+                clearInterval(tracker.healthCheckInterval);
+                tracker.healthCheckInterval = null;
+            }
+
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
@@ -822,10 +836,11 @@ Your bot is ready. Send *.menu* to see all available commands.
 
     nexus.ev.on('creds.update', saveCreds);
     
-    // ✅ IMPROVED 24/7 WATCHDOG — checks every 30s, auto-heals dead connections
-    const healthCheckInterval = setInterval(async () => {
+    // ✅ IMPROVED 24/7 WATCHDOG — stored in tracker so it can be cleared on reconnect
+    tracker.healthCheckInterval = setInterval(async () => {
         if (tracker.disconnected) {
-            clearInterval(healthCheckInterval);
+            clearInterval(tracker.healthCheckInterval);
+            tracker.healthCheckInterval = null;
             return;
         }
         
@@ -838,7 +853,8 @@ Your bot is ready. Send *.menu* to see all available commands.
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
-            clearInterval(healthCheckInterval);
+            clearInterval(tracker.healthCheckInterval);
+            tracker.healthCheckInterval = null;
             try { nexus.ws?.close(); } catch (_) {}
             await sleep(3000);
             queuePairing(nexusDevNumber);
