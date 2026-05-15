@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion';
 
-const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
+const HERO_IMG = '/cybersecpro_hero.jpeg';
 const CONTACT = '+923417022212';
 const INSTAGRAM = 'https://www.instagram.com/cyber_sec_pro';
 
@@ -219,8 +219,8 @@ export default function Landing() {
         style={{ background: 'rgba(4,6,26,0.85)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,245,255,0.15)' }}>
         <div className="flex items-center gap-3">
           <div className="relative">
-            <img src={LOGO} alt="CYBERSECPRO" className="w-9 h-9 sm:w-10 sm:h-10 object-contain rounded" style={{ filter: 'drop-shadow(0 0 12px #00f5ff)' }} />
-            <div className="absolute inset-0 rounded animate-ping" style={{ border: '1px solid rgba(0,245,255,0.3)', animationDuration: '3s' }} />
+            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 sm:w-10 sm:h-10 object-cover rounded-full" style={{ filter: 'drop-shadow(0 0 12px #00f5ff)' }} />
+            <div className="absolute inset-0 rounded-full animate-ping" style={{ border: '1px solid rgba(0,245,255,0.3)', animationDuration: '3s' }} />
           </div>
           <div>
             <div className="font-display font-bold text-sm sm:text-base tracking-widest" style={{ color: '#00f5ff' }}>CYBERSECPRO</div>
@@ -277,8 +277,10 @@ export default function Landing() {
         )}
       </AnimatePresence>
 
-      {/* Hero */}
+      {/* ── HERO ── */}
       <section className="relative z-10 min-h-screen flex items-center justify-center text-center px-4 overflow-hidden pt-20">
+
+        {/* HUD rings — visible on sm+ */}
         <div className="absolute hidden sm:block" style={{ width: 700, height: 700, left: '50%', top: '50%', marginLeft: -350, marginTop: -350 }}>
           <HUDRing size={700} color="#00f5ff" duration={25} dashed />
           <HUDRing size={560} color="#8b5cf6" duration={18} reverse />
@@ -287,8 +289,38 @@ export default function Landing() {
           <HUDRing size={140} color="#8b5cf6" duration={5} />
         </div>
 
+        {/* Hero image — center of rings */}
+        <motion.div
+          className="absolute hidden sm:block pointer-events-none"
+          style={{ width: 340, height: 340, left: '50%', top: '50%', marginLeft: -170, marginTop: -200 }}
+          initial={{ opacity: 0, scale: 0.7 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 1.4, ease: 'easeOut' }}>
+          <div style={{
+            width: '100%', height: '100%',
+            borderRadius: '50%',
+            overflow: 'hidden',
+            border: '2px solid rgba(0,245,255,0.5)',
+            boxShadow: '0 0 60px rgba(0,245,255,0.4), 0 0 120px rgba(139,92,246,0.2), inset 0 0 40px rgba(0,245,255,0.1)',
+          }}>
+            <img
+              src={HERO_IMG}
+              alt="CYBERSECPRO"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center' }}
+            />
+          </div>
+          {/* Glow ring around image */}
+          <motion.div
+            className="absolute inset-0 rounded-full"
+            style={{ border: '1px solid rgba(0,245,255,0.6)', boxShadow: '0 0 40px rgba(0,245,255,0.3)' }}
+            animate={{ opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
+          />
+        </motion.div>
+
         <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1.2, ease: 'easeOut' }}
-          className="relative z-10 max-w-5xl mx-auto w-full">
+          className="relative z-10 max-w-5xl mx-auto w-full" style={{ paddingTop: '340px' }}>
+
           <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
             className="inline-flex items-center gap-2 mb-8 px-5 py-2.5 rounded-full"
             style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.3)', boxShadow: '0 0 20px rgba(0,245,255,0.1)' }}>
@@ -304,82 +336,66 @@ export default function Landing() {
             <GlitchText style={{ color: '#8b5cf6', textShadow: '0 0 40px rgba(139,92,246,0.6)' }}>PRO</GlitchText>
           </motion.h1>
 
-          <motion.div initial={{ opacity: 0, scaleX: 0 }} animate={{ opacity: 1, scaleX: 1 }} transition={{ delay: 0.4 }}
-            className="w-64 h-px mx-auto mb-6"
-            style={{ background: 'linear-gradient(90deg, transparent, #00f5ff, #8b5cf6, #ff00ff, transparent)' }} />
-
           <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
-            className="font-mono text-[#00f5ff] text-xs sm:text-sm tracking-widest mb-4">
-            [ HOLOGRAPHIC CONTROL CENTER — BOT MANAGEMENT SYSTEM ]
+            className="font-mono text-sm sm:text-base text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed tracking-wide">
+            Next-generation WhatsApp bot management platform. Link numbers, manage sessions,
+            and control your entire bot network from one cyberpunk command center.
           </motion.p>
 
-          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6 }}
-            className="font-body text-gray-300 text-base sm:text-lg max-w-2xl mx-auto mb-10 leading-relaxed px-2">
-            The most advanced cyberpunk SaaS platform for managing bot numbers, real-time monitoring, and AI-powered automation.
-          </motion.p>
-
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}
-            className="flex flex-col sm:flex-row gap-4 justify-center px-4">
-            <Link to="/signup" className="w-full sm:w-auto">
-              <motion.button whileHover={{ scale: 1.06, boxShadow: '0 0 40px rgba(0,245,255,0.6)' }} whileTap={{ scale: 0.95 }}
-                className="w-full sm:w-auto px-10 py-4 text-sm rounded font-display tracking-widest transition-all"
-                style={{ background: 'linear-gradient(135deg, #00f5ff, #0060ff)', color: '#04061a', boxShadow: '0 0 25px rgba(0,245,255,0.4)' }}>
-                ⚡ ENTER CYBERSECPRO
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}
+            className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
+            <Link to="/signup">
+              <motion.button whileHover={{ scale: 1.06, boxShadow: '0 0 50px rgba(0,245,255,0.5)' }} whileTap={{ scale: 0.95 }}
+                className="px-10 py-4 rounded font-display text-sm tracking-widest"
+                style={{ background: 'linear-gradient(135deg, #00f5ff, #0060ff)', color: '#04061a' }}>
+                ⚡ INITIALIZE FREE
               </motion.button>
             </Link>
-            <a href="#features" className="w-full sm:w-auto">
-              <motion.button whileHover={{ scale: 1.06, background: 'rgba(0,245,255,0.12)' }} whileTap={{ scale: 0.95 }}
-                className="w-full sm:w-auto px-10 py-4 text-sm rounded font-display tracking-widest transition-all"
-                style={{ border: '1px solid rgba(0,245,255,0.5)', color: '#00f5ff' }}>
-                EXPLORE FEATURES
+            <a href="#features">
+              <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.95 }}
+                className="px-10 py-4 rounded font-display text-sm tracking-widest"
+                style={{ border: '1px solid rgba(139,92,246,0.6)', color: '#8b5cf6', background: 'rgba(139,92,246,0.08)' }}>
+                EXPLORE SYSTEM →
               </motion.button>
             </a>
           </motion.div>
-        </motion.div>
 
-        <motion.div animate={{ y: [0, 12, 0] }} transition={{ repeat: Infinity, duration: 2.5 }}
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
-          <span className="font-mono text-[9px] tracking-widest text-gray-600">SCROLL DOWN</span>
-          <motion.div className="w-px h-10" style={{ background: 'linear-gradient(to bottom, #00f5ff, transparent)' }}
-            animate={{ opacity: [1, 0.3, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} />
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
+            <CounterCard value="1000+" label="Active Users" suffix="+" color="#00f5ff" />
+            <CounterCard value="50000+" label="Bot Sessions" suffix="+" color="#8b5cf6" />
+            <CounterCard value="99%" label="Uptime" suffix="%" color="#00ff88" />
+          </div>
         </motion.div>
-      </section>
-
-      {/* Stats */}
-      <section className="relative z-10 py-16 px-4">
-        <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4">
-          <CounterCard value="10000" label="Active Users" suffix="+" color="#00f5ff" />
-          <CounterCard value="50000" label="Linked Numbers" suffix="+" color="#8b5cf6" />
-          <CounterCard value="99" label="Uptime" suffix="%" color="#00ff88" />
-          <CounterCard value="150" label="Countries" suffix="+" color="#ff00ff" />
-        </div>
       </section>
 
       {/* Features */}
       <section id="features" className="relative z-10 py-16 sm:py-24 px-4">
         <div className="max-w-6xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
-            <p className="font-mono text-xs tracking-widest text-gray-500 mb-3 uppercase">// System Capabilities</p>
-            <h2 className="font-display font-bold text-3xl sm:text-5xl mb-4" style={{ background: 'linear-gradient(135deg, #00f5ff, #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            <p className="font-mono text-xs tracking-widest text-gray-500 mb-3 uppercase">// Core Modules</p>
+            <h2 className="font-display font-bold text-3xl sm:text-5xl mb-4"
+              style={{ background: 'linear-gradient(135deg, #00f5ff, #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               SYSTEM FEATURES
             </h2>
             <div className="mt-3 h-px max-w-xs mx-auto" style={{ background: 'linear-gradient(90deg, transparent, #00f5ff, transparent)' }} />
           </motion.div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
-              <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}
-                whileHover={{ y: -10, scale: 1.02 }}
-                onHoverStart={() => setActiveFeature(i)}
-                onHoverEnd={() => setActiveFeature(null)}
-                className="rounded-xl p-7 cursor-default transition-all duration-300"
+              <motion.div key={i}
+                initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}
+                whileHover={{ y: -8, scale: 1.02 }}
+                onHoverStart={() => setActiveFeature(i)} onHoverEnd={() => setActiveFeature(null)}
+                className="rounded-xl p-6 cursor-default relative overflow-hidden"
                 style={{
-                  background: activeFeature === i ? `linear-gradient(145deg, ${f.color}20, rgba(4,6,26,0.95))` : `linear-gradient(145deg, ${f.color}10, rgba(4,6,26,0.9))`,
-                  border: `1px solid ${activeFeature === i ? f.color + '60' : f.color + '25'}`,
-                  boxShadow: activeFeature === i ? `0 0 40px ${f.color}25` : `0 0 15px ${f.color}10`
+                  background: `linear-gradient(145deg, ${f.color}12, rgba(4,6,26,0.95))`,
+                  border: `1px solid ${f.color}${activeFeature === i ? '60' : '25'}`,
+                  boxShadow: activeFeature === i ? `0 0 40px ${f.color}25` : 'none',
+                  transition: 'all 0.3s ease'
                 }}>
-                <div className="text-4xl mb-4" style={{ filter: `drop-shadow(0 0 10px ${f.color})` }}>{f.icon}</div>
-                <h3 className="font-display font-bold text-base mb-3" style={{ color: f.color }}>{f.title}</h3>
-                <p className="text-gray-300 text-sm leading-relaxed font-body">{f.desc}</p>
+                <div className="text-3xl mb-4">{f.icon}</div>
+                <div className="font-display text-sm font-bold tracking-wider mb-2" style={{ color: f.color }}>{f.title}</div>
+                <div className="font-mono text-xs text-gray-400 leading-relaxed">{f.desc}</div>
                 <motion.div className="mt-5 h-px" style={{ background: `linear-gradient(90deg, ${f.color}80, transparent)` }}
                   initial={{ scaleX: 0, originX: 0 }}
                   whileInView={{ scaleX: 1 }}
@@ -419,17 +435,14 @@ export default function Landing() {
                     </div>
                   </>
                 )}
-
                 <div className="font-display text-xs tracking-widest mb-2" style={{ color: tier.color + 'aa' }}>// TIER</div>
                 <div className="font-display text-2xl font-bold tracking-widest mb-2" style={{ color: tier.color, textShadow: `0 0 20px ${tier.color}60` }}>
                   {tier.plan}
                 </div>
-
                 <div className="mb-5 rounded-lg px-4 py-3 text-center" style={{ background: `${tier.color}10`, border: `1px solid ${tier.color}25` }}>
                   <div className="font-mono text-xs text-gray-500 mb-1 tracking-widest uppercase">Users</div>
                   <div className="font-display font-black text-2xl" style={{ color: tier.color }}>{tier.users}</div>
                 </div>
-
                 {tier.isFree ? (
                   <div className="mb-6 text-center">
                     <span className="font-display font-black text-3xl text-white">FREE</span>
@@ -444,7 +457,6 @@ export default function Landing() {
                     </a>
                   </div>
                 )}
-
                 <div className="space-y-3 mb-8 flex-1">
                   {tier.features.map((f, j) => (
                     <motion.div key={j} className="flex items-center gap-3"
@@ -454,7 +466,6 @@ export default function Landing() {
                     </motion.div>
                   ))}
                 </div>
-
                 {tier.isFree ? (
                   <Link to="/signup">
                     <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -495,9 +506,7 @@ export default function Landing() {
                 style={{ background: `linear-gradient(145deg, ${t.color}10, rgba(4,6,26,0.95))`, border: `1px solid ${t.color}30` }}>
                 <div className="absolute top-0 right-0 w-24 h-24 rounded-full opacity-10"
                   style={{ background: `radial-gradient(circle, ${t.color}, transparent)`, filter: 'blur(20px)', transform: 'translate(30%, -30%)' }} />
-                <div className="flex mb-4" style={{ color: t.color }}>
-                  {Array(t.rating).fill('★').join('')}
-                </div>
+                <div className="flex mb-4" style={{ color: t.color }}>{Array(t.rating).fill('★').join('')}</div>
                 <p className="font-mono text-xs text-gray-300 leading-relaxed mb-6">"{t.text}"</p>
                 <div className="border-t pt-4" style={{ borderColor: t.color + '25' }}>
                   <div className="font-display text-sm font-bold" style={{ color: t.color }}>{t.name}</div>
@@ -540,12 +549,10 @@ export default function Landing() {
         style={{ background: 'rgba(4,6,26,0.95)', borderTop: '1px solid rgba(0,245,255,0.15)' }}>
         <div className="max-w-6xl mx-auto flex flex-col items-center gap-6">
           <div className="flex items-center gap-3">
-            <img src={LOGO} alt="CYBERSECPRO" className="w-9 h-9 object-contain rounded" style={{ filter: 'drop-shadow(0 0 10px #00f5ff)' }} />
+            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 object-cover rounded-full" style={{ filter: 'drop-shadow(0 0 10px #00f5ff)' }} />
             <span className="font-display text-base tracking-widest" style={{ color: '#00f5ff' }}>CYBERSECPRO</span>
           </div>
-
           <div className="h-px w-40" style={{ background: 'linear-gradient(90deg, transparent, rgba(0,245,255,0.4), transparent)' }} />
-
           <div className="text-center">
             <div className="font-mono text-sm text-gray-300 mb-1">
               Created by <span className="font-bold" style={{ color: '#00f5ff' }}>CYBERSECPRO</span>
@@ -556,17 +563,14 @@ export default function Landing() {
                 className="transition-colors" style={{ color: '#8b5cf6' }}>{CONTACT}</a>
             </div>
           </div>
-
           <div className="flex gap-6">
             <Link to="/login" className="font-mono text-xs text-gray-400 hover:text-[#00f5ff] transition-colors">LOGIN</Link>
             <span className="text-gray-700">|</span>
             <Link to="/signup" className="font-mono text-xs text-gray-400 hover:text-[#00f5ff] transition-colors">SIGNUP</Link>
           </div>
-
           <div className="font-mono text-xs text-gray-600 text-center">
             © 2026 CYBERSECPRO — FUTURISTIC BOT MANAGEMENT SYSTEM
           </div>
-
           <div className="font-mono text-xs text-center" style={{ color: 'rgba(0,245,255,0.35)' }}>
             Web by{' '}
             <a href={INSTAGRAM} target="_blank" rel="noreferrer"
