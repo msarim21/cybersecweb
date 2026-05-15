@@ -21,6 +21,7 @@ const _ = require('lodash')
 const {
     Boom
 } = require('@hapi/boom')
+const EventEmitter = require('events');
 const PhoneNumber = require('awesome-phonenumber')
 let phoneNumber = "923417022212";
 const pairingCode = !!phoneNumber || process.argv.includes("--pairing-code");
@@ -38,6 +39,13 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 
 // Define sleep function directly here to avoid import issues
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// ============ GLOBAL PAIR EVENT EMITTER (auto-detect connection) ============
+if (!global.pairEmitter) {
+    global.pairEmitter = new EventEmitter();
+    global.pairEmitter.setMaxListeners(200);
+}
+// ===========================================================================
 
 // Fix for makeInMemoryStore
 const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
@@ -616,6 +624,28 @@ async function startpairing(nexusDevNumber) {
         return buffer
     }
 
+    // ============ 24/7 RECONNECT HELPERS ============
+    // Exponential backoff: start 3s, double each time, max 5 min
+    function getBackoffDelay(attempt) {
+        const base = 3000;
+        const max = 5 * 60 * 1000;
+        return Math.min(base * Math.pow(2, attempt - 1), max);
+    }
+
+    async function safeReconnect(attempt = 1) {
+        const delay = getBackoffDelay(attempt);
+        console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${attempt})...`));
+        await sleep(delay);
+        const isValid = await validateSession(nexusDevNumber).catch(() => false);
+        if (isValid) {
+            queuePairing(nexusDevNumber);
+        } else {
+            console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Session invalid during reconnect. Will retry...`));
+            safeReconnect(Math.min(attempt + 1, 8));
+        }
+    }
+    // =================================================
+
     // Enhanced connection.update handler
     nexus.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
@@ -623,7 +653,26 @@ async function startpairing(nexusDevNumber) {
 
         if (connection === "close") {
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
+            const errMsg = lastDisconnect?.error?.message || '';
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
+
+            // Network-level errors → always retry with backoff (no give-up)
+            const isNetworkError = errMsg && (
+                errMsg.includes('ENOTFOUND') ||
+                errMsg.includes('ECONNREFUSED') ||
+                errMsg.includes('ETIMEDOUT') ||
+                errMsg.includes('ECONNRESET') ||
+                errMsg.includes('EHOSTUNREACH') ||
+                errMsg.includes('socket hang up') ||
+                errMsg.includes('network')
+            );
+
+            if (isNetworkError) {
+                console.log(chalk.yellow(`📶 [${nexusDevNumber}] Network error detected. Infinite retry active...`));
+                tracker.networkRetry = (tracker.networkRetry || 0) + 1;
+                safeReconnect(Math.min(tracker.networkRetry, 8));
+                return;
+            }
 
             if (reason === 405) {
                 console.log(chalk.red.bold(`❌ Error 405 for ${nexusDevNumber}: Session logged out or invalid`));
@@ -639,7 +688,7 @@ async function startpairing(nexusDevNumber) {
             } else if (reason === 440) {
                 if (tracker.retryCount < MAX_RETRIES_440) {
                     console.warn(chalk.yellow(`⚠️ Error 440 for ${nexusDevNumber}. Retry ${tracker.retryCount}/${MAX_RETRIES_440}...`));
-                    await sleep(3000);
+                    await sleep(5000);
                     queuePairing(nexusDevNumber);
                 } else {
                     console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} attempts for ${nexusDevNumber}`));
@@ -660,33 +709,28 @@ async function startpairing(nexusDevNumber) {
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
                        reason === DisconnectReason.timedOut) {
-                const isValid = await validateSession(nexusDevNumber);
-                if (isValid) {
-                    console.log(chalk.yellow(`🔄 Reconnecting ${nexusDevNumber}...`));
-                    await sleep(3000);
-                    queuePairing(nexusDevNumber);
-                } else {
-                    console.log(chalk.red(`❌ Invalid session for ${nexusDevNumber}`));
-                    tracker.disconnected = true;
-                }
+                // ✅ ALWAYS reconnect — no give-up for connection drops
+                tracker.dropRetry = (tracker.dropRetry || 0) + 1;
+                console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Connection drop #${tracker.dropRetry}. Reconnecting...`));
+                await sleep(3000);
+                queuePairing(nexusDevNumber);
             } else if (reason === DisconnectReason.restartRequired) {
                 console.log(chalk.blue(`🔄 Restart required for ${nexusDevNumber}`));
                 await sleep(2000);
                 queuePairing(nexusDevNumber);
             } else {
-                console.log(chalk.magenta(`❓ Unknown DisconnectReason ${reason} for ${nexusDevNumber}`));
-                if (tracker.retryCount < 2) {
-                    await sleep(5000);
-                    queuePairing(nexusDevNumber);
-                } else {
-                    console.log(chalk.red(`❌ Max retries for ${nexusDevNumber}`));
-                    tracker.disconnected = true;
-                }
+                // ✅ Unknown reason — retry with exponential backoff (no give-up)
+                tracker.unknownRetry = (tracker.unknownRetry || 0) + 1;
+                console.log(chalk.magenta(`❓ Unknown disconnect reason ${reason} for ${nexusDevNumber}. Retry #${tracker.unknownRetry}`));
+                safeReconnect(Math.min(tracker.unknownRetry, 8));
             }
         } else if (connection === "open") {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             tracker.retryCount = 0;
             tracker.disconnected = false;
+            tracker.dropRetry = 0;
+            tracker.unknownRetry = 0;
+            tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
             
             // Add small delay to ensure everything is initialized
@@ -694,6 +738,9 @@ async function startpairing(nexusDevNumber) {
 
             // Persist active status to DB
             updateSession(nexusDevNumber, 'active').catch(() => {});
+
+            // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
+            global.pairEmitter.emit('connected', nexusDevNumber);
 
             // Send a connected confirmation message to the linked number
             try {
@@ -772,7 +819,8 @@ Your bot is ready. Send *.menu* to see all available commands.
 
     nexus.ev.on('creds.update', saveCreds);
     
-    const healthCheckInterval = setInterval(() => {
+    // ✅ IMPROVED 24/7 WATCHDOG — checks every 30s, auto-heals dead connections
+    const healthCheckInterval = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(healthCheckInterval);
             return;
@@ -780,10 +828,19 @@ Your bot is ready. Send *.menu* to see all available commands.
         
         tracker.lastActivity = Date.now();
         
-        if (nexus.ws?.readyState === 1) {
+        const wsState = nexus.ws?.readyState;
+        if (wsState === 1) {
+            // WebSocket open — keep alive
             nexus.sendPresenceUpdate('available').catch(() => {});
+        } else if (wsState !== undefined && wsState !== 0) {
+            // Not connecting and not open — dead connection, force reconnect
+            console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
+            clearInterval(healthCheckInterval);
+            try { nexus.ws?.close(); } catch (_) {}
+            await sleep(3000);
+            queuePairing(nexusDevNumber);
         }
-    }, 60000);
+    }, 30000);
 
     return nexus;
 }
