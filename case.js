@@ -42,7 +42,6 @@ const jimp = require("jimp")
 const latensi = speed() - timestampp
 const moment = require('moment-timezone')
 const yts = require('yt-search');
-const ytdl = require('@distube/ytdl-core');
 const { ytDownload, extractVideoId } = require('./allfunc/ytdownload')
 const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
@@ -215,6 +214,7 @@ if (!global._antideleteConfig) global._antideleteConfig = { mode: 'off' };
 const ANTIEDIT_CONFIG_FILE = './database/antiedit_config.json';
 const ANTIDELETE_CONFIG_FILE = './database/antidelete_config.json';
 const ANTIDELETE_TEMP_DIR = './tmp/antidelete_media';
+const ANTIDELETE_DISK_STORE = './database/antidelete_store.json';
 const ANTICALL_CONFIG_FILE = './database/anticall_config.json';
 const STICKERCMD_FILE = './database/stickercmds.json';
 const WARNLIMIT_FILE = './database/warnlimit.json';
@@ -241,6 +241,57 @@ function isOwnMessage(msg, sock) {
 
 function antiStoreKey(chatId, msgId) {
     return `${chatId || 'unknown'}::${msgId}`;
+}
+
+// ── Persistent antidelete disk store helpers ──
+const ANTIDELETE_MAX_ENTRIES = 2000;
+
+function _saveDiskStore() {
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        const entries = [];
+        for (const [key, val] of global._antideleteStore.entries()) {
+            entries.push([key, val]);
+        }
+        // Keep only last ANTIDELETE_MAX_ENTRIES
+        const trimmed = entries.slice(-ANTIDELETE_MAX_ENTRIES);
+        fs.writeFileSync(ANTIDELETE_DISK_STORE, JSON.stringify(trimmed), 'utf-8');
+    } catch (e) {}
+}
+
+function _loadDiskStore() {
+    try {
+        if (fs.existsSync(ANTIDELETE_DISK_STORE)) {
+            const entries = JSON.parse(fs.readFileSync(ANTIDELETE_DISK_STORE, 'utf-8'));
+            if (Array.isArray(entries)) {
+                const now = Date.now();
+                for (const [key, val] of entries) {
+                    // Skip entries older than 24 hours
+                    if (val?.timestamp && (now - new Date(val.timestamp).getTime()) > 24 * 60 * 60 * 1000) continue;
+                    global._antideleteStore.set(key, val);
+                }
+            }
+        }
+    } catch (e) {}
+}
+
+function _getFromDiskStore(key) {
+    try {
+        if (fs.existsSync(ANTIDELETE_DISK_STORE)) {
+            const entries = JSON.parse(fs.readFileSync(ANTIDELETE_DISK_STORE, 'utf-8'));
+            if (Array.isArray(entries)) {
+                const found = entries.find(([k]) => k === key);
+                return found ? found[1] : null;
+            }
+        }
+    } catch (e) {}
+    return null;
+}
+
+// Load disk store into memory on startup (only once per process)
+if (!global._antideleteStoreLoaded) {
+    _loadDiskStore();
+    global._antideleteStoreLoaded = true;
 }
 
 // Ensure temp dir exists
@@ -3522,9 +3573,11 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
             if (_adMode === 'private_groups' && !_adIsGroup) { return; }
             if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
 
-            // Look up cached message — check BOTH stores
+            // Look up cached message — check memory store, then disk store
             let _adOriginal = global._antideleteStore.get(antiStoreKey(_adChatId, _adMsgId))
-                || global._antideleteStore.get(_adMsgId);
+                || global._antideleteStore.get(_adMsgId)
+                || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
+                || _getFromDiskStore(_adMsgId);
 
             if (!_adOriginal) {
                 const _aeMsg = global._antieditStore.get(_adChatId)?.get(_adMsgId);
@@ -3730,7 +3783,12 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
                 timestamp: new Date().toISOString(),
                 sessionJid: getBotJid(devtrust)
             });
-            setTimeout(() => global._antideleteStore.delete(antiStoreKey(_adChatId2, _adMsgId2)), 24 * 60 * 60 * 1000);
+            // Save to disk so messages survive bot restarts
+            _saveDiskStore();
+            setTimeout(() => {
+                global._antideleteStore.delete(antiStoreKey(_adChatId2, _adMsgId2));
+                _saveDiskStore();
+            }, 24 * 60 * 60 * 1000);
         }
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
