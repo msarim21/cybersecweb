@@ -1,384 +1,194 @@
-# CyberSecPro — WhatsApp Bot Management SaaS
-
-A full-stack cyberpunk SaaS platform where users sign up, link their WhatsApp numbers via pairing codes, and manage their bot sessions through a holographic web dashboard. Powered by Baileys, MongoDB, Express, and React.
-
----
-
-## One-Click Heroku Deploy
-
-[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/msarim21/cybersecweb)
-
----
-
-## Table of Contents
-
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Environment Variables](#environment-variables)
-- [Deployment Guides](#deployment-guides)
-  - [Heroku](#heroku)
-  - [Railway](#railway)
-  - [Render](#render)
-  - [VPS (Ubuntu / Debian)](#vps-ubuntu--debian)
-- [Admin Access](#admin-access)
-- [Post-Deployment Checklist](#post-deployment-checklist)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────┐
-│                    CyberSecPro                       │
-│                                                      │
-│  ┌─────────────────┐     ┌──────────────────────┐   │
-│  │  React + Vite   │────▶│  Express.js API      │   │
-│  │   (Frontend)    │/api │  server/index.js     │   │
-│  └─────────────────┘     │  Port: $PORT (3001)  │   │
-│                          └──────────┬───────────┘   │
-│                                     │               │
-│                          ┌──────────▼───────────┐   │
-│                          │   MongoDB (Mongoose)  │   │
-│                          │   via MONGO_URL       │   │
-│                          └──────────────────────┘   │
-│                                                      │
-│  ┌───────────────────────────────────────────────┐   │
-│  │  pair.js  (Baileys — WhatsApp multi-session)  │   │
-│  │  Sessions → nexstore/pairing/                 │   │
-│  │  Auto-reconnects on every server restart      │   │
-│  └───────────────────────────────────────────────┘   │
-│                                                      │
-│  ┌───────────────────────────────────────────────┐   │
-│  │  bot.js / Telegraf (Telegram bot integration) │   │
-│  │  Token read from TELEGRAM_BOT_TOKEN env var   │   │
-│  └───────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────┘
-```
-
-**Key facts:**
-- Node.js **20.x** required — Baileys will not run on Node 18
-- Uses **MongoDB only** — set `MONGO_URL` to your Atlas cluster
-- WhatsApp session files live in `nexstore/pairing/` — needs persistent storage on cloud platforms
-- The Express backend serves the compiled React frontend as static files in production
-- Admin account is auto-created on first boot using `ADMIN_EMAIL` + `ADMIN_PASSWORD`
+# CYBERSECPRO — Futuristic WhatsApp Bot Management System
+
+  > 🔐 A full-stack cyberpunk SaaS platform where users sign up, link their WhatsApp numbers via pairing codes, and manage their bot sessions through a holographic web dashboard.
+
+  [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/msarim21/cybersecweb)
+
+  ---
+
+  ## ✨ Features
+
+  ### 👤 User Panel
+  - Signup / Login with JWT authentication
+  - Link WhatsApp numbers via pairing code (Baileys multi-device)
+  - Real-time session management dashboard
+  - Subscription plans: Free (1 number) → Pro (5 numbers) → Enterprise (unlimited)
+  - 24-hour free trial with countdown timer
+  - Request plan upgrade — admin approves/rejects
+
+  ### 🛡️ Admin Panel
+  - **Overview** — live stats: users, numbers, active sessions
+  - **Users** — ban/unban, delete, change plans
+  - **Numbers** — view all linked WhatsApp numbers
+  - **Upgrades** — approve or reject user upgrade requests
+  - **Security** — real-time threat log (SQLi, XSS, brute-force, CORS violations)
+  - **Audio** — upload background music that plays on the user dashboard
+  - **🔞 Access Control** — set/change the 18+ secret code, view & manage unlocked users
+
+  ### 🤖 WhatsApp Bot (200+ commands)
+  - **Status Tools** — download status media, auto-status reply
+  - **Media** — stickers, image editing, video conversion
+  - **Social** — YouTube, TikTok, Instagram, Twitter downloader
+  - **AI** — ChatGPT, image generation, TTS
+  - **Group Tools** — antilink, tagall, mute/unmute members
+  - **Security** — anti-spam, anti-stale, rate limiting
+  - **🔞 18+ System** — adult commands hidden by default, unlocked via secret code
+
+  ### 🔞 18+ Secret Unlock System
+  - All adult commands (`.xnxx`, `.xvideos`, etc.) are **completely hidden** from menus by default
+  - Admin sets a global secret code from the Admin Panel → ACCESS tab
+  - Users type `.addsecret [code]` to unlock — no admin action needed per user
+  - Admin can change the code anytime, view all unlocked users, and revoke access
+
+  ---
+
+  ## 🏗️ Architecture
+
+  ```
+  ┌──────────────────────────────────────────────────────┐
+  │                    CYBERSECPRO                       │
+  │                                                      │
+  │  ┌─────────────────┐     ┌──────────────────────┐   │
+  │  │  React + Vite   │────▶│  Express.js API      │   │
+  │  │   (Frontend)    │/api │  server/index.js     │   │
+  │  └─────────────────┘     │  Port: $PORT         │   │
+  │                          └──────────┬───────────┘   │
+  │                                     │               │
+  │                          ┌──────────▼───────────┐   │
+  │                          │   MongoDB (Mongoose)  │   │
+  │                          │   via MONGO_URL       │   │
+  │                          └──────────────────────┘   │
+  │                                                      │
+  │  ┌───────────────────────────────────────────────┐   │
+  │  │  pair.js  (Baileys — WhatsApp multi-session)  │   │
+  │  │  Sessions → nexstore/pairing/                 │   │
+  │  │  Auto-reconnects on every server restart      │   │
+  │  └───────────────────────────────────────────────┘   │
+  └──────────────────────────────────────────────────────┘
+  ```
+
+  ---
+
+  ## 🛠️ Tech Stack
+
+  | Layer | Technology |
+  |---|---|
+  | Frontend | React 19, Vite 7, Tailwind CSS, Framer Motion |
+  | Backend | Node.js 20, Express.js |
+  | Database | MongoDB (Mongoose) |
+  | WhatsApp | @whiskeysockets/baileys (multi-device) |
+  | Auth | JWT (jsonwebtoken) + bcryptjs |
+  | Security | Helmet, express-rate-limit, CORS protection |
+
+  ---
+
+  ## ⚙️ Environment Variables
+
+  | Variable | Required | Description |
+  |---|---|---|
+  | `MONGO_URL` | **Yes** | MongoDB Atlas connection string |
+  | `JWT_SECRET` | **Yes** | Long random string for auth tokens |
+  | `ADMIN_EMAIL` | No | Email for auto-created admin account |
+  | `ADMIN_PASSWORD` | No | Password for auto-created admin account |
+  | `PORT` | No | API port — defaults to `3001` |
+  | `NODE_ENV` | No | Set to `production` on live deployments |
+
+  ---
+
+  ## 🚀 Deployment Guides
+
+  ### Heroku
+
+  ```bash
+  heroku login
+  heroku create your-app-name
+  heroku config:set MONGO_URL="..." JWT_SECRET="..." ADMIN_EMAIL="..." ADMIN_PASSWORD="..." NODE_ENV="production"
+  git push heroku main
+  ```
 
----
+  > ⚠️ Heroku has ephemeral storage — WhatsApp sessions are lost on dyno restart. Use Railway or VPS for persistent sessions.
 
-## Tech Stack
+  ---
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18, Vite, Tailwind CSS, Framer Motion |
-| Backend | Node.js 20, Express.js |
-| Database | MongoDB (Mongoose) |
-| WhatsApp | @whiskeysockets/baileys (multi-device) |
-| Telegram | Telegraf, node-telegram-bot-api |
-| Auth | JWT (jsonwebtoken) + bcryptjs |
-| Security | Helmet, express-rate-limit, express-mongo-sanitize |
+  ### Railway *(Recommended)*
 
----
+  1. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
+  2. Set environment variables in the **Variables** tab
+  3. Add a volume: **Settings → Volumes** → mount at `/app/nexstore` (1 GB)
+  4. Set `NIXPACKS_NODE_VERSION=20`
 
-## Environment Variables
+  ---
 
-| Variable | Required | Description |
-|---|---|---|
-| `MONGO_URL` | **Yes** | MongoDB connection string. Get a free cluster at [mongodb.com/atlas](https://mongodb.com/atlas). Example: `mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/cybersecpro` |
-| `JWT_SECRET` | **Yes** | Long random string for signing auth tokens. Generate one: `openssl rand -hex 64` |
-| `TELEGRAM_BOT_TOKEN` | No | Your Telegram bot token from [@BotFather](https://t.me/BotFather) |
-| `ADMIN_EMAIL` | No | Email for the auto-created admin account (created on first boot) |
-| `ADMIN_PASSWORD` | No | Password for the auto-created admin account (min 6 chars) |
-| `PORT` | No | API port — defaults to `3001`. Most platforms set this automatically |
-| `NODE_ENV` | No | Set to `production` on live deployments |
+  ### Render
 
----
+  1. **New → Web Service** → connect repo
+  2. Build: `npm install --legacy-peer-deps && npm run build`
+  3. Start: `node server/index.js`
+  4. Add disk: mount at `/opt/render/project/src/nexstore` (1 GB)
 
-## Deployment Guides
+  ---
 
----
+  ### VPS (Ubuntu / Debian)
 
-### Heroku
+  ```bash
+  # Install Node 20
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt install -y nodejs
 
-#### Option A — One-Click Deploy
+  # Clone & install
+  git clone https://github.com/msarim21/cybersecweb
+  cd cybersecweb
+  npm install --legacy-peer-deps
+  cd client && npm install && npm run build && cd ..
+  cd server && npm install && cd ..
 
-Click the button at the top of this README. Heroku will prompt you to fill in your env vars and deploy automatically.
+  # Create .env and run with PM2
+  pm2 start server/index.js --name cybersecpro
+  pm2 save && pm2 startup
+  ```
 
-#### Option B — Manual via CLI
+  ---
 
-```bash
-# 1. Login and create app
-heroku login
-heroku create your-app-name
+  ## 🔐 Admin Access
 
-# 2. Set environment variables
-heroku config:set MONGO_URL="mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/cybersecpro"
-heroku config:set JWT_SECRET="your_long_random_secret"
-heroku config:set TELEGRAM_BOT_TOKEN="your_telegram_token"
-heroku config:set ADMIN_EMAIL="admin@yourdomain.com"
-heroku config:set ADMIN_PASSWORD="your_secure_password"
-heroku config:set NODE_ENV="production"
-heroku config:set NPM_CONFIG_LEGACY_PEER_DEPS="true"
+  Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` before first boot — admin account is auto-created on startup.
 
-# 3. Deploy
-git push heroku main
-```
+  Log in at `/login` and navigate to `/admin`.
 
-#### Session persistence on Heroku
+  ---
 
-> Heroku's filesystem resets on every dyno restart. WhatsApp sessions in `nexstore/pairing/` will be lost.
+  ## ✅ Post-Deployment Checklist
 
-For persistent sessions, use **Railway** or a **VPS** with a mounted volume. On Heroku, users simply re-pair after a dyno restart.
+  - [ ] `GET /api/health` returns `{ "status": "CYBERSECPRO API Online" }`
+  - [ ] Logs show `✅ MongoDB connected`
+  - [ ] Sign up and log in — dashboard loads correctly
+  - [ ] Link a WhatsApp number via pairing code
+  - [ ] Bot sends welcome message after linking
+  - [ ] Admin panel accessible at `/admin`
+  - [ ] 18+ Access Control tab visible in admin panel
 
----
+  ---
 
-### Railway
+  ## 🔧 Troubleshooting
 
-Railway is recommended for persistent sessions — it supports native volumes and Node 20 out of the box.
+  | Problem | Solution |
+  |---|---|
+  | `Cannot find module '@whiskeysockets/baileys'` | Run `npm install --legacy-peer-deps` with Node 20 |
+  | Pairing code never arrives | Wait 2 min and retry; check `proxy_read_timeout 60s` on Nginx |
+  | Sessions lost after restart | Mount persistent volume at `nexstore/` |
+  | Frontend shows blank page | Run `cd client && npm run build` first |
+  | MongoDB connection error | Verify `MONGO_URL` in your env vars |
 
-#### Step 1 — Create project
+  ---
 
-[railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo** → select your repo.
+  ## 📞 Contact & Credits
 
-#### Step 2 — Set environment variables
+  - 📲 WhatsApp Channel: [CYBERSECPRO](https://whatsapp.com/channel/0029Vb5jIRv6xCSQAhlsYQ1D)
+  - 👨‍💻 Developer: [@msarim21](https://github.com/msarim21)
 
-Your service → **Variables** tab:
+  ---
 
-```
-MONGO_URL             = mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/cybersecpro
-JWT_SECRET            = your_long_random_secret
-TELEGRAM_BOT_TOKEN    = your_telegram_token
-ADMIN_EMAIL           = admin@yourdomain.com
-ADMIN_PASSWORD        = your_secure_password
-NODE_ENV              = production
-NPM_CONFIG_LEGACY_PEER_DEPS = true
-NIXPACKS_NODE_VERSION = 20
-```
-
-#### Step 3 — Add persistent volume (required for sessions)
-
-Your service → **Settings** → **Volumes** → **Add Volume**:
-
-| Field | Value |
-|---|---|
-| Mount Path | `/app/nexstore` |
-| Size | 1 GB |
-
-Railway auto-detects `railway.toml` in the repo for build and start commands.
-
----
-
-### Render
-
-#### Step 1 — Create Web Service
-
-[render.com](https://render.com) → **New** → **Web Service** → connect your repo.
-
-Render auto-detects `render.yaml` in the repo. If setting manually:
-
-| Setting | Value |
-|---|---|
-| Build Command | `npm install --legacy-peer-deps && npm run build` |
-| Start Command | `node server/index.js` |
-| Instance Type | Starter (512 MB RAM minimum) |
-
-#### Step 2 — Add persistent disk (required for sessions)
-
-Your web service → **Disks** → **Add Disk**:
-
-| Field | Value |
-|---|---|
-| Mount Path | `/opt/render/project/src/nexstore` |
-| Size | 1 GB |
-
-#### Step 3 — Environment variables
-
-In your service → **Environment** tab:
-
-```
-MONGO_URL             = mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/cybersecpro
-JWT_SECRET            = your_long_random_secret
-TELEGRAM_BOT_TOKEN    = your_telegram_token
-ADMIN_EMAIL           = admin@yourdomain.com
-ADMIN_PASSWORD        = your_secure_password
-NODE_ENV              = production
-NPM_CONFIG_LEGACY_PEER_DEPS = true
-```
-
----
-
-### VPS (Ubuntu / Debian)
-
-#### Step 1 — Install Node.js 20
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-node -v   # must show v20.x.x
-```
-
-#### Step 2 — Clone and install
-
-```bash
-cd /var/www
-git clone https://github.com/msarim21/cybersecweb
-cd cybersec
-npm install --legacy-peer-deps
-cd server && npm install && cd ..
-cd client && npm install && npm run build && cd ..
-```
-
-#### Step 3 — Create .env
-
-```bash
-nano .env
-```
-
-```env
-MONGO_URL=mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/cybersecpro
-JWT_SECRET=replace_with_very_long_random_string
-TELEGRAM_BOT_TOKEN=your_telegram_token
-NODE_ENV=production
-PORT=3001
-ADMIN_EMAIL=admin@yourdomain.com
-ADMIN_PASSWORD=your_secure_password
-```
-
-#### Step 4 — Run with PM2
-
-```bash
-sudo npm install -g pm2
-pm2 start server/index.js --name cybersecpro
-pm2 save && pm2 startup
-```
-
-#### Step 5 — Nginx reverse proxy
-
-```bash
-sudo apt install -y nginx
-sudo nano /etc/nginx/sites-available/cybersecpro
-```
-
-```nginx
-server {
-    listen 80;
-    server_name yourdomain.com;
-
-    proxy_read_timeout    60s;
-    proxy_connect_timeout 60s;
-
-    location / {
-        proxy_pass         http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade           $http_upgrade;
-        proxy_set_header   Connection        keep-alive;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $remote_addr;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-```bash
-sudo ln -s /etc/nginx/sites-available/cybersecpro /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl restart nginx
-sudo certbot --nginx -d yourdomain.com   # free HTTPS via Let's Encrypt
-```
-
----
-
-## Admin Access
-
-### Method 1 — Environment variables (recommended)
-
-Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` before first boot. The admin account is created automatically on startup. Log in at `/login` with those credentials.
-
-### Method 2 — Promote an existing user
-
-Open a shell on your platform (Heroku → **More** → **Run console**, Railway → **Shell** tab, or your VPS terminal):
-
-```bash
-node -e "
-require('dotenv').config();
-const { initDb } = require('./server/db');
-const svc = require('./server/db-service');
-initDb().then(async () => {
-  const user = await svc.findUserByEmail('user@example.com');
-  if (!user) return console.log('User not found');
-  await svc.setAdminRole(user.id);
-  console.log('Admin role granted to', user.email);
-  process.exit(0);
-});
-"
-```
-
----
-
-## Post-Deployment Checklist
-
-- [ ] `GET /api/health` returns `{ "status": "CYBERSECPRO API Online", "db": "MongoDB" }`
-- [ ] Logs show `✅ MongoDB connected`
-- [ ] Logs show `✅ Admin account created` or `✅ Admin role granted` (if env vars were set)
-- [ ] Logs show `🔄 Sessions restored: X/X` ~5 seconds after boot
-- [ ] Sign up at `/signup` and log in — dashboard loads correctly
-- [ ] Link a WhatsApp number — enter number with country code, no `+` (e.g. `263776046121`)
-- [ ] Enter the pairing code on your phone → **Linked Devices** → **Link a Device**
-- [ ] Bot sends a welcome message after linking
-- [ ] Restart the service — bot reconnects without re-pairing (requires persistent volume)
-
----
-
-## Troubleshooting
-
-### `Cannot find module '@whiskeysockets/baileys'`
-
-Ensure Node.js 20 is being used and run:
-```bash
-npm install --legacy-peer-deps
-```
-If on Railway/Render, set `NIXPACKS_NODE_VERSION=20` in environment variables.
-
-### Pairing code never arrives
-
-1. Enter number with country code, no `+`, no spaces (e.g. `263776046121`)
-2. If behind Nginx, ensure `proxy_read_timeout 60s` — the request can take up to 40 seconds
-3. WhatsApp may rate-limit — wait 2 minutes and retry
-
-### Sessions lost after restart
-
-Mount a persistent volume at `nexstore/` (see each platform's guide above). On Heroku, ephemeral storage means sessions are lost on dyno restart — use Railway or a VPS for persistent sessions.
-
-### Frontend shows blank page
-
-Build the React app first:
-```bash
-cd client && npm install && npm run build
-```
-The built files go to `client/dist/` — Express serves them automatically when that folder exists.
-
-### MongoDB connection error
-
-Test your connection string:
-```bash
-node -e "require('dotenv').config(); const m=require('mongoose'); m.connect(process.env.MONGO_URL).then(()=>{ console.log('MongoDB OK'); process.exit(0); }).catch(e=>{ console.error(e.message); process.exit(1); })"
-```
-
-### `FATAL ERROR: Reached heap limit`
-
-Minimum 512 MB RAM required. Add swap on a VPS:
-```bash
-sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
----
-
-## Credits
-
-- Telegram: [@gamechanger2007](https://t.me/gamechanger2007)
-- Developer: [@msarim21](https://www.instagram.com/msarim21)
-
-## Contributors
-
-- [@msarim21](https://www.instagram.com/msarim21) — Owner & Developer
-- CYBERSECPRO — AI System Architect
+  <p align="center">
+    <b>⚡ CYBERSECPRO © 2026 — All Rights Reserved ⚡</b>
+  </p>
+  
