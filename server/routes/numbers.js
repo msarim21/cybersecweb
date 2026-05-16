@@ -10,6 +10,14 @@ const {
   findUserById,
 } = require('../db-service');
 
+// Lazy-load stopBot from pair.js (bot process must be running)
+function tryStopBot(numberStr) {
+  try {
+    const pairMod = require('../../pair');
+    if (typeof pairMod.stopBot === 'function') pairMod.stopBot(numberStr);
+  } catch (_) {}
+}
+
 function getPlanLimit(plan) {
   if (plan === 'pro') return 5;
   if (plan === 'enterprise') return 999;
@@ -72,6 +80,8 @@ router.put('/:id/toggle', protect, async (req, res) => {
   try {
     const updated = await toggleNumber(req.params.id, req.user.id);
     if (!updated) return res.status(404).json({ error: 'Number not found.' });
+    // If toggled to inactive, stop the running bot
+    if (updated.status === 'inactive' && updated.number) tryStopBot(updated.number);
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -83,6 +93,8 @@ router.delete('/:id', protect, async (req, res) => {
   try {
     const deleted = await deleteNumber(req.params.id, req.user.id);
     if (!deleted) return res.status(404).json({ error: 'Number not found.' });
+    // Stop the bot process for this number
+    if (deleted.number) tryStopBot(deleted.number);
     res.json({ message: 'Number deleted successfully.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
