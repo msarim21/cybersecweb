@@ -648,7 +648,7 @@ export default function Admin() {
                         </div>
                       </div>
                       <audio controls className="w-full mb-3" style={{ filter: 'invert(1) hue-rotate(180deg)' }}>
-                        <source src={`/uploads/${audioInfo.filename}`} />
+                        <source src="/api/site/audio/file" />
                       </audio>
                       <button onClick={handleAudioRemove}
                         className="w-full py-2.5 rounded-xl font-mono text-xs text-red-400 transition-all"
