@@ -198,24 +198,39 @@ function launchBot() {
         'rate-overlimit',
         'Connection Closed',
         'Timed Out',
-        'Value not found'
+        'Value not found',
+        'Connection Failure',
+        'ENOTFOUND',
+        'ECONNRESET',
+        'ETIMEDOUT',
+        'ECONNREFUSED',
+        'socket hang up',
+        'stream ended unexpectedly',
+        'Closing stale open session',
+        'Request timeout',
+        'Bad MAC',
+        'Lost connection',
+        'connect ETIMEDOUT',
+        'read ECONNRESET',
+        'write ECONNRESET',
+        'Connection reset',
+        'WebSocket closed',
+        'Tag not found',
+        'Connection lost'
     ];
 
     process.on('unhandledRejection', (reason, promise) => {
         if (ignoredErrors.some(e => String(reason).includes(e))) return;
-        
+        // Log only — do NOT call process.exit (keeps bot alive)
         console.log(chalk.red('\n⚠️  Unhandled Promise Rejection:'));
-        console.log(chalk.yellow('Reason:'), reason);
+        console.log(chalk.yellow('Reason:'), String(reason).substring(0, 200));
     });
 
     process.on('uncaughtException', (error) => {
         if (ignoredErrors.some(e => String(error).includes(e))) return;
-        
-        console.log(chalk.red('\n❌ Uncaught Exception:'));
+        // Log only — do NOT call process.exit (keeps bot alive)
+        console.log(chalk.red('\n❌ Uncaught Exception (bot staying alive):'));
         console.log(chalk.yellow('Error:'), error.message);
-        if (error.stack) {
-            console.log(chalk.gray(error.stack));
-        }
     });
 
     const originalConsoleError = console.error;
