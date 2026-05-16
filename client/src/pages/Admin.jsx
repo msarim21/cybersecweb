@@ -926,7 +926,7 @@ export default function Admin() {
                     <div className="rounded-xl p-3" style={{ background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.15)' }}>
                       <div className="font-mono text-[10px] text-[#00f5ff] mb-1">HOW TO SHARE</div>
                       <div className="font-mono text-[10px] text-gray-400">
-                        User WhatsApp bot mein type kare: <span style={{ color: '#ff00ff' }}>.addsecret {adultCode}</span>
+                        User WhatsApp bot mein type kare: <span style={{ color: '#ff00ff' }}>.addkey {adultCode}</span>
                       </div>
                     </div>
                   </GCard>
