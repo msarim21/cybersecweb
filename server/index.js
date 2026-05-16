@@ -30,6 +30,7 @@ function logThreat({ type, severity, ip, path: p, detail }) {
 }
 global.logThreat = logThreat;
 const svc         = require('./db-service');
+const { countAdmins, createUser, setAdminRole, findUserByEmail, findUserByEmailOrUsername } = require('./db-service');
 
 const authRoutes    = require('./routes/auth');
 const userRoutes    = require('./routes/user');
@@ -196,6 +197,39 @@ app.use((req, _res, next) => {
     logThreat({ type: 'XSS_ATTEMPT', severity: 'HIGH', ip: req.ip, path: req.path, detail: `XSS in ${req.method} ${req.originalUrl}` });
   }
   next();
+});
+
+// ── First-run setup endpoints (works ONLY when no admin exists) ─────────────
+app.get('/api/setup/status', requireDb, async (req, res) => {
+  try {
+    const adminCount = await countAdmins();
+    res.json({ needsSetup: adminCount === 0 });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not check setup status.' });
+  }
+});
+
+app.post('/api/setup', requireDb, async (req, res) => {
+  try {
+    const adminCount = await countAdmins();
+    if (adminCount > 0) {
+      return res.status(403).json({ error: 'Setup already completed. Admin account exists.' });
+    }
+    const { username, email, password } = req.body;
+    if (!username || !email || !password)
+      return res.status(400).json({ error: 'Username, email and password are required.' });
+    if (password.length < 6)
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    const existing = await findUserByEmailOrUsername(email, username);
+    if (existing) return res.status(409).json({ error: 'Username or email already taken.' });
+    const user = await createUser(username, email, password);
+    await setAdminRole(user.id);
+    console.log(`✅ First-run admin created: ${email}`);
+    res.status(201).json({ success: true, message: 'Admin account created. You can now login.' });
+  } catch (err) {
+    console.error('Setup error:', err.message);
+    res.status(500).json({ error: 'Server error during setup.' });
+  }
 });
 
 // ── API routes ──────────────────────────────────────────────────────────────
