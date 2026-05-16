@@ -477,7 +477,7 @@ export default function Dashboard() {
   const trialExpired = stats?.trialExpired;
   const trialExpiresAt = stats?.trialExpiresAt;
   const upgradeRequest = stats?.upgradeRequest;
-  const audioUrl = siteAudio.filename ? `/uploads/${siteAudio.filename}` : '';
+  const audioUrl = siteAudio.filename ? '/api/site/audio/file' : '';
 
   const canAddNumber = !trialExpired && (stats?.total ?? 0) < (stats?.limit ?? 1);
 
