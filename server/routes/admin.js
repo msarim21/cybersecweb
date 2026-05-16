@@ -42,11 +42,7 @@ function getUnlockedUsers() {
   } catch (e) { return []; }
 }
 
-router.get('/adult', (req, res) => {
-  try {
-    res.json({ code: getAdultSecret(), unlockedUsers: getUnlockedUsers() });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+
 
 router.put('/adult/code', (req, res) => {
   try {
@@ -74,6 +70,83 @@ router.delete('/adult/all', (req, res) => {
   try {
     _adultFs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify([], null, 2));
     res.json({ message: 'All adult access cleared.', unlockedUsers: [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Adult Permanent Ban System ───────────────────────────────────────────────
+const ADULT_BANNED_FILE  = _adultPath.join(__dirname, '../../database/adult_banned.json');
+const BOT_DISABLED_FILE  = _adultPath.join(__dirname, '../../database/bot_disabled.json');
+
+function getAdultBanned() {
+  try {
+    if (!_adultFs.existsSync(ADULT_BANNED_FILE)) return [];
+    return JSON.parse(_adultFs.readFileSync(ADULT_BANNED_FILE));
+  } catch (e) { return []; }
+}
+function getBotDisabled() {
+  try {
+    if (!_adultFs.existsSync(BOT_DISABLED_FILE)) return [];
+    return JSON.parse(_adultFs.readFileSync(BOT_DISABLED_FILE));
+  } catch (e) { return []; }
+}
+
+// GET all data (unlocked + banned + bot disabled)
+router.get('/adult', (req, res) => {
+  try {
+    res.json({ code: getAdultSecret(), unlockedUsers: getUnlockedUsers(), bannedUsers: getAdultBanned() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST permanently ban a user from 18+
+router.post('/adult/ban/:phone', (req, res) => {
+  try {
+    const phone = req.params.phone;
+    let banned = getAdultBanned();
+    const jid = phone.includes('@') ? phone : phone.replace(/[^0-9]/g,'') + '@s.whatsapp.net';
+    if (!banned.includes(jid)) banned.push(jid);
+    _adultFs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(banned, null, 2));
+    // Also remove from unlocked
+    let users = getUnlockedUsers().filter(u => !u.includes(phone));
+    _adultFs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify(users, null, 2));
+    res.json({ message: 'User permanently banned from 18+.', bannedUsers: banned, unlockedUsers: users });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE unban a user from 18+ permanent ban
+router.delete('/adult/ban/:phone', (req, res) => {
+  try {
+    const phone = req.params.phone;
+    let banned = getAdultBanned().filter(u => !u.includes(phone));
+    _adultFs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(banned, null, 2));
+    res.json({ message: 'User unbanned from 18+.', bannedUsers: banned });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Bot Number On/Off Control ────────────────────────────────────────────────
+router.get('/bot-disabled', (req, res) => {
+  try { res.json({ disabledNumbers: getBotDisabled() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST disable bot for a number
+router.post('/bot-disabled/:phone', (req, res) => {
+  try {
+    const phone = req.params.phone;
+    let disabled = getBotDisabled();
+    const jid = phone.includes('@') ? phone : phone.replace(/[^0-9]/g,'') + '@s.whatsapp.net';
+    if (!disabled.includes(jid)) disabled.push(jid);
+    _adultFs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify(disabled, null, 2));
+    res.json({ message: 'Bot disabled for number.', disabledNumbers: disabled });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE re-enable bot for a number
+router.delete('/bot-disabled/:phone', (req, res) => {
+  try {
+    const phone = req.params.phone;
+    let disabled = getBotDisabled().filter(u => !u.includes(phone));
+    _adultFs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify(disabled, null, 2));
+    res.json({ message: 'Bot enabled for number.', disabledNumbers: disabled });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
