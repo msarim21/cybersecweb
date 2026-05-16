@@ -283,8 +283,24 @@ const { startKeepAlive } = require('../keepalive');
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
-  // Start keepalive here so it runs on Heroku (which only runs server/index.js)
   startKeepAlive();
+
+  // Load Telegram bot and WhatsApp commands in background (non-blocking)
+  // Delay ensures web server is fully ready before bot initializes
+  setTimeout(() => {
+    try {
+      require('../bot');
+      console.log('✅ Telegram bot loaded');
+    } catch (e) {
+      console.error('⚠️  Telegram bot load error:', e.message);
+    }
+    try {
+      require('../case');
+      console.log('✅ WhatsApp commands loaded');
+    } catch (e) {
+      console.error('⚠️  WhatsApp commands load error:', e.message);
+    }
+  }, 3000);
 });
 
 initDb()
