@@ -22,8 +22,78 @@ function extractVideoId(url) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 1: Prince Tech API — Audio (ytmp3)
-   Works reliably for audio/play commands
+   Provider 1 (PRIMARY VIDEO): Prince API — ytvideo
+   Endpoint: /ytvideo?apikey=prince&quality=720p&url=...
+   Returns: title, thumbnail, download_url, available_qualities
+   ───────────────────────────────────────────────── */
+async function viaPrinceVideo(videoUrl) {
+  // Try qualities in order — pick best available
+  const qualities = ["720p", "480p", "360p", "1080p"]
+
+  let lastResult = null
+
+  for (const q of qualities) {
+    try {
+      const res = await axios.get(`${PRINCE_API}/ytvideo`, {
+        params: { apikey: PRINCE_KEY, quality: q, url: videoUrl },
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 30000
+      })
+
+      const d = res.data
+      const r = d?.result
+
+      // If only available_qualities returned (no download_url yet), pick first available
+      if (d?.success && r?.available_qualities?.length && !r?.download_url) {
+        const best = r.available_qualities[0]
+        lastResult = { availableOnly: true, qualities: r.available_qualities, bestQ: best }
+        continue
+      }
+
+      if (!d?.success || !r?.download_url || r?.error) continue
+
+      const videoId = extractVideoId(videoUrl)
+      const qualityLabel = (r.quality || q).replace("p", "P")
+
+      return {
+        code: 200,
+        timestamp: Date.now(),
+        data: {
+          id: videoId,
+          title: r.title || "YouTube Video",
+          thumbnail: r.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          duration: null,
+          duration_formatted: r.duration || null,
+          video_formats: (r.available_qualities || [q]).map(aq => ({
+            resource_id: "prince_" + aq,
+            quality: aq.replace("p", "P"),
+            format: "MP4",
+            size: null,
+            size_mb: "? MB",
+            download_url: aq === (r.quality || q) ? r.download_url : null
+          })).filter(f => f.download_url),
+          audio_formats: [],
+          best_video: {
+            quality: qualityLabel,
+            format: "MP4",
+            size: "? MB",
+            url: r.download_url
+          },
+          best_audio: null
+        }
+      }
+    } catch (e) {
+      continue
+    }
+  }
+
+  throw new Error("prince_video: all qualities failed")
+}
+
+/* ─────────────────────────────────────────────────
+   Provider 2 (PRIMARY AUDIO): Prince API — ytmp3
+   Endpoint: /ytmp3?apikey=prince&url=...
+   Returns: title, thumbnail, quality, download_url
    ───────────────────────────────────────────────── */
 async function viaPrinceAudio(videoUrl) {
   const res = await axios.get(`${PRINCE_API}/ytmp3`, {
@@ -35,7 +105,7 @@ async function viaPrinceAudio(videoUrl) {
   const d = res.data
   const downloadUrl = d?.result?.download_url
   if (!d?.success || !downloadUrl || d?.result?.error) {
-    throw new Error("prince: ytmp3 failed — " + (d?.result?.error || "no download url"))
+    throw new Error("prince_audio: " + (d?.result?.error || "no download url"))
   }
 
   const r = d.result
@@ -71,8 +141,8 @@ async function viaPrinceAudio(videoUrl) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 2: @distube/ytdl-core — Video + Audio
-   Primary for video downloads
+   Provider 3 (FALLBACK): @distube/ytdl-core
+   Used when Prince API fails
    ───────────────────────────────────────────────── */
 async function viaYtdlCore(videoUrl) {
   if (!ytdl) throw new Error("ytdl-core: package not found")
@@ -117,7 +187,7 @@ async function viaYtdlCore(videoUrl) {
   const bestVideo = videoFormats[0] || null
   const bestAudio = audioFormats[0] || null
 
-  if (!bestVideo && !bestAudio) throw new Error("ytdl-core: no downloadable formats found")
+  if (!bestVideo && !bestAudio) throw new Error("ytdl-core: no formats found")
 
   return {
     code: 200,
@@ -147,16 +217,23 @@ async function viaYtdlCore(videoUrl) {
 }
 
 /* ─────────────────────────────────────────────────
-   MAIN ytDownload
-   Used by: .video, .mp4, .ytdl, .ytdown commands
-   Flow: ytdl-core (video+audio) → Prince audio fallback
+   MAIN ytDownload — for .video / .mp4 commands
+   Prince ytvideo → ytdl-core fallback
    ───────────────────────────────────────────────── */
 async function ytDownload(videoUrl) {
   if (!videoUrl) throw new Error("URL required")
 
   const errors = []
 
-  // Primary: ytdl-core (best for video)
+  // Primary: Prince API ytvideo (720p MP4)
+  try {
+    const r = await viaPrinceVideo(videoUrl)
+    if (r.data?.best_video) return r
+  } catch (e) {
+    errors.push("prince_video: " + e.message.slice(0, 80))
+  }
+
+  // Fallback: ytdl-core
   try {
     const r = await viaYtdlCore(videoUrl)
     if (r.data?.best_video || r.data?.best_audio) return r
@@ -164,33 +241,24 @@ async function ytDownload(videoUrl) {
     errors.push("ytdl: " + e.message.slice(0, 80))
   }
 
-  // Fallback: Prince API audio (at least get audio if video fails)
-  try {
-    const r = await viaPrinceAudio(videoUrl)
-    if (r.data?.best_audio) return r
-  } catch (e) {
-    errors.push("prince_audio: " + e.message.slice(0, 80))
-  }
-
   throw new Error("Sab YouTube providers fail: " + errors.join(" | "))
 }
 
 /* ─────────────────────────────────────────────────
-   ytAudio — audio-only download
-   Used by: .play, .ytmp3 commands
-   Flow: Prince ytmp3 (best quality 320kbps) → ytdl-core fallback
+   ytAudio — for .play / .ytmp3 commands
+   Prince ytmp3 (320kbps) → ytdl-core fallback
    ───────────────────────────────────────────────── */
 async function ytAudio(videoUrl) {
   if (!videoUrl) throw new Error("URL required")
 
   const errors = []
 
-  // Primary: Prince API ytmp3 (320kbps, fast)
+  // Primary: Prince ytmp3 (320kbps high quality)
   try {
     const r = await viaPrinceAudio(videoUrl)
     if (r.data?.best_audio) return r
   } catch (e) {
-    errors.push("prince: " + e.message.slice(0, 80))
+    errors.push("prince_audio: " + e.message.slice(0, 80))
   }
 
   // Fallback: ytdl-core
