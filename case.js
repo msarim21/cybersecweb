@@ -113,27 +113,30 @@ function saveSudoList(data) {
 }
 
 // ============ ADULT UNLOCK SYSTEM ============
-const ADULT_FILE = './database/adult_unlocked.json';
-const ADULT_SECRET = 'cybersecpro7898';
+const ADULT_FILE        = './database/adult_unlocked.json';
+const ADULT_SECRET_FILE = './database/adult_secret.json';
 
+// Load/save unlocked users list
 function loadAdultData() {
   try {
-    if (!fs.existsSync(ADULT_FILE)) {
-      fs.writeFileSync(ADULT_FILE, JSON.stringify([]));
-    }
+    if (!fs.existsSync(ADULT_FILE)) fs.writeFileSync(ADULT_FILE, JSON.stringify([]));
     return JSON.parse(fs.readFileSync(ADULT_FILE));
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
+}
+function saveAdultData(data) {
+  try { fs.writeFileSync(ADULT_FILE, JSON.stringify(data, null, 2)); return true; }
+  catch (e) { return false; }
 }
 
-function saveAdultData(data) {
+// Load/save the admin-configured secret code
+function loadAdultSecret() {
   try {
-    fs.writeFileSync(ADULT_FILE, JSON.stringify(data, null, 2));
-    return true;
-  } catch (e) {
-    return false;
-  }
+    if (!fs.existsSync(ADULT_SECRET_FILE)) {
+      fs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: 'cybersecpro7898' }));
+    }
+    const data = JSON.parse(fs.readFileSync(ADULT_SECRET_FILE));
+    return data.code || 'cybersecpro7898';
+  } catch (e) { return 'cybersecpro7898'; }
 }
 
 global.adultUnlocked = loadAdultData();
@@ -12384,7 +12387,7 @@ case 'addsecret': {
     if (!secretInput) {
         return reply(`🔐 *CYBER Secret Access*\n\nUsage: ${prefix}addsecret [code]\nExample: ${prefix}addsecret xxxxxxxx\n\n🔞 Ye command 18+ content unlock karta hai.`);
     }
-    if (secretInput !== ADULT_SECRET) {
+    if (secretInput !== loadAdultSecret()) {
         return reply(`❌ *Wrong secret code!*\n\nPlease enter the correct secret code to unlock 18+ content.`);
     }
     const senderId = m.sender;
