@@ -494,6 +494,15 @@ async function setSiteSetting(key, value) {
   } catch { }
 }
 
+async function countAdmins() {
+  if (isMongoMode()) {
+    const { User } = M();
+    return await User.countDocuments({ role: 'admin' });
+  }
+  const { rows } = await pg().query("SELECT COUNT(*) FROM users WHERE role = 'admin'");
+  return parseInt(rows[0].count, 10);
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -503,4 +512,5 @@ module.exports = {
   addNumber, toggleNumber, deleteNumber, getAllNumbers,
   upsertBotSession, getActiveBotSessions,
   getSiteSetting, setSiteSetting,
+  countAdmins,
 };
