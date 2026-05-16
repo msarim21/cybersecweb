@@ -8690,38 +8690,95 @@ break;
 
 case 'apk':
 case 'apkdl': {
-    if (!text) {
-        return reply(`📱 *Usage:* ${prefix + command} com.whatsapp`);
-    }
-    
-    try {
-        const packageId = text.trim();
-        const res = await fetch(`https://api.bk9.dev/download/apk?id=${encodeURIComponent(packageId)}`);
-        const data = await res.json();
+    if (!text) return reply(`📱 *APK Search & Download*\n\nUsage: ${prefix + command} [app name]\nExample: ${prefix + command} WhatsApp`);
 
-        if (!data.status || !data.BK9 || !data.BK9.dllink) {
-            return reply('❌ *APK not found* • Check package ID');
+    await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
+    try {
+        const searchRes = await axios.get(`https://api.princetechn.com/api/search/happymod?apikey=prince&query=${encodeURIComponent(text.trim())}`, { timeout: 20000 });
+        const sData = searchRes.data;
+
+        if (!sData.success || !sData.results?.data?.length) {
+            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *"${text}"* ke liye koi app nahi mila. Koi aur naam try karo.`);
         }
 
-        const { name, emperor, dllink, package: packageName } = data.BK9;
+        const apps = sData.results.data.slice(0, 8);
+        const menuText = apps.map((a, i) =>
+            `*${i + 1}.* ${a.name}\n    📝 ${(a.summary || '').substring(0, 55)}`
+        ).join('\n\n');
 
-        await devtrust.sendMessage(m.chat, 
+        const sentMsg = await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                image: { url: emperor},
-                caption: `📦 *${name}*\nPackage: ${packageName}\n📥 Downloading...`
-            }), 
+                image: { url: apps[0].icon },
+                caption: `📱 *APK Search Results*\n🔎 Query: *${text}*\n📦 Source: F-Droid (Free & Open Source)\n\n${menuText}\n\n📌 *Number reply karo download ke liye*`
+            }),
             { quoted: m }
         );
 
-        await devtrust.sendMessage(m.chat, {
-            document: { url: dllink },
-            fileName: `${name}.apk`,
-            mimetype: 'application/vnd.android.package-archive'
-        }, { quoted: m });
+        const _apkHandler = async (msgUpdate) => {
+            try {
+                const msg = msgUpdate?.messages[0];
+                if (!msg?.message) return;
+                const replyTxt = (msg.message.extendedTextMessage?.text || msg.message.conversation || '').trim();
+                const stanzaId = msg.message.extendedTextMessage?.contextInfo?.stanzaId;
+                if (stanzaId !== sentMsg?.key?.id) return;
+
+                const num = parseInt(replyTxt);
+                if (isNaN(num) || num < 1 || num > apps.length) return;
+
+                devtrust.ev.off('messages.upsert', _apkHandler);
+                await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: msg.key } });
+
+                const chosen = apps[num - 1];
+                // Extract package ID from F-Droid URL
+                const pkgId = chosen.url.split('/packages/')[1]?.split('/')[0];
+
+                await devtrust.sendMessage(m.chat, { text: `⬇️ *${chosen.name}*\nDownload preparing...` }, { quoted: msg });
+
+                // Get APK download URL from F-Droid API
+                const fdRes = await axios.get(`https://f-droid.org/api/v1/packages/${pkgId}/suggested`, { timeout: 15000 });
+                const fdData = fdRes.data;
+
+                if (!fdData || !fdData.apkName) throw new Error('APK download link nahi mila');
+
+                const apkUrl = `https://f-droid.org/repo/${fdData.apkName}`;
+                const apkBuf = Buffer.from((await axios.get(apkUrl, {
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0' },
+                    timeout: 180000,
+                    maxContentLength: 200 * 1024 * 1024
+                })).data);
+
+                if (chosen.icon) {
+                    await devtrust.sendMessage(m.chat, addNewsletterContext({
+                        image: { url: chosen.icon },
+                        caption: `📦 *${chosen.name}*\n📝 ${chosen.summary || ''}\n🆔 Package: ${pkgId}`
+                    }), { quoted: msg });
+                }
+
+                await devtrust.sendMessage(m.chat, {
+                    document: apkBuf,
+                    fileName: `${chosen.name.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.apk`,
+                    mimetype: 'application/vnd.android.package-archive',
+                    caption: `✅ *${chosen.name}*`
+                }, { quoted: msg });
+
+                await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } });
+
+            } catch (e) {
+                console.error('apk handler error:', e.message);
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+                reply(`❌ *APK download failed:* ${e.message}`);
+            }
+        };
+
+        devtrust.ev.on('messages.upsert', _apkHandler);
+        setTimeout(() => devtrust.ev.off('messages.upsert', _apkHandler), 120000);
 
     } catch (e) {
-        console.error(e);
-        reply('❌ *APK fetch failed* • Try again later');
+        console.error('apk search error:', e.message);
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        reply(`❌ *APK Search failed:* ${e.message}`);
     }
 }
 break;
