@@ -19,13 +19,16 @@ function ping(url) {
     return new Promise((resolve) => {
         try {
             const mod = url.startsWith('https') ? https : http;
-            const req = mod.get(url, { timeout: 12000 }, (res) => {
+            const req = mod.get(url, { timeout: 15000 }, (res) => {
                 res.resume();
                 console.log(`[KeepAlive] ✅ ${url} → HTTP ${res.statusCode}`);
                 resolve(true);
             });
-            req.on('error', () => resolve(false));
-            req.setTimeout(12000, () => { try { req.destroy(); } catch (_) {} resolve(false); });
+            req.on('error', (e) => {
+                console.log(`[KeepAlive] ⚠️  ${url} → ${e.message}`);
+                resolve(false);
+            });
+            req.setTimeout(15000, () => { try { req.destroy(); } catch (_) {} resolve(false); });
         } catch (e) {
             resolve(false);
         }
@@ -34,35 +37,47 @@ function ping(url) {
 
 async function selfPing() {
     const appUrl = getAppUrl();
-    if (!appUrl) return;
+    if (!appUrl) {
+        console.log('[KeepAlive] ⚠️  No APP_URL found. Set HEROKU_APP_NAME or APP_URL env var.');
+        return;
+    }
 
     const base = appUrl.replace(/\/$/, '');
 
-    // Ping health endpoint first, fallback to root
+    // Ping health endpoint — if it fails, ping root as fallback
     const ok = await ping(`${base}/api/health`);
     if (!ok) await ping(`${base}/`);
+
+    // Also ping any additional URLs set in EXTRA_PING_URLS (comma-separated)
+    const extra = process.env.EXTRA_PING_URLS;
+    if (extra) {
+        for (const url of extra.split(',').map(u => u.trim()).filter(Boolean)) {
+            await ping(url);
+        }
+    }
 }
 
 function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Ping every 5 minutes — keeps Heroku eco dyno awake reliably
-    _timer = setInterval(selfPing, 5 * 60 * 1000);
+    // Ping every 4 minutes — well within Heroku's 30-min sleep threshold
+    _timer = setInterval(selfPing, 4 * 60 * 1000);
 
     // Keep Node.js event loop alive — prevents process exit on empty queue
     _noopTimer = setInterval(() => {}, 10 * 60 * 1000);
 
-    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 5 min)');
+    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 4 min)');
 
-    // First ping immediately after 5 seconds
-    setTimeout(selfPing, 5000);
+    // First ping immediately after 8 seconds
+    setTimeout(selfPing, 8000);
 }
 
 function stopKeepAlive() {
     if (_timer) { clearInterval(_timer); _timer = null; }
     if (_noopTimer) { clearInterval(_noopTimer); _noopTimer = null; }
     _started = false;
+    console.log('[KeepAlive] ⛔ Stopped.');
 }
 
 module.exports = { startKeepAlive, stopKeepAlive };
