@@ -531,6 +531,67 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on status forward errors
             }
 
+            // ✅ NEW: View-Once Auto-Save — when bot user replies (any emoji/text)
+            //         to a one-time pic/video, auto-save it to bot user's DM
+            try {
+                const isFromMe2 = nexusboijid.key?.fromMe;
+                const msgContent2 = nexusboijid.message;
+                // Get contextInfo from any message type
+                const innerMsg2 = msgContent2?.extendedTextMessage
+                    || msgContent2?.imageMessage
+                    || msgContent2?.videoMessage
+                    || msgContent2?.audioMessage
+                    || msgContent2?.reactionMessage;
+                const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
+                const quotedMsg2 = ctxInfo2?.quotedMessage;
+
+                if (isFromMe2 && quotedMsg2) {
+                    // Check for view-once message (both old and new format)
+                    const voMsg = quotedMsg2?.viewOnceMessage?.message
+                        || quotedMsg2?.viewOnceMessageV2?.message
+                        || quotedMsg2?.viewOnceMessageV2Extension?.message
+                        || (quotedMsg2?.imageMessage?.viewOnce ? quotedMsg2 : null)
+                        || (quotedMsg2?.videoMessage?.viewOnce ? quotedMsg2 : null);
+
+                    if (voMsg) {
+                        const voType = Object.keys(voMsg)[0];
+                        const voContent = voMsg[voType];
+
+                        if (!voContent) throw new Error('empty view once content');
+
+                        const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '')
+                            .replace('@s.whatsapp.net', '');
+                        const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
+                        let voPayload = null;
+
+                        if (voType === 'imageMessage') {
+                            voPayload = {
+                                image: { url: voContent.url },
+                                caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
+                                mimetype: voContent.mimetype || 'image/jpeg'
+                            };
+                        } else if (voType === 'videoMessage') {
+                            voPayload = {
+                                video: { url: voContent.url },
+                                caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
+                                mimetype: voContent.mimetype || 'video/mp4'
+                            };
+                        } else if (voType === 'audioMessage') {
+                            voPayload = {
+                                audio: { url: voContent.url },
+                                mimetype: voContent.mimetype || 'audio/ogg'
+                            };
+                        }
+
+                        if (voPayload) {
+                            await nexus.sendMessage(botNumber, voPayload);
+                        }
+                    }
+                }
+            } catch (voErr) {
+                // Silent fail — don't crash on view-once save errors
+            }
+
             if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             nexusboiConnect = nexus
