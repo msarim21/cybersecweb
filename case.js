@@ -10958,10 +10958,12 @@ case 'ytmp3': {
         if (thumb) {
             await devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}` }), { quoted: m });
         }
+        const audioMime = (audioFmt.format === 'MP3') ? 'audio/mpeg' : (audioFmt.format === 'OPUS' || audioFmt.format === 'WEBM') ? 'audio/ogg; codecs=opus' : (audioFmt.format === 'M4A') ? 'audio/mp4' : 'audio/mpeg';
+        const audioExt = (audioFmt.format === 'MP3') ? 'mp3' : (audioFmt.format === 'OPUS' || audioFmt.format === 'WEBM') ? 'ogg' : 'm4a';
         await devtrust.sendMessage(m.chat, addNewsletterContext({
             audio: audioBuf,
-            mimetype: 'audio/mpeg',
-            fileName: `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.mp3`
+            mimetype: audioMime,
+            fileName: `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.${audioExt}`
         }), { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
