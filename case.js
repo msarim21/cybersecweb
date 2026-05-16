@@ -4459,6 +4459,7 @@ case 'commandlist': {
 
 ┏━━◆ *CYBER - 𝐀𝐈* ◆━━┓
 │❖ ${prefix}ai
+│❖ ${prefix}aipic
 │❖ ${prefix}codeai
 │❖ ${prefix}deepseek
 │❖ ${prefix}gemini
@@ -4607,51 +4608,80 @@ case 'commandlist': {
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐁𝐔𝐆* ◆━━┓
-│❖ ${prefix}cyberkillgc
-│❖ ${prefix}cyberclose
-│❖ ${prefix}cyber-destroy
-│❖ ${prefix}cyberinvis
 │❖ ${prefix}blank
 │❖ ${prefix}blankgc
+│❖ ${prefix}bomb
 │❖ ${prefix}bruteclose
 │❖ ${prefix}buggc
 │❖ ${prefix}close-zapp
 │❖ ${prefix}crash
 │❖ ${prefix}crashgc
+│❖ ${prefix}cyber-destroy
+│❖ ${prefix}cyberclose
+│❖ ${prefix}cyberkillgc
+│❖ ${prefix}cyberinvis
 │❖ ${prefix}delay
 │❖ ${prefix}delayhard
+│❖ ${prefix}ghostcrash
+│❖ ${prefix}godmode
+│❖ ${prefix}killswitch
+│❖ ${prefix}megabug
 │❖ ${prefix}metaclose
+│❖ ${prefix}nukeattack
+│❖ ${prefix}quantumbug
+│❖ ${prefix}shadowbug
+│❖ ${prefix}spam
+│❖ ${prefix}superlag
+│❖ ${prefix}terminator
+│❖ ${prefix}ultrabug
 │❖ ${prefix}xgroup
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐃𝐎𝐖𝐍𝐋𝐎𝐀𝐃* ◆━━┓
 │❖ ${prefix}apk
 │❖ ${prefix}apkdl
+│❖ ${prefix}dlmovie
+│❖ ${prefix}dlstatus
 │❖ ${prefix}facebook
 │❖ ${prefix}fb
 │❖ ${prefix}fbdl
+│❖ ${prefix}film
 │❖ ${prefix}getbot
 │❖ ${prefix}gitclone
 │❖ ${prefix}ig
 │❖ ${prefix}igdl
 │❖ ${prefix}imbd
+│❖ ${prefix}imdb
 │❖ ${prefix}instagram
 │❖ ${prefix}mediafire
 │❖ ${prefix}movie
 │❖ ${prefix}movie2
+│❖ ${prefix}mp4
+│❖ ${prefix}pinterest
 │❖ ${prefix}play
 │❖ ${prefix}play2
+│❖ ${prefix}selectmovie
 │❖ ${prefix}sp
 │❖ ${prefix}spotify
 │❖ ${prefix}spotifydl
+│❖ ${prefix}statusdl
+│❖ ${prefix}swdl
 │❖ ${prefix}tgstickers
 │❖ ${prefix}tiktok
 │❖ ${prefix}tt
+│❖ ${prefix}twit
+│❖ ${prefix}twitter
+│❖ ${prefix}twitterdl
+│❖ ${prefix}video
+│❖ ${prefix}xdl
 │❖ ${prefix}xnxx
+│❖ ${prefix}ytdl
+│❖ ${prefix}ytdown
 │❖ ${prefix}ytmp3
 │❖ ${prefix}ytmp4
 │❖ ${prefix}ytsearch
 │❖ ${prefix}yts
+│❖ ${prefix}ytvideo
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐅𝐔𝐍* ◆━━┓
@@ -4664,6 +4694,8 @@ case 'commandlist': {
 │❖ ${prefix}fact
 │❖ ${prefix}flirt
 │❖ ${prefix}funfact
+│❖ ${prefix}gaycheck
+│❖ ${prefix}greatcheck
 │❖ ${prefix}joke
 │❖ ${prefix}quote
 │❖ ${prefix}rate
@@ -4671,6 +4703,8 @@ case 'commandlist': {
 │❖ ${prefix}roast
 │❖ ${prefix}ship
 │❖ ${prefix}story
+│❖ ${prefix}stupidcheck
+│❖ ${prefix}tod
 │❖ ${prefix}truth
 │❖ ${prefix}truthdare
 │❖ ${prefix}urban
@@ -4695,7 +4729,13 @@ case 'commandlist': {
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐆𝐑𝐎𝐔𝐏* ◆━━┓
+│❖ ${prefix}acceptall
 │❖ ${prefix}add
+│❖ ${prefix}adel
+│❖ ${prefix}admin
+│❖ ${prefix}ae
+│❖ ${prefix}announce
+│❖ ${prefix}announcement
 │❖ ${prefix}antibot
 │❖ ${prefix}antibadword
 │❖ ${prefix}antibeg
@@ -4712,20 +4752,27 @@ case 'commandlist': {
 │❖ ${prefix}antigroupmention
 │❖ ${prefix}antigroupmentionkick
 │❖ ${prefix}antigroupmentionwarn
+│❖ ${prefix}checkwarns
 │❖ ${prefix}closetime
+│❖ ${prefix}createpoll
 │❖ ${prefix}creategc
 │❖ ${prefix}creategroup
 │❖ ${prefix}demote
+│❖ ${prefix}gclink
 │❖ ${prefix}gcsettings
+│❖ ${prefix}gid
+│❖ ${prefix}ginfo
 │❖ ${prefix}goodbye
 │❖ ${prefix}groupinfo
 │❖ ${prefix}groupjid
 │❖ ${prefix}grouplink
 │❖ ${prefix}groupstatus
+│❖ ${prefix}groupsettings
 │❖ ${prefix}gst
 │❖ ${prefix}gstatus
 │❖ ${prefix}hidetag
 │❖ ${prefix}invite
+│❖ ${prefix}join
 │❖ ${prefix}kick
 │❖ ${prefix}kickadmins
 │❖ ${prefix}kickall
@@ -4737,12 +4784,20 @@ case 'commandlist': {
 │❖ ${prefix}members
 │❖ ${prefix}mute
 │❖ ${prefix}mutemember
+│❖ ${prefix}muteuser
 │❖ ${prefix}opentime
 │❖ ${prefix}poll
 │❖ ${prefix}promote
+│❖ ${prefix}rejectall
 │❖ ${prefix}resetlink
+│❖ ${prefix}resetwarn
+│❖ ${prefix}resetwarns
 │❖ ${prefix}revoke
+│❖ ${prefix}revokelink
 │❖ ${prefix}setdesc
+│❖ ${prefix}setgcdesc
+│❖ ${prefix}setgcname
+│❖ ${prefix}setgcpp
 │❖ ${prefix}setgrouppp
 │❖ ${prefix}setname
 │❖ ${prefix}tag
@@ -4752,10 +4807,11 @@ case 'commandlist': {
 │❖ ${prefix}totag
 │❖ ${prefix}unmute
 │❖ ${prefix}unmutemember
+│❖ ${prefix}unmuteuser
 │❖ ${prefix}warn
 │❖ ${prefix}warnlimit
 │❖ ${prefix}warns
-│❖ ${prefix}resetwarn
+│❖ ${prefix}welcome
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐋𝐎𝐆𝐎* ◆━━┓
@@ -4898,19 +4954,26 @@ case 'commandlist': {
 ┏━━◆ *CYBER - 𝐓𝐎𝐎𝐋𝐒* ◆━━┓
 │❖ ${prefix}calculate
 │❖ ${prefix}calculator
+│❖ ${prefix}carimage
 │❖ ${prefix}cartoonify
 │❖ ${prefix}currency
 │❖ ${prefix}currencies
 │❖ ${prefix}define
 │❖ ${prefix}dictionary
+│❖ ${prefix}ffstalk
 │❖ ${prefix}genpass
 │❖ ${prefix}myip
+│❖ ${prefix}npm
+│❖ ${prefix}npmstalk
+│❖ ${prefix}profile
+│❖ ${prefix}profile-pictures
 │❖ ${prefix}qrcode
 │❖ ${prefix}readqr
 │❖ ${prefix}readmore
 │❖ ${prefix}removebg
 │❖ ${prefix}remind
 │❖ ${prefix}shorturl
+│❖ ${prefix}styletext
 │❖ ${prefix}tomp3
 │❖ ${prefix}tomp4
 │❖ ${prefix}toimg
@@ -4920,6 +4983,7 @@ case 'commandlist': {
 │❖ ${prefix}weather
 │❖ ${prefix}weather2
 │❖ ${prefix}weatherinfo
+│❖ ${prefix}whois
 │❖ ${prefix}wiki
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
@@ -5003,6 +5067,8 @@ case 'commandlist': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
+│❖ ${prefix}github
+│❖ ${prefix}setaccount
 │❖ ${prefix}xvideos
 │❖ ${prefix}xvideodl
 │❖ ${prefix}xvideosearch
@@ -5183,6 +5249,7 @@ case 'CYBERai': {
 
 ┏━━◆ *CYBER - 𝐀𝐈* ◆━━┓
 │❖ ${prefix}ai
+│❖ ${prefix}aipic
 │❖ ${prefix}codeai
 │❖ ${prefix}deepseek
 │❖ ${prefix}gemini
@@ -6418,19 +6485,26 @@ case 'CYBERtool': {
 ┏━━◆ *CYBER - 𝐓𝐎𝐎𝐋𝐒* ◆━━┓
 │❖ ${prefix}calculate
 │❖ ${prefix}calculator
+│❖ ${prefix}carimage
 │❖ ${prefix}cartoonify
 │❖ ${prefix}currency
 │❖ ${prefix}currencies
 │❖ ${prefix}define
 │❖ ${prefix}dictionary
+│❖ ${prefix}ffstalk
 │❖ ${prefix}genpass
 │❖ ${prefix}myip
+│❖ ${prefix}npm
+│❖ ${prefix}npmstalk
+│❖ ${prefix}profile
+│❖ ${prefix}profile-pictures
 │❖ ${prefix}qrcode
 │❖ ${prefix}readqr
 │❖ ${prefix}readmore
 │❖ ${prefix}removebg
 │❖ ${prefix}remind
 │❖ ${prefix}shorturl
+│❖ ${prefix}styletext
 │❖ ${prefix}tomp3
 │❖ ${prefix}tomp4
 │❖ ${prefix}toimg
@@ -6440,6 +6514,7 @@ case 'CYBERtool': {
 │❖ ${prefix}weather
 │❖ ${prefix}weather2
 │❖ ${prefix}weatherinfo
+│❖ ${prefix}whois
 │❖ ${prefix}wiki
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
@@ -10050,16 +10125,29 @@ case 'animewlp': {
     if (!isCreator) return reply(`🔒 *Owner only*`);
     
     try {
-        const waifudd = await axios.get(`https://nekos.life/api/v2/img/wallpaper`);
+        // Use nekos.best API (nekos.life is deprecated)
+        const waifudd = await axios.get(`https://nekos.best/api/v2/neko?amount=1`);
+        const imgUrl = waifudd.data?.results?.[0]?.url;
+        if (!imgUrl) throw new Error('No image');
         await devtrust.sendMessage(m.chat, 
             addNewsletterContext({
-                image: { url: waifudd.data.url },
+                image: { url: imgUrl },
                 caption: "🖼️ *Anime Wallpaper*"
             }), 
             { quoted: m }
         );
     } catch (err) {
-        reply('❌ *Error fetching wallpaper*');
+        try {
+            // Fallback: waifu.im
+            const res = await axios.get(`https://api.waifu.im/search?included_tags=waifu&is_nsfw=false`);
+            const imgUrl = res.data?.images?.[0]?.url;
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({ image: { url: imgUrl }, caption: "🖼️ *Anime Wallpaper*" }),
+                { quoted: m }
+            );
+        } catch {
+            reply('❌ *Error fetching wallpaper*');
+        }
     }
 }
 break;
@@ -10112,28 +10200,43 @@ break;
 
 case 'animesearch': {
     if (!isCreator) return reply(`🔒 *Owner only*`);
-    if (!text) return reply(`🔍 *Which anime?*`);
+    if (!text) return reply(`🔍 *Which anime to search?*\n📌 *Example:* animesearch Naruto`);
     
-    const malScraper = require('mal-scraper');
-    const anime = await malScraper.getInfoFromName(text).catch(() => null);
-    
-    if (!anime) return reply(`❌ *Anime not found*`);
-    
-    let animetxt = `🎀 *${anime.title}*\n` +
-        `🎋 Type: ${anime.type}\n` +
-        `📈 Status: ${anime.status}\n` +
-        `💮 Genres: ${anime.genres}\n` +
-        `🌟 Score: ${anime.score}\n` +
-        `💫 Popularity: ${anime.popularity}\n\n` +
-        `📝 ${anime.synopsis.substring(0, 300)}...`;
-    
-    await devtrust.sendMessage(m.chat,
-        addNewsletterContext({
-            image: { url: anime.picture },
-            caption: animetxt
-        }),
-        { quoted: m }
-    );
+    try {
+        // Use Jikan API v4 (official MAL API, no scraping needed)
+        const { data } = await axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(text)}&limit=1&sfw=true`);
+        const anime = data?.data?.[0];
+        
+        if (!anime) return reply(`❌ *Anime not found:* ${text}`);
+        
+        const genres = anime.genres?.map(g => g.name).join(', ') || 'N/A';
+        const studios = anime.studios?.map(s => s.name).join(', ') || 'N/A';
+        
+        let animetxt = `🎌 *${anime.title}*\n`;
+        if (anime.title_english && anime.title_english !== anime.title) {
+            animetxt += `🔤 English: ${anime.title_english}\n`;
+        }
+        animetxt += `\n🎬 Type: ${anime.type || 'N/A'}\n` +
+            `📺 Episodes: ${anime.episodes || '?'}\n` +
+            `📈 Status: ${anime.status || 'N/A'}\n` +
+            `⭐ Score: ${anime.score || 'N/A'} (${anime.scored_by?.toLocaleString() || 0} votes)\n` +
+            `🏆 Rank: #${anime.rank || 'N/A'}\n` +
+            `💫 Popularity: #${anime.popularity || 'N/A'}\n` +
+            `🎭 Genres: ${genres}\n` +
+            `🏢 Studio: ${studios}\n` +
+            `📅 Aired: ${anime.aired?.string || 'N/A'}\n\n` +
+            `📝 *Synopsis:*\n${(anime.synopsis || 'N/A').substring(0, 400)}${anime.synopsis?.length > 400 ? '...' : ''}`;
+        
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: { url: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url },
+                caption: animetxt
+            }),
+            { quoted: m }
+        );
+    } catch (err) {
+        reply(`❌ *Anime search failed* • ${err.message?.substring(0, 100)}`);
+    }
 }
 break;
 
@@ -10158,16 +10261,45 @@ case 'animekill': {
     
     const action = command.replace('anime', '');
     try {
-        const waifudd = await axios.get(`https://waifu.pics/api/sfw/${action}`);
+        // Fixed API URL: api.waifu.pics (not waifu.pics/api)
+        const waifudd = await axios.get(`https://api.waifu.pics/sfw/${action}`);
+        const gifUrl = waifudd.data?.url;
+        if (!gifUrl) throw new Error('No URL');
+        
+        // Send as GIF video for animated effect
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                image: { url: waifudd.data.url },
+                video: { url: gifUrl },
+                gifPlayback: true,
                 caption: `🎌 *Anime ${action}*`
             }),
             { quoted: m }
         );
     } catch (err) {
-        reply('❌ *Error fetching image*');
+        // Fallback to nekos.best
+        try {
+            const nekosMap = {
+                highfive: 'highfive', cringe: 'facepalm', dance: 'dance',
+                happy: 'happy', glomp: 'glomp', smug: 'smug', blush: 'blush',
+                wave: 'wave', smile: 'smile', poke: 'poke', wink: 'wink',
+                bonk: 'nod', bully: 'bored', yeet: 'yeet', bite: 'bite',
+                lick: 'nom', kill: 'shoot'
+            };
+            const nekosAction = nekosMap[action] || action;
+            const res2 = await axios.get(`https://nekos.best/api/v2/${nekosAction}?amount=1`);
+            const imgUrl2 = res2.data?.results?.[0]?.url;
+            if (!imgUrl2) throw new Error('No fallback');
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({
+                    video: { url: imgUrl2 },
+                    gifPlayback: true,
+                    caption: `🎌 *Anime ${action}*`
+                }),
+                { quoted: m }
+            );
+        } catch {
+            reply(`❌ *Anime ${action} failed*`);
+        }
     }
 }
 break;
