@@ -5111,7 +5111,7 @@ ${isAdultUnlocked(m.sender) ? `╔═══════════════�
 │❖ ${prefix}xvideosearch
 │❖ ${prefix}nsfw
 
-` : `🔐 *Lock Section:* .addsecret [code]
+` : `🔐 *Lock Section:* .addkey [code]
 `}
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
 `;
@@ -11179,14 +11179,14 @@ case 'ytmp3': {
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption }), { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption }, { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
+        await devtrust.sendMessage(m.chat, {
             audio: audioBuf,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle}.mp3`
-        }), { quoted: m });
+        }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -11270,14 +11270,14 @@ case 'play2': {
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption2 }), { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption2 }, { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
+        await devtrust.sendMessage(m.chat, {
             audio: audioBuf2,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle2}.mp3`
-        }), { quoted: m });
+        }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -11518,9 +11518,26 @@ case 'statusdl': {
         if (_quotedType === 'imageMessage') {
             await devtrust.sendMessage(m.chat, { image: _buf, caption: _mediaData.caption || '📸 *Status Image*' }, { quoted: m });
         } else if (_quotedType === 'videoMessage') {
-            await devtrust.sendMessage(m.chat, { video: _buf, caption: _mediaData.caption || '🎥 *Status Video*', mimetype: _mediaData.mimetype || 'video/mp4' }, { quoted: m });
+            const _mime = _mediaData.mimetype || 'video/mp4';
+            try {
+                await devtrust.sendMessage(m.chat, {
+                    video: _buf,
+                    caption: _mediaData.caption || '🎥 *Status Video*',
+                    mimetype: _mime,
+                    ptv: false,
+                    gifPlayback: false,
+                }, { quoted: m });
+            } catch (_ve) {
+                // Fallback: send as document so it is always accessible
+                await devtrust.sendMessage(m.chat, {
+                    document: _buf,
+                    mimetype: _mime,
+                    fileName: 'status_video.mp4',
+                    caption: _mediaData.caption || '🎥 *Status Video*',
+                }, { quoted: m });
+            }
         } else if (_quotedType === 'audioMessage') {
-            await devtrust.sendMessage(m.chat, { audio: _buf, mimetype: 'audio/mp4', ptt: false }, { quoted: m });
+            await devtrust.sendMessage(m.chat, { audio: _buf, mimetype: _mediaData.mimetype || 'audio/mp4', ptt: false }, { quoted: m });
         } else if (_quotedType === 'documentMessage') {
             await devtrust.sendMessage(m.chat, { document: _buf, mimetype: _mediaData.mimetype || 'application/octet-stream', fileName: _mediaData.fileName || 'status_file' }, { quoted: m });
         } else {
@@ -12382,10 +12399,11 @@ case 'styletext': {
     await reply(teks);
 } 
 break;
+case 'addkey':
 case 'addsecret': {
     const secretInput = text ? text.trim() : '';
     if (!secretInput) {
-        return reply(`🔐 *CYBER Secret Access*\n\nUsage: ${prefix}addsecret [code]\nExample: ${prefix}addsecret xxxxxxxx\n\n🔞 Ye command 18+ content unlock karta hai.`);
+        return reply(`🔐 *CYBER Secret Access*\n\nUsage: ${prefix}addkey [code]\nExample: ${prefix}addkey xxxxxxxx\n\n🔞 Ye command 18+ content unlock karta hai.`);
     }
     if (secretInput !== loadAdultSecret()) {
         return reply(`❌ *Wrong secret code!*\n\nPlease enter the correct secret code to unlock 18+ content.`);
@@ -12394,22 +12412,40 @@ case 'addsecret': {
     if (!global.adultUnlocked.includes(senderId)) {
         global.adultUnlocked.push(senderId);
         saveAdultData(global.adultUnlocked);
+        return reply(`✅ *18+ Content Unlocked!*\n\n🔞 Ab aap ${prefix}xnxx, ${prefix}xvideos, ${prefix}xvideosearch, ${prefix}xnxxsearch commands use kar sakte hain.\n\n⚠️ Ye sirf aap ke liye unlock hua hai.\n💡 Content dobara hide karne ke liye: *${prefix}removekey*`);
+    } else {
+        return reply(`ℹ️ *Already Unlocked*\n\n🔞 Aapka 18+ access pehle se active hai.\n💡 Content hide karne ke liye: *${prefix}removekey*`);
     }
-    return reply(`✅ *18+ Content Unlocked!*\n\n🔞 Ab aap ${prefix}xnxx, ${prefix}xvideos, ${prefix}xvideosearch, ${prefix}xnxxsearch commands use kar sakte hain.\n\n⚠️ Ye sirf aap ke liye unlock hua hai.`);
 }
 break;
 
+case 'removekey':
 case 'removesecret': {
-    if (!isCreator) return reply('🔒 *Owner only*');
-    const targetId = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
-    if (!targetId) {
+    const _selfId = m.sender;
+    // Admin/owner can remove any user; regular users can only remove themselves
+    const targetId = isCreator
+        ? (m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null))
+        : null;
+
+    if (isCreator && !targetId) {
+        // Owner with no target = clear all
         global.adultUnlocked = [];
         saveAdultData(global.adultUnlocked);
         return reply('✅ *All users 18+ access removed.*');
     }
-    global.adultUnlocked = global.adultUnlocked.filter(id => id !== targetId);
+    if (isCreator && targetId) {
+        // Owner removing specific user
+        global.adultUnlocked = global.adultUnlocked.filter(id => id !== targetId);
+        saveAdultData(global.adultUnlocked);
+        return reply(`✅ User ka 18+ access remove kar diya.`);
+    }
+    // Regular user removing themselves
+    if (!global.adultUnlocked.includes(_selfId)) {
+        return reply(`ℹ️ *Already Locked*\n\n🔞 Aapka 18+ content pehle se hide hai.\n💡 Unlock karne ke liye: *${prefix}addkey [code]*`);
+    }
+    global.adultUnlocked = global.adultUnlocked.filter(id => id !== _selfId);
     saveAdultData(global.adultUnlocked);
-    return reply(`✅ User ka 18+ access remove kar diya.`);
+    return reply(`✅ *18+ Content Hidden!*\n\n🔒 Aapka 18+ access remove ho gaya.\n💡 Dobara unlock karne ke liye: *${prefix}addkey [code]*`);
 }
 break;
 
@@ -12476,10 +12512,7 @@ break;
                     maxContentLength: 500 * 1024 * 1024
                 })).data);
 
-                await devtrust.sendMessage(m.chat,
-                    addNewsletterContext({ video: videoBuf, caption: videoCaption, mimetype: 'video/mp4' }),
-                    { quoted: msg }
-                );
+                await devtrust.sendMessage(m.chat, { video: videoBuf, caption: videoCaption, mimetype: 'video/mp4' }, { quoted: msg });
                 await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } });
 
             } catch (e) {
@@ -12561,10 +12594,7 @@ break;
             `📽️ *Title:* ${xdata.title.slice(0, 100)}\n` +
             `🎬 *Quality:* ${xdata.sources.high ? 'High (360p)' : 'Low (240p)'}`;
 
-        await devtrust.sendMessage(m.chat,
-            addNewsletterContext({ video: { url: videoUrl }, mimetype: 'video/mp4', caption }),
-            { quoted: m }
-        );
+        await devtrust.sendMessage(m.chat, { video: { url: videoUrl }, mimetype: 'video/mp4', caption }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
         console.error('xnxxvideodl error:', e.message);
