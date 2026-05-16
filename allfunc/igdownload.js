@@ -3,17 +3,20 @@
  * Instagram Downloader — Updated May 2026
  * File: allfunc/igdownload.js
  *
- * Strategy:
- *  1. Instagram embed page — extract video_url from JSON (works everywhere, no API key)
- *  2. SaveInsta ajaxSearch
- *  3. SnapSave action.php
- *  4. IgDownloader ajaxSearch
- *  5. InstaVideoSave ajaxSearch
+ * Provider order:
+ *  1. Instagram embed page  — no external service, extracts video_url from JSON
+ *  2. saveinsta.to          — 3-step (tokens → cftoken → ajaxSearch), TESTED WORKING
+ *  3. SaveInsta.app         — simple ajaxSearch
+ *  4. SnapSave              — action.php
+ *  5. IgDownloader.app      — ajaxSearch
+ *  6. InstaVideoSave        — ajaxSearch
+ *  7. Ryzen API
+ *  8. Vreden API
  */
 
 const axios = require('axios');
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 
 function detectType(url) {
   if (!url) return 'image';
@@ -36,10 +39,10 @@ function buildResult(caption, items) {
   return { caption: caption || '', medias };
 }
 
-/* ────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
    1. INSTAGRAM EMBED PAGE
-   Most reliable — Instagram's own embed endpoint. Video URL is
-   inside JSON embedded in the page (properly escaped). ─────── */
+   Extracts video_url from JSON inside Instagram's own embed page.
+   ───────────────────────────────────────────────────────────── */
 async function viaEmbed(url) {
   const m = url.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
   if (!m) throw new Error('embed: could not extract shortcode');
@@ -59,76 +62,134 @@ async function viaEmbed(url) {
   );
 
   const items = [];
-
-  // ── Extract video_url from embedded JSON ─────────────────
-  // HTML contains: "video_url":"https:\/\/scontent..." (JSON-escaped)
   const videoUrlMatch = data.match(/"video_url"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if (videoUrlMatch) {
     try {
       const cleanUrl = JSON.parse('"' + videoUrlMatch[1] + '"');
-      if (/^https?:\/\//.test(cleanUrl)) {
-        items.push({ url: cleanUrl, type: 'video' });
-      }
-    } catch { /* ignore parse error */ }
+      if (/^https?:\/\//.test(cleanUrl)) items.push({ url: cleanUrl, type: 'video' });
+    } catch { }
   }
 
-  // ── Extract display_url / thumbnail_src for images ───────
   if (!items.length) {
-    const imgMatches = [
-      data.match(/"display_url"\s*:\s*"((?:[^"\\]|\\.)*)"/),
-      data.match(/"thumbnail_src"\s*:\s*"((?:[^"\\]|\\.)*)"/),
-    ];
-    for (const match of imgMatches) {
-      if (match) {
+    for (const key of ['"display_url"', '"thumbnail_src"']) {
+      const r = data.match(new RegExp(key + '\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+      if (r) {
         try {
-          const cleanUrl = JSON.parse('"' + match[1] + '"');
-          if (/^https?:\/\//.test(cleanUrl)) {
-            items.push({ url: cleanUrl, type: 'image' });
-            break;
-          }
-        } catch { /* ignore */ }
+          const cleanUrl = JSON.parse('"' + r[1] + '"');
+          if (/^https?:\/\//.test(cleanUrl)) { items.push({ url: cleanUrl, type: 'image' }); break; }
+        } catch { }
       }
     }
   }
 
-  // ── Fallback: scan all JSON string values for CDN URLs ────
   if (!items.length) {
-    const allStrings = [...data.matchAll(/"((?:[^"\\]|\\.)*)"/g)];
-    for (const s of allStrings) {
+    for (const s of [...data.matchAll(/"((?:[^"\\]|\\.)*)"/g)]) {
       try {
         const val = JSON.parse('"' + s[1] + '"');
         if (/^https?:\/\/[^\s]+(?:cdninstagram|fbcdn)[^\s]*\.(?:mp4|jpg|jpeg|png)/i.test(val)) {
           items.push({ url: val, type: detectType(val) });
           if (items.length >= 3) break;
         }
-      } catch { /* ignore */ }
+      } catch { }
     }
   }
 
   return buildResult('', items);
 }
 
-/* ──────────────────────────────────────────────
-   2. SAVEINSTA ─────────────────────────────── */
-async function viaSaveInsta(url) {
+/* ─────────────────────────────────────────────────────────────
+   2. SAVEINSTA.TO — 3-step (tokens → cftoken → ajaxSearch)
+   TESTED WORKING: returns direct CDN video download links.
+   ───────────────────────────────────────────────────────────── */
+async function viaSaveInstaDotTo(url) {
+  // Step 1: Get page tokens
+  const page = await axios.get('https://saveinsta.to/en/highlights', {
+    headers: {
+      'User-Agent':      UA,
+      'Accept':          'text/html,application/xhtml+xml,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer':         'https://www.google.com/',
+    },
+    timeout: 20000,
+  });
+  const html1 = page.data;
+  const k_exp   = (html1.match(/k_exp\s*=\s*"([^"]+)"/)   || [])[1];
+  const k_token = (html1.match(/k_token\s*=\s*"([^"]+)"/) || [])[1];
+  if (!k_exp || !k_token) throw new Error('saveinsta.to: tokens not found on page');
+
+  // Step 2: Get CF JWT token
+  const cfRes = await axios.post(
+    'https://saveinsta.to/api/userverify',
+    `url=${encodeURIComponent(url)}`,
+    {
+      headers: {
+        'Content-Type':     'application/x-www-form-urlencoded; charset=UTF-8',
+        'Origin':           'https://saveinsta.to',
+        'Referer':          'https://saveinsta.to/en/video',
+        'User-Agent':       UA,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      timeout: 15000,
+    }
+  );
+  const cftoken = cfRes.data?.token;
+  if (!cftoken) throw new Error('saveinsta.to: no CF token returned');
+
+  // Step 3: Fetch download HTML
+  const body = new URLSearchParams({ k_exp, k_token, q: url, t: 'media', lang: 'en', v: 'v2', cftoken }).toString();
+  const finalRes = await axios.post('https://saveinsta.to/api/ajaxSearch', body, {
+    headers: {
+      'Content-Type':     'application/x-www-form-urlencoded; charset=UTF-8',
+      'Origin':           'https://saveinsta.to',
+      'Referer':          'https://saveinsta.to/en/highlights',
+      'User-Agent':       UA,
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    timeout: 20000,
+  });
+
+  const fd = finalRes.data;
+  if (fd?.status !== 'ok' || !fd?.data) throw new Error('saveinsta.to: bad final response');
+
+  // Parse download links from returned HTML
+  const html = fd.data;
+  const items = [];
+
+  // Find <a> tags with video attribute or "Download Video" text
+  for (const m of html.matchAll(/<a\s[^>]*href="([^"]+)"[^>]*video[^>]*>/gi)) {
+    items.push({ url: m[1].replace(/&amp;/g, '&'), type: 'video' });
+  }
+  for (const m of html.matchAll(/<a\s[^>]*video[^>]*href="([^"]+)"[^>]*>/gi)) {
+    items.push({ url: m[1].replace(/&amp;/g, '&'), type: 'video' });
+  }
+  // Also find any direct CDN links
+  for (const m of html.matchAll(/href="(https?:\/\/(?:dl\.snapcdn\.app|cdninstagram|scontent)[^"]+)"/gi)) {
+    items.push({ url: m[1].replace(/&amp;/g, '&'), type: detectType(m[1]) });
+  }
+
+  return buildResult('', items);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   3. SAVEINSTA.APP — simple ajaxSearch
+   ───────────────────────────────────────────────────────────── */
+async function viaSaveInstaApp(url) {
   const { data } = await axios.post(
     'https://saveinsta.app/api/ajaxSearch',
     new URLSearchParams({ q: url, t: 'media', lang: 'en' }).toString(),
     {
       headers: {
-        'User-Agent':        UA,
-        'Content-Type':      'application/x-www-form-urlencoded',
-        'Origin':            'https://saveinsta.app',
-        'Referer':           'https://saveinsta.app/',
-        'X-Requested-With':  'XMLHttpRequest',
+        'User-Agent':       UA,
+        'Content-Type':     'application/x-www-form-urlencoded',
+        'Origin':           'https://saveinsta.app',
+        'Referer':          'https://saveinsta.app/',
+        'X-Requested-With': 'XMLHttpRequest',
       },
       timeout: 20000,
     }
   );
-
   const html = data?.data;
-  if (!html || typeof html !== 'string') throw new Error('saveinsta: empty response');
-
+  if (!html || typeof html !== 'string') throw new Error('saveinsta.app: empty response');
   const items = [];
   for (const m of html.matchAll(/href=["']([^"']*(?:cdninstagram|fbcdn|\.mp4)[^"']*?)["']/g)) {
     items.push({ url: m[1].replace(/&amp;/g, '&'), type: detectType(m[1]) });
@@ -136,8 +197,9 @@ async function viaSaveInsta(url) {
   return buildResult('', items);
 }
 
-/* ──────────────────────────────────────────────
-   3. SNAPSAVE ─────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   4. SNAPSAVE — action.php
+   ───────────────────────────────────────────────────────────── */
 async function viaSnapSave(url) {
   const { data } = await axios.post(
     'https://snapsave.app/action.php',
@@ -152,10 +214,8 @@ async function viaSnapSave(url) {
       timeout: 20000,
     }
   );
-
   const html = typeof data === 'string' ? data : (data?.data || '');
   if (!html) throw new Error('snapsave: empty response');
-
   const items = [];
   for (const m of html.matchAll(/href=["'](https?:\/\/[^"']*(?:cdninstagram|fbcdn|\.mp4)[^"']*?)["']/g)) {
     items.push({ url: m[1].replace(/&amp;/g, '&'), type: detectType(m[1]) });
@@ -163,8 +223,9 @@ async function viaSnapSave(url) {
   return buildResult('', items);
 }
 
-/* ──────────────────────────────────────────────
-   4. IGDOWNLOADER.APP ─────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   5. IGDOWNLOADER.APP
+   ───────────────────────────────────────────────────────────── */
 async function viaIgDownloader(url) {
   const { data } = await axios.post(
     'https://igdownloader.app/api/ajaxSearch',
@@ -180,10 +241,8 @@ async function viaIgDownloader(url) {
       timeout: 20000,
     }
   );
-
   const html = data?.data;
   if (!html || typeof html !== 'string') throw new Error('igdownloader: empty');
-
   const items = [];
   for (const m of html.matchAll(/["'](https?:\/\/[^"']*(?:cdninstagram|fbcdn)[^"']*\.(?:mp4|jpg|jpeg|png)[^"']*?)["']/g)) {
     if (!m[1].includes('static.cdninstagram')) items.push({ url: m[1], type: detectType(m[1]) });
@@ -191,8 +250,9 @@ async function viaIgDownloader(url) {
   return buildResult('', items);
 }
 
-/* ──────────────────────────────────────────────
-   5. INSTAVIDEOSAVE ───────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   6. INSTAVIDEOSAVE.COM
+   ───────────────────────────────────────────────────────────── */
 async function viaInstaVideoSave(url) {
   const { data } = await axios.post(
     'https://instavideosave.com/api/ajaxSearch',
@@ -208,10 +268,8 @@ async function viaInstaVideoSave(url) {
       timeout: 20000,
     }
   );
-
   const html = data?.data;
   if (!html || typeof html !== 'string') throw new Error('instavideosave: empty');
-
   const items = [];
   for (const m of html.matchAll(/["'](https?:\/\/[^"']*(?:cdninstagram|fbcdn|\.mp4)[^"']*?)["']/g)) {
     items.push({ url: m[1], type: detectType(m[1]) });
@@ -219,21 +277,49 @@ async function viaInstaVideoSave(url) {
   return buildResult('', items);
 }
 
-/* ──────────────────────────────────────────────
-   MAIN ────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   7. RYZEN API
+   ───────────────────────────────────────────────────────────── */
+async function viaRyzen(url) {
+  const r = await axios.get('https://api.ryzendesu.vip/api/downloader/igdl', {
+    params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
+  });
+  const d = r.data;
+  if (d?.data?.length > 0) return buildResult('', d.data);
+  throw new Error('ryzen: empty');
+}
+
+/* ─────────────────────────────────────────────────────────────
+   8. VREDEN API
+   ───────────────────────────────────────────────────────────── */
+async function viaVreden(url) {
+  const r = await axios.get('https://api.vreden.my.id/api/igdl', {
+    params: { url }, headers: { 'User-Agent': UA }, timeout: 15000,
+  });
+  const d = r.data;
+  const items = d?.result?.response || d?.data || [];
+  if (items.length > 0) return buildResult(d?.result?.caption || '', items);
+  throw new Error('vreden: empty');
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MAIN
+   ───────────────────────────────────────────────────────────── */
 async function igDownload(url) {
   if (!url || typeof url !== 'string') throw new Error('Invalid URL');
   if (!url.includes('instagram.com'))  throw new Error('Not an Instagram URL');
 
-  // Clean up — remove query params, normalize trailing slash
   const cleanUrl = url.split('?')[0].replace(/\/+$/, '') + '/';
 
   const providers = [
     ['embed',          viaEmbed],
-    ['saveinsta',      viaSaveInsta],
+    ['saveinsta.to',   viaSaveInstaDotTo],
+    ['saveinsta.app',  viaSaveInstaApp],
     ['snapsave',       viaSnapSave],
     ['igdownloader',   viaIgDownloader],
     ['instavideosave', viaInstaVideoSave],
+    ['ryzen',          viaRyzen],
+    ['vreden',         viaVreden],
   ];
 
   const errors = [];
