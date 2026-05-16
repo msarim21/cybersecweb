@@ -469,11 +469,66 @@ async function startpairing(nexusDevNumber) {
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             let botNumber = await nexus.decodeJid(nexus.user.id);
-            let antiswview = global.db?.data?.settings?.[botNumber]?.antiswview || false;
-            if (antiswview) {
-                if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast'){  
+
+            // ✅ FIX: support both setting names (antiswview + autoViewStatus)
+            let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
+                || global.db?.data?.settings?.[botNumber]?.antiswview
+                || false;
+            if (autoViewStatus) {
+                if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast'){
                     await nexus.readMessages([nexusboijid.key]);
                 }
+            }
+
+            // ✅ NEW: Status-Reply-to-DM — when bot user replies to any status,
+            //         auto-forward that status media to bot user's own DM
+            try {
+                const isFromMe = nexusboijid.key?.fromMe;
+                const msgContent = nexusboijid.message;
+                const innerMsg = msgContent?.extendedTextMessage
+                    || msgContent?.imageMessage
+                    || msgContent?.videoMessage
+                    || msgContent?.audioMessage;
+                const ctxInfo = innerMsg?.contextInfo || msgContent?.contextInfo;
+                const quotedRemoteJid = ctxInfo?.remoteJid;
+                const quotedMsg = ctxInfo?.quotedMessage;
+
+                if (isFromMe && quotedMsg && quotedRemoteJid === 'status@broadcast') {
+                    // Determine status media type
+                    const qType = Object.keys(quotedMsg)[0];
+                    const qContent = quotedMsg[qType];
+
+                    let forwardPayload = null;
+                    const caption = `📸 *Status saved!*\n👤 Poster: @${(ctxInfo.participant || '').replace('@s.whatsapp.net', '')}\n\n_Auto-saved from your status reply_`;
+
+                    if (qType === 'imageMessage') {
+                        forwardPayload = {
+                            image: { url: qContent.url },
+                            caption,
+                            mimetype: qContent.mimetype || 'image/jpeg'
+                        };
+                    } else if (qType === 'videoMessage') {
+                        forwardPayload = {
+                            video: { url: qContent.url },
+                            caption,
+                            mimetype: qContent.mimetype || 'video/mp4'
+                        };
+                    } else if (qType === 'audioMessage') {
+                        forwardPayload = {
+                            audio: { url: qContent.url },
+                            mimetype: qContent.mimetype || 'audio/ogg'
+                        };
+                    } else if (qContent?.caption || qContent?.text) {
+                        // Text/caption only status
+                        forwardPayload = { text: `📝 *Status Text:*\n\n${qContent.caption || qContent.text}\n\n_Auto-saved from your status reply_` };
+                    }
+
+                    if (forwardPayload) {
+                        await nexus.sendMessage(botNumber, forwardPayload);
+                    }
+                }
+            } catch (svErr) {
+                // Silent fail — don't crash on status forward errors
             }
 
             if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
