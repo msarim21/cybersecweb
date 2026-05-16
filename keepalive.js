@@ -47,13 +47,13 @@ function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Ping every 14 minutes — safe margin under Heroku's 30-min sleep threshold
-    _timer = setInterval(selfPing, 14 * 60 * 1000);
+    // Ping every 5 minutes — keeps Heroku eco dyno awake reliably
+    _timer = setInterval(selfPing, 5 * 60 * 1000);
 
     // Keep Node.js event loop alive — prevents process exit on empty queue
-    _noopTimer = setInterval(() => {}, 30 * 60 * 1000);
+    _noopTimer = setInterval(() => {}, 10 * 60 * 1000);
 
-    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 14 min)');
+    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 5 min)');
 
     // First ping immediately after 5 seconds
     setTimeout(selfPing, 5000);
