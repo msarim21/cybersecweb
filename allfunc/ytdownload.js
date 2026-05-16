@@ -1,5 +1,4 @@
 const axios = require("axios")
-const ytdl = require("@distube/ytdl-core")
 
 function extractVideoId(url) {
   let videoId = ""
@@ -14,18 +13,9 @@ function extractVideoId(url) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 1: vidssave API (primary)
+   Provider 1: VidsSave API (primary — video + audio)
    ───────────────────────────────────────────────── */
 async function viaVidssave(videoUrl) {
-  const headers = {
-    "accept": "*/*",
-    "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-    "content-type": "application/x-www-form-urlencoded",
-    "origin": "https://vidssave.com",
-    "referer": "https://vidssave.com/",
-    "user-agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36"
-  }
-
   const body = new URLSearchParams()
   body.append("auth", "20250901majwlqo")
   body.append("domain", "api-ak.vidssave.com")
@@ -35,11 +25,26 @@ async function viaVidssave(videoUrl) {
   const res = await axios.post(
     "https://api.vidssave.com/api/contentsite_api/media/parse",
     body.toString(),
-    { headers, timeout: 20000 }
+    {
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "origin": "https://vidssave.com",
+        "referer": "https://vidssave.com/",
+        "user-agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9"
+      },
+      timeout: 30000,
+      maxRedirects: 5
+    }
   )
 
   const data = res.data
-  if (!data.data || data.status !== 1) throw new Error("vidssave: bad response")
+  // Accept status 1 OR any response that has usable data
+  if (!data || (!data.data && data.status !== 1)) {
+    throw new Error("vidssave: bad response (status=" + data?.status + ")")
+  }
+  if (!data.data) throw new Error("vidssave: no data in response")
 
   const info = data.data
   const resources = info.resources || []
@@ -49,14 +54,15 @@ async function viaVidssave(videoUrl) {
     .map(r => ({
       resource_id: r.resource_id,
       quality: r.quality,
-      format: r.format,
+      format: r.format || "MP4",
       size: r.size,
-      size_mb: (r.size / 1024 / 1024).toFixed(2) + " MB",
-      download_url: r.download_url
+      size_mb: r.size ? (r.size / 1024 / 1024).toFixed(2) + " MB" : "? MB",
+      download_url: r.download_url || r.url
     }))
     .sort((a, b) => {
-      const order = ["2160P", "1440P", "1080P", "720P", "480P", "240P", "144P"]
-      return order.indexOf(a.quality) - order.indexOf(b.quality)
+      const order = ["720P", "480P", "360P", "1080P", "1440P", "2160P", "240P", "144P"]
+      const ai = order.indexOf(a.quality), bi = order.indexOf(b.quality)
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
     })
 
   const audioFormats = resources
@@ -64,20 +70,21 @@ async function viaVidssave(videoUrl) {
     .map(r => ({
       resource_id: r.resource_id,
       quality: r.quality,
-      format: r.format,
+      format: r.format || "OPUS",
       size: r.size,
-      size_mb: (r.size / 1024 / 1024).toFixed(2) + " MB",
-      download_url: r.download_url
+      size_mb: r.size ? (r.size / 1024 / 1024).toFixed(2) + " MB" : "? MB",
+      download_url: r.download_url || r.url
     }))
 
   const bestVideo = videoFormats.find(v => v.quality === "720P") || videoFormats[0] || null
-  const bestAudio = audioFormats.find(a => a.quality === "256KBPS") || audioFormats[0] || null
+  // Prefer MP3 for audio if available, else OPUS, else any
+  const bestAudio = audioFormats.find(a => a.format === "MP3") || audioFormats.find(a => a.format === "OPUS") || audioFormats[0] || null
 
   return {
     code: 200,
     timestamp: Date.now(),
     data: {
-      id: info.id || null,
+      id: info.id || extractVideoId(videoUrl) || null,
       title: info.title || null,
       thumbnail: info.thumbnail || null,
       duration: info.duration || null,
@@ -101,73 +108,53 @@ async function viaVidssave(videoUrl) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 2: @distube/ytdl-core  (same approach
-   as pytubefix — direct googlevideo stream URLs,
-   no third-party API needed)
+   Provider 2: DavidCyril API (audio-only fallback)
    ───────────────────────────────────────────────── */
-async function viaYtdlCore(videoUrl) {
-  const info = await ytdl.getInfo(videoUrl, { requestOptions: { timeout: 25000 } })
-  const details = info.videoDetails
+async function viaDavidCyril(query) {
+  // If it's a YouTube URL, extract search terms from it; otherwise use as-is
+  let searchQuery = query
+  if (query.includes("youtu")) {
+    // Use the URL directly - API supports YouTube URLs
+    searchQuery = query
+  }
 
-  // Progressive = video+audio in one stream (like pytubefix progressive=True, mp4)
-  const progressive = info.formats
-    .filter(f => f.hasVideo && f.hasAudio && f.container === "mp4" && f.url)
-    .sort((a, b) => (parseInt(b.qualityLabel) || 0) - (parseInt(a.qualityLabel) || 0))
+  const res = await axios.get("https://apis.davidcyril.name.ng/play", {
+    params: { query: searchQuery, apikey: "" },
+    headers: { "User-Agent": "Mozilla/5.0" },
+    timeout: 30000
+  })
 
-  const videoOnly = info.formats
-    .filter(f => f.hasVideo && !f.hasAudio && f.container === "mp4" && f.url)
-    .sort((a, b) => (parseInt(b.qualityLabel) || 0) - (parseInt(a.qualityLabel) || 0))
+  const data = res.data
+  if (!data.status || !data.result?.download_url) {
+    throw new Error("davidcyril: no audio download url")
+  }
 
-  const audioOnly = info.formats
-    .filter(f => !f.hasVideo && f.hasAudio && f.url)
-    .sort((a, b) => (parseInt(b.audioBitrate) || 0) - (parseInt(a.audioBitrate) || 0))
-
-  const allVideoFormats = [...progressive, ...videoOnly].map(f => ({
-    quality: f.qualityLabel || "unknown",
-    format: f.container || "mp4",
-    size_mb: f.contentLength ? (parseInt(f.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
-    download_url: f.url,
-    has_audio: f.hasAudio
-  }))
-
-  const allAudioFormats = audioOnly.map(f => ({
-    quality: (f.audioBitrate || "?") + "kbps",
-    format: f.container || "webm",
-    size_mb: f.contentLength ? (parseInt(f.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
-    download_url: f.url
-  }))
-
-  const bestVideo = progressive[0] || videoOnly[0] || null
-  const bestAudio = audioOnly[0] || null
-
-  if (!bestVideo) throw new Error("ytdl-core: no usable video stream found")
-
-  const thumb = details.thumbnails?.sort((a, b) => (b.width || 0) - (a.width || 0))[0]?.url || null
-  const durationSec = parseInt(details.lengthSeconds) || 0
-
+  const r = data.result
   return {
     code: 200,
     timestamp: Date.now(),
     data: {
-      id: details.videoId || null,
-      title: details.title || null,
-      thumbnail: thumb,
-      duration: durationSec,
-      duration_formatted: durationSec ? new Date(durationSec * 1000).toISOString().slice(11, 19) : null,
-      video_formats: allVideoFormats,
-      audio_formats: allAudioFormats,
-      best_video: bestVideo ? {
-        quality: bestVideo.qualityLabel || "360p",
-        format: bestVideo.container || "mp4",
-        size: bestVideo.contentLength ? (parseInt(bestVideo.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
-        url: bestVideo.url
-      } : null,
-      best_audio: bestAudio ? {
-        quality: (bestAudio.audioBitrate || "?") + "kbps",
-        format: bestAudio.container || "webm",
-        size: bestAudio.contentLength ? (parseInt(bestAudio.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
-        url: bestAudio.url
-      } : null
+      id: null,
+      title: r.title || "Unknown",
+      thumbnail: r.thumbnail || null,
+      duration: null,
+      duration_formatted: r.duration || null,
+      video_formats: [],
+      audio_formats: [{
+        resource_id: "dc_audio",
+        quality: "128KBPS",
+        format: "MP3",
+        size: null,
+        size_mb: "? MB",
+        download_url: r.download_url
+      }],
+      best_video: null,
+      best_audio: {
+        quality: "128KBPS",
+        format: "MP3",
+        size: "? MB",
+        url: r.download_url
+      }
     }
   }
 }
@@ -176,20 +163,24 @@ async function viaYtdlCore(videoUrl) {
    MAIN — try providers in order
    ───────────────────────────────────────────────── */
 async function ytDownload(videoUrl) {
-  if (!videoUrl) throw new Error("URL tidak boleh kosong")
+  if (!videoUrl) throw new Error("URL required")
 
   const errors = []
 
+  // Provider 1: VidsSave (video + audio)
   try {
     return await viaVidssave(videoUrl)
   } catch (e) {
-    errors.push("vidssave: " + e.message.slice(0, 60))
+    errors.push("vidssave: " + e.message.slice(0, 80))
+    console.error("[ytDownload] VidsSave failed:", e.message)
   }
 
+  // Provider 2: DavidCyril (audio-only fallback)
   try {
-    return await viaYtdlCore(videoUrl)
+    return await viaDavidCyril(videoUrl)
   } catch (e) {
-    errors.push("ytdl-core: " + e.message.slice(0, 60))
+    errors.push("davidcyril: " + e.message.slice(0, 60))
+    console.error("[ytDownload] DavidCyril failed:", e.message)
   }
 
   throw new Error("All YouTube providers failed: " + errors.join(" | "))
