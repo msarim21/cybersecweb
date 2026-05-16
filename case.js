@@ -11487,7 +11487,7 @@ case 'statusdl': {
         if (_quotedType === 'imageMessage') {
             await devtrust.sendMessage(m.chat, { image: _buf, caption: _mediaData.caption || '📸 *Status Image*' }, { quoted: m });
         } else if (_quotedType === 'videoMessage') {
-            await devtrust.sendMessage(m.chat, { video: _buf, caption: _mediaData.caption || '🎥 *Status Video*', mimetype: 'video/mp4' }, { quoted: m });
+            await devtrust.sendMessage(m.chat, { video: _buf, caption: _mediaData.caption || '🎥 *Status Video*', mimetype: _mediaData.mimetype || 'video/mp4' }, { quoted: m });
         } else if (_quotedType === 'audioMessage') {
             await devtrust.sendMessage(m.chat, { audio: _buf, mimetype: 'audio/mp4', ptt: false }, { quoted: m });
         } else if (_quotedType === 'documentMessage') {
