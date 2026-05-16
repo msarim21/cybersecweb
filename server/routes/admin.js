@@ -1,3 +1,65 @@
+
+// ── Adult Secret Code Management ────────────────────────────────────────────
+const fs = require('fs');
+const path = require('path');
+const ADULT_SECRET_FILE = path.join(__dirname, '../../database/adult_secret.json');
+const ADULT_UNLOCKED_FILE = path.join(__dirname, '../../database/adult_unlocked.json');
+
+function getAdultSecret() {
+  try {
+    if (!fs.existsSync(ADULT_SECRET_FILE)) {
+      fs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: 'cybersecpro7898' }));
+    }
+    return JSON.parse(fs.readFileSync(ADULT_SECRET_FILE)).code || 'cybersecpro7898';
+  } catch (e) { return 'cybersecpro7898'; }
+}
+
+function getUnlockedUsers() {
+  try {
+    if (!fs.existsSync(ADULT_UNLOCKED_FILE)) return [];
+    return JSON.parse(fs.readFileSync(ADULT_UNLOCKED_FILE));
+  } catch (e) { return []; }
+}
+
+// GET /api/admin/adult — get current secret code & unlocked users
+router.get('/adult', (req, res) => {
+  try {
+    res.json({ code: getAdultSecret(), unlockedUsers: getUnlockedUsers() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/admin/adult/code — change the secret code
+router.put('/adult/code', (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code || code.trim().length < 4)
+      return res.status(400).json({ error: 'Code must be at least 4 characters.' });
+    const clean = code.trim();
+    fs.mkdirSync(path.join(__dirname, '../../database'), { recursive: true });
+    fs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: clean }, null, 2));
+    res.json({ message: 'Secret code updated.', code: clean });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/admin/adult/user/:phone — remove a specific user from unlocked list
+router.delete('/adult/user/:phone', (req, res) => {
+  try {
+    const phone = req.params.phone;
+    let users = getUnlockedUsers();
+    users = users.filter(u => !u.includes(phone));
+    fs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify(users, null, 2));
+    res.json({ message: 'User access removed.', unlockedUsers: users });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/admin/adult/all — clear all unlocked users
+router.delete('/adult/all', (req, res) => {
+  try {
+    fs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify([], null, 2));
+    res.json({ message: 'All adult access cleared.', unlockedUsers: [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 const express = require('express');
 const router  = express.Router();
 const { protect, adminOnly } = require('../middleware/auth');
