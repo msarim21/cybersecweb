@@ -20,6 +20,7 @@ A full-stack cyberpunk SaaS platform where users sign up, link their WhatsApp nu
   - [Railway](#railway)
   - [Render](#render)
   - [VPS (Ubuntu / Debian)](#vps-ubuntu--debian)
+- [Bot Commands](#bot-commands--650)
 - [Admin Access](#admin-access)
 - [Post-Deployment Checklist](#post-deployment-checklist)
 - [Troubleshooting](#troubleshooting)
@@ -284,8 +285,34 @@ sudo nginx -t && sudo systemctl restart nginx
 sudo certbot --nginx -d yourdomain.com   # free HTTPS via Let's Encrypt
 ```
 
+
 ---
 
+## Bot Commands — 650+
+
+CyberSecPro bot has **650+ commands** across all categories. Use `.menu` or `.allmenu` to see the full list inside WhatsApp.
+
+| # | Category | Commands | Examples |
+|---|---|---|---|
+| 1 | 📋 **Menu** | 30+ | `.menu` `.allmenu` `.aimenu` `.downloadmenu` `.groupmenu` `.toolmenu` |
+| 2 | 🤖 **AI & GPT** | 20+ | `.ai` `.metaai` `.codeai` `.storyai` `.photoai` `.triviaai` `.gpt3` |
+| 3 | ⬇️ **Downloader** | 40+ | `.ytmp3` `.ytmp4` `.tiktok` `.fbdl` `.igdl` `.twitterdl` `.apk` `.statusdl` |
+| 4 | 👥 **Group Management** | 80+ | `.add` `.kick` `.promote` `.demote` `.mute` `.tagall` `.antilink` `.warns` |
+| 5 | 🎭 **Sticker** | 15+ | `.sticker` `.steal` `.tosticker` `.stickerwm` `.toimg` `.tgstickers` |
+| 6 | 🎮 **Fun & Games** | 40+ | `.flirt` `.roast` `.ship` `.truth` `.dare` `.joke` `.quote` `.wouldyou` |
+| 7 | 🛠️ **Tools** | 50+ | `.ping` `.alive` `.speed` `.tempmail2` `.shorturl` `.weather` `.wiki` `.imdb` |
+| 8 | 🖼️ **Image & Logo** | 30+ | `.gfx` `.waifu` `.wallhp` `.carimage` `.cartoonify` `.profile-pictures` |
+| 9 | 🌸 **Anime** | 60+ | `.animedance` `.animekill` `.animelick` `.naruto` `.sasuke` `.miku` `.waifu` |
+| 10 | 👸 **Girl Pics** | 15+ | `.boypic` `.korean-girl` `.japan-girl` `.malaysia-girl` `.tiktokgirl` `.waifu` |
+| 11 | 🔒 **Anti-Spam / Protection** | 25+ | `.antilink` `.antispam` `.antibot` `.antitag` `.antiedit` `.antidel` |
+| 12 | 👑 **Owner Only** | 30+ | `.broadcast` `.pair` `.mode` `.setsudo` `.killswitch` `.buy-panel` |
+| 13 | 💥 **Bug Tools** (Owner) | 20+ | `.buggc` `.megabug` `.ultrabug` `.crashgc` `.nukeattack` `.ghostcrash` |
+| 14 | 🎵 **Voice / TTS** | 10+ | `.tts` `.gtts` `.tomp3` `.bass` `.smooth` |
+| 15 | 📱 **Status** | 10+ | `.statusdl` `.dlstatus` `.autoreactstatusdelay` `.autoviewstatusdelay` |
+
+> **Tip:** Type `.menu` in WhatsApp to see all available commands with descriptions.
+
+---
 ## Admin Access
 
 ### Method 1 — Environment variables (recommended)
