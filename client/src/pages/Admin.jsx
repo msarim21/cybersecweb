@@ -64,6 +64,12 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024);
+  useEffect(() => {
+    const onResize = () => setIsDesktop(window.innerWidth >= 1024);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const [threats, setThreats] = useState([]);
   const [threatSummary, setThreatSummary] = useState({ CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 });
   const [threatTotal, setThreatTotal] = useState(0);
@@ -208,7 +214,7 @@ export default function Admin() {
       {/* ════ SIDEBAR ════ */}
       <motion.aside
         initial={false}
-        animate={{ x: sidebarOpen ? 0 : -260 }}
+        animate={{ x: (sidebarOpen || isDesktop) ? 0 : -260 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         className="fixed top-0 left-0 h-full w-60 z-40 flex flex-col lg:translate-x-0"
         style={{ background: 'rgba(8,3,18,0.96)', backdropFilter: 'blur(30px)', borderRight: '1px solid rgba(255,0,255,0.15)' }}>
