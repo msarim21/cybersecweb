@@ -93,4 +93,19 @@ router.post('/request', protect, async (req, res) => {
   }
 });
 
+// ── GET /api/pairing/status/:number ──────────────────────────────────────────
+// Returns {connected: true} if WhatsApp has confirmed pairing for this number
+router.get('/status/:number', protect, (req, res) => {
+  const clean    = req.params.number.replace(/[^0-9]/g, '');
+  const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
+  if (fsSync.existsSync(flagFile)) {
+    try {
+      const data = JSON.parse(fsSync.readFileSync(flagFile, 'utf-8'));
+      return res.json({ connected: true, ts: data.ts });
+    } catch (_) {}
+    return res.json({ connected: true });
+  }
+  res.json({ connected: false });
+});
+
 module.exports = router;
