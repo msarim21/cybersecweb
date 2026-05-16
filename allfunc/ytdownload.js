@@ -1,5 +1,11 @@
 const axios = require("axios")
 
+// Primary: @distube/ytdl-core (direct YouTube access, no 3rd party API needed)
+let ytdl = null
+try { ytdl = require('@distube/ytdl-core') } catch (e) {
+  try { ytdl = require('ytdl-core') } catch (e2) {}
+}
+
 function extractVideoId(url) {
   let videoId = ""
   if (url.includes("youtu.be/")) {
@@ -13,83 +19,65 @@ function extractVideoId(url) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 1: VidsSave API (primary — cached popular videos)
+   Provider 1: @distube/ytdl-core  (direct, most reliable)
    ───────────────────────────────────────────────── */
-async function viaVidssave(videoUrl) {
-  const body = new URLSearchParams()
-  body.append("auth", "20250901majwlqo")
-  body.append("domain", "api-ak.vidssave.com")
-  body.append("origin", "cache")
-  body.append("link", videoUrl)
+async function viaYtdlCore(videoUrl) {
+  if (!ytdl) throw new Error("ytdl-core: package not found")
 
-  const res = await axios.post(
-    "https://api.vidssave.com/api/contentsite_api/media/parse",
-    body.toString(),
-    {
+  const info = await ytdl.getInfo(videoUrl, {
+    requestOptions: {
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "origin": "https://vidssave.com",
-        "referer": "https://vidssave.com/",
-        "user-agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-        "accept": "application/json, text/plain, */*",
-        "accept-language": "en-US,en;q=0.9"
-      },
-      timeout: 25000,
-      maxRedirects: 5
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
     }
-  )
+  })
 
-  const data = res.data
-  if (!data) throw new Error("vidssave: empty response")
-  if (data.status_code === "not_result" || data.status === "not_result" || String(data.status_code).includes("not_result")) {
-    throw new Error("vidssave: not_result — video not in cache")
-  }
-  if (!data.data) throw new Error("vidssave: no data (status=" + data?.status_code + ")")
+  const videoId = info.videoDetails.videoId
+  const title = info.videoDetails.title
+  const duration = parseInt(info.videoDetails.lengthSeconds) || null
+  const thumbnail = info.videoDetails.thumbnails?.slice(-1)[0]?.url ||
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
 
-  const info = data.data
-  const resources = info.resources || []
-
-  const videoFormats = resources
-    .filter(r => r.type === "video")
-    .map(r => ({
-      resource_id: r.resource_id,
-      quality: r.quality,
-      format: r.format || "MP4",
-      size: r.size,
-      size_mb: r.size ? (r.size / 1024 / 1024).toFixed(2) + " MB" : "? MB",
-      download_url: r.download_url || r.url
+  const videoFormats = ytdl.filterFormats(info.formats, 'videoandaudio')
+    .map(f => ({
+      resource_id: String(f.itag),
+      quality: f.qualityLabel || f.quality || "360p",
+      format: (f.container || "mp4").toUpperCase(),
+      size: f.contentLength ? parseInt(f.contentLength) : null,
+      size_mb: f.contentLength ? (parseInt(f.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "? MB",
+      download_url: f.url
     }))
     .sort((a, b) => {
-      const order = ["720P", "480P", "360P", "1080P", "1440P", "2160P", "240P", "144P"]
-      const ai = order.indexOf(a.quality), bi = order.indexOf(b.quality)
-      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+      const diff = (q) => Math.abs(720 - (parseInt(q) || 0))
+      return diff(a.quality) - diff(b.quality)
     })
 
-  const audioFormats = resources
-    .filter(r => r.type === "audio")
-    .map(r => ({
-      resource_id: r.resource_id,
-      quality: r.quality,
-      format: r.format || "OPUS",
-      size: r.size,
-      size_mb: r.size ? (r.size / 1024 / 1024).toFixed(2) + " MB" : "? MB",
-      download_url: r.download_url || r.url
+  const audioFormats = ytdl.filterFormats(info.formats, 'audioonly')
+    .map(f => ({
+      resource_id: String(f.itag),
+      quality: f.audioBitrate ? f.audioBitrate + 'KBPS' : "128KBPS",
+      format: (f.container === 'webm' || f.mimeType?.includes('opus')) ? 'WEBM' : 'M4A',
+      size: f.contentLength ? parseInt(f.contentLength) : null,
+      size_mb: f.contentLength ? (parseInt(f.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "? MB",
+      download_url: f.url
     }))
+    .sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
 
-  if (!videoFormats.length) throw new Error("vidssave: no video formats found")
+  const bestVideo = videoFormats[0] || null
+  const bestAudio = audioFormats[0] || null
 
-  const bestVideo = videoFormats.find(v => v.quality === "720P") || videoFormats[0] || null
-  const bestAudio = audioFormats.find(a => a.format === "MP3") || audioFormats.find(a => a.format === "OPUS") || audioFormats[0] || null
+  if (!bestVideo && !bestAudio) throw new Error("ytdl-core: no downloadable formats found")
 
   return {
     code: 200,
     timestamp: Date.now(),
     data: {
-      id: info.id || extractVideoId(videoUrl) || null,
-      title: info.title || null,
-      thumbnail: info.thumbnail || null,
-      duration: info.duration || null,
-      duration_formatted: info.duration ? new Date(info.duration * 1000).toISOString().slice(11, 19) : null,
+      id: videoId,
+      title,
+      thumbnail,
+      duration,
+      duration_formatted: duration ? new Date(duration * 1000).toISOString().slice(11, 19) : null,
       video_formats: videoFormats,
       audio_formats: audioFormats,
       best_video: bestVideo ? {
@@ -110,39 +98,38 @@ async function viaVidssave(videoUrl) {
 
 /* ─────────────────────────────────────────────────
    Provider 2: Invidious open-source instances
-   (works for ALL videos including restricted/age-gated)
    ───────────────────────────────────────────────── */
 async function viaInvidious(videoUrl) {
   const videoId = extractVideoId(videoUrl)
   if (!videoId) throw new Error("invidious: invalid YouTube URL")
 
-  // Multiple public Invidious instances — tried in order
   const instances = [
+    "https://inv.nadeko.net",
+    "https://invidious.privacydev.net",
+    "https://yt.artemislena.eu",
     "https://invidious.fdn.fr",
     "https://yewtu.be",
     "https://invidious.perennialte.ch",
     "https://iv.datura.network",
-    "https://yt.artemislena.eu",
-    "https://invidious.nerdvpn.de",
-    "https://inv.nadeko.net",
-    "https://invidious.private.coffee"
+    "https://invidious.private.coffee",
+    "https://invidious.nerdvpn.de"
   ]
 
   for (const instance of instances) {
     try {
       const res = await axios.get(
-        `${instance}/api/v1/videos/${videoId}?fields=title,videoThumbnails,lengthSeconds,formatStreams`,
+        `${instance}/api/v1/videos/${videoId}?fields=title,videoThumbnails,lengthSeconds,formatStreams,adaptiveFormats`,
         {
           headers: {
             "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36",
             "Accept": "application/json"
           },
-          timeout: 18000
+          timeout: 15000
         }
       )
 
       const data = res.data
-      if (!data || data.error || !data.formatStreams) continue
+      if (!data || data.error) continue
 
       const formatStreams = (data.formatStreams || [])
         .filter(f => f.container === "mp4" && f.url)
@@ -155,19 +142,30 @@ async function viaInvidious(videoUrl) {
           download_url: f.url
         }))
 
-      if (!formatStreams.length) continue
+      const adaptiveAudio = (data.adaptiveFormats || [])
+        .filter(f => f.type?.startsWith("audio/") && f.url)
+        .map(f => ({
+          resource_id: String(f.itag || ""),
+          quality: f.bitrate ? Math.round(f.bitrate / 1000) + "KBPS" : "128KBPS",
+          format: f.container?.toUpperCase() === 'WEBM' ? 'WEBM' : 'M4A',
+          size: null,
+          size_mb: "? MB",
+          download_url: f.url
+        }))
+        .sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
 
-      // Sort highest quality first
+      if (!formatStreams.length && !adaptiveAudio.length) continue
+
       formatStreams.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))
 
       const thumb = data.videoThumbnails?.find(t => t.quality === "maxres")?.url ||
-                    data.videoThumbnails?.find(t => t.quality === "high")?.url ||
-                    data.videoThumbnails?.[0]?.url ||
-                    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+        data.videoThumbnails?.find(t => t.quality === "high")?.url ||
+        data.videoThumbnails?.[0]?.url ||
+        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
 
-      const bestVideo = formatStreams.find(v => parseInt(v.quality) <= 720) || formatStreams[0]
+      const bestVideo = formatStreams.find(v => parseInt(v.quality) <= 720) || formatStreams[0] || null
+      const bestAudio = adaptiveAudio[0] || null
 
-      console.log(`[ytDownload] Invidious OK via ${instance}`)
       return {
         code: 200,
         timestamp: Date.now(),
@@ -180,18 +178,22 @@ async function viaInvidious(videoUrl) {
             ? new Date(parseInt(data.lengthSeconds) * 1000).toISOString().slice(11, 19)
             : null,
           video_formats: formatStreams,
-          audio_formats: [],
+          audio_formats: adaptiveAudio,
           best_video: bestVideo ? {
             quality: bestVideo.quality,
             format: "MP4",
             size: "? MB",
             url: bestVideo.download_url
           } : null,
-          best_audio: null
+          best_audio: bestAudio ? {
+            quality: bestAudio.quality,
+            format: bestAudio.format,
+            size: "? MB",
+            url: bestAudio.download_url
+          } : null
         }
       }
     } catch (e) {
-      console.error(`[ytDownload] Invidious ${instance} failed: ${e.message}`)
       continue
     }
   }
@@ -200,26 +202,31 @@ async function viaInvidious(videoUrl) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 3: cobalt.tools public API
+   Provider 3: Cobalt v10 API
    ───────────────────────────────────────────────── */
 async function viaCobalt(videoUrl) {
   const instances = [
-    "https://co.wuk.sh",
-    "https://cobalt.api.onrender.com"
+    "https://cobalt.api.void.cat",
+    "https://cobalt.ggtyler.dev",
+    "https://cobalt.drgns.space",
+    "https://cobalt.privacyredirect.com"
   ]
 
   for (const base of instances) {
     try {
       const res = await axios.post(
-        `${base}/api/json`,
-        { url: videoUrl, vQuality: "720", isAudioOnly: false, filenamePattern: "basic" },
+        `${base}/`,
+        { url: videoUrl, videoQuality: "720", filenameStyle: "basic" },
         {
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
           timeout: 15000
         }
       )
       const d = res.data
-      if (!d || d.status === "error" || d.status === "rate-limit" || !d.url) continue
+      if (!d || d.status === "error" || !d.url) continue
 
       const videoId = extractVideoId(videoUrl)
       return {
@@ -231,7 +238,14 @@ async function viaCobalt(videoUrl) {
           thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
           duration: null,
           duration_formatted: null,
-          video_formats: [{ resource_id: "cobalt", quality: "720P", format: "MP4", size: null, size_mb: "? MB", download_url: d.url }],
+          video_formats: [{
+            resource_id: "cobalt",
+            quality: "720P",
+            format: "MP4",
+            size: null,
+            size_mb: "? MB",
+            download_url: d.url
+          }],
           audio_formats: [],
           best_video: { quality: "720P", format: "MP4", size: "? MB", url: d.url },
           best_audio: null
@@ -245,91 +259,96 @@ async function viaCobalt(videoUrl) {
 }
 
 /* ─────────────────────────────────────────────────
-   Provider 4: DavidCyril API (audio-only last resort)
+   Provider 4: DavidCyril API (audio search fallback)
    ───────────────────────────────────────────────── */
 async function viaDavidCyril(query) {
-  const res = await axios.get("https://apis.davidcyril.name.ng/play", {
-    params: { query, apikey: "" },
-    headers: { "User-Agent": "Mozilla/5.0" },
-    timeout: 25000
-  })
+  const endpoints = [
+    `https://apis.davidcyriltech.my.id/play?query=${encodeURIComponent(query)}`,
+    `https://apis.davidcyril.name.ng/play?query=${encodeURIComponent(query)}&apikey=`
+  ]
 
-  const data = res.data
-  if (!data.status || !data.result?.download_url) {
-    throw new Error("davidcyril: no audio download url")
-  }
+  for (const url of endpoints) {
+    try {
+      const res = await axios.get(url, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 20000
+      })
+      const data = res.data
+      const downloadUrl = data?.result?.download_url || data?.download_url || data?.url
+      if (!downloadUrl) continue
 
-  const r = data.result
-  return {
-    code: 200,
-    timestamp: Date.now(),
-    data: {
-      id: null,
-      title: r.title || "Unknown",
-      thumbnail: r.thumbnail || null,
-      duration: null,
-      duration_formatted: r.duration || null,
-      video_formats: [],
-      audio_formats: [{
-        resource_id: "dc_audio",
-        quality: "128KBPS",
-        format: "MP3",
-        size: null,
-        size_mb: "? MB",
-        download_url: r.download_url
-      }],
-      best_video: null,
-      best_audio: {
-        quality: "128KBPS",
-        format: "MP3",
-        size: "? MB",
-        url: r.download_url
+      const r = data.result || data
+      return {
+        code: 200,
+        timestamp: Date.now(),
+        data: {
+          id: null,
+          title: r.title || "Unknown",
+          thumbnail: r.thumbnail || null,
+          duration: null,
+          duration_formatted: r.duration || null,
+          video_formats: [],
+          audio_formats: [{
+            resource_id: "dc_audio",
+            quality: "128KBPS",
+            format: "MP3",
+            size: null,
+            size_mb: "? MB",
+            download_url: downloadUrl
+          }],
+          best_video: null,
+          best_audio: {
+            quality: "128KBPS",
+            format: "MP3",
+            size: "? MB",
+            url: downloadUrl
+          }
+        }
       }
+    } catch (e) {
+      continue
     }
   }
+  throw new Error("davidcyril: no audio download url")
 }
 
 /* ─────────────────────────────────────────────────
-   MAIN — try 4 providers in order, fallback chain
+   MAIN — try providers in order, fallback chain
    ───────────────────────────────────────────────── */
 async function ytDownload(videoUrl) {
   if (!videoUrl) throw new Error("URL required")
 
   const errors = []
 
-  // Provider 1: VidsSave (fast for popular/cached videos)
+  // Provider 1: @distube/ytdl-core (best — direct, no API limits)
   try {
-    const r = await viaVidssave(videoUrl)
-    if (r.data?.video_formats?.length || r.data?.best_video) return r
+    const r = await viaYtdlCore(videoUrl)
+    if (r.data?.best_video || r.data?.best_audio) return r
   } catch (e) {
-    errors.push("vidssave: " + e.message.slice(0, 80))
-    console.error("[ytDownload] VidsSave failed:", e.message)
+    errors.push("ytdl: " + e.message.slice(0, 80))
   }
 
-  // Provider 2: Invidious (works for all videos — most reliable)
+  // Provider 2: Invidious
   try {
     const r = await viaInvidious(videoUrl)
-    if (r.data?.video_formats?.length || r.data?.best_video) return r
+    if (r.data?.best_video || r.data?.best_audio) return r
   } catch (e) {
     errors.push("invidious: " + e.message.slice(0, 80))
-    console.error("[ytDownload] Invidious failed:", e.message)
   }
 
-  // Provider 3: cobalt.tools
+  // Provider 3: Cobalt
   try {
     const r = await viaCobalt(videoUrl)
     if (r.data?.best_video) return r
   } catch (e) {
     errors.push("cobalt: " + e.message.slice(0, 60))
-    console.error("[ytDownload] Cobalt failed:", e.message)
   }
 
-  // Provider 4: DavidCyril (audio-only last resort)
+  // Provider 4: DavidCyril (audio search)
   try {
     return await viaDavidCyril(videoUrl)
   } catch (e) {
     errors.push("davidcyril: " + e.message.slice(0, 60))
-    console.error("[ytDownload] DavidCyril failed:", e.message)
   }
 
   throw new Error("Sab YouTube providers fail: " + errors.join(" | "))
