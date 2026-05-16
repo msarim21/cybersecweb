@@ -5,6 +5,7 @@ const readline = require('readline');
 const chalk = require('chalk');
 const figlet = require('figlet');
 const { startupPassword } = require('./nexstore/token');
+const { startKeepAlive } = require('./keepalive');
 
 const AUTH_FILE = './auth.json';
 const PAIRING_DIR = './nexstore/pairing/';
@@ -120,6 +121,9 @@ const initializeBot = async () => {
 function launchBot() {
     console.clear();
     console.log(chalk.green('𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 sᴏʟᴏs ᴀʟʟ....\n'));
+
+    // 24/7 keep-alive — prevents hosting platform from sleeping the bot
+    try { startKeepAlive(); } catch (e) {}
 
     let telegramLoaded = false;
     let whatsappLoaded = false;
