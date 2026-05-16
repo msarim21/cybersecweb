@@ -11492,7 +11492,6 @@ break;
 case 'dlstatus':
 case 'swdl':
 case 'statusdl': {
-    if (!isCreator) return reply('🔒 *Owner only*');
     const _m = m.message;
     const _type = Object.keys(_m)[0];
     const _ctxInfo = _m[_type]?.contextInfo;
