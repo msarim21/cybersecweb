@@ -872,6 +872,14 @@ async function startpairing(nexusDevNumber) {
             // Persist active status to DB
             updateSession(nexusDevNumber, 'active').catch(() => {});
 
+            // Write connected flag so web panel can auto-save the number
+            try {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const flagDir  = path.join(process.cwd(), 'nexstore', 'pairing', cleanNum);
+                if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
+                fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
+            } catch (_) {}
+
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
@@ -1053,3 +1061,23 @@ fs.watchFile(file, () => {
 })
 
 module.exports = startpairing;
+
+// ── stopBot: externally kill a running bot session ────────────────────────
+module.exports.stopBot = function stopBot(number) {
+    const clean = String(number).replace(/[^0-9]/g, '');
+    const jid   = clean + '@s.whatsapp.net';
+    [jid, clean].forEach(key => {
+        const tracker = rentbotTracker.get(key);
+        if (tracker) {
+            tracker.disconnected = true;
+            if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
+            try { tracker.connection?.ws?.terminate(); } catch (_) {}
+            rentbotTracker.delete(key);
+        }
+    });
+    // Remove connected flag
+    try {
+        const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
+        if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
+    } catch (_) {}
+};
