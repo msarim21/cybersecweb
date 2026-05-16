@@ -163,20 +163,26 @@ const SiteAudioPlayer = ({ audioUrl }) => {
 
   if (!audioUrl) return null;
   const btnColor = !playing ? '#8b5cf6' : muted ? '#ff4444' : '#00f5ff';
+  const btnLabel = !playing ? 'PLAY' : muted ? 'UNMUTE' : 'MUTE';
+  const btnIcon  = !playing ? '▶' : muted ? '🔇' : '🔊';
   return (
-    <div className="fixed bottom-20 lg:bottom-6 right-4 z-30">
+    <div className="fixed bottom-20 lg:bottom-6 right-4 z-30 flex flex-col items-center gap-1">
       <audio ref={audioRef} src={audioUrl} />
       <motion.button
-        whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+        whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
         onClick={toggle}
-        className="w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-lg"
+        className="flex items-center gap-2 px-4 py-2 rounded-2xl shadow-xl font-mono text-xs tracking-widest"
         style={{
-          background: `${btnColor}dd`,
-          border: `1px solid ${btnColor}`,
-          boxShadow: `0 0 16px ${btnColor}66`
+          background: `${btnColor}22`,
+          border: `1.5px solid ${btnColor}`,
+          color: btnColor,
+          boxShadow: `0 0 18px ${btnColor}55`,
+          minWidth: '90px',
+          justifyContent: 'center',
         }}
-        title={!playing ? 'Play music' : muted ? 'Unmute' : 'Mute'}>
-        {!playing ? '▶' : muted ? '🔇' : '🔊'}
+        title={btnLabel}>
+        <span className="text-base">{btnIcon}</span>
+        <span>{btnLabel}</span>
       </motion.button>
     </div>
   );
