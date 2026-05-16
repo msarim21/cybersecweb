@@ -115,8 +115,9 @@ function saveSudoList(data) {
 // ============ ADULT UNLOCK SYSTEM ============
 const ADULT_FILE        = './database/adult_unlocked.json';
 const ADULT_SECRET_FILE = './database/adult_secret.json';
+const ADULT_BANNED_FILE = './database/adult_banned.json';
+const BOT_DISABLED_FILE = './database/bot_disabled.json';
 
-// Load/save unlocked users list
 function loadAdultData() {
   try {
     if (!fs.existsSync(ADULT_FILE)) fs.writeFileSync(ADULT_FILE, JSON.stringify([]));
@@ -128,7 +129,36 @@ function saveAdultData(data) {
   catch (e) { return false; }
 }
 
-// Load/save the admin-configured secret code
+// Permanently banned from 18+ (cannot re-unlock even with secret code)
+function loadAdultBanned() {
+  try {
+    if (!fs.existsSync(ADULT_BANNED_FILE)) fs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify([]));
+    return JSON.parse(fs.readFileSync(ADULT_BANNED_FILE));
+  } catch (e) { return []; }
+}
+function saveAdultBanned(data) {
+  try { fs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(data, null, 2)); return true; }
+  catch (e) { return false; }
+}
+function isAdultBanned(senderId) {
+  return loadAdultBanned().includes(senderId);
+}
+
+// Bot disabled numbers (admin can turn bot off for specific numbers)
+function loadBotDisabled() {
+  try {
+    if (!fs.existsSync(BOT_DISABLED_FILE)) fs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify([]));
+    return JSON.parse(fs.readFileSync(BOT_DISABLED_FILE));
+  } catch (e) { return []; }
+}
+function saveBotDisabled(data) {
+  try { fs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify(data, null, 2)); return true; }
+  catch (e) { return false; }
+}
+function isBotDisabled(senderId) {
+  return loadBotDisabled().includes(senderId);
+}
+
 function loadAdultSecret() {
   try {
     if (!fs.existsSync(ADULT_SECRET_FILE)) {
@@ -142,7 +172,7 @@ function loadAdultSecret() {
 global.adultUnlocked = loadAdultData();
 
 function isAdultUnlocked(senderId) {
-  return global.adultUnlocked.includes(senderId);
+  return global.adultUnlocked.includes(senderId) && !isAdultBanned(senderId);
 }
 // =============================================
 // ========================================
@@ -3943,6 +3973,11 @@ if (getSetting(m.sender, "autoread", false)) {
 if (getSetting(m.sender, "banned", false)) {
     await reply(`⛔ You are banned from using this bot, @${m.sender.split('@')[0]}`, [m.sender])
     return
+}
+
+// ======================[ BOT DISABLED CHECK ]======================
+if (!isCreator && isBotDisabled(m.sender)) {
+    return; // Silently ignore — bot is off for this number
 }
 
 // ======================[ 🔇 MUTED USERS CHECK ]======================
@@ -12401,13 +12436,17 @@ break;
 case 'addkey':
 case 'addsecret': {
     const secretInput = text ? text.trim() : '';
+    const senderId = m.sender;
+    // Check if permanently banned — cannot unlock even with correct code
+    if (isAdultBanned(senderId)) {
+        return reply(`🚫 *Access Permanently Blocked!*\n\nAapko admin ne permanently 18+ access se ban kar diya hai.\nBot admin se contact karein.`);
+    }
     if (!secretInput) {
         return reply(`🔐 *CYBER Secret Access*\n\nUsage: ${prefix}addkey [code]\nExample: ${prefix}addkey xxxxxxxx\n\n🔞 Ye command 18+ content unlock karta hai.`);
     }
     if (secretInput !== loadAdultSecret()) {
         return reply(`❌ *Wrong secret code!*\n\nPlease enter the correct secret code to unlock 18+ content.`);
     }
-    const senderId = m.sender;
     if (!global.adultUnlocked.includes(senderId)) {
         global.adultUnlocked.push(senderId);
         saveAdultData(global.adultUnlocked);
@@ -12420,31 +12459,72 @@ break;
 
 case 'removekey':
 case 'removesecret': {
-    const _selfId = m.sender;
-    // Admin/owner can remove any user; regular users can only remove themselves
-    const targetId = isCreator
-        ? (m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null))
-        : null;
-
-    if (isCreator && !targetId) {
-        // Owner with no target = clear all
+    if (!isCreator) {
+        // Regular user removing themselves
+        const _selfId = m.sender;
+        if (!global.adultUnlocked.includes(_selfId)) {
+            return reply(`ℹ️ *Already Locked*\n\n🔞 Aapka 18+ content pehle se hide hai.\n💡 Unlock karne ke liye: *${prefix}addkey [code]*`);
+        }
+        global.adultUnlocked = global.adultUnlocked.filter(id => id !== _selfId);
+        saveAdultData(global.adultUnlocked);
+        return reply(`✅ *18+ Content Hidden!*\n\n🔒 Aapka 18+ access remove ho gaya.\n💡 Dobara unlock karne ke liye: *${prefix}addkey [code]*`);
+    }
+    const targetId = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
+    if (!targetId) {
+        // Clear all
         global.adultUnlocked = [];
         saveAdultData(global.adultUnlocked);
         return reply('✅ *All users 18+ access removed.*');
     }
-    if (isCreator && targetId) {
-        // Owner removing specific user
-        global.adultUnlocked = global.adultUnlocked.filter(id => id !== targetId);
-        saveAdultData(global.adultUnlocked);
-        return reply(`✅ User ka 18+ access remove kar diya.`);
-    }
-    // Regular user removing themselves
-    if (!global.adultUnlocked.includes(_selfId)) {
-        return reply(`ℹ️ *Already Locked*\n\n🔞 Aapka 18+ content pehle se hide hai.\n💡 Unlock karne ke liye: *${prefix}addkey [code]*`);
-    }
-    global.adultUnlocked = global.adultUnlocked.filter(id => id !== _selfId);
+    // Remove access only (can re-add with code)
+    global.adultUnlocked = global.adultUnlocked.filter(id => id !== targetId);
     saveAdultData(global.adultUnlocked);
-    return reply(`✅ *18+ Content Hidden!*\n\n🔒 Aapka 18+ access remove ho gaya.\n💡 Dobara unlock karne ke liye: *${prefix}addkey [code]*`);
+    return reply(`✅ *18+ Access Removed!*\n👤 @${targetId.split('@')[0]} ka 18+ access remove kar diya.\n\n💡 Permanent ban ke liye use karein: *${prefix}bankey @user*`, [targetId]);
+}
+break;
+
+case 'bankey': {
+    if (!isCreator) return reply('🔒 *Admin only*');
+    const _banTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
+    if (!_banTarget) return reply(`🚫 *Usage:* ${prefix}bankey @user\n_Permanently block 18+ access for a user_`);
+    const _banned = loadAdultBanned();
+    if (!_banned.includes(_banTarget)) _banned.push(_banTarget);
+    saveAdultBanned(_banned);
+    // Also remove from unlocked list
+    global.adultUnlocked = global.adultUnlocked.filter(id => id !== _banTarget);
+    saveAdultData(global.adultUnlocked);
+    return reply(`🚫 *Permanently Banned!*\n👤 @${_banTarget.split('@')[0]} ko 18+ access se permanently ban kar diya.\nWo ab .addkey command use nahi kar sakta.\n\n_Unban ke liye: ${prefix}unbankey @user_`, [_banTarget]);
+}
+break;
+
+case 'unbankey': {
+    if (!isCreator) return reply('🔒 *Admin only*');
+    const _unbanTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
+    if (!_unbanTarget) return reply(`✅ *Usage:* ${prefix}unbankey @user\n_Remove permanent 18+ ban from a user_`);
+    const _bannedList = loadAdultBanned().filter(id => id !== _unbanTarget);
+    saveAdultBanned(_bannedList);
+    return reply(`✅ *Unbanned!*\n👤 @${_unbanTarget.split('@')[0]} ka permanent 18+ ban remove kar diya.\nAb wo .addkey use kar sakta hai.`, [_unbanTarget]);
+}
+break;
+
+case 'botoff': {
+    if (!isCreator) return reply('🔒 *Admin only*');
+    const _offTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
+    if (!_offTarget) return reply(`⚙️ *Usage:* ${prefix}botoff @user\n_Turn off bot for a specific number_`);
+    const _disabled = loadBotDisabled();
+    if (!_disabled.includes(_offTarget)) _disabled.push(_offTarget);
+    saveBotDisabled(_disabled);
+    return reply(`🔴 *Bot OFF!*\n👤 @${_offTarget.split('@')[0]} ke liye bot band kar diya.\n_Dobara on karne ke liye: ${prefix}boton @user_`, [_offTarget]);
+}
+break;
+
+case 'boton': {
+    if (!isCreator) return reply('🔒 *Admin only*');
+    const _onTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
+    if (!_onTarget) return reply(`⚙️ *Usage:* ${prefix}boton @user\n_Turn on bot for a specific number_`);
+    const _enabledList = loadBotDisabled().filter(id => id !== _onTarget);
+    saveBotDisabled(_enabledList);
+    return reply(`🟢 *Bot ON!*\n👤 @${_onTarget.split('@')[0]} ke liye bot chalu kar diya.`, [_onTarget]);
 }
 break;
 
