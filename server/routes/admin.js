@@ -150,4 +150,29 @@ router.get('/audio', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Security Threats ────────────────────────────────────────────────────────
+// Returns the in-memory security threat log captured by server/index.js
+router.get('/security', (req, res) => {
+  const { limit = 100, severity, type } = req.query;
+  let threats = global.securityThreats || [];
+  if (severity) threats = threats.filter(t => t.severity === severity);
+  if (type)     threats = threats.filter(t => t.type     === type);
+  res.json({
+    total:   (global.securityThreats || []).length,
+    threats: threats.slice(0, parseInt(limit)),
+    summary: {
+      CRITICAL: (global.securityThreats || []).filter(t => t.severity === 'CRITICAL').length,
+      HIGH:     (global.securityThreats || []).filter(t => t.severity === 'HIGH').length,
+      MEDIUM:   (global.securityThreats || []).filter(t => t.severity === 'MEDIUM').length,
+      LOW:      (global.securityThreats || []).filter(t => t.severity === 'LOW').length,
+    },
+  });
+});
+
+// DELETE /api/admin/security — clear threat log
+router.delete('/security', (req, res) => {
+  global.securityThreats = [];
+  res.json({ message: 'Security log cleared.' });
+});
+
 module.exports = router;
