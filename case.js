@@ -11068,21 +11068,22 @@ case 'video':
 case 'mp4':
 case 'ytvideo': {
     if (!text) {
-        return reply(`🎬 *YouTube Video Downloader*\n\nUsage: ${prefix}video <song name or YouTube link>\nExample: ${prefix}video shape of you\nExample: ${prefix}video https://youtu.be/dQw4w9WgXcQ`);
+        return reply(`🎬 *YouTube Video Downloader*\n\nUsage: ${prefix}video <song name or YouTube URL>\nExample: ${prefix}video shape of you\nExample: ${prefix}video https://youtu.be/dQw4w9WgXcQ`);
     }
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
 
-        // ── 1. Resolve URL (search by name if not a direct link) ─────────────
+        // ── 1. Resolve URL ────────────────────────────────────────────────
         let videoUrl = text;
         let videoInfo = null;
         const yts = require('yt-search');
+
         if (text.includes('youtube.com') || text.includes('youtu.be')) {
             let videoId = null;
             if (text.includes('/shorts/')) {
                 videoId = text.split('/shorts/')[1].split('?')[0].split('/')[0].trim();
             } else {
-                videoId = text.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i)?.[1];
+                videoId = text.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i)?.[1];
             }
             if (videoId) {
                 const r = await yts({ videoId });
@@ -11098,97 +11099,69 @@ case 'ytvideo': {
             videoUrl = videoInfo.url;
         }
 
-        // ── 2. Fetch all formats via VidsSave API ─────────────────────────────
+        reply(`🔍 Found: *${videoInfo?.title || text}*\n⏳ Fetching video...`);
+
+        // ── 2. Get video formats via VidsSave API ─────────────────────────
         const result = await ytDownload(videoUrl);
-        if (!result?.data) throw new Error('Could not fetch video info');
+        if (!result?.data) throw new Error('Could not fetch video info from API');
 
-        const info      = result.data;
-        const vidFmts   = info.video_formats || [];
-        const audioFmts = info.audio_formats || [];
+        const info    = result.data;
+        const vidFmts = info.video_formats || [];
+        if (!vidFmts.length && !info.best_video) throw new Error('No video formats available');
 
-        if (!vidFmts.length && !info.best_video) throw new Error('No video formats found');
+        // ── 3. Pick best quality ≤ 480P for WhatsApp limits ───────────────
+        const preferred = ['480P', '360P', '720P', '240P', '144P', '1080P'];
+        let chosen = null;
+        for (const q of preferred) {
+            chosen = vidFmts.find(f => f.quality === q);
+            if (chosen) break;
+        }
+        if (!chosen) chosen = vidFmts[vidFmts.length - 1] || info.best_video;
 
-        // Build quality menu from actual available formats
-        const menuFmts = vidFmts.length ? vidFmts : [info.best_video];
-        const qualityMenu = menuFmts.map((f, i) => `*${i + 1}.* ${f.quality} — ${f.format} (${f.size_mb})`).join('\n');
-
-        // ── 3. Show info card with quality menu ───────────────────────────────
-        const thumb = videoInfo?.thumbnail || (info.thumbnail ? info.thumbnail : null);
+        const dlUrl   = chosen.download_url || chosen.url;
         const titleStr = info.title || videoInfo?.title || 'Unknown Title';
         const duration = info.duration_formatted || videoInfo?.timestamp || 'N/A';
-        const channel  = videoInfo?.author?.name || 'Unknown';
-        const views    = videoInfo?.views ? videoInfo.views.toLocaleString() : 'N/A';
+        const thumb    = info.thumbnail || videoInfo?.thumbnail || null;
+        const sizeMB   = chosen.size_mb || chosen.size || '? MB';
 
-        const caption =
-            `🎬 *${titleStr}*\n\n` +
-            `⏱️ *Duration:* ${duration}\n` +
-            `👤 *Channel:* ${channel}\n` +
-            `👀 *Views:* ${views}\n\n` +
-            `📋 *Available Qualities:*\n${qualityMenu}\n\n` +
-            `📌 *Reply with a number* to download that quality`;
+        reply(`🎬 *${titleStr}*\n⏱️ ${duration} | 🎚️ ${chosen.quality} MP4 (${sizeMB})\n⬇️ Downloading...`);
 
-        const sentMsg = await devtrust.sendMessage(
-            m.chat,
-            addNewsletterContext(thumb
-                ? { image: { url: thumb }, caption }
-                : { text: caption }),
-            { quoted: m }
-        );
+        // ── 4. Download buffer ────────────────────────────────────────────
+        const videoResp = await axios.get(dlUrl, {
+            responseType: 'arraybuffer',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36',
+                'referer': 'https://vidssave.com/',
+                'origin': 'https://vidssave.com'
+            },
+            timeout: 300000,
+            maxRedirects: 10,
+            maxContentLength: 200 * 1024 * 1024
+        });
+        const videoBuf = Buffer.from(videoResp.data);
+        const actualMB = (videoBuf.length / (1024 * 1024)).toFixed(2);
 
-        // ── 4. Wait for user quality selection ────────────────────────────────
-        const _videoHandler = async (messageUpdate) => {
-            try {
-                const msgData  = messageUpdate?.messages[0];
-                if (!msgData?.message) return;
-                const replyTxt = (msgData.message.extendedTextMessage?.text || msgData.message.conversation || '').trim();
-                const stanzaId = msgData.message.extendedTextMessage?.contextInfo?.stanzaId;
-                if (stanzaId !== sentMsg?.key?.id) return;
-                const sel = parseInt(replyTxt);
-                if (isNaN(sel) || sel < 1 || sel > menuFmts.length) return;
+        // ── 5. Send thumbnail then video ──────────────────────────────────
+        if (thumb) {
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({ image: { url: thumb }, caption: `🎬 *${titleStr}*\n⏱️ ${duration} | 🎚️ ${chosen.quality} | 📦 ${actualMB} MB` }),
+                { quoted: m }
+            );
+        }
+        const fileName = `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${chosen.quality}.mp4`;
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
+            video: videoBuf,
+            caption: `🎬 *${titleStr}*\n⏱️ ${duration}\n🎚️ Quality: ${chosen.quality}\n📦 Size: ${actualMB} MB`,
+            mimetype: 'video/mp4',
+            fileName
+        }), { quoted: m });
 
-                devtrust.ev.off('messages.upsert', _videoHandler);
-                await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: msgData.key } });
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
-                const chosen = menuFmts[sel - 1];
-                const fetchMsg = await devtrust.sendMessage(
-                    m.chat,
-                    { text: `🎬 *Downloading ${chosen.quality} (${chosen.size_mb})...*\nPlease wait ⏳` },
-                    { quoted: msgData }
-                );
-
-                // ── 5. Download buffer and send ───────────────────────────────
-                const videoResp = await axios.get(chosen.download_url || chosen.url, {
-                    responseType: 'arraybuffer',
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36' },
-                    timeout: 300000,
-                    maxContentLength: 500 * 1024 * 1024
-                });
-                const videoBuf  = Buffer.from(videoResp.data);
-                const sizeMB    = (videoBuf.length / (1024 * 1024)).toFixed(2);
-                const fileName  = `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${chosen.quality}.mp4`;
-
-                await devtrust.sendMessage(m.chat, { delete: fetchMsg.key });
-                await devtrust.sendMessage(m.chat, {
-                    video: videoBuf,
-                    caption: `🎬 *${titleStr}*\n🎚️ *Quality:* ${chosen.quality}\n📦 *Size:* ${sizeMB} MB`,
-                    mimetype: 'video/mp4',
-                    fileName
-                }, { quoted: msgData });
-                await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msgData.key } });
-
-            } catch (err) {
-                console.error('Video quality handler error:', err.message);
-                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-                reply(`❌ Download failed: ${err.message}`);
-            }
-        };
-        devtrust.ev.on('messages.upsert', _videoHandler);
-        setTimeout(() => devtrust.ev.off('messages.upsert', _videoHandler), 180000);
-
-    } catch (err) {
-        console.error('Video command error:', err.message);
+    } catch (error) {
+        console.error('[video cmd] Error:', error.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply(`❌ Failed: ${err.message}`);
+        reply(`❌ *Video download failed:* ${error.message}`);
     }
 }
 break;
