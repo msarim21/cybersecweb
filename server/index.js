@@ -205,13 +205,33 @@ app.use('/api/numbers', requireDb, numbersRoutes);
 app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
 
-app.get('/api/health', (req, res) =>
+app.get('/api/health', (req, res) => {
+  // Count active WhatsApp sessions from nexstore/pairing
+  let sessionCount = 0;
+  try {
+    const pairingDir = path.join(__dirname, '../nexstore/pairing');
+    if (fs.existsSync(pairingDir)) {
+      sessionCount = fs.readdirSync(pairingDir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && d.name.endsWith('@s.whatsapp.net'))
+        .length;
+    }
+  } catch (_) {}
+
+  const uptimeSec = Math.floor(process.uptime());
+  const hrs  = Math.floor(uptimeSec / 3600);
+  const mins = Math.floor((uptimeSec % 3600) / 60);
+  const secs = uptimeSec % 60;
+  const uptime = `${hrs}h ${mins}m ${secs}s`;
+
   res.json({
-    status: 'CYBERSECPRO API Online',
-    db: isDbReady() ? (process.env.MONGO_URL ? 'MongoDB' : 'PostgreSQL') : 'Not connected',
-    timestamp: new Date(),
-  })
-);
+    status: 'online',
+    app: 'CYBERSECPRO',
+    db: isDbReady() ? (process.env.MONGO_URL ? 'MongoDB' : 'PostgreSQL') : 'disconnected',
+    sessions: sessionCount,
+    uptime,
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // ── 404 handler ─────────────────────────────────────────────────────────────
 app.use('/api/*', (req, res) => {
