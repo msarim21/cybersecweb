@@ -43,6 +43,7 @@ const NAV = [
   { id: 'upgrades', label: 'UPGRADES', icon: '⚡' },
   { id: 'security', label: 'SECURITY', icon: '🛡️' },
   { id: 'audio', label: 'AUDIO', icon: '🎵' },
+  { id: 'access', label: 'ACCESS', icon: '🔞' },
 ];
 
 const SEV_COLOR = { CRITICAL: '#ff2244', HIGH: '#ff6600', MEDIUM: '#ffaa00', LOW: '#00f5ff' };
@@ -78,8 +79,12 @@ export default function Admin() {
   const [audioInfo, setAudioInfo] = useState({ filename: '', original: '' });
   const [audioUploading, setAudioUploading] = useState(false);
   const audioFileRef = useRef(null);
+  const [adultCode, setAdultCode] = useState('');
+  const [adultCodeInput, setAdultCodeInput] = useState('');
+  const [adultUnlockedUsers, setAdultUnlockedUsers] = useState([]);
+  const [adultLoading, setAdultLoading] = useState(false);
 
-  useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); }, []);
+  useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); fetchAdult(); }, []);
 
   const fetchThreats = async () => {
     setThreatLoading(true);
@@ -189,7 +194,45 @@ export default function Admin() {
     } catch { toast.error('Failed to remove audio'); }
   };
 
-  const filtered = users.filter(u =>
+  const fetchAdult = async () => {
+    try {
+      const res = await axios.get('/api/admin/adult');
+      setAdultCode(res.data.code || '');
+      setAdultCodeInput(res.data.code || '');
+      setAdultUnlockedUsers(res.data.unlockedUsers || []);
+    } catch {}
+  };
+
+  const handleUpdateAdultCode = async () => {
+    if (!adultCodeInput.trim() || adultCodeInput.trim().length < 4)
+      return toast.error('Code must be at least 4 characters.');
+    setAdultLoading(true);
+    try {
+      const res = await axios.put('/api/admin/adult/code', { code: adultCodeInput.trim() });
+      setAdultCode(res.data.code);
+      toast.success('Secret code updated!');
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
+    finally { setAdultLoading(false); }
+  };
+
+  const handleRemoveAdultUser = async (phone) => {
+    try {
+      const res = await axios.delete(`/api/admin/adult/user/${phone}`);
+      setAdultUnlockedUsers(res.data.unlockedUsers || []);
+      toast.success('User access removed.');
+    } catch { toast.error('Failed to remove user.'); }
+  };
+
+  const handleClearAllAdult = async () => {
+    if (!confirm('Remove 18+ access from ALL users?')) return;
+    try {
+      const res = await axios.delete('/api/admin/adult/all');
+      setAdultUnlockedUsers(res.data.unlockedUsers || []);
+      toast.success('All adult access cleared.');
+    } catch { toast.error('Failed.'); }
+  };
+
+    const filtered = users.filter(u =>
     u.username?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
   );
@@ -854,6 +897,102 @@ export default function Admin() {
                         ))}
                       </ul>
                     </div>
+                  </GCard>
+                </div>
+              </motion.div>
+            )}
+
+            {tab === 'access' && (
+              <motion.div key="access" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                <div className="mb-5">
+                  <h2 className="font-display text-xl font-bold tracking-widest" style={{ color: '#ff00ff' }}>🔞 18+ ACCESS CONTROL</h2>
+                  <p className="font-mono text-[10px] text-gray-500 mt-0.5">Manage the secret code for 18+ content unlock</p>
+                </div>
+
+                <div className="space-y-4 max-w-lg">
+                  {/* Current Code Display */}
+                  <GCard className="p-5">
+                    <h3 className="font-mono text-[10px] tracking-widest mb-4" style={{ color: '#ff00ff' }}>CURRENT SECRET CODE</h3>
+                    <div className="rounded-xl p-4 mb-4 flex items-center justify-between"
+                      style={{ background: 'rgba(255,0,255,0.06)', border: '1px solid rgba(255,0,255,0.25)' }}>
+                      <div>
+                        <div className="font-mono text-[10px] text-gray-500 mb-1">Active Code</div>
+                        <div className="font-display text-lg font-bold tracking-widest" style={{ color: '#ff00ff', textShadow: '0 0 12px rgba(255,0,255,0.5)' }}>
+                          {adultCode || '—'}
+                        </div>
+                      </div>
+                      <div className="text-3xl">🔐</div>
+                    </div>
+                    <div className="rounded-xl p-3" style={{ background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.15)' }}>
+                      <div className="font-mono text-[10px] text-[#00f5ff] mb-1">HOW TO SHARE</div>
+                      <div className="font-mono text-[10px] text-gray-400">
+                        User WhatsApp bot mein type kare: <span style={{ color: '#ff00ff' }}>.addsecret {adultCode}</span>
+                      </div>
+                    </div>
+                  </GCard>
+
+                  {/* Change Code */}
+                  <GCard className="p-5">
+                    <h3 className="font-mono text-[10px] tracking-widest mb-4" style={{ color: '#ff00ff' }}>CHANGE SECRET CODE</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="font-mono text-[10px] text-[#ff00ff] tracking-widest block mb-2">NEW SECRET CODE</label>
+                        <input
+                          type="text"
+                          value={adultCodeInput}
+                          onChange={e => setAdultCodeInput(e.target.value)}
+                          placeholder="Enter new secret code (min 4 chars)"
+                          className="w-full px-4 py-2.5 rounded-xl font-mono text-sm outline-none transition-all"
+                          style={{ background: 'rgba(255,0,255,0.06)', border: '1px solid rgba(255,0,255,0.3)', color: '#fff' }}
+                        />
+                      </div>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        onClick={handleUpdateAdultCode} disabled={adultLoading}
+                        className="w-full py-3 rounded-xl font-display text-sm tracking-widest text-white"
+                        style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(139,92,246,0.3))', border: '1px solid rgba(255,0,255,0.5)', opacity: adultLoading ? 0.7 : 1 }}>
+                        {adultLoading ? '⏳ UPDATING...' : '🔐 UPDATE CODE'}
+                      </motion.button>
+                    </div>
+                  </GCard>
+
+                  {/* Unlocked Users */}
+                  <GCard className="p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-mono text-[10px] tracking-widest" style={{ color: '#ff00ff' }}>
+                        UNLOCKED USERS ({adultUnlockedUsers.length})
+                      </h3>
+                      {adultUnlockedUsers.length > 0 && (
+                        <button onClick={handleClearAllAdult}
+                          className="px-3 py-1 rounded-lg font-mono text-[9px] text-red-400 transition-all"
+                          style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)' }}>
+                          🗑️ CLEAR ALL
+                        </button>
+                      )}
+                    </div>
+                    {adultUnlockedUsers.length === 0 ? (
+                      <div className="text-center py-6">
+                        <div className="text-3xl mb-2">🔒</div>
+                        <div className="font-mono text-[10px] text-gray-600">No users have unlocked 18+ content yet</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {adultUnlockedUsers.map((u, i) => (
+                          <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2"
+                            style={{ background: 'rgba(255,0,255,0.05)', border: '1px solid rgba(255,0,255,0.12)' }}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">📱</span>
+                              <span className="font-mono text-xs text-gray-300">{u.split('@')[0]}</span>
+                            </div>
+                            <button onClick={() => handleRemoveAdultUser(u.split('@')[0])}
+                              className="text-red-400 hover:text-red-300 transition-all font-mono text-[10px] px-2 py-1 rounded"
+                              style={{ background: 'rgba(255,68,68,0.08)' }}>
+                              REMOVE
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </GCard>
                 </div>
               </motion.div>
