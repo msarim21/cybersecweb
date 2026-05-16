@@ -10951,15 +10951,22 @@ case 'ytmp3': {
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const audioCaption = `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}`;
 
-        // Send thumbnail + audio in parallel for max speed (no buffer download)
-        await Promise.all([
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption }), { quoted: m }) : Promise.resolve(),
-            devtrust.sendMessage(m.chat, addNewsletterContext({
-                audio: { url: audioFmt.url },
-                mimetype: 'audio/mpeg',
-                fileName: `${safeTitle}.mp3`
-            }), { quoted: m })
+        // Download buffer + send thumbnail in parallel
+        const [audioBuf] = await Promise.all([
+            axios.get(audioFmt.url, {
+                responseType: 'arraybuffer',
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                timeout: 180000,
+                maxContentLength: 200 * 1024 * 1024
+            }).then(r => Buffer.from(r.data)),
+            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption }), { quoted: m }) : Promise.resolve()
         ]);
+
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
+            audio: audioBuf,
+            mimetype: 'audio/mpeg',
+            fileName: `${safeTitle}.mp3`
+        }), { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -11035,15 +11042,22 @@ case 'play2': {
         const safeTitle2 = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const audioCaption2 = `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}`;
 
-        // Thumbnail + audio parallel, no buffer download
-        await Promise.all([
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption2 }), { quoted: m }) : Promise.resolve(),
-            devtrust.sendMessage(m.chat, addNewsletterContext({
-                audio: { url: audioFmt.url },
-                mimetype: 'audio/mpeg',
-                fileName: `${safeTitle2}.mp3`
-            }), { quoted: m })
+        // Download buffer + send thumbnail in parallel
+        const [audioBuf2] = await Promise.all([
+            axios.get(audioFmt.url, {
+                responseType: 'arraybuffer',
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                timeout: 180000,
+                maxContentLength: 200 * 1024 * 1024
+            }).then(r => Buffer.from(r.data)),
+            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption2 }), { quoted: m }) : Promise.resolve()
         ]);
+
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
+            audio: audioBuf2,
+            mimetype: 'audio/mpeg',
+            fileName: `${safeTitle2}.mp3`
+        }), { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -11147,14 +11161,23 @@ case 'ytvideo': {
                     { quoted: msgData }
                 );
 
-                // ── 5. Stream directly from URL (no buffer = much faster) ────────
+                // ── 5. Download buffer and send as actual file ────────────────
                 const chosenUrl = chosen.download_url || chosen.url;
                 const fileName  = `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${chosen.quality}.mp4`;
 
+                const videoResp = await axios.get(chosenUrl, {
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                    timeout: 300000,
+                    maxContentLength: 500 * 1024 * 1024
+                });
+                const videoBuf = Buffer.from(videoResp.data);
+                const sizeMB   = (videoBuf.length / 1024 / 1024).toFixed(2);
+
                 await devtrust.sendMessage(m.chat, { delete: fetchMsg.key });
                 await devtrust.sendMessage(m.chat, {
-                    video: { url: chosenUrl },
-                    caption: `🎬 *${titleStr}*\n🎚️ *Quality:* ${chosen.quality}\n📦 *Size:* ${chosen.size_mb}`,
+                    video: videoBuf,
+                    caption: `🎬 *${titleStr}*\n🎚️ *Quality:* ${chosen.quality}\n📦 *Size:* ${sizeMB} MB`,
                     mimetype: 'video/mp4',
                     fileName
                 }, { quoted: msgData });
@@ -11207,19 +11230,25 @@ case 'ytdown': {
                 await devtrust.sendMessage(m.chat, { react: { text: '⬇️', key: msg.key } })
                 const selected = allFormats[num - 1]
                 const isVideo = num <= d.video_formats.length
-                await devtrust.sendMessage(m.chat, { text: `⏳ Sending ${selected.quality} ${selected.format}...` }, { quoted: msg })
+                await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${selected.quality} ${selected.format}...` }, { quoted: msg })
                 const ext = selected.format.toLowerCase() === 'opus' ? 'ogg' : selected.format.toLowerCase()
                 const fileName = `${(d.title || 'file').replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${selected.quality}.${ext}`
-                // Stream directly from URL — no buffer download needed
+                const dlBuf = await axios.get(selected.download_url, {
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                    timeout: 300000,
+                    maxContentLength: 500 * 1024 * 1024
+                })
+                const fileBuffer = Buffer.from(dlBuf.data)
                 if (isVideo) {
                     await devtrust.sendMessage(m.chat, {
-                        video: { url: selected.download_url },
+                        video: fileBuffer,
                         caption: `🎬 *${d.title}*\n🎚️ *Quality:* ${selected.quality}\n📦 *Size:* ${selected.size_mb}`,
                         mimetype: 'video/mp4', fileName
                     }, { quoted: msg })
                 } else {
                     await devtrust.sendMessage(m.chat, {
-                        audio: { url: selected.download_url },
+                        audio: fileBuffer,
                         mimetype: 'audio/mpeg', fileName,
                         caption: `🎵 *${d.title}*\n🎚️ *Quality:* ${selected.quality}\n📦 *Size:* ${selected.size_mb}`
                     }, { quoted: msg })
