@@ -954,7 +954,16 @@ bot.onText(/\/start/, async (msg) => {
 
 // ==================== COMMAND: PAIR ====================
 
-bot.onText(/\/pair(?:\s+(.+))?/, async (msg, match) => {
+bot.onText(/\/pair(?:\s+(.+))?/, async (msg) => {
+  const chatId = msg.chat.id;
+  return bot.sendMessage(chatId,
+    `┌ ❏ ◆ *⌜𝗣𝗔𝗜𝗥𝗜𝗡𝗚 𝗗𝗜𝗦𝗔𝗕𝗟𝗘𝗗⌟* ◆\n│\n├◆ 🌐 Pairing is only available on the website.\n├◆ Please visit the website to pair your number.\n│\n└ ❏`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// DISABLED pair handler — kept for reference only
+const _disabledPairHandler = async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const input = match ? match[1] : null;
@@ -2775,14 +2784,8 @@ bot.on('callback_query', async (query) => {
 
   else if (data === 'pair_guide') {
     await bot.answerCallbackQuery(query.id);
-    
     bot.sendMessage(chatId,
-      `┌ ❏ ◆ *⌜𝗣𝗔𝗜𝗥 𝗚𝗨𝗜𝗗𝗘⌟* ◆
-│
-├◆ ᴜsᴇ: /pair 923212345678
-├◆ ᴏʀ: /pair 923212345678|1234
-│
-└ ❏`,
+      `┌ ❏ ◆ *⌜𝗣𝗔𝗜𝗥𝗜𝗡𝗚 𝗗𝗜𝗦𝗔𝗕𝗟𝗘𝗗⌟* ◆\n│\n├◆ 🌐 Pairing is only available on the website.\n├◆ Please visit the website to pair your number.\n│\n└ ❏`,
       { parse_mode: 'Markdown' }
     );
   }
