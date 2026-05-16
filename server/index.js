@@ -137,11 +137,28 @@ const requireDb = (req, res, next) => {
 // ── Public audio info endpoint (no auth required) ───────────────────────────
 app.get('/api/site/audio', requireDb, async (req, res) => {
   try {
-    const filename = await svc.getSiteSetting('site_audio_filename');
+    const data     = await svc.getSiteSetting('site_audio_data');
     const original = await svc.getSiteSetting('site_audio_original');
-    res.json({ filename: filename || '', original: original || '' });
+    res.json({ filename: data ? 'db' : '', original: original || '' });
   } catch (err) {
     res.json({ filename: '', original: '' });
+  }
+});
+
+// Stream audio file from database (no ephemeral filesystem dependency)
+app.get('/api/site/audio/file', requireDb, async (req, res) => {
+  try {
+    const data     = await svc.getSiteSetting('site_audio_data');
+    const mimetype = await svc.getSiteSetting('site_audio_mimetype');
+    if (!data) return res.status(404).json({ error: 'No audio uploaded.' });
+    const buf = Buffer.from(data, 'base64');
+    res.set('Content-Type',   mimetype || 'audio/mpeg');
+    res.set('Content-Length', buf.length);
+    res.set('Accept-Ranges',  'bytes');
+    res.set('Cache-Control',  'no-cache');
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to serve audio.' });
   }
 });
 
