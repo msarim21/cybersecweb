@@ -28,7 +28,7 @@ function extractVideoId(url) {
    ───────────────────────────────────────────────── */
 async function viaPrinceVideo(videoUrl) {
   // Try qualities in order — pick best available
-  const qualities = ["720p", "480p", "360p", "1080p"]
+  const qualities = ["480p", "360p", "720p", "1080p"]
 
   let lastResult = null
 
