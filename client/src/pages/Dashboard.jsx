@@ -429,6 +429,12 @@ export default function Dashboard() {
   const [showAdd, setShowAdd] = useState(false);
   const [showLimit, setShowLimit] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 1024);
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [profileEdit, setProfileEdit] = useState({ username: user?.username || '' });
   const [profileLoading, setProfileLoading] = useState(false);
   const [upgradeLoading, setUpgradeLoading] = useState('');
@@ -534,9 +540,9 @@ export default function Dashboard() {
       {/* ════ SIDEBAR ════ */}
       <motion.aside
         initial={false}
-        animate={{ x: sidebarOpen ? 0 : -280 }}
+        animate={{ x: isDesktop || sidebarOpen ? 0 : -280 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col lg:translate-x-0"
+        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col"
         style={{ background: 'rgba(6,9,26,0.92)', backdropFilter: 'blur(30px)', borderRight: '1px solid rgba(0,245,255,0.15)' }}>
         <div className="p-5 border-b border-[rgba(0,245,255,0.12)]">
           <div className="flex items-center justify-between">
