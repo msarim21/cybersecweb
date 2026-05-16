@@ -243,8 +243,12 @@ if (!JWT_SECRET || JWT_SECRET.includes('default') || JWT_SECRET.length < 32) {
 // ── Boot sequence ───────────────────────────────────────────────────────────
 // Start server immediately so Heroku's health check passes,
 // then connect to the database in the background.
+const { startKeepAlive } = require('../keepalive');
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
+  // Start keepalive here so it runs on Heroku (which only runs server/index.js)
+  startKeepAlive();
 });
 
 initDb()
