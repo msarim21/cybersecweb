@@ -1,7 +1,7 @@
 require('dotenv').config();
 
-process.on('uncaughtException',  err => console.error('[Server] Uncaught exception (non-fatal):', err.message));
-process.on('unhandledRejection', err => console.error('[Server] Unhandled rejection (non-fatal):', err?.message || err));
+process.on('uncaughtException',  err => { console.error('[Server] Uncaught exception:', err.message); console.error('[Server] Stack:', err.stack); });
+process.on('unhandledRejection', err => { console.error('[Server] Unhandled rejection:', err?.message || err); if (err?.stack) console.error('[Server] Stack:', err.stack); });
 
 const path          = require('path');
 const fs            = require('fs');
