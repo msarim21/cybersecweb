@@ -42,7 +42,7 @@ const jimp = require("jimp")
 const latensi = speed() - timestampp
 const moment = require('moment-timezone')
 const yts = require('yt-search');
-const { ytDownload, extractVideoId } = require('./allfunc/ytdownload')
+const { ytDownload, ytAudio, extractVideoId } = require('./allfunc/ytdownload')
 const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const FormData = require('form-data');
@@ -10956,7 +10956,7 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytDownload(videoUrl);
+        const result = await ytAudio(videoUrl);
         if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
 
         const d = result.data;
@@ -11047,7 +11047,7 @@ case 'play2': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytDownload(videoUrl);
+        const result = await ytAudio(videoUrl);
         if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
 
         const d = result.data;
