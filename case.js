@@ -11122,7 +11122,7 @@ case 'ytvideo': {
 
         reply(`🔍 Found: *${videoInfo?.title || text}*\n⏳ Fetching video...`);
 
-        // ── 2. Get video formats via VidsSave API ─────────────────────────
+        // ── 2. Get video formats via Prince API (ytvideo) / ytdl-core fallback ──
         const result = await ytDownload(videoUrl);
         if (!result?.data) throw new Error('Could not fetch video info from API');
 
@@ -11131,7 +11131,7 @@ case 'ytvideo': {
         if (!vidFmts.length && !info.best_video) throw new Error('No video formats available');
 
         // ── 3. Pick best quality ≤ 480P for WhatsApp limits ───────────────
-        const preferred = ['480P', '360P', '720P', '240P', '144P', '1080P'];
+        const preferred = ['720P', '480P', '360P', '1080P', '240P', '144P'];
         let chosen = null;
         for (const q of preferred) {
             chosen = vidFmts.find(f => f.quality === q);
@@ -11151,9 +11151,7 @@ case 'ytvideo': {
         const videoResp = await axios.get(dlUrl, {
             responseType: 'arraybuffer',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36',
-                'referer': 'https://vidssave.com/',
-                'origin': 'https://vidssave.com'
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36'
             },
             timeout: 300000,
             maxRedirects: 10,
