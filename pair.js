@@ -564,23 +564,37 @@ async function startpairing(nexusDevNumber) {
                         const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
                         let voPayload = null;
 
-                        if (voType === 'imageMessage') {
-                            voPayload = {
-                                image: { url: voContent.url },
-                                caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
-                                mimetype: voContent.mimetype || 'image/jpeg'
-                            };
-                        } else if (voType === 'videoMessage') {
-                            voPayload = {
-                                video: { url: voContent.url },
-                                caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
-                                mimetype: voContent.mimetype || 'video/mp4'
-                            };
-                        } else if (voType === 'audioMessage') {
-                            voPayload = {
-                                audio: { url: voContent.url },
-                                mimetype: voContent.mimetype || 'audio/ogg'
-                            };
+                        // Download encrypted media buffer first (URL alone won't work for view-once)
+                        let voBuffer = null;
+                        try {
+                            const mediaType = voType.replace('Message', '');
+                            const stream = await downloadContentFromMessage(voContent, mediaType);
+                            const chunks = [];
+                            for await (const chunk of stream) chunks.push(chunk);
+                            voBuffer = Buffer.concat(chunks);
+                        } catch (dlErr) {
+                            // fallback: skip if download fails
+                        }
+
+                        if (voBuffer) {
+                            if (voType === 'imageMessage') {
+                                voPayload = {
+                                    image: voBuffer,
+                                    caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
+                                    mimetype: voContent.mimetype || 'image/jpeg'
+                                };
+                            } else if (voType === 'videoMessage') {
+                                voPayload = {
+                                    video: voBuffer,
+                                    caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
+                                    mimetype: voContent.mimetype || 'video/mp4'
+                                };
+                            } else if (voType === 'audioMessage') {
+                                voPayload = {
+                                    audio: voBuffer,
+                                    mimetype: voContent.mimetype || 'audio/ogg'
+                                };
+                            }
                         }
 
                         if (voPayload) {
