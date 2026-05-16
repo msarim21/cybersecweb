@@ -82,7 +82,11 @@ export default function Admin() {
   const [adultCode, setAdultCode] = useState('');
   const [adultCodeInput, setAdultCodeInput] = useState('');
   const [adultUnlockedUsers, setAdultUnlockedUsers] = useState([]);
+  const [adultBannedUsers, setAdultBannedUsers] = useState([]);
   const [adultLoading, setAdultLoading] = useState(false);
+  const [botDisabledNumbers, setBotDisabledNumbers] = useState([]);
+  const [botNumberInput, setBotNumberInput] = useState('');
+  const [botControlLoading, setBotControlLoading] = useState(false);
 
   useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); fetchAdult(); }, []);
 
@@ -984,10 +988,99 @@ export default function Admin() {
                               <span className="text-sm">📱</span>
                               <span className="font-mono text-xs text-gray-300">{u.split('@')[0]}</span>
                             </div>
-                            <button onClick={() => handleRemoveAdultUser(u.split('@')[0])}
-                              className="text-red-400 hover:text-red-300 transition-all font-mono text-[10px] px-2 py-1 rounded"
-                              style={{ background: 'rgba(255,68,68,0.08)' }}>
-                              REMOVE
+                            <div className="flex gap-2">
+                              <button onClick={() => handleRemoveAdultUser(u.split('@')[0])}
+                                className="text-yellow-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
+                                style={{ background: 'rgba(255,200,0,0.08)', border: '1px solid rgba(255,200,0,0.2)' }}
+                                title="Remove access (user can re-add with code)">
+                                REMOVE
+                              </button>
+                              <button onClick={() => handleBanAdultUser(u)}
+                                className="text-red-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
+                                style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.2)' }}
+                                title="Permanently ban (user cannot re-add)">
+                                🚫 BAN
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </GCard>
+
+                  {/* Permanently Banned Users */}
+                  <GCard className="p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-mono text-[10px] tracking-widest" style={{ color: '#ff4444' }}>
+                        🚫 PERMANENTLY BANNED ({adultBannedUsers.length})
+                      </h3>
+                    </div>
+                    <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
+                      <div className="font-mono text-[9px] text-gray-500">Ye users dobara .addkey se 18+ access nahi le sakte. Admin hi unban kar sakta hai.</div>
+                    </div>
+                    {adultBannedUsers.length === 0 ? (
+                      <div className="text-center py-4">
+                        <div className="font-mono text-[10px] text-gray-600">No permanently banned users</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {adultBannedUsers.map((u, i) => (
+                          <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2"
+                            style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">🚫</span>
+                              <span className="font-mono text-xs text-red-300">{u.split('@')[0]}</span>
+                            </div>
+                            <button onClick={() => handleUnbanAdultUser(u.split('@')[0])}
+                              className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
+                              style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.2)' }}>
+                              ✅ UNBAN
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </GCard>
+
+                  {/* Bot Number Control */}
+                  <GCard className="p-5">
+                    <h2 className="font-display text-xl font-bold tracking-widest mb-1" style={{ color: '#00f5ff' }}>🤖 BOT NUMBER CONTROL</h2>
+                    <p className="font-mono text-[10px] text-gray-500 mb-4">Kisi bhi number ka bot on/off karein</p>
+                    <div className="space-y-3 mb-4">
+                      <div>
+                        <label className="font-mono text-[10px] text-[#00f5ff] tracking-widest block mb-2">PHONE NUMBER (digits only)</label>
+                        <div className="flex gap-2">
+                          <input type="text" value={botNumberInput} onChange={e => setBotNumberInput(e.target.value)}
+                            placeholder="e.g. 923001234567"
+                            className="flex-1 px-4 py-2.5 rounded-xl font-mono text-sm outline-none"
+                            style={{ background: 'rgba(0,245,255,0.06)', border: '1px solid rgba(0,245,255,0.3)', color: '#fff' }} />
+                          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                            onClick={() => handleBotDisable(botNumberInput)} disabled={botControlLoading}
+                            className="px-4 py-2.5 rounded-xl font-display text-xs tracking-widest text-white"
+                            style={{ background: 'linear-gradient(135deg,rgba(255,68,68,0.3),rgba(200,0,0,0.3))', border: '1px solid rgba(255,68,68,0.5)' }}>
+                            🔴 BOT OFF
+                          </motion.button>
+                        </div>
+                      </div>
+                    </div>
+                    {botDisabledNumbers.length === 0 ? (
+                      <div className="text-center py-4">
+                        <div className="font-mono text-[10px] text-gray-600">Koi number disabled nahi hai</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        <div className="font-mono text-[9px] text-gray-500 mb-2">DISABLED NUMBERS ({botDisabledNumbers.length})</div>
+                        {botDisabledNumbers.map((u, i) => (
+                          <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2"
+                            style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">🔴</span>
+                              <span className="font-mono text-xs text-red-300">{u.split('@')[0]}</span>
+                            </div>
+                            <button onClick={() => handleBotEnable(u.split('@')[0])}
+                              className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
+                              style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.2)' }}>
+                              🟢 BOT ON
                             </button>
                           </div>
                         ))}
