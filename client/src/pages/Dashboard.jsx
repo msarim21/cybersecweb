@@ -232,7 +232,9 @@ const LinkModal = ({ onClose, onAdd }) => {
   const [copied, setCopied] = useState(false);
   const [timer, setTimer] = useState(300);
   const [saving, setSaving] = useState(false);
-  const timerRef = useRef(null);
+  const timerRef   = useRef(null);
+  const pollRef    = useRef(null);
+  const autoSaved  = useRef(false);
 
   useEffect(() => {
     if (step === 3) {
@@ -243,6 +245,35 @@ const LinkModal = ({ onClose, onAdd }) => {
     }
     return () => clearInterval(timerRef.current);
   }, [step]);
+
+  // Auto-detect WhatsApp pairing — poll /api/pairing/status every 3 s
+  useEffect(() => {
+    if (step !== 3) { autoSaved.current = false; return; }
+    const cleanNum = form.number.replace(/\D/g, '');
+    if (!cleanNum) return;
+    pollRef.current = setInterval(async () => {
+      if (autoSaved.current) return;
+      try {
+        const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
+        if (data.connected) {
+          autoSaved.current = true;
+          clearInterval(pollRef.current);
+          toast.success('📱 WhatsApp connected! Auto-saving…');
+          setSaving(true);
+          try {
+            const res = await axios.post('/api/numbers', { number: form.number, botName: form.botName });
+            onAdd(res.data);
+            toast.success('✅ NUMBER LINKED SUCCESSFULLY');
+            onClose();
+          } catch (err) {
+            toast.error(err.response?.data?.error || 'Failed to save number');
+            autoSaved.current = false;
+          } finally { setSaving(false); }
+        }
+      } catch (_) {}
+    }, 3000);
+    return () => clearInterval(pollRef.current);
+  }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmt = s => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
 
@@ -369,7 +400,7 @@ const LinkModal = ({ onClose, onAdd }) => {
                     onClick={handleConfirm} disabled={saving || timer === 0}
                     className="flex-1 py-3 rounded-xl font-display text-xs tracking-widest text-white"
                     style={{ background: 'linear-gradient(135deg,rgba(0,255,136,0.3),rgba(0,245,255,0.2))', border: '1px solid rgba(0,255,136,0.4)' }}>
-                    {saving ? 'SAVING...' : '✓ I ENTERED THE CODE — SAVE'}
+                    {saving ? '⟳ AUTO-SAVING...' : '✓ I ENTERED THE CODE — SAVE'}
                   </motion.button>
                 </div>
               </motion.div>
