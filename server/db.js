@@ -18,7 +18,35 @@ const isDbReady   = () => _dbReady;
 const initDb = async () => {
   if (MONGO_URL) {
     _mongoMode = true;
-    await mongoose.connect(MONGO_URL, { serverSelectionTimeoutMS: 10000 });
+    await mongoose.connect(MONGO_URL, {
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS:          60000,
+      connectTimeoutMS:         20000,
+      heartbeatFrequencyMS:     10000,
+      retryWrites:              true,
+      retryReads:               true,
+      maxPoolSize:              10,
+    });
+    // Auto-reconnect event handlers
+    mongoose.connection.on('disconnected', () => {
+      console.warn('⚠️  MongoDB disconnected — auto-reconnecting...');
+      setTimeout(() => {
+        mongoose.connect(MONGO_URL, {
+          serverSelectionTimeoutMS: 15000,
+          socketTimeoutMS:          60000,
+          heartbeatFrequencyMS:     10000,
+          retryWrites:              true,
+          retryReads:               true,
+          maxPoolSize:              10,
+        }).catch(err => console.error('MongoDB reconnect failed:', err.message));
+      }, 3000);
+    });
+    mongoose.connection.on('error', err => {
+      console.error('MongoDB error:', err.message);
+    });
+    mongoose.connection.on('reconnected', () => {
+      console.log('✅ MongoDB reconnected');
+    });
     _dbReady = true;
     console.log('✅ MongoDB connected');
     return;
@@ -34,8 +62,15 @@ const initDb = async () => {
     ssl: PG_URL.includes('sslmode=require') || PG_URL.includes('amazonaws') || process.env.NODE_ENV === 'production'
       ? { rejectUnauthorized: false }
       : false,
-    max: 10,
-    idleTimeoutMillis: 30000,
+    max:                    10,
+    idleTimeoutMillis:      60000,
+    connectionTimeoutMillis: 10000,
+    keepAlive:              true,
+    keepAliveInitialDelayMillis: 10000,
+  });
+  // Log pool errors so they don't silently crash the process
+  _pool.on('error', (err) => {
+    console.error('PostgreSQL pool error:', err.message);
   });
 
   const client = await _pool.connect();
