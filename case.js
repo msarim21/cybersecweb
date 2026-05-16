@@ -111,6 +111,37 @@ function loadSudoList() {
 function saveSudoList(data) {
   fs.writeFileSync(SUDO_FILE, JSON.stringify(data, null, 2));
 }
+
+// ============ ADULT UNLOCK SYSTEM ============
+const ADULT_FILE = './database/adult_unlocked.json';
+const ADULT_SECRET = 'cybersecpro7898';
+
+function loadAdultData() {
+  try {
+    if (!fs.existsSync(ADULT_FILE)) {
+      fs.writeFileSync(ADULT_FILE, JSON.stringify([]));
+    }
+    return JSON.parse(fs.readFileSync(ADULT_FILE));
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveAdultData(data) {
+  try {
+    fs.writeFileSync(ADULT_FILE, JSON.stringify(data, null, 2));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+global.adultUnlocked = loadAdultData();
+
+function isAdultUnlocked(senderId) {
+  return global.adultUnlocked.includes(senderId);
+}
+// =============================================
 // ========================================
 
 // ============ PREFIX FUNCTIONS ============
@@ -4568,8 +4599,7 @@ case 'commandlist': {
 │❖ ${prefix}neko2
 │❖ ${prefix}nekonime
 │❖ ${prefix}nezuko
-│❖ ${prefix}nsfw
-│❖ ${prefix}onepiece
+${isAdultUnlocked(m.sender) ? '│❖ ${prefix}nsfw\n' : ''}│❖ ${prefix}onepiece
 │❖ ${prefix}pentol
 │❖ ${prefix}pokemon
 │❖ ${prefix}profil
@@ -4673,9 +4703,7 @@ case 'commandlist': {
 │❖ ${prefix}twitter
 │❖ ${prefix}twitterdl
 │❖ ${prefix}video
-│❖ ${prefix}xdl
-│❖ ${prefix}xnxx
-│❖ ${prefix}ytdl
+${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xdl\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxx\n' : ''}│❖ ${prefix}ytdl
 │❖ ${prefix}ytdown
 │❖ ${prefix}ytmp3
 │❖ ${prefix}ytmp4
@@ -5069,13 +5097,19 @@ case 'commandlist': {
 │❖ ${prefix}vvgh
 │❖ ${prefix}github
 │❖ ${prefix}setaccount
-│❖ ${prefix}xvideos
-│❖ ${prefix}xvideodl
-│❖ ${prefix}xvideosearch
-│❖ ${prefix}xnxxsearch
-│❖ ${prefix}xnxx
-┗━━━━━━━━━━━━━━━━━━━━┛
+${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideos\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideodl\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideosearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxxsearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxx\n' : ''}┗━━━━━━━━━━━━━━━━━━━━┛
 
+${isAdultUnlocked(m.sender) ? `╔══════════════════════╗
+║  🔞 18+ ADULT ZONE   ║  
+╚══════════════════════╝
+│❖ ${prefix}xnxx
+│❖ ${prefix}xnxxsearch
+│❖ ${prefix}xvideos
+│❖ ${prefix}xvideosearch
+│❖ ${prefix}nsfw
+
+` : `🔐 *Lock Section:* .addsecret [code]
+`}
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
 `;
 
@@ -5436,8 +5470,7 @@ case 'CYBERanime': {
 │❖ ${prefix}neko2
 │❖ ${prefix}nekonime
 │❖ ${prefix}nezuko
-│❖ ${prefix}nsfw
-│❖ ${prefix}onepiece
+${isAdultUnlocked(m.sender) ? '│❖ ${prefix}nsfw\n' : ''}│❖ ${prefix}onepiece
 │❖ ${prefix}pentol
 │❖ ${prefix}pokemon
 │❖ ${prefix}profil
@@ -6754,12 +6787,7 @@ case 'CYBERother': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
-│❖ ${prefix}xvideos
-│❖ ${prefix}xvideodl
-│❖ ${prefix}xvideosearch
-│❖ ${prefix}xnxxsearch
-│❖ ${prefix}xnxx
-┗━━━━━━━━━━━━━━━━━━━━┛
+${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideos\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideodl\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideosearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxxsearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxx\n' : ''}┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by GAME CHANGER* | © 2026
 `;
@@ -12351,7 +12379,39 @@ case 'styletext': {
     await reply(teks);
 } 
 break;
+case 'addsecret': {
+    const secretInput = text ? text.trim() : '';
+    if (!secretInput) {
+        return reply(`🔐 *CYBER Secret Access*\n\nUsage: ${prefix}addsecret [code]\nExample: ${prefix}addsecret xxxxxxxx\n\n🔞 Ye command 18+ content unlock karta hai.`);
+    }
+    if (secretInput !== ADULT_SECRET) {
+        return reply(`❌ *Wrong secret code!*\n\nPlease enter the correct secret code to unlock 18+ content.`);
+    }
+    const senderId = m.sender;
+    if (!global.adultUnlocked.includes(senderId)) {
+        global.adultUnlocked.push(senderId);
+        saveAdultData(global.adultUnlocked);
+    }
+    return reply(`✅ *18+ Content Unlocked!*\n\n🔞 Ab aap ${prefix}xnxx, ${prefix}xvideos, ${prefix}xvideosearch, ${prefix}xnxxsearch commands use kar sakte hain.\n\n⚠️ Ye sirf aap ke liye unlock hua hai.`);
+}
+break;
+
+case 'removesecret': {
+    if (!isCreator) return reply('🔒 *Owner only*');
+    const targetId = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
+    if (!targetId) {
+        global.adultUnlocked = [];
+        saveAdultData(global.adultUnlocked);
+        return reply('✅ *All users 18+ access removed.*');
+    }
+    global.adultUnlocked = global.adultUnlocked.filter(id => id !== targetId);
+    saveAdultData(global.adultUnlocked);
+    return reply(`✅ User ka 18+ access remove kar diya.`);
+}
+break;
+
   case 'xvideos': {
+    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
     if (!text) return reply(`🔞 *XVideos Search & Download*\n\nUsage: ${prefix}xvideos [search query]\nExample: ${prefix}xvideos step mom`);
 
     await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
@@ -12483,6 +12543,7 @@ console.log(`Error downloading video: ${e}`);
 }
 break;
   case "xnxxvideodl": {
+    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!text) return reply("📌 *Usage:* .xnxxvideodl <xnxx link>\nExample: .xnxxvideodl https://www.xnxx.com/video-xxx/...");
     if (!text.includes("xnxx.com")) return reply("❌ *Link must be from xnxx.com*");
@@ -12510,6 +12571,7 @@ break;
 }
 break;
 case 'xvideosearch':{
+    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
   if (!text) return m.reply(example(`Milf`))
   try {
     // checking data from api
@@ -12546,6 +12608,7 @@ case 'xvideosearch':{
 break; 
 // ✅ Command switch
 case 'xnxxsearch': {
+    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
         if (!text) return reply(`Enter Query`)
         reply(mess.wait)
         const fg = require('api-dylux')
@@ -12555,6 +12618,7 @@ case 'xnxxsearch': {
               }
               break;  
 case 'xnxx': {
+    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
     if (!text) {
         return reply('❌ Please enter a name.\n📌 Example: *.xnxx mia*');
     }
