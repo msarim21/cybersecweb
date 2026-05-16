@@ -1,4 +1,5 @@
 const axios = require("axios")
+const ytdl = require("@distube/ytdl-core")
 
 function extractVideoId(url) {
   let videoId = ""
@@ -12,9 +13,10 @@ function extractVideoId(url) {
   return videoId
 }
 
-async function ytDownload(videoUrl) {
-  if (!videoUrl) throw Error("URL tidak boleh kosong")
-
+/* ─────────────────────────────────────────────────
+   Provider 1: vidssave API (primary)
+   ───────────────────────────────────────────────── */
+async function viaVidssave(videoUrl) {
   const headers = {
     "accept": "*/*",
     "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -33,14 +35,11 @@ async function ytDownload(videoUrl) {
   const res = await axios.post(
     "https://api.vidssave.com/api/contentsite_api/media/parse",
     body.toString(),
-    { headers }
+    { headers, timeout: 20000 }
   )
 
   const data = res.data
-
-  if (!data.data || data.status !== 1) {
-    throw Error("Gagal mengambil video YouTube")
-  }
+  if (!data.data || data.status !== 1) throw new Error("vidssave: bad response")
 
   const info = data.data
   const resources = info.resources || []
@@ -71,7 +70,7 @@ async function ytDownload(videoUrl) {
       download_url: r.download_url
     }))
 
-  const bestVideo = videoFormats.find(v => v.quality === "2160P") || videoFormats[0] || null
+  const bestVideo = videoFormats.find(v => v.quality === "720P") || videoFormats[0] || null
   const bestAudio = audioFormats.find(a => a.quality === "256KBPS") || audioFormats[0] || null
 
   return {
@@ -99,6 +98,101 @@ async function ytDownload(videoUrl) {
       } : null
     }
   }
+}
+
+/* ─────────────────────────────────────────────────
+   Provider 2: @distube/ytdl-core  (same approach
+   as pytubefix — direct googlevideo stream URLs,
+   no third-party API needed)
+   ───────────────────────────────────────────────── */
+async function viaYtdlCore(videoUrl) {
+  const info = await ytdl.getInfo(videoUrl, { requestOptions: { timeout: 25000 } })
+  const details = info.videoDetails
+
+  // Progressive = video+audio in one stream (like pytubefix progressive=True, mp4)
+  const progressive = info.formats
+    .filter(f => f.hasVideo && f.hasAudio && f.container === "mp4" && f.url)
+    .sort((a, b) => (parseInt(b.qualityLabel) || 0) - (parseInt(a.qualityLabel) || 0))
+
+  const videoOnly = info.formats
+    .filter(f => f.hasVideo && !f.hasAudio && f.container === "mp4" && f.url)
+    .sort((a, b) => (parseInt(b.qualityLabel) || 0) - (parseInt(a.qualityLabel) || 0))
+
+  const audioOnly = info.formats
+    .filter(f => !f.hasVideo && f.hasAudio && f.url)
+    .sort((a, b) => (parseInt(b.audioBitrate) || 0) - (parseInt(a.audioBitrate) || 0))
+
+  const allVideoFormats = [...progressive, ...videoOnly].map(f => ({
+    quality: f.qualityLabel || "unknown",
+    format: f.container || "mp4",
+    size_mb: f.contentLength ? (parseInt(f.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
+    download_url: f.url,
+    has_audio: f.hasAudio
+  }))
+
+  const allAudioFormats = audioOnly.map(f => ({
+    quality: (f.audioBitrate || "?") + "kbps",
+    format: f.container || "webm",
+    size_mb: f.contentLength ? (parseInt(f.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
+    download_url: f.url
+  }))
+
+  const bestVideo = progressive[0] || videoOnly[0] || null
+  const bestAudio = audioOnly[0] || null
+
+  if (!bestVideo) throw new Error("ytdl-core: no usable video stream found")
+
+  const thumb = details.thumbnails?.sort((a, b) => (b.width || 0) - (a.width || 0))[0]?.url || null
+  const durationSec = parseInt(details.lengthSeconds) || 0
+
+  return {
+    code: 200,
+    timestamp: Date.now(),
+    data: {
+      id: details.videoId || null,
+      title: details.title || null,
+      thumbnail: thumb,
+      duration: durationSec,
+      duration_formatted: durationSec ? new Date(durationSec * 1000).toISOString().slice(11, 19) : null,
+      video_formats: allVideoFormats,
+      audio_formats: allAudioFormats,
+      best_video: bestVideo ? {
+        quality: bestVideo.qualityLabel || "360p",
+        format: bestVideo.container || "mp4",
+        size: bestVideo.contentLength ? (parseInt(bestVideo.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
+        url: bestVideo.url
+      } : null,
+      best_audio: bestAudio ? {
+        quality: (bestAudio.audioBitrate || "?") + "kbps",
+        format: bestAudio.container || "webm",
+        size: bestAudio.contentLength ? (parseInt(bestAudio.contentLength) / 1024 / 1024).toFixed(2) + " MB" : "unknown",
+        url: bestAudio.url
+      } : null
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────
+   MAIN — try providers in order
+   ───────────────────────────────────────────────── */
+async function ytDownload(videoUrl) {
+  if (!videoUrl) throw new Error("URL tidak boleh kosong")
+
+  const errors = []
+
+  try {
+    return await viaVidssave(videoUrl)
+  } catch (e) {
+    errors.push("vidssave: " + e.message.slice(0, 60))
+  }
+
+  try {
+    return await viaYtdlCore(videoUrl)
+  } catch (e) {
+    errors.push("ytdl-core: " + e.message.slice(0, 60))
+  }
+
+  throw new Error("All YouTube providers failed: " + errors.join(" | "))
 }
 
 module.exports = { ytDownload, extractVideoId }
