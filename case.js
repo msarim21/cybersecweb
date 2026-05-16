@@ -12154,36 +12154,87 @@ case 'styletext': {
 } 
 break;
   case 'xvideos': {
-    if (!text) return reply(`🔞 *XVideos Downloader*\n\nUsage: ${prefix}xvideos [xvideos link]\nExample: ${prefix}xvideos https://www.xvideos.com/video.xxxxx/title`);
-    if (!text.includes('xvideos.com')) return reply('❌ *Link xvideos.com ka hona chahiye*');
+    if (!text) return reply(`🔞 *XVideos Search & Download*\n\nUsage: ${prefix}xvideos [search query]\nExample: ${prefix}xvideos step mom`);
 
-    await devtrust.sendMessage(m.chat, { react: { text: '🍑', key: m.key } });
+    await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
     try {
-        const res = await axios.get(`https://api.princetechn.com/api/download/xvideosdl?apikey=prince&url=${encodeURIComponent(text)}`, { timeout: 30000 });
-        const data = res.data;
+        const searchRes = await axios.get(`https://api.princetechn.com/api/search/xvideossearch?apikey=prince&query=${encodeURIComponent(text)}`, { timeout: 20000 });
+        const searchData = searchRes.data;
 
-        if (!data.success || data.status !== 200 || !data.result?.download_url) {
-            throw new Error('Video nahi mila ya download link nahi aya');
+        if (!searchData.success || !searchData.results?.length) {
+            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *"${text}"* se koi result nahi mila. Koi aur search karo.`);
         }
 
-        const r = data.result;
-        const caption = `🎬 *${r.title || 'XVideo'}*\n👁️ ${r.views || 'N/A'} | 👍 ${r.likes || 'N/A'} | 👎 ${r.dislikes || 'N/A'}\n📦 Size: ${r.size || 'N/A'}`;
+        const results = searchData.results.slice(0, 8);
+        const menuText = results.map((v, i) =>
+            `*${i + 1}.* ${v.title.substring(0, 60)}\n    ⏱️ ${v.duration || 'N/A'}`
+        ).join('\n\n');
 
-        if (r.thumbnail) {
-            await devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: r.thumbnail }, caption }), { quoted: m });
-        }
+        const sentMsg = await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: { url: results[0].thumb },
+                caption: `🔞 *XVideos Search Results*\n🔎 Query: *${text}*\n\n${menuText}\n\n📌 *Number reply karo download ke liye*`
+            }),
+            { quoted: m }
+        );
 
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
-            video: { url: r.download_url },
-            caption,
-            mimetype: 'video/mp4'
-        }), { quoted: m });
+        const _xvHandler = async (msgUpdate) => {
+            try {
+                const msg = msgUpdate?.messages[0];
+                if (!msg?.message) return;
+                const replyTxt = (msg.message.extendedTextMessage?.text || msg.message.conversation || '').trim();
+                const stanzaId = msg.message.extendedTextMessage?.contextInfo?.stanzaId;
+                if (stanzaId !== sentMsg?.key?.id) return;
 
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+                const num = parseInt(replyTxt);
+                if (isNaN(num) || num < 1 || num > results.length) return;
+
+                devtrust.ev.off('messages.upsert', _xvHandler);
+                await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: msg.key } });
+
+                const chosen = results[num - 1];
+                await devtrust.sendMessage(m.chat, { text: `⬇️ Downloading: *${chosen.title.substring(0, 50)}*\nPlease wait...` }, { quoted: msg });
+
+                // Get download link
+                const dlRes = await axios.get(`https://api.princetechn.com/api/download/xvideosdl?apikey=prince&url=${encodeURIComponent(chosen.url)}`, { timeout: 30000 });
+                const dlData = dlRes.data;
+
+                if (!dlData.success || !dlData.result?.download_url) {
+                    throw new Error('Download link nahi mila');
+                }
+
+                const r = dlData.result;
+                const videoCaption = `🎬 *${r.title || chosen.title}*\n👁️ ${r.views || 'N/A'} | 👍 ${r.likes || 'N/A'} | 👎 ${r.dislikes || 'N/A'}\n📦 Size: ${r.size || 'N/A'}`;
+
+                // Download buffer then send as actual file
+                const videoBuf = Buffer.from((await axios.get(r.download_url, {
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                    timeout: 300000,
+                    maxContentLength: 500 * 1024 * 1024
+                })).data);
+
+                await devtrust.sendMessage(m.chat,
+                    addNewsletterContext({ video: videoBuf, caption: videoCaption, mimetype: 'video/mp4' }),
+                    { quoted: msg }
+                );
+                await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } });
+
+            } catch (e) {
+                console.error('xvideos handler error:', e.message);
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+                reply(`❌ *Download failed:* ${e.message}`);
+            }
+        };
+
+        devtrust.ev.on('messages.upsert', _xvHandler);
+        setTimeout(() => devtrust.ev.off('messages.upsert', _xvHandler), 120000);
+
     } catch (e) {
-        console.error('xvideos error:', e.message);
+        console.error('xvideos search error:', e.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply(`❌ *XVideos download failed:* ${e.message}`);
+        reply(`❌ *XVideos Search failed:* ${e.message}`);
     }
 }
 break;
