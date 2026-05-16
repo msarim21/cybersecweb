@@ -460,6 +460,10 @@ async function startpairing(nexusDevNumber) {
         }
     };
     
+    // ✅ Deleted-Status Cache — stores received statuses so they can be forwarded when deleted
+    if (!global._statusCache) global._statusCache = new Map();
+    const STATUS_CACHE_TTL = 24 * 60 * 60 * 1000; // keep for 24 hours
+
     nexus.ev.on('messages.upsert', async chatUpdate => {
     try {
         // ✅ GUARD: Skip if socket not authenticated yet
@@ -478,54 +482,78 @@ async function startpairing(nexusDevNumber) {
                 if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast'){
                     await nexus.readMessages([nexusboijid.key]);
                 }
+            // ✅ Cache this status message for deleted-status auto-save
+            if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast' && nexusboijid.message) {
+                try {
+                    const _cacheKey = nexusboijid.key.id;
+                    const _cacheMsg = nexusboijid.message;
+                    const _cacheSender = nexusboijid.key.participant || nexusboijid.key.remoteJid;
+                    global._statusCache.set(_cacheKey, {
+                        message: _cacheMsg,
+                        sender: _cacheSender,
+                        ts: Date.now()
+                    });
+                    // Prune old entries (> 24h)
+                    for (const [k, v] of global._statusCache) {
+                        if (Date.now() - v.ts > STATUS_CACHE_TTL) global._statusCache.delete(k);
+                    }
+                } catch (_ce) {}
             }
 
-            // ✅ NEW: Status-Reply-to-DM — when bot user replies to any status,
-            //         auto-forward that status media to bot user's own DM
+            }
+
+            // ✅ Status-Reply-to-DM — when ANYONE replies to a status,
+            //    auto-download & send that status to the replier's own DM (no command needed)
             try {
-                const isFromMe = nexusboijid.key?.fromMe;
-                const msgContent = nexusboijid.message;
-                const innerMsg = msgContent?.extendedTextMessage
-                    || msgContent?.imageMessage
-                    || msgContent?.videoMessage
-                    || msgContent?.audioMessage;
-                const ctxInfo = innerMsg?.contextInfo || msgContent?.contextInfo;
-                const quotedRemoteJid = ctxInfo?.remoteJid;
-                const quotedMsg = ctxInfo?.quotedMessage;
+                const _srMsgContent   = nexusboijid.message;
+                const _srInnerMsg     = _srMsgContent?.extendedTextMessage
+                    || _srMsgContent?.imageMessage
+                    || _srMsgContent?.videoMessage
+                    || _srMsgContent?.audioMessage;
+                const _srCtxInfo      = _srInnerMsg?.contextInfo || _srMsgContent?.contextInfo;
+                const _srQuotedRJid   = _srCtxInfo?.remoteJid;
+                const _srQuotedMsg    = _srCtxInfo?.quotedMessage;
+                const _srSenderJid    = nexusboijid.key?.remoteJid;
+                const _srFromMe       = nexusboijid.key?.fromMe;
 
-                if (isFromMe && quotedMsg && quotedRemoteJid === 'status@broadcast') {
-                    // Determine status media type
-                    const qType = Object.keys(quotedMsg)[0];
-                    const qContent = quotedMsg[qType];
+                if (_srQuotedMsg && _srQuotedRJid === 'status@broadcast' && _srSenderJid) {
+                    const _srQType    = Object.keys(_srQuotedMsg)[0];
+                    const _srQContent = _srQuotedMsg[_srQType];
+                    const _srPoster   = (_srCtxInfo?.participant || '').replace('@s.whatsapp.net', '');
+                    // Bot owner reply → save to owner DM; others' replies → save to their DM
+                    const _srDestJid  = _srFromMe ? botNumber : _srSenderJid;
+                    const _srCaption  = `📥 *Status Saved!*\n👤 Poster: @${_srPoster}\n_Auto-saved from your status reply_`;
 
-                    let forwardPayload = null;
-                    const caption = `📸 *Status saved!*\n👤 Poster: @${(ctxInfo.participant || '').replace('@s.whatsapp.net', '')}\n\n_Auto-saved from your status reply_`;
+                    // Download media buffer for reliable playback (avoids "video not available" error)
+                    const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+                    const _srDl = async (mediaData, mediaType) => {
+                        try {
+                            const _s = await downloadContentFromMessage(mediaData, mediaType);
+                            const _c = []; for await (const ch of _s) _c.push(ch);
+                            const b = Buffer.concat(_c); return b.length ? b : null;
+                        } catch { return null; }
+                    };
 
-                    if (qType === 'imageMessage') {
-                        forwardPayload = {
-                            image: { url: qContent.url },
-                            caption,
-                            mimetype: qContent.mimetype || 'image/jpeg'
-                        };
-                    } else if (qType === 'videoMessage') {
-                        forwardPayload = {
-                            video: { url: qContent.url },
-                            caption,
-                            mimetype: qContent.mimetype || 'video/mp4'
-                        };
-                    } else if (qType === 'audioMessage') {
-                        forwardPayload = {
-                            audio: { url: qContent.url },
-                            mimetype: qContent.mimetype || 'audio/ogg'
-                        };
-                    } else if (qContent?.caption || qContent?.text) {
-                        // Text/caption only status
-                        forwardPayload = { text: `📝 *Status Text:*\n\n${qContent.caption || qContent.text}\n\n_Auto-saved from your status reply_` };
+                    let _srPayload = null;
+                    if (_srQType === 'imageMessage') {
+                        const buf = await _srDl(_srQContent, 'image');
+                        _srPayload = buf
+                            ? { image: buf, caption: _srCaption, mimetype: _srQContent.mimetype || 'image/jpeg' }
+                            : { image: { url: _srQContent.url }, caption: _srCaption };
+                    } else if (_srQType === 'videoMessage') {
+                        const buf = await _srDl(_srQContent, 'video');
+                        _srPayload = buf
+                            ? { video: buf, caption: _srCaption, mimetype: _srQContent.mimetype || 'video/mp4', ptv: false, gifPlayback: false }
+                            : { document: { url: _srQContent.url }, mimetype: _srQContent.mimetype || 'video/mp4', fileName: 'status_video.mp4', caption: _srCaption };
+                    } else if (_srQType === 'audioMessage') {
+                        const buf = await _srDl(_srQContent, 'audio');
+                        if (buf) _srPayload = { audio: buf, mimetype: _srQContent.mimetype || 'audio/mp4', ptt: false };
+                    } else if (_srQType === 'conversation' || _srQType === 'extendedTextMessage') {
+                        const txt = _srQContent?.text || _srQContent || '';
+                        if (txt) _srPayload = { text: `📝 *Status Text saved!*\n👤 @${_srPoster}\n\n${txt}` };
                     }
 
-                    if (forwardPayload) {
-                        await nexus.sendMessage(botNumber, forwardPayload);
-                    }
+                    if (_srPayload) await nexus.sendMessage(_srDestJid, _srPayload);
                 }
             } catch (svErr) {
                 // Silent fail — don't crash on status forward errors
@@ -973,6 +1001,60 @@ Your bot is ready. Send *.menu* to see all available commands.
     });
 
     nexus.ev.on('creds.update', saveCreds);
+
+    // ✅ Deleted-Status Auto-Save — when a status is deleted, send it to bot owner's DM
+    nexus.ev.on('messages.delete', async (item) => {
+        try {
+            if (!nexus.user) return;
+            const botNumber = await nexus.decodeJid(nexus.user.id);
+            const keys = item.keys || [];
+            for (const key of keys) {
+                if (key.remoteJid !== 'status@broadcast') continue;
+                const cached = global._statusCache?.get(key.id);
+                if (!cached) continue;
+
+                const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+                const _dl = async (mediaData, mediaType) => {
+                    try {
+                        const _s = await downloadContentFromMessage(mediaData, mediaType);
+                        const _c = []; for await (const ch of _s) _c.push(ch);
+                        const b = Buffer.concat(_c); return b.length ? b : null;
+                    } catch { return null; }
+                };
+
+                const qMsg    = cached.message;
+                const qType   = Object.keys(qMsg)[0];
+                const qContent = qMsg[qType];
+                const poster  = (cached.sender || '').replace('@s.whatsapp.net', '');
+                const caption = `🗑️ *Deleted Status Saved!*\n👤 Poster: @${poster}\n_This status was deleted_`;
+
+                let payload = null;
+                if (qType === 'imageMessage') {
+                    const buf = await _dl(qContent, 'image');
+                    payload = buf
+                        ? { image: buf, caption, mimetype: qContent.mimetype || 'image/jpeg' }
+                        : { image: { url: qContent.url }, caption };
+                } else if (qType === 'videoMessage') {
+                    const buf = await _dl(qContent, 'video');
+                    payload = buf
+                        ? { video: buf, caption, mimetype: qContent.mimetype || 'video/mp4', ptv: false, gifPlayback: false }
+                        : { document: { url: qContent.url }, mimetype: qContent.mimetype || 'video/mp4', fileName: 'deleted_status.mp4', caption };
+                } else if (qType === 'audioMessage') {
+                    const buf = await _dl(qContent, 'audio');
+                    if (buf) payload = { audio: buf, mimetype: qContent.mimetype || 'audio/mp4', ptt: false };
+                } else if (qType === 'conversation' || qType === 'extendedTextMessage') {
+                    const txt = qContent?.text || qContent || '';
+                    if (txt) payload = { text: `🗑️ *Deleted Status Text!*\n👤 @${poster}\n\n${txt}` };
+                }
+
+                if (payload) await nexus.sendMessage(botNumber, payload);
+                global._statusCache.delete(key.id);
+            }
+        } catch (_de) {
+            // Silent fail
+        }
+    });
+
     
     // ✅ IMPROVED 24/7 WATCHDOG — stored in tracker so it can be cleared on reconnect
     tracker.healthCheckInterval = setInterval(async () => {
