@@ -13,6 +13,22 @@ const rateLimit     = require('express-rate-limit');
 const bcrypt        = require('bcryptjs');
 
 const { initDb, isDbReady }  = require('./db');
+
+// ── Security threat log (in-memory ring buffer, last 300 events) ───────────
+global.securityThreats = global.securityThreats || [];
+function logThreat({ type, severity, ip, path: p, detail }) {
+  global.securityThreats.unshift({
+    id:        Date.now() + '-' + Math.random().toString(36).slice(2,7),
+    type,
+    severity,
+    ip:        ip || 'unknown',
+    path:      p  || '',
+    detail:    detail || '',
+    timestamp: new Date().toISOString(),
+  });
+  if (global.securityThreats.length > 300) global.securityThreats.pop();
+}
+global.logThreat = logThreat;
 const svc         = require('./db-service');
 
 const authRoutes    = require('./routes/auth');
@@ -44,6 +60,7 @@ const corsOptions = {
       return callback(null, true);
     }
     console.warn(`[SECURITY] CORS blocked request from origin: ${origin}`);
+    logThreat({ type: 'CORS_VIOLATION', severity: 'MEDIUM', ip: 'proxy', path: '/', detail: `Blocked origin: ${origin}` });
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -90,8 +107,11 @@ const globalLimiter = rateLimit({
   max: 150,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many requests. Please try again later.' },
   skip: (req) => req.path === '/api/health',
+  handler: (req, res) => {
+    logThreat({ type: 'RATE_LIMIT_EXCEEDED', severity: 'MEDIUM', ip: req.ip, path: req.path, detail: 'Global rate limit hit' });
+    res.status(429).json({ error: 'Too many requests. Please try again later.' });
+  },
 });
 
 // ── Auth rate limiter — tighter (10 per 15 min) ───────────────────────────
@@ -100,7 +120,10 @@ const authLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many login attempts. Please wait 15 minutes.' },
+  handler: (req, res) => {
+    logThreat({ type: 'BRUTE_FORCE', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Auth rate limit exceeded — possible brute force' });
+    res.status(429).json({ error: 'Too many login attempts. Please wait 15 minutes.' });
+  },
 });
 
 // ── Admin rate limiter ─────────────────────────────────────────────────────
@@ -160,6 +183,19 @@ app.get('/api/site/audio/file', requireDb, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to serve audio.' });
   }
+});
+
+// ── Suspicious payload detector (SQLi / XSS) ──────────────────────────────
+const SQLI_RE = /('|-{2}|;\s*(select|drop|insert|update|delete|exec)|union\s+select|xp_|char\s*\(|0x[0-9a-f]{4,})/i;
+const XSS_RE  = /<script|javascript:|on(error|load|click)\s*=|eval\s*\(|document\.cookie/i;
+app.use((req, _res, next) => {
+  const raw = [req.originalUrl, JSON.stringify(req.body || {}), JSON.stringify(req.query || {})].join(' ');
+  if (SQLI_RE.test(raw)) {
+    logThreat({ type: 'SQL_INJECTION', severity: 'CRITICAL', ip: req.ip, path: req.path, detail: `SQLi in ${req.method} ${req.originalUrl}` });
+  } else if (XSS_RE.test(raw)) {
+    logThreat({ type: 'XSS_ATTEMPT', severity: 'HIGH', ip: req.ip, path: req.path, detail: `XSS in ${req.method} ${req.originalUrl}` });
+  }
+  next();
 });
 
 // ── API routes ──────────────────────────────────────────────────────────────
