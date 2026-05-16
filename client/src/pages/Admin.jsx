@@ -41,8 +41,17 @@ const NAV = [
   { id: 'users', label: 'USERS', icon: '👥' },
   { id: 'numbers', label: 'NUMBERS', icon: '📱' },
   { id: 'upgrades', label: 'UPGRADES', icon: '⚡' },
+  { id: 'security', label: 'SECURITY', icon: '🛡️' },
   { id: 'audio', label: 'AUDIO', icon: '🎵' },
 ];
+
+const SEV_COLOR = { CRITICAL: '#ff2244', HIGH: '#ff6600', MEDIUM: '#ffaa00', LOW: '#00f5ff' };
+const SEV_BG    = { CRITICAL: 'rgba(255,34,68,0.15)', HIGH: 'rgba(255,102,0,0.12)', MEDIUM: 'rgba(255,170,0,0.1)', LOW: 'rgba(0,245,255,0.08)' };
+const TYPE_ICON = { SQL_INJECTION: '💉', XSS_ATTEMPT: '⚡', BRUTE_FORCE: '🔨', CORS_VIOLATION: '🚫', RATE_LIMIT_EXCEEDED: '⏱️' };
+function fmtTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
 
 export default function Admin() {
   const { user, logout } = useAuth();
@@ -55,12 +64,33 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [threats, setThreats] = useState([]);
+  const [threatSummary, setThreatSummary] = useState({ CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 });
+  const [threatTotal, setThreatTotal] = useState(0);
+  const [threatLoading, setThreatLoading] = useState(false);
 
   const [audioInfo, setAudioInfo] = useState({ filename: '', original: '' });
   const [audioUploading, setAudioUploading] = useState(false);
   const audioFileRef = useRef(null);
 
-  useEffect(() => { fetchData(); fetchAudio(); }, []);
+  useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); }, []);
+
+  const fetchThreats = async () => {
+    setThreatLoading(true);
+    try {
+      const res = await axios.get('/api/admin/security?limit=100');
+      setThreats(res.data.threats || []);
+      setThreatSummary(res.data.summary || { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 });
+      setThreatTotal(res.data.total || 0);
+    } catch { }
+    finally { setThreatLoading(false); }
+  };
+
+  const clearThreats = async () => {
+    if (!confirm('Clear all security threat logs?')) return;
+    try { await axios.delete('/api/admin/security'); setThreats([]); setThreatSummary({ CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }); setThreatTotal(0); toast.success('Threat log cleared'); }
+    catch { toast.error('Failed to clear log'); }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -555,6 +585,129 @@ export default function Admin() {
                               <td className="text-[#8b5cf6]">{n.ownerId?.username || 'N/A'}</td>
                               <td><span className={n.status === 'active' ? 'status-active' : 'status-inactive'}>{n.status?.toUpperCase()}</span></td>
                               <td className="text-gray-600 text-xs">{new Date(n.createdAt).toLocaleDateString()}</td>
+                            </motion.tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </GCard>
+                  </>
+                )}
+              </motion.div>
+            )}
+
+            {/* ══ SECURITY THREATS ══ */}
+            {tab === 'security' && (
+              <motion.div key="security" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                <div className="flex items-center justify-between mb-5">
+                  <div>
+                    <h2 className="font-display text-xl font-bold tracking-widest" style={{ color: '#ff2244' }}>🛡️ SECURITY MONITOR</h2>
+                    <p className="font-mono text-[10px] text-gray-500 mt-0.5">{threatTotal} events recorded · live detection active</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={fetchThreats}
+                      className="px-3 py-1.5 rounded-xl font-mono text-[10px] tracking-widest"
+                      style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.25)', color: '#00f5ff' }}>
+                      ↺ REFRESH
+                    </motion.button>
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={clearThreats}
+                      className="px-3 py-1.5 rounded-xl font-mono text-[10px] tracking-widest"
+                      style={{ background: 'rgba(255,34,68,0.08)', border: '1px solid rgba(255,34,68,0.25)', color: '#ff2244' }}>
+                      🗑 CLEAR LOG
+                    </motion.button>
+                  </div>
+                </div>
+
+                {/* Severity summary cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                  {[['CRITICAL','💀'],['HIGH','🔥'],['MEDIUM','⚠️'],['LOW','ℹ️']].map(([sev, icon]) => (
+                    <motion.div key={sev} whileHover={{ y: -2 }} className="rounded-2xl p-4 relative overflow-hidden"
+                      style={{ background: SEV_BG[sev], border: `1px solid ${SEV_COLOR[sev]}40`, boxShadow: `0 0 18px ${SEV_COLOR[sev]}10` }}>
+                      <div className="absolute -top-1 -right-1 text-4xl opacity-10">{icon}</div>
+                      <div className="font-mono text-[9px] tracking-widest mb-1" style={{ color: `${SEV_COLOR[sev]}cc` }}>{sev}</div>
+                      <div className="font-display font-black text-3xl" style={{ color: SEV_COLOR[sev], textShadow: `0 0 14px ${SEV_COLOR[sev]}60` }}>
+                        {threatSummary[sev] || 0}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+
+                {/* Threat detection status banner */}
+                <div className="rounded-xl p-3 mb-4 flex items-center gap-3"
+                  style={{ background: 'rgba(0,255,136,0.06)', border: '1px solid rgba(0,255,136,0.2)' }}>
+                  <div className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse flex-shrink-0" />
+                  <div className="font-mono text-[10px] text-[#00ff88]">ACTIVE · Monitoring: SQL Injection · XSS Attacks · Brute Force · CORS Violations · Rate Limit Abuse</div>
+                </div>
+
+                {/* Threat log */}
+                {threatLoading ? (
+                  <div className="flex justify-center py-20"><div className="cyber-spinner" style={{ borderTopColor: '#ff2244' }} /></div>
+                ) : threats.length === 0 ? (
+                  <GCard className="p-12 text-center">
+                    <div className="text-5xl mb-4">🛡️</div>
+                    <div className="font-display text-sm text-[#00ff88] tracking-widest mb-1">ALL CLEAR</div>
+                    <div className="font-mono text-[10px] text-gray-500">No security threats detected yet</div>
+                  </GCard>
+                ) : (
+                  <>
+                    {/* Mobile cards */}
+                    <div className="sm:hidden space-y-2">
+                      {threats.map((t, i) => (
+                        <motion.div key={t.id || i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.02 }}
+                          className="rounded-xl p-3"
+                          style={{ background: SEV_BG[t.severity] || 'rgba(15,5,30,0.65)', border: `1px solid ${SEV_COLOR[t.severity] || '#ff2244'}30` }}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-sm">{TYPE_ICON[t.type] || '⚠️'}</span>
+                                <span className="font-mono text-[10px] font-bold" style={{ color: SEV_COLOR[t.severity] || '#ff2244' }}>{t.type?.replace(/_/g,' ')}</span>
+                              </div>
+                              <div className="font-mono text-[9px] text-gray-400 truncate">{t.detail}</div>
+                              <div className="font-mono text-[9px] text-gray-600 mt-0.5">IP: {t.ip} · {t.path}</div>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <span className="inline-block px-2 py-0.5 rounded-full font-mono text-[8px] font-bold"
+                                style={{ background: SEV_BG[t.severity], color: SEV_COLOR[t.severity], border: `1px solid ${SEV_COLOR[t.severity]}40` }}>
+                                {t.severity}
+                              </span>
+                              <div className="font-mono text-[8px] text-gray-600 mt-1">{fmtTime(t.timestamp)}</div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+
+                    {/* Desktop table */}
+                    <GCard className="hidden sm:block overflow-x-auto">
+                      <table className="w-full cyber-table min-w-[750px]">
+                        <thead>
+                          <tr>
+                            <th>TYPE</th>
+                            <th>SEVERITY</th>
+                            <th>IP ADDRESS</th>
+                            <th>PATH</th>
+                            <th>DETAIL</th>
+                            <th>TIME</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {threats.map((t, i) => (
+                            <motion.tr key={t.id || i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.015 }}>
+                              <td>
+                                <span className="flex items-center gap-1.5">
+                                  <span>{TYPE_ICON[t.type] || '⚠️'}</span>
+                                  <span className="font-mono text-[10px]" style={{ color: SEV_COLOR[t.severity] || '#aaa' }}>{t.type?.replace(/_/g,' ')}</span>
+                                </span>
+                              </td>
+                              <td>
+                                <span className="px-2 py-0.5 rounded-full font-mono text-[9px] font-bold"
+                                  style={{ background: SEV_BG[t.severity], color: SEV_COLOR[t.severity], border: `1px solid ${SEV_COLOR[t.severity]}40` }}>
+                                  {t.severity}
+                                </span>
+                              </td>
+                              <td className="font-mono text-[10px] text-[#00f5ff]">{t.ip}</td>
+                              <td className="font-mono text-[10px] text-gray-500 max-w-[120px] truncate">{t.path}</td>
+                              <td className="font-mono text-[10px] text-gray-400 max-w-[180px] truncate">{t.detail}</td>
+                              <td className="font-mono text-[10px] text-gray-600 whitespace-nowrap">{fmtTime(t.timestamp)}</td>
                             </motion.tr>
                           ))}
                         </tbody>
