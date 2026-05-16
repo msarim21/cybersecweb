@@ -11465,33 +11465,42 @@ case 'statusdl': {
     const _m = m.message;
     const _type = Object.keys(_m)[0];
     const _ctxInfo = _m[_type]?.contextInfo;
-    if (!_ctxInfo || _ctxInfo.remoteJid !== 'status@broadcast') {
-        return reply('📌 *Please reply/quote a Status update to download it.*');
+    if (!_ctxInfo || !_ctxInfo.quotedMessage) {
+        return reply('📌 *Please reply to a Status update to download it.*');
     }
     const _quotedMsg = _ctxInfo.quotedMessage;
-    if (!_quotedMsg) return reply('❌ *Could not find quoted status.*');
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         const _quotedType = Object.keys(_quotedMsg)[0];
         const _mediaData = _quotedMsg[_quotedType];
         if (_quotedType === 'conversation' || _quotedType === 'extendedTextMessage') {
-            const _txt = _quotedMsg.conversation || _quotedMsg.extendedTextMessage?.text;
+            const _txt = _quotedMsg.conversation || _quotedMsg.extendedTextMessage?.text || '';
+            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
             return reply(`📝 *Status Text:*\n\n${_txt}`);
         }
         const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-        const _stream = await downloadContentFromMessage(_mediaData, _quotedType.replace('Message', ''));
+        const _mediaType = _quotedType.replace('Message', '');
+        const _stream = await downloadContentFromMessage(_mediaData, _mediaType);
         let _buf = Buffer.from([]);
         for await (const chunk of _stream) { _buf = Buffer.concat([_buf, chunk]); }
+        if (!_buf.length) throw new Error('Empty buffer — media could not be downloaded');
         if (_quotedType === 'imageMessage') {
-            await devtrust.sendMessage(m.chat, { image: _buf, caption: _mediaData.caption || '' }, { quoted: m });
+            await devtrust.sendMessage(m.chat, { image: _buf, caption: _mediaData.caption || '📸 *Status Image*' }, { quoted: m });
         } else if (_quotedType === 'videoMessage') {
-            await devtrust.sendMessage(m.chat, { video: _buf, caption: _mediaData.caption || '' }, { quoted: m });
+            await devtrust.sendMessage(m.chat, { video: _buf, caption: _mediaData.caption || '🎥 *Status Video*', mimetype: 'video/mp4' }, { quoted: m });
+        } else if (_quotedType === 'audioMessage') {
+            await devtrust.sendMessage(m.chat, { audio: _buf, mimetype: 'audio/mp4', ptt: false }, { quoted: m });
+        } else if (_quotedType === 'documentMessage') {
+            await devtrust.sendMessage(m.chat, { document: _buf, mimetype: _mediaData.mimetype || 'application/octet-stream', fileName: _mediaData.fileName || 'status_file' }, { quoted: m });
+        } else {
+            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *Unsupported status type:* ${_quotedType}`);
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
         console.error('Status DL Error:', e);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply('❌ *Failed to download status media.*');
+        reply(`❌ *Failed to download status:* ${e.message}`);
     }
 }
 break;
