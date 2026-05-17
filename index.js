@@ -10,7 +10,7 @@ const { startKeepAlive } = require('./keepalive');
 const AUTH_FILE = './auth.json';
 const PAIRING_DIR = './nexstore/pairing/';
 const startpairing = require('./pair');
-const { getActiveSessions, getActiveLinkedNumbers, restoreCredsFromDb } = require('./session-db');
+const { getActiveLinkedNumbers, restoreCredsFromDb } = require('./session-db');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -25,53 +25,23 @@ function setAuthenticated(value) {
 const autoLoadPairs = async () => {
     console.log(chalk.cyan('🔄 Auto-loading all paired users...'));
 
-    // ── Step 1: Collect numbers from LinkedNumber (web panel) — primary source ─
-    let dbNumbers = [];
+    // ── Only reconnect numbers that are actively linked in the web panel ────────
+    let allUsers = [];
     try {
         const webLinked = await getActiveLinkedNumbers();
-        dbNumbers = (webLinked || []).map(n => {
+        allUsers = (webLinked || []).map(n => {
             const clean = String(n).replace(/[^0-9]/g, '');
             return clean ? `${clean}@s.whatsapp.net` : null;
         }).filter(Boolean);
-        if (dbNumbers.length > 0) {
-            console.log(chalk.green(`🌐 Found ${dbNumbers.length} web-linked number(s) to reconnect.`));
+        if (allUsers.length > 0) {
+            console.log(chalk.green(`🌐 Found ${allUsers.length} web-linked number(s) to reconnect.`));
         }
     } catch (e) {
         console.log(chalk.yellow(`⚠️  Could not read web-linked numbers: ${e.message}`));
-        // Fallback to BotSession active list
-        try {
-            const active = await getActiveSessions();
-            dbNumbers = (active || []).map(n => {
-                const clean = String(n).replace(/[^0-9]/g, '');
-                return clean ? `${clean}@s.whatsapp.net` : null;
-            }).filter(Boolean);
-            if (dbNumbers.length > 0) {
-                console.log(chalk.green(`📦 Fallback: Found ${dbNumbers.length} active session(s) from BotSession.`));
-            }
-        } catch (e2) {
-            console.log(chalk.yellow(`⚠️  Could not read BotSession either: ${e2.message}`));
-        }
     }
-
-    // ── Step 2: Collect numbers from local filesystem (local / VPS) ───────────
-    let fileNumbers = [];
-    if (fs.existsSync(PAIRING_DIR)) {
-        fileNumbers = fs.readdirSync(PAIRING_DIR, { withFileTypes: true })
-            .filter(d => d.isDirectory())
-            .map(d => d.name)
-            .filter(n => n.endsWith('@s.whatsapp.net'));
-    }
-
-    // ── Step 3: Merge — DB takes priority, add any extra from files ───────────
-    const seen = new Set(dbNumbers);
-    for (const n of fileNumbers) {
-        if (!seen.has(n)) { seen.add(n); dbNumbers.push(n); }
-    }
-
-    const allUsers = dbNumbers;
 
     if (allUsers.length === 0) {
-        console.log(chalk.yellow('ℹ️  No paired users found in DB or filesystem.'));
+        console.log(chalk.yellow('ℹ️  No web-linked active numbers found. Nothing to reconnect.'));
         return;
     }
 
