@@ -11175,22 +11175,23 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        // ── Use PrinceTech API ────────────────────────────────────────────────
-        const apiRes = await axios.get(`https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`, { timeout: 60000 });
+        // ── Use PrinceTech ytmusic API ────────────────────────────────────────
+        const apiRes = await axios.get(
+            `https://api.princetechn.com/api/download/ytmusic?apikey=prince&quality=mp3&url=${encodeURIComponent(videoUrl)}`,
+            { timeout: 60000 }
+        );
         const apiData = apiRes.data?.result;
-        if (!apiData?.audio_url) throw new Error('API did not return audio URL');
+        if (!apiData?.download_url) throw new Error('API did not return download URL');
 
         const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
         const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
-        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
-        const quality   = apiData.audio_quality || '128kbps';
+        const quality   = apiData.quality || '320kbps';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
-        const caption   = `🎵 *${titleStr}*\n⏱️ Duration: ${dur}\n🎚️ Quality: ${quality}`;
+        const caption   = `🎵 *${titleStr}*\n🎚️ Quality: ${quality}`;
 
-        // Send thumbnail first, then download audio
         if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
 
-        const audioBuf = await axios.get(apiData.audio_url, {
+        const audioBuf = await axios.get(apiData.download_url, {
             responseType: 'arraybuffer',
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
             timeout: 180000,
