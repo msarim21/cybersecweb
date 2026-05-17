@@ -103,4 +103,20 @@ async function removeLinkedNumber(number) {
   }
 }
 
-module.exports = { updateSession, getActiveSessions, saveCredsToDb, restoreCredsFromDb, removeLinkedNumber };
+/**
+ * Return all numbers that are actively linked in the web panel (LinkedNumber collection).
+ * This is the source of truth — if a number is linked on the web, the bot should connect.
+ * @returns {Promise<string[]>} array of clean phone number strings (digits only)
+ */
+async function getActiveLinkedNumbers() {
+  try {
+    await _init();
+    const { getAllActiveLinkedNumbers } = require('./server/db-service');
+    return await getAllActiveLinkedNumbers();
+  } catch (err) {
+    console.error('[session-db] getActiveLinkedNumbers failed:', err.message);
+    return [];
+  }
+}
+
+module.exports = { updateSession, getActiveSessions, getActiveLinkedNumbers, saveCredsToDb, restoreCredsFromDb, removeLinkedNumber };
