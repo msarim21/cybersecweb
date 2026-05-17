@@ -305,6 +305,7 @@ export default function Admin() {
   const handleBotDisable = async (phone) => {
     const cleanPhone = phone.trim().replace(/[^0-9]/g, '');
     if (!cleanPhone) return toast.error('Please enter a valid phone number');
+    if (!confirm(`⚠️ Are you sure you want to turn OFF the bot for:\n\n📱 ${cleanPhone}\n\nThis number will stop receiving bot responses.`)) return;
     setBotControlLoading(true);
     try {
       const res = await axios.post(`/api/admin/bot-disabled/${cleanPhone}`);
