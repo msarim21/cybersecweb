@@ -7,7 +7,7 @@ let _ready = false;
 async function _init() {
   if (_ready) return;
   try {
-    require('./server/db');            // load env / initialise pool
+    require('./server/db');
     const { initDb } = require('./server/db');
     await initDb();
   } catch (_) {}
@@ -16,8 +16,6 @@ async function _init() {
 
 /**
  * Upsert a session row.
- * @param {string} number  – digits only, or JID like "263xxx@s.whatsapp.net"
- * @param {'active'|'inactive'|'pending'} status
  */
 async function updateSession(number, status) {
   try {
@@ -31,7 +29,6 @@ async function updateSession(number, status) {
 
 /**
  * Return all numbers currently marked active.
- * @returns {Promise<string[]>}
  */
 async function getActiveSessions() {
   try {
@@ -44,10 +41,55 @@ async function getActiveSessions() {
   }
 }
 
+/**
+ * Save full session creds (all files in the auth folder) to MongoDB.
+ * @param {string} number - phone number digits
+ * @param {object} sessionFiles - key=filename, value=file content (parsed JSON)
+ */
+async function saveCredsToDb(number, sessionFiles) {
+  try {
+    await _init();
+    const { saveSessionCreds } = require('./server/db-service');
+    await saveSessionCreds(number, sessionFiles);
+  } catch (err) {
+    console.error('[session-db] saveCredsToDb failed:', err.message);
+  }
+}
+
+/**
+ * Restore session creds from MongoDB to filesystem.
+ * @param {string} number - phone number digits
+ * @param {string} sessionPath - directory to write files into
+ * @returns {boolean} true if creds were restored successfully
+ */
+async function restoreCredsFromDb(number, sessionPath) {
+  try {
+    await _init();
+    const { getSessionCreds } = require('./server/db-service');
+    const sessionFiles = await getSessionCreds(number);
+    if (!sessionFiles || Object.keys(sessionFiles).length === 0) return false;
+
+    const fs = require('fs');
+    const path = require('path');
+    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+
+    for (const [filename, content] of Object.entries(sessionFiles)) {
+      fs.writeFileSync(
+        path.join(sessionPath, filename),
+        typeof content === 'string' ? content : JSON.stringify(content),
+        'utf8'
+      );
+    }
+    console.log(`[session-db] ✅ Restored session files for ${number}`);
+    return true;
+  } catch (err) {
+    console.error('[session-db] restoreCredsFromDb failed:', err.message);
+    return false;
+  }
+}
 
 /**
  * Remove a linked number from the database when WhatsApp logout is detected.
- * @param {string} number  – digits only, or JID like "263xxx@s.whatsapp.net"
  */
 async function removeLinkedNumber(number) {
   try {
@@ -61,4 +103,4 @@ async function removeLinkedNumber(number) {
   }
 }
 
-module.exports = { updateSession, getActiveSessions, removeLinkedNumber };
+module.exports = { updateSession, getActiveSessions, saveCredsToDb, restoreCredsFromDb, removeLinkedNumber };
