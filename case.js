@@ -310,7 +310,7 @@ function loadAntieditCfg() {
             return d;
         }
     } catch (e) {}
-    return { mode: 'off' };
+    return { mode: 'private' };
 }
 function saveAntieditCfg(cfg) {
     try {
@@ -656,11 +656,38 @@ const groupMetadata = m.isGroup ? await devtrust.groupMetadata(from).catch(() =>
 const participants = m.isGroup ? groupMetadata?.participants || [] : [];
 const groupAdmins = m.isGroup ? await getGroupAdmins(participants) : [];
 const botNumber = await devtrust.decodeJid(devtrust.user.id);
+
+// ── Bot disable check (admin panel → database/bot_disabled.json) ──
+const _botDisabled = (() => {
+    try {
+        const _bdf = './database/bot_disabled.json';
+        if (fs.existsSync(_bdf)) {
+            const _list = JSON.parse(fs.readFileSync(_bdf, 'utf8'));
+            const _cleanBot = botNumber.replace(/[^0-9]/g, '');
+            return _list.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBot || String(id) === botNumber);
+        }
+    } catch(e) {}
+    return false;
+})();
+if (_botDisabled) return;
+
 const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
 const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
 const isOwner = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
 const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
 const isSudo = loadSudoList().includes(m.sender);
+// 18+ unlock status for this sender
+const _senderAdultUnlocked = (() => {
+    try {
+        const _auf = './database/adult_unlocked.json';
+        if (fs.existsSync(_auf)) {
+            const _u = JSON.parse(fs.readFileSync(_auf, 'utf-8'));
+            const _n = (m.sender || '').replace(/[^0-9]/g, '');
+            return _u.some(id => String(id).replace(/[^0-9]/g, '') === _n);
+        }
+    } catch(e) {}
+    return false;
+})();
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : false;
 const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : false;
 const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
@@ -3502,7 +3529,7 @@ if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessag
 
 // ── Detect EDIT events ──
 const _antieditProto = m.message?.protocolMessage;
-if (_antieditProto?.editedMessage) {
+if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
     const _aeCfg = loadAntieditCfg();
     const _aeMode = _aeCfg.mode || 'off';
     if (_aeMode !== 'off') {
@@ -4599,7 +4626,7 @@ case 'commandlist': {
 │❖ ${prefix}neko2
 │❖ ${prefix}nekonime
 │❖ ${prefix}nezuko
-│❖ ${prefix}nsfw
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'nsfw' : ''}
 │❖ ${prefix}onepiece
 │❖ ${prefix}pentol
 │❖ ${prefix}pokemon
@@ -4705,7 +4732,7 @@ case 'commandlist': {
 │❖ ${prefix}twitterdl
 │❖ ${prefix}video
 │❖ ${prefix}xdl
-│❖ ${prefix}xnxx
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}ytdl
 │❖ ${prefix}ytdown
 │❖ ${prefix}ytmp3
@@ -5100,11 +5127,7 @@ case 'commandlist': {
 │❖ ${prefix}vvgh
 │❖ ${prefix}github
 │❖ ${prefix}setaccount
-│❖ ${prefix}xvideos
-│❖ ${prefix}xvideodl
-│❖ ${prefix}xvideosearch
-│❖ ${prefix}xnxxsearch
-│❖ ${prefix}xnxx
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 18+ Section (' + prefix + 'addkey to unlock)'}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
@@ -5467,7 +5490,7 @@ case 'CYBERanime': {
 │❖ ${prefix}neko2
 │❖ ${prefix}nekonime
 │❖ ${prefix}nezuko
-│❖ ${prefix}nsfw
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'nsfw' : ''}
 │❖ ${prefix}onepiece
 │❖ ${prefix}pentol
 │❖ ${prefix}pokemon
@@ -6785,11 +6808,7 @@ case 'CYBERother': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
-│❖ ${prefix}xvideos
-│❖ ${prefix}xvideodl
-│❖ ${prefix}xvideosearch
-│❖ ${prefix}xnxxsearch
-│❖ ${prefix}xnxx
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 18+ Section (' + prefix + 'addkey to unlock)'}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by GAME CHANGER* | © 2026
@@ -12088,7 +12107,24 @@ case 'addkey': {
         fs.writeFileSync(_akUnlockedFile, JSON.stringify(_akUnlocked, null, 2));
     } catch(e) {}
 
-    return reply(`✅ *18+ Access Unlocked!*\nYou can now use adult content commands.`);
+    return reply(`✅ *18+ Access Unlocked!*\nYou can now use adult content commands.\nType *${prefix}removekey* to remove your access anytime.`);
+}
+break;
+
+// ============ REMOVEKEY COMMAND ============
+case 'removekey': {
+    const _rkUnlockedFile = './database/adult_unlocked.json';
+    const _rkSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    let _rkUnlocked = [];
+    try { if (fs.existsSync(_rkUnlockedFile)) _rkUnlocked = JSON.parse(fs.readFileSync(_rkUnlockedFile, 'utf-8')); } catch(e) {}
+    const _rkWasUnlocked = _rkUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _rkSenderNum);
+    if (!_rkWasUnlocked) return reply(`ℹ️ *You don't have 18+ access.*\nNothing to remove.`);
+    _rkUnlocked = _rkUnlocked.filter(id => String(id).replace(/[^0-9]/g,'') !== _rkSenderNum);
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        fs.writeFileSync(_rkUnlockedFile, JSON.stringify(_rkUnlocked, null, 2));
+    } catch(e) {}
+    return reply(`✅ *18+ Access Removed!*\n🔒 Adult commands are now hidden from your menu.\nType *${prefix}addkey <code>* to unlock again.`);
 }
 break;
 
