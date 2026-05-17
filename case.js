@@ -12461,6 +12461,11 @@ case 'styletext': {
 } 
 break;
   case 'xvideos': {
+    // 18+ unlock check
+    const _xvid_num = (m.sender || '').split('@')[0].split(':')[0];
+    const _xvid_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
+    const _xvid_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
+    if (!isCreator && (_xvid_banned || !_xvid_unlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) return reply(`🔞 *XVideos Search & Download*\n\nUsage: ${prefix}xvideos [search query]\nExample: ${prefix}xvideos step mom`);
 
     await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
@@ -12619,6 +12624,11 @@ break;
 }
 break;
 case 'xvideosearch':{
+    // 18+ unlock check
+    const _xvsrch_num = (m.sender || '').split('@')[0].split(':')[0];
+    const _xvsrch_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
+    const _xvsrch_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
+    if (!isCreator && (_xvsrch_banned || !_xvsrch_unlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
   if (!text) return m.reply(example(`Milf`))
   try {
     // checking data from api
@@ -12655,6 +12665,11 @@ case 'xvideosearch':{
 break; 
 // ✅ Command switch
 case 'xnxxsearch': {
+    // 18+ unlock check
+    const _xnxxs_num = (m.sender || '').split('@')[0].split(':')[0];
+    const _xnxxs_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
+    const _xnxxs_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
+    if (!isCreator && (_xnxxs_banned || !_xnxxs_unlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
         if (!text) return reply(`Enter Query`)
         reply(mess.wait)
         const fg = require('api-dylux')
@@ -12667,7 +12682,8 @@ case 'xnxx': {
     // Adult unlock check
     const _xnxxSenderNum = (m.sender || '').split('@')[0].split(':')[0];
     const _xnxxUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
-    if (!isCreator && !_xnxxUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
+    const _xnxxBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
+    if (!isCreator && (_xnxxBanned || !_xnxxUnlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) {
         return reply('❌ Please enter a name.\n📌 Example: *.xnxx mia*');
     }

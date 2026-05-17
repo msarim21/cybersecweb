@@ -109,7 +109,7 @@ app.use(express.urlencoded({ extended: false, limit: '10kb' }));
 // ── Global API rate limiter ────────────────────────────────────────────────
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 150,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path === '/api/health',
@@ -134,7 +134,7 @@ const authLimiter = rateLimit({
 // ── Admin rate limiter ─────────────────────────────────────────────────────
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 50,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many admin requests.' },

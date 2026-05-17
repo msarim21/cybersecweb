@@ -108,6 +108,7 @@ router.post('/adult/ban/:phone', (req, res) => {
     let banned = getAdultBanned();
     const jid = phone.includes('@') ? phone : phone.replace(/[^0-9]/g,'') + '@s.whatsapp.net';
     if (!banned.includes(jid)) banned.push(jid);
+    _adultFs.mkdirSync(_adultPath.dirname(ADULT_BANNED_FILE), { recursive: true });
     _adultFs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(banned, null, 2));
     // Also remove from unlocked
     let users = getUnlockedUsers().filter(u => !u.includes(phone));
@@ -139,6 +140,7 @@ router.post('/bot-disabled/:phone', (req, res) => {
     let disabled = getBotDisabled();
     const jid = phone.includes('@') ? phone : phone.replace(/[^0-9]/g,'') + '@s.whatsapp.net';
     if (!disabled.includes(jid)) disabled.push(jid);
+    _adultFs.mkdirSync(_adultPath.dirname(BOT_DISABLED_FILE), { recursive: true });
     _adultFs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify(disabled, null, 2));
     res.json({ message: 'Bot disabled for number.', disabledNumbers: disabled });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -149,6 +151,7 @@ router.delete('/bot-disabled/:phone', (req, res) => {
   try {
     const phone = req.params.phone;
     let disabled = getBotDisabled().filter(u => !u.includes(phone));
+    _adultFs.mkdirSync(_adultPath.dirname(BOT_DISABLED_FILE), { recursive: true });
     _adultFs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify(disabled, null, 2));
     res.json({ message: 'Bot enabled for number.', disabledNumbers: disabled });
   } catch (err) { res.status(500).json({ error: err.message }); }
