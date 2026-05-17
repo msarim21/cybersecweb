@@ -295,6 +295,7 @@ async function startpairing(nexusDevNumber) {
             disconnected: false,
             lastActivity: Date.now(),
             autoActionsCompleted: false,
+            connectedMsgSent: false,
             groupsJoined: false,
             healthCheckInterval: null  // ✅ track interval so old ones can be cleared
         });
@@ -927,7 +928,9 @@ async function startpairing(nexusDevNumber) {
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
-            // Send a connected confirmation message to the linked number
+            // Send a connected confirmation message to the linked number (only once per session)
+            if (!tracker.connectedMsgSent) {
+            tracker.connectedMsgSent = true;
             try {
                 const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
                 const connectedMsg = `╔══════════════════╗
@@ -949,6 +952,7 @@ Your bot is ready. Send *.menu* to see all available commands.
             } catch (msgErr) {
                 console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
             }
+            } // end connectedMsgSent check
 
             try {
                 // Set up event listeners for this connection

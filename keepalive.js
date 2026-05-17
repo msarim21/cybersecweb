@@ -61,16 +61,16 @@ function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Ping every 5 seconds — ultra-fast keep-alive to prevent bot sleep
-    _timer = setInterval(selfPing, 5 * 1000);
+    // Ping every 14 minutes — keeps Heroku/Render dynos alive 24/7
+    _timer = setInterval(selfPing, 14 * 60 * 1000);
 
     // Keep Node.js event loop alive — prevents process exit on empty queue
     _noopTimer = setInterval(() => {}, 10 * 60 * 1000);
 
-    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 5 sec — bot stays alive)');
+    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 14 min — bot stays alive on Heroku)');
 
-    // First ping immediately after 8 seconds
-    setTimeout(selfPing, 2000);
+    // First ping immediately after 3 seconds
+    setTimeout(selfPing, 3000);
 }
 
 function stopKeepAlive() {

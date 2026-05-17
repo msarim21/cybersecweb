@@ -5127,7 +5127,7 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}vvgh
 │❖ ${prefix}github
 │❖ ${prefix}setaccount
-${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 18+ Section (' + prefix + 'addkey to unlock)'}
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 Locked Commands'}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
@@ -6808,7 +6808,7 @@ case 'CYBERother': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
-${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 18+ Section (' + prefix + 'addkey to unlock)'}
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 Locked Commands'}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by GAME CHANGER* | © 2026

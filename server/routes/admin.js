@@ -64,6 +64,7 @@ router.delete('/adult/user/:phone', (req, res) => {
     const phone = req.params.phone;
     let users = getUnlockedUsers();
     users = users.filter(u => !u.includes(phone));
+    _adultFs.mkdirSync(_adultPath.dirname(ADULT_UNLOCKED_FILE), { recursive: true });
     _adultFs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify(users, null, 2));
     res.json({ message: 'User access removed.', unlockedUsers: users });
   } catch (err) { res.status(500).json({ error: err.message }); }
