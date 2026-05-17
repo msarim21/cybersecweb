@@ -503,13 +503,28 @@ async function countAdmins() {
   return parseInt(rows[0].count, 10);
 }
 
+
+async function deleteNumberByPhone(phone) {
+  const clean = phone.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+  if (isMongoMode()) {
+    const { LinkedNumber } = M();
+    try {
+      await LinkedNumber.findOneAndDelete({ number: { $regex: clean } });
+    } catch (e) { console.error('[db] deleteNumberByPhone mongo error:', e.message); }
+    return;
+  }
+  try {
+    await pg().query('DELETE FROM linked_numbers WHERE number LIKE $1', [`%${clean}%`]);
+  } catch (e) { console.error('[db] deleteNumberByPhone pg error:', e.message); }
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
   banUser, deleteUser, updateUserPlan, getAllUsers, getStats,
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
-  addNumber, toggleNumber, deleteNumber, getAllNumbers,
+  addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   upsertBotSession, getActiveBotSessions,
   getSiteSetting, setSiteSetting,
   countAdmins,
