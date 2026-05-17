@@ -9,192 +9,260 @@ import * as THREE from 'three';
 const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
 
 
-// ── Live Data 3D Graph (Three.js + Real API Data) ───────────────────────────
+// ── CYBER PULSE — Dramatic 3D Live Graph ────────────────────────────────────
 const TAB_CONFIG = {
-  overview: { label: 'TOTAL USERS',      color: '#00f5ff', hexColor: 0x00f5ff, fetch: () => axios.get('/api/admin/stats').then(r => r.data.totalUsers || 0) },
-  users:    { label: 'ACTIVE USERS',     color: '#8b5cf6', hexColor: 0x8b5cf6, fetch: () => axios.get('/api/admin/stats').then(r => r.data.onlineUsers || 0) },
-  numbers:  { label: 'ACTIVE NUMBERS',   color: '#ff00ff', hexColor: 0xff00ff, fetch: () => axios.get('/api/admin/numbers').then(r => Array.isArray(r.data) ? r.data.filter(n => n.status === 'active').length : 0) },
-  upgrades: { label: 'PENDING REQUESTS', color: '#ffaa00', hexColor: 0xffaa00, fetch: () => axios.get('/api/admin/upgrade-requests').then(r => Array.isArray(r.data) ? r.data.length : 0) },
-  security: { label: 'THREATS LOGGED',   color: '#ff2244', hexColor: 0xff2244, fetch: () => axios.get('/api/admin/security').then(r => r.data.total || 0) },
-  audio:    { label: 'BOT SESSIONS',     color: '#00f5ff', hexColor: 0x00f5ff, fetch: () => axios.get('/api/health').then(r => r.data.sessions || 0) },
-  access:   { label: 'UNLOCKED USERS',   color: '#ff00ff', hexColor: 0xff00ff, fetch: () => axios.get('/api/admin/adult').then(r => Array.isArray(r.data.unlockedUsers) ? r.data.unlockedUsers.length : 0) },
-  bot:      { label: 'BOT SESSIONS',     color: '#00ff88', hexColor: 0x00ff88, fetch: () => axios.get('/api/health').then(r => r.data.sessions || 0) },
-  logs:     { label: 'LOG ENTRIES',      color: '#ffaa00', hexColor: 0xffaa00, fetch: () => axios.get('/api/admin/activity-log').then(r => Array.isArray(r.data.log) ? r.data.log.length : 0) },
+  overview: { label: 'TOTAL USERS',      subLabel: 'Platform Growth',  color: '#00f5ff', hex: 0x00f5ff, fetch: () => axios.get('/api/admin/stats').then(r => r.data.totalUsers   || 0) },
+  users:    { label: 'ONLINE USERS',     subLabel: 'Active Right Now', color: '#8b5cf6', hex: 0x8b5cf6, fetch: () => axios.get('/api/admin/stats').then(r => r.data.onlineUsers  || 0) },
+  numbers:  { label: 'ACTIVE NUMBERS',   subLabel: 'Bot Connections',  color: '#ff00ff', hex: 0xff00ff, fetch: () => axios.get('/api/admin/numbers').then(r => Array.isArray(r.data) ? r.data.filter(n=>n.status==='active').length : 0) },
+  upgrades: { label: 'PENDING REQUESTS', subLabel: 'Awaiting Approval',color: '#ffaa00', hex: 0xffaa00, fetch: () => axios.get('/api/admin/upgrade-requests').then(r => Array.isArray(r.data) ? r.data.length : 0) },
+  security: { label: 'THREATS DETECTED', subLabel: 'Security Events',  color: '#ff2244', hex: 0xff2244, fetch: () => axios.get('/api/admin/security').then(r => r.data.total    || 0) },
+  audio:    { label: 'BOT SESSIONS',     subLabel: 'WA Connections',   color: '#00f5ff', hex: 0x00f5ff, fetch: () => axios.get('/api/health').then(r => r.data.sessions          || 0) },
+  access:   { label: 'UNLOCKED USERS',   subLabel: '18+ Access',       color: '#ff00ff', hex: 0xff00ff, fetch: () => axios.get('/api/admin/adult').then(r => Array.isArray(r.data.unlockedUsers) ? r.data.unlockedUsers.length : 0) },
+  bot:      { label: 'BOT SESSIONS',     subLabel: 'Live Connections',  color: '#00ff88', hex: 0x00ff88, fetch: () => axios.get('/api/health').then(r => r.data.sessions          || 0) },
+  logs:     { label: 'LOG ENTRIES',      subLabel: 'Activity Records', color: '#ffaa00', hex: 0xffaa00, fetch: () => axios.get('/api/admin/activity-log').then(r => Array.isArray(r.data.log) ? r.data.log.length : 0) },
 };
 
-const BAR_COUNT = 24;
+const HIST = 28;
 
 const LiveDataGraph = ({ tabId = 'overview' }) => {
-  const mountRef    = useRef(null);
-  const dataRef     = useRef(Array(BAR_COUNT).fill(0));
-  const barsRef     = useRef([]);
-  const peakLineRef = useRef(null);
-  const rendRef     = useRef(null);
-  const rafRef      = useRef(null);
-  const [live, setLive]   = useState({ val: 0, trend: 0 });
+  const mountRef  = useRef(null);
+  const dataRef   = useRef(Array(HIST).fill(0));
+  const stateRef  = useRef({ bars: [], topSpheres: [], scanPlane: null, orb: null, peakLine: null, particles: [] });
+  const rendRef   = useRef(null);
+  const rafRef    = useRef(null);
+  const [live, setLive] = useState({ val: 0, trend: 0, max: 0 });
 
   const cfg = TAB_CONFIG[tabId] || TAB_CONFIG.overview;
 
-  // ─── Setup Three.js scene ──────────────────────────────────────────────
   useEffect(() => {
-    const container = mountRef.current;
-    if (!container) return;
-    const W = container.clientWidth || 500;
-    const H = 150;
+    const el = mountRef.current;
+    if (!el) return;
+    const W = el.clientWidth || 600, H = 200;
 
-    const scene    = new THREE.Scene();
-    const camera   = new THREE.PerspectiveCamera(48, W / H, 0.1, 100);
-    camera.position.set(0, 6, 14);
-    camera.lookAt(0, 0, 0);
+    const scene  = new THREE.Scene();
+    scene.fog    = new THREE.FogExp2(0x000008, 0.055);
+    const camera = new THREE.PerspectiveCamera(52, W / H, 0.1, 100);
+    camera.position.set(-3, 8, 13);
+    camera.lookAt(0, 2, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
-    container.appendChild(renderer.domElement);
+    renderer.shadowMap.enabled = true;
+    el.appendChild(renderer.domElement);
     rendRef.current = renderer;
 
-    // ── Floor grid ──────────────────────────────────────────────────────
-    const grid = new THREE.GridHelper(22, 22, cfg.hexColor & 0x333333, 0x111122);
-    grid.position.y = -0.05;
+    // ── floor grid ─────────────────────────────────────────────────────────
+    const grid = new THREE.GridHelper(24, 24, cfg.hex, (cfg.hex & 0xfefefe) >> 1);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.35;
     scene.add(grid);
 
-    // ── Bars ──────────────────────────────────────────────────────────
-    const bars = [];
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const geo = new THREE.BoxGeometry(0.4, 0.1, 0.4);
+    // ── central glowing ORB ─────────────────────────────────────────────────
+    const orbGeo = new THREE.SphereGeometry(0.55, 32, 32);
+    const orbMat = new THREE.MeshStandardMaterial({ color: cfg.hex, emissive: cfg.hex, emissiveIntensity: 1.8, transparent: true, opacity: 0.9 });
+    const orb = new THREE.Mesh(orbGeo, orbMat);
+    orb.position.set(-7.2, 1.2, 0);
+    scene.add(orb);
+    stateRef.current.orb = orb;
+
+    // ── bars + top spheres ──────────────────────────────────────────────────
+    const bars = [], topSpheres = [];
+    for (let i = 0; i < HIST; i++) {
+      const geo = new THREE.BoxGeometry(0.38, 0.12, 0.38);
       const mat = new THREE.MeshStandardMaterial({
-        color:            cfg.hexColor,
-        emissive:         cfg.hexColor,
-        emissiveIntensity: 0.5 + (i / BAR_COUNT) * 0.5,
-        transparent:      true,
-        opacity:          0.55 + (i / BAR_COUNT) * 0.4,
+        color: cfg.hex, emissive: cfg.hex,
+        emissiveIntensity: 0.3 + (i / HIST) * 0.7,
+        transparent: true, opacity: 0.5 + (i / HIST) * 0.45,
+        roughness: 0.2, metalness: 0.6,
       });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.x = -5.5 + i * 0.48;
-      mesh.position.y = 0.05;
-      scene.add(mesh);
-      bars.push(mesh);
+      const bar = new THREE.Mesh(geo, mat);
+      bar.position.set(-5.9 + i * 0.45, 0.06, 0);
+      bar.castShadow = true;
+      scene.add(bar);
+      bars.push(bar);
+
+      // glowing sphere on top
+      const sg  = new THREE.SphereGeometry(0.13, 12, 12);
+      const sm  = new THREE.MeshStandardMaterial({ color: cfg.hex, emissive: cfg.hex, emissiveIntensity: 1.5, transparent: true, opacity: 0.95 });
+      const sp  = new THREE.Mesh(sg, sm);
+      scene.add(sp);
+      topSpheres.push(sp);
     }
-    barsRef.current = bars;
+    stateRef.current.bars = bars;
+    stateRef.current.topSpheres = topSpheres;
 
-    // ── Peak line ──────────────────────────────────────────────────────
-    const linePts  = new Float32Array(BAR_COUNT * 3);
-    const lineGeo  = new THREE.BufferGeometry();
+    // ── peak line ────────────────────────────────────────────────────────────
+    const linePts = new Float32Array(HIST * 3);
+    const lineGeo = new THREE.BufferGeometry();
     lineGeo.setAttribute('position', new THREE.BufferAttribute(linePts, 3));
-    const lineMat  = new THREE.LineBasicMaterial({ color: cfg.hexColor, transparent: true, opacity: 0.9 });
-    const line     = new THREE.Line(lineGeo, lineMat);
-    scene.add(line);
-    peakLineRef.current = line;
+    const lineMat = new THREE.LineBasicMaterial({ color: cfg.hex, transparent: true, opacity: 0.85, linewidth: 2 });
+    const peakLine = new THREE.Line(lineGeo, lineMat);
+    scene.add(peakLine);
+    stateRef.current.peakLine = peakLine;
 
-    // ── Lights ──────────────────────────────────────────────────────────
-    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
-    const pl = new THREE.PointLight(cfg.hexColor, 3, 22);
-    pl.position.set(0, 8, 4);
-    scene.add(pl);
+    // ── horizontal scan plane ────────────────────────────────────────────────
+    const scanGeo = new THREE.PlaneGeometry(14, 0.04);
+    const scanMat = new THREE.MeshBasicMaterial({ color: cfg.hex, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
+    const scanPlane = new THREE.Mesh(scanGeo, scanMat);
+    scanPlane.rotation.x = Math.PI / 2;
+    scene.add(scanPlane);
+    stateRef.current.scanPlane = scanPlane;
 
-    // ── Animate ──────────────────────────────────────────────────────────
+    // ── floating particles ────────────────────────────────────────────────────
+    const ptCount = 60;
+    const ptGeo   = new THREE.BufferGeometry();
+    const ptPos   = new Float32Array(ptCount * 3);
+    const particles = [];
+    for (let i = 0; i < ptCount; i++) {
+      ptPos[i*3]   = -6 + Math.random() * 13;
+      ptPos[i*3+1] = Math.random() * 7;
+      ptPos[i*3+2] = -1.5 + Math.random() * 3;
+      particles.push({ x: ptPos[i*3], vy: 0.01 + Math.random() * 0.025, life: Math.random() });
+    }
+    ptGeo.setAttribute('position', new THREE.BufferAttribute(ptPos, 3));
+    const ptMat  = new THREE.PointsMaterial({ color: cfg.hex, size: 0.08, transparent: true, opacity: 0.7 });
+    const points = new THREE.Points(ptGeo, ptMat);
+    scene.add(points);
+
+    // ── lights ────────────────────────────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+    const pl1 = new THREE.PointLight(cfg.hex, 4, 20); pl1.position.set(0, 8, 3); scene.add(pl1);
+    const pl2 = new THREE.PointLight(0xffffff, 1.2, 18); pl2.position.set(-6, 5, -3); scene.add(pl2);
+    const pl3 = new THREE.PointLight(cfg.hex === 0xff2244 ? 0xff6600 : 0xff00ff, 1.5, 16); pl3.position.set(7, 4, 4); scene.add(pl3);
+
+    // ── animate ────────────────────────────────────────────────────────────────
     let tick = 0;
     const animate = () => {
       rafRef.current = requestAnimationFrame(animate);
-      tick += 0.006;
+      tick += 0.007;
 
-      const data   = dataRef.current;
-      const maxVal = Math.max(...data, 1);
-      const lastTrend = data[BAR_COUNT - 1] - data[BAR_COUNT - 2];
+      const data     = dataRef.current;
+      const maxVal   = Math.max(...data, 1);
+      const lastT    = data[HIST-1] - data[HIST-2];
+      const trendCol = lastT > 0 ? 0x00ff88 : lastT < 0 ? 0xff2244 : cfg.hex;
 
+      // update bars
       bars.forEach((bar, i) => {
-        const norm = data[i] / maxVal;
-        const targetH = Math.max(0.08, norm * 5);
-        bar.scale.y = THREE.MathUtils.lerp(bar.scale.y, targetH, 0.1);
-        bar.position.y = (bar.scale.y * 0.1) / 2;
+        const norm      = data[i] / maxVal;
+        const targetH   = Math.max(0.08, norm * 6.5);
+        bar.scale.y     = THREE.MathUtils.lerp(bar.scale.y, targetH, 0.09);
+        bar.position.y  = (bar.scale.y * 0.12) * 0.5;
 
-        // Last bar colour = trend
-        if (i === BAR_COUNT - 1) {
-          const c = lastTrend > 0 ? 0x00ff88 : lastTrend < 0 ? 0xff2244 : cfg.hexColor;
-          bar.material.color.setHex(c);
-          bar.material.emissive.setHex(c);
-          bar.material.emissiveIntensity = 1.2 + 0.4 * Math.sin(tick * 6);
+        if (i === HIST - 1) {
+          bar.material.color.setHex(trendCol);
+          bar.material.emissive.setHex(trendCol);
+          bar.material.emissiveIntensity = 1.4 + 0.6 * Math.sin(tick * 8);
         } else {
-          bar.material.emissiveIntensity = 0.4 + (i / BAR_COUNT) * 0.5 + 0.1 * Math.sin(tick * 2 + i * 0.3);
+          bar.material.emissiveIntensity = 0.25 + (i/HIST)*0.6 + 0.08*Math.sin(tick*1.8 + i*0.22);
         }
+
+        // top sphere
+        const sp = topSpheres[i];
+        sp.position.set(bar.position.x, bar.scale.y * 0.12 + 0.14, bar.position.z);
+        if (i === HIST - 1) { sp.material.color.setHex(trendCol); sp.material.emissive.setHex(trendCol); sp.material.emissiveIntensity = 2.2; }
+        else { sp.material.emissiveIntensity = 0.9 + 0.3*Math.sin(tick*2.5 + i*0.3); }
       });
 
-      // Update peak line
-      const pos = peakLineRef.current.geometry.attributes.position.array;
-      bars.forEach((bar, i) => {
-        pos[i * 3]     = bar.position.x;
-        pos[i * 3 + 1] = bar.scale.y * 0.1 + 0.05;
-        pos[i * 3 + 2] = 0;
-      });
-      peakLineRef.current.geometry.attributes.position.needsUpdate = true;
+      // update peak line
+      const pos = peakLine.geometry.attributes.position.array;
+      bars.forEach((b, i) => { pos[i*3]=b.position.x; pos[i*3+1]=b.scale.y*0.12+0.14; pos[i*3+2]=0; });
+      peakLine.geometry.attributes.position.needsUpdate = true;
 
-      // Gentle camera drift
-      camera.position.x = Math.sin(tick * 0.3) * 0.8;
-      camera.position.y = 6 + Math.sin(tick * 0.5) * 0.4;
-      camera.lookAt(0, 1.5, 0);
+      // scan plane sweep
+      const scanH = 6.5 * 0.5 * (1 + Math.sin(tick * 1.2));
+      scanPlane.position.set(-0.5, scanH, 0);
+      scanMat.opacity = 0.1 + 0.4 * Math.abs(Math.sin(tick * 1.2));
+
+      // central orb pulse
+      const orbS = 0.55 + 0.2 * Math.sin(tick * 3) + (data[HIST-1]/maxVal) * 0.4;
+      orb.scale.setScalar(orbS);
+      orb.material.color.setHex(trendCol);
+      orb.material.emissive.setHex(trendCol);
+      orb.material.emissiveIntensity = 1.6 + 0.8 * Math.sin(tick * 4);
+      pl1.color.setHex(trendCol);
+      pl1.intensity = 3.5 + 1.5 * Math.sin(tick * 3);
+
+      // float particles
+      const ppos = points.geometry.attributes.position.array;
+      for (let i = 0; i < ptCount; i++) {
+        ppos[i*3+1] += particles[i].vy * (1 + data[HIST-1]/maxVal);
+        if (ppos[i*3+1] > 8) { ppos[i*3+1] = 0; ppos[i*3] = -6 + Math.random()*13; }
+      }
+      points.geometry.attributes.position.needsUpdate = true;
+
+      // slow camera orbit
+      const cr = 14;
+      camera.position.x = cr * 0.22 * Math.sin(tick * 0.12) - 2;
+      camera.position.y = 7.5 + 1.2 * Math.sin(tick * 0.18);
+      camera.position.z = cr * Math.cos(tick * 0.12);
+      camera.lookAt(0, 2, 0);
 
       renderer.render(scene, camera);
     };
     animate();
 
     const onResize = () => {
-      const nw = container.clientWidth;
+      const nw = el.clientWidth;
       camera.aspect = nw / H;
       camera.updateProjectionMatrix();
       renderer.setSize(nw, H);
     };
     window.addEventListener('resize', onResize);
-
     return () => {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener('resize', onResize);
       renderer.dispose();
-      try { container.removeChild(renderer.domElement); } catch (_) {}
+      try { el.removeChild(renderer.domElement); } catch (_) {}
     };
   }, [tabId]);
 
-  // ─── Poll API data every 4 seconds ───────────────────────────────────────
+  // poll data
   useEffect(() => {
-    let active = true;
+    let alive = true;
     const poll = async () => {
       try {
         const val = Number(await cfg.fetch()) || 0;
-        if (!active) return;
-        setLive(prev => ({ val, trend: val - prev.val }));
+        if (!alive) return;
+        setLive(prev => ({ val, trend: val - prev.val, max: Math.max(prev.max, val) }));
         dataRef.current = [...dataRef.current.slice(1), val];
       } catch (_) {}
     };
     poll();
     const t = setInterval(poll, 4000);
-    return () => { active = false; clearInterval(t); };
+    return () => { alive = false; clearInterval(t); };
   }, [tabId]);
 
-  const { val, trend } = live;
-  const trendColor = trend > 0 ? '#00ff88' : trend < 0 ? '#ff4444' : '#888';
-  const trendIcon  = trend > 0 ? '▲' : trend < 0 ? '▼' : '—';
+  const { val, trend, max } = live;
+  const tC = trend > 0 ? '#00ff88' : trend < 0 ? '#ff4444' : '#888';
+  const tI = trend > 0 ? '▲' : trend < 0 ? '▼' : '—';
 
   return (
-    <div style={{ position: 'relative', width: '100%', marginBottom: '18px', borderRadius: '16px', overflow: 'hidden', background: 'rgba(0,0,5,0.55)', border: `1px solid ${cfg.color}30`, boxShadow: `0 0 24px ${cfg.color}0a` }}>
-      <div ref={mountRef} style={{ width: '100%', height: '150px' }} />
-      {/* Overlay info */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.15em', color: cfg.color + 'bb', textShadow: `0 0 6px ${cfg.color}` }}>{cfg.label}</div>
-            <div style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: '26px', color: cfg.color, textShadow: `0 0 16px ${cfg.color}80`, lineHeight: 1.1 }}>{val}</div>
+    <div style={{ position:'relative', width:'100%', marginBottom:'20px', borderRadius:'18px', overflow:'hidden', background:'rgba(0,0,8,0.7)', border:`1px solid ${cfg.color}28`, boxShadow:`0 0 40px ${cfg.color}12, inset 0 1px 0 ${cfg.color}18` }}>
+      <div ref={mountRef} style={{ width:'100%', height:'200px' }} />
+      {/* corner stats */}
+      <div style={{ position:'absolute', inset:0, pointerEvents:'none', padding:'12px 16px', display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+          <div style={{ background:'rgba(0,0,0,0.55)', backdropFilter:'blur(8px)', borderRadius:'10px', padding:'6px 12px', border:`1px solid ${cfg.color}22` }}>
+            <div style={{ fontFamily:'monospace', fontSize:'8px', letterSpacing:'0.18em', color:cfg.color+'99', marginBottom:'2px' }}>{cfg.subLabel}</div>
+            <div style={{ fontFamily:'monospace', fontWeight:900, fontSize:'30px', color:cfg.color, textShadow:`0 0 20px ${cfg.color}90`, lineHeight:1 }}>{val.toLocaleString()}</div>
+            <div style={{ fontFamily:'monospace', fontSize:'8px', letterSpacing:'0.12em', color:cfg.color+'77', marginTop:'1px' }}>{cfg.label}</div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontFamily: 'monospace', fontSize: '9px', color: '#00ff88', letterSpacing: '0.1em' }}>
-              ● LIVE
-            </span>
+          <div style={{ background:'rgba(0,0,0,0.55)', backdropFilter:'blur(8px)', borderRadius:'10px', padding:'6px 10px', border:'1px solid rgba(0,255,136,0.2)', display:'flex', alignItems:'center', gap:'5px' }}>
+            <div style={{ width:'6px', height:'6px', borderRadius:'50%', background:'#00ff88', boxShadow:'0 0 8px #00ff88', animation:'pulse 1s infinite' }} />
+            <span style={{ fontFamily:'monospace', fontSize:'8px', color:'#00ff88', letterSpacing:'0.15em' }}>LIVE</span>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontFamily: 'monospace', fontSize: '11px', color: trendColor, fontWeight: 700 }}>
-            {trendIcon} {Math.abs(trend) > 0 ? `${trend > 0 ? '+' : ''}${trend}` : 'NO CHANGE'}
-          </span>
-          <span style={{ fontFamily: 'monospace', fontSize: '9px', color: '#444', letterSpacing: '0.1em' }}>SINCE LAST POLL</span>
+        <div style={{ display:'flex', gap:'8px', alignItems:'center' }}>
+          <div style={{ background:'rgba(0,0,0,0.55)', backdropFilter:'blur(8px)', borderRadius:'8px', padding:'4px 10px', border:`1px solid ${tC}30`, display:'flex', alignItems:'center', gap:'6px' }}>
+            <span style={{ fontFamily:'monospace', fontSize:'13px', color:tC, fontWeight:800 }}>{tI} {Math.abs(trend)>0?`${trend>0?'+':''}${trend}`:'NO CHANGE'}</span>
+            <span style={{ fontFamily:'monospace', fontSize:'8px', color:'#444', letterSpacing:'0.1em' }}>SINCE LAST POLL</span>
+          </div>
+          <div style={{ background:'rgba(0,0,0,0.55)', backdropFilter:'blur(8px)', borderRadius:'8px', padding:'4px 10px', border:`1px solid ${cfg.color}20` }}>
+            <span style={{ fontFamily:'monospace', fontSize:'8px', color:cfg.color+'88' }}>PEAK: </span>
+            <span style={{ fontFamily:'monospace', fontSize:'11px', fontWeight:700, color:cfg.color }}>{max.toLocaleString()}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -338,6 +406,12 @@ export default function Admin() {
     return () => clearInterval(id);
   }, []);
 
+  // auto-refresh security every 15 seconds
+  useEffect(() => {
+    if (tab !== 'security') return;
+    const t = setInterval(fetchThreats, 15000);
+    return () => clearInterval(t);
+  }, [tab]);
   const fetchThreats = async () => {
     setThreatLoading(true);
     try {
@@ -1184,115 +1258,173 @@ Ye action immediately apply hoga.`)) return;
             {/* ══ SECURITY THREATS ══ */}
             {tab === 'security' && (
               <motion.div key="security" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                <div className="flex items-center justify-between mb-5">
+                {/* header */}
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h2 className="font-display text-xl font-bold tracking-widest" style={{ color: '#ff2244' }}>🛡️ SECURITY MONITOR</h2>
-                    <p className="font-mono text-[10px] text-gray-500 mt-0.5">{threatTotal} events recorded · live detection active</p>
+                    <h2 className="font-display text-xl font-bold tracking-widest flex items-center gap-2" style={{ color: '#ff2244', textShadow: '0 0 20px #ff224450' }}>
+                      🛡️ SECURITY COMMAND CENTER
+                    </h2>
+                    <p className="font-mono text-[10px] text-gray-500 mt-0.5">{threatTotal} events · auto-refresh every 15s · live detection active</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={fetchThreats}
                       className="px-3 py-1.5 rounded-xl font-mono text-[10px] tracking-widest"
-                      style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.25)', color: '#00f5ff' }}>
-                      ↺ REFRESH
-                    </motion.button>
+                      style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.3)', color: '#00f5ff' }}>↺ REFRESH</motion.button>
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                      onClick={() => {
+                        const blob = new Blob([JSON.stringify(threats, null, 2)], { type: 'application/json' });
+                        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+                        a.download = 'security-log.json'; a.click();
+                      }}
+                      className="px-3 py-1.5 rounded-xl font-mono text-[10px] tracking-widest"
+                      style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.3)', color: '#8b5cf6' }}>⬇ EXPORT</motion.button>
                     <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={clearThreats}
                       className="px-3 py-1.5 rounded-xl font-mono text-[10px] tracking-widest"
-                      style={{ background: 'rgba(255,34,68,0.08)', border: '1px solid rgba(255,34,68,0.25)', color: '#ff2244' }}>
-                      🗑 CLEAR LOG
-                    </motion.button>
+                      style={{ background: 'rgba(255,34,68,0.08)', border: '1px solid rgba(255,34,68,0.3)', color: '#ff2244' }}>🗑 CLEAR</motion.button>
                   </div>
                 </div>
 
-                {/* Severity summary cards */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-                  {[['CRITICAL','💀'],['HIGH','🔥'],['MEDIUM','⚠️'],['LOW','ℹ️']].map(([sev, icon]) => (
-                    <motion.div key={sev} whileHover={{ y: -2 }} className="rounded-2xl p-4 relative overflow-hidden"
-                      style={{ background: SEV_BG[sev], border: `1px solid ${SEV_COLOR[sev]}40`, boxShadow: `0 0 18px ${SEV_COLOR[sev]}10` }}>
-                      <div className="absolute -top-1 -right-1 text-4xl opacity-10">{icon}</div>
-                      <div className="font-mono text-[9px] tracking-widest mb-1" style={{ color: `${SEV_COLOR[sev]}cc` }}>{sev}</div>
-                      <div className="font-display font-black text-3xl" style={{ color: SEV_COLOR[sev], textShadow: `0 0 14px ${SEV_COLOR[sev]}60` }}>
-                        {threatSummary[sev] || 0}
-                      </div>
+                {/* animated radar banner */}
+                <div className="rounded-xl p-3 mb-4 relative overflow-hidden"
+                  style={{ background: 'rgba(255,34,68,0.04)', border: '1px solid rgba(255,34,68,0.2)' }}>
+                  <div style={{ position:'absolute', inset:0, background:'linear-gradient(90deg, transparent, rgba(255,34,68,0.07), transparent)', animation:'scanline 2s linear infinite', backgroundSize:'200% 100%' }} />
+                  <div className="flex items-center gap-3 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="w-3 h-3 rounded-full bg-[#ff2244] animate-ping absolute" />
+                      <div className="w-3 h-3 rounded-full bg-[#ff2244]" />
+                    </div>
+                    <div className="font-mono text-[10px] text-[#ff2244] tracking-wide">
+                      THREAT DETECTION ACTIVE · SQL Injection · XSS · Brute Force · CORS · Rate Abuse · Payload Scanning
+                    </div>
+                    <div className="ml-auto font-mono text-[9px] text-gray-600 flex-shrink-0">
+                      {new Date().toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* severity cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                  {[['CRITICAL','💀','#ff2244'],['HIGH','🔥','#ff6600'],['MEDIUM','⚠️','#ffaa00'],['LOW','ℹ️','#00f5ff']].map(([sev, icon, col]) => (
+                    <motion.div key={sev} whileHover={{ y: -3, scale: 1.02 }} className="rounded-2xl p-4 relative overflow-hidden cursor-pointer"
+                      style={{ background: SEV_BG[sev], border: `1px solid ${col}45`, boxShadow: `0 0 20px ${col}10` }}>
+                      <div className="absolute -top-2 -right-2 text-5xl opacity-8">{icon}</div>
+                      <div className="font-mono text-[8px] tracking-widest mb-1" style={{ color: `${col}bb` }}>{sev}</div>
+                      <div className="font-display font-black text-3xl" style={{ color: col, textShadow: `0 0 16px ${col}70` }}>{threatSummary[sev] || 0}</div>
+                      <div className="font-mono text-[8px] mt-1" style={{ color: `${col}66` }}>EVENTS</div>
                     </motion.div>
                   ))}
                 </div>
 
-                {/* Threat detection status banner */}
-                <div className="rounded-xl p-3 mb-4 flex items-center gap-3"
-                  style={{ background: 'rgba(0,255,136,0.06)', border: '1px solid rgba(0,255,136,0.2)' }}>
-                  <div className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse flex-shrink-0" />
-                  <div className="font-mono text-[10px] text-[#00ff88]">ACTIVE · Monitoring: SQL Injection · XSS Attacks · Brute Force · CORS Violations · Rate Limit Abuse</div>
+                {/* top attackers + attack type breakdown */}
+                {threats.length > 0 && (() => {
+                  // group by IP
+                  const ipMap = {};
+                  threats.forEach(t => { ipMap[t.ip] = (ipMap[t.ip]||0) + 1; });
+                  const topIPs = Object.entries(ipMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+                  // group by type
+                  const typeMap = {};
+                  threats.forEach(t => { typeMap[t.type] = (typeMap[t.type]||0) + 1; });
+                  const topTypes = Object.entries(typeMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+                  const maxTypeCount = Math.max(...topTypes.map(t=>t[1]), 1);
+                  return (
+                    <div className="grid sm:grid-cols-2 gap-3 mb-4">
+                      <GCard className="p-4">
+                        <div className="font-mono text-[9px] tracking-widest text-[#ff2244] mb-3">🔴 TOP ATTACKERS</div>
+                        <div className="space-y-2">
+                          {topIPs.map(([ip, count], i) => (
+                            <div key={ip} className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono text-[9px] text-gray-600 w-4">{i+1}</span>
+                                <span className="font-mono text-[10px] text-[#00f5ff] truncate">{ip}</span>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <div className="h-1.5 rounded-full" style={{ width:`${Math.max(20, (count/threats.length)*100)}px`, background:'linear-gradient(90deg,#ff2244,#ff6600)', boxShadow:'0 0 6px #ff224460' }} />
+                                <span className="font-mono text-[9px] font-bold text-[#ff2244]">{count}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </GCard>
+                      <GCard className="p-4">
+                        <div className="font-mono text-[9px] tracking-widest text-[#ffaa00] mb-3">⚡ ATTACK TYPES</div>
+                        <div className="space-y-2">
+                          {topTypes.map(([type, count]) => (
+                            <div key={type} className="space-y-1">
+                              <div className="flex justify-between">
+                                <span className="font-mono text-[9px] text-gray-400">{(TYPE_ICON[type]||'⚠️')} {type.replace(/_/g,' ')}</span>
+                                <span className="font-mono text-[9px] font-bold text-[#ffaa00]">{count}</span>
+                              </div>
+                              <div className="h-1 rounded-full overflow-hidden" style={{ background:'rgba(255,255,255,0.05)' }}>
+                                <motion.div initial={{ width:0 }} animate={{ width:`${(count/maxTypeCount)*100}%` }} transition={{ duration:0.8 }}
+                                  className="h-full rounded-full" style={{ background:'linear-gradient(90deg,#ffaa00,#ff6600)', boxShadow:'0 0 4px #ffaa0060' }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </GCard>
+                    </div>
+                  );
+                })()}
+
+                {/* filter bar */}
+                <div className="flex gap-2 mb-4 flex-wrap">
+                  {['ALL','CRITICAL','HIGH','MEDIUM','LOW'].map(f => (
+                    <button key={f} onClick={() => setThreatFilter && setThreatFilter(f)}
+                      className="px-3 py-1 rounded-lg font-mono text-[9px] tracking-widest transition-all"
+                      style={{ background: f==='ALL' ? 'rgba(255,34,68,0.15)' : SEV_BG[f]||'rgba(255,255,255,0.04)', border: `1px solid ${f==='ALL' ? 'rgba(255,34,68,0.4)' : (SEV_COLOR[f]||'rgba(255,255,255,0.1)')+'40'}`, color: f==='ALL' ? '#ff2244' : SEV_COLOR[f]||'#888' }}>
+                      {f}
+                    </button>
+                  ))}
+                  <div className="ml-auto">
+                    <span className="font-mono text-[9px] text-gray-600">Showing {threats.length} of {threatTotal} events</span>
+                  </div>
                 </div>
 
-                {/* Threat log */}
+                {/* threat log */}
                 {threatLoading ? (
                   <div className="flex justify-center py-20"><div className="cyber-spinner" style={{ borderTopColor: '#ff2244' }} /></div>
                 ) : threats.length === 0 ? (
                   <GCard className="p-12 text-center">
                     <div className="text-5xl mb-4">🛡️</div>
                     <div className="font-display text-sm text-[#00ff88] tracking-widest mb-1">ALL CLEAR</div>
-                    <div className="font-mono text-[10px] text-gray-500">No security threats detected yet</div>
+                    <div className="font-mono text-[10px] text-gray-500">No security threats detected</div>
                   </GCard>
                 ) : (
                   <>
-                    {/* Mobile cards */}
                     <div className="sm:hidden space-y-2">
                       {threats.map((t, i) => (
-                        <motion.div key={t.id || i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.02 }}
-                          className="rounded-xl p-3"
-                          style={{ background: SEV_BG[t.severity] || 'rgba(15,5,30,0.65)', border: `1px solid ${SEV_COLOR[t.severity] || '#ff2244'}30` }}>
+                        <motion.div key={t.id||i} initial={{ opacity:0, x:-10 }} animate={{ opacity:1, x:0 }} transition={{ delay:i*0.02 }}
+                          className="rounded-xl p-3" style={{ background:SEV_BG[t.severity]||'rgba(15,5,30,0.65)', border:`1px solid ${SEV_COLOR[t.severity]||'#ff2244'}30` }}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 mb-1">
-                                <span className="text-sm">{TYPE_ICON[t.type] || '⚠️'}</span>
-                                <span className="font-mono text-[10px] font-bold" style={{ color: SEV_COLOR[t.severity] || '#ff2244' }}>{t.type?.replace(/_/g,' ')}</span>
+                                <span className="text-sm">{TYPE_ICON[t.type]||'⚠️'}</span>
+                                <span className="font-mono text-[10px] font-bold" style={{ color:SEV_COLOR[t.severity]||'#ff2244' }}>{t.type?.replace(/_/g,' ')}</span>
                               </div>
                               <div className="font-mono text-[9px] text-gray-400 truncate">{t.detail}</div>
-                              <div className="font-mono text-[9px] text-gray-600 mt-0.5">IP: {t.ip} · {t.path}</div>
+                              <div className="font-mono text-[9px] text-[#00f5ff] mt-0.5">IP: {t.ip} · {t.path}</div>
                             </div>
                             <div className="text-right flex-shrink-0">
                               <span className="inline-block px-2 py-0.5 rounded-full font-mono text-[8px] font-bold"
-                                style={{ background: SEV_BG[t.severity], color: SEV_COLOR[t.severity], border: `1px solid ${SEV_COLOR[t.severity]}40` }}>
-                                {t.severity}
-                              </span>
+                                style={{ background:SEV_BG[t.severity], color:SEV_COLOR[t.severity], border:`1px solid ${SEV_COLOR[t.severity]}40` }}>{t.severity}</span>
                               <div className="font-mono text-[8px] text-gray-600 mt-1">{fmtTime(t.timestamp)}</div>
                             </div>
                           </div>
                         </motion.div>
                       ))}
                     </div>
-
-                    {/* Desktop table */}
                     <GCard className="hidden sm:block overflow-x-auto">
                       <table className="w-full cyber-table min-w-[750px]">
-                        <thead>
-                          <tr>
-                            <th>TYPE</th>
-                            <th>SEVERITY</th>
-                            <th>IP ADDRESS</th>
-                            <th>PATH</th>
-                            <th>DETAIL</th>
-                            <th>TIME</th>
-                          </tr>
-                        </thead>
+                        <thead><tr><th>#</th><th>TYPE</th><th>SEVERITY</th><th>IP ADDRESS</th><th>PATH</th><th>DETAIL</th><th>TIME</th></tr></thead>
                         <tbody>
                           {threats.map((t, i) => (
-                            <motion.tr key={t.id || i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.015 }}>
-                              <td>
-                                <span className="flex items-center gap-1.5">
-                                  <span>{TYPE_ICON[t.type] || '⚠️'}</span>
-                                  <span className="font-mono text-[10px]" style={{ color: SEV_COLOR[t.severity] || '#aaa' }}>{t.type?.replace(/_/g,' ')}</span>
-                                </span>
-                              </td>
-                              <td>
-                                <span className="px-2 py-0.5 rounded-full font-mono text-[9px] font-bold"
-                                  style={{ background: SEV_BG[t.severity], color: SEV_COLOR[t.severity], border: `1px solid ${SEV_COLOR[t.severity]}40` }}>
-                                  {t.severity}
-                                </span>
-                              </td>
-                              <td className="font-mono text-[10px] text-[#00f5ff]">{t.ip}</td>
-                              <td className="font-mono text-[10px] text-gray-500 max-w-[120px] truncate">{t.path}</td>
-                              <td className="font-mono text-[10px] text-gray-400 max-w-[180px] truncate">{t.detail}</td>
+                            <motion.tr key={t.id||i} initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ delay:i*0.01 }}>
+                              <td className="font-mono text-[10px] text-gray-700">{i+1}</td>
+                              <td><span className="flex items-center gap-1.5"><span>{TYPE_ICON[t.type]||'⚠️'}</span><span className="font-mono text-[10px]" style={{ color:SEV_COLOR[t.severity]||'#aaa' }}>{t.type?.replace(/_/g,' ')}</span></span></td>
+                              <td><span className="px-2 py-0.5 rounded-full font-mono text-[9px] font-bold" style={{ background:SEV_BG[t.severity], color:SEV_COLOR[t.severity], border:`1px solid ${SEV_COLOR[t.severity]}40` }}>{t.severity}</span></td>
+                              <td className="font-mono text-[10px] text-[#00f5ff] font-bold">{t.ip}</td>
+                              <td className="font-mono text-[10px] text-gray-500 max-w-[100px] truncate">{t.path}</td>
+                              <td className="font-mono text-[10px] text-gray-400 max-w-[160px] truncate">{t.detail}</td>
                               <td className="font-mono text-[10px] text-gray-600 whitespace-nowrap">{fmtTime(t.timestamp)}</td>
                             </motion.tr>
                           ))}
@@ -1304,7 +1436,7 @@ Ye action immediately apply hoga.`)) return;
               </motion.div>
             )}
 
-            {/* ══ UPGRADE REQUESTS ══ */}
+                        {/* ══ UPGRADE REQUESTS ══ */}
             {tab === 'upgrades' && (
               <motion.div key="upgrades" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 <div className="mb-5">
