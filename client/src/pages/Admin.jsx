@@ -240,10 +240,15 @@ export default function Admin() {
 
   const fetchAdult = async () => {
     try {
-      const res = await axios.get('/api/admin/adult');
-      setAdultCode(res.data.code || '');
-      setAdultCodeInput(res.data.code || '');
-      setAdultUnlockedUsers(res.data.unlockedUsers || []);
+      const [adultRes, botRes] = await Promise.all([
+        axios.get('/api/admin/adult'),
+        axios.get('/api/admin/bot-disabled'),
+      ]);
+      setAdultCode(adultRes.data.code || '');
+      setAdultCodeInput(adultRes.data.code || '');
+      setAdultUnlockedUsers(adultRes.data.unlockedUsers || []);
+      setAdultBannedUsers(adultRes.data.bannedUsers || []);
+      setBotDisabledNumbers(botRes.data.disabledNumbers || []);
     } catch {}
   };
 
@@ -276,7 +281,49 @@ export default function Admin() {
     } catch { toast.error('Failed.'); }
   };
 
-    const filtered = users.filter(u =>
+  const handleBanAdultUser = async (phone) => {
+    const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
+    if (!confirm(`Permanently ban ${cleanPhone} from 18+ content? They cannot re-unlock even with the code.`)) return;
+    try {
+      const res = await axios.post(`/api/admin/adult/ban/${cleanPhone}`);
+      setAdultBannedUsers(res.data.bannedUsers || []);
+      setAdultUnlockedUsers(res.data.unlockedUsers || []);
+      toast.success(`🚫 ${cleanPhone} permanently banned from 18+`);
+    } catch { toast.error('Failed to ban user'); }
+  };
+
+  const handleUnbanAdultUser = async (phone) => {
+    const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
+    try {
+      const res = await axios.delete(`/api/admin/adult/ban/${cleanPhone}`);
+      setAdultBannedUsers(res.data.bannedUsers || []);
+      toast.success(`✅ ${cleanPhone} unbanned from 18+`);
+    } catch { toast.error('Failed to unban user'); }
+  };
+
+  const handleBotDisable = async (phone) => {
+    const cleanPhone = phone.trim().replace(/[^0-9]/g, '');
+    if (!cleanPhone) return toast.error('Please enter a valid phone number');
+    setBotControlLoading(true);
+    try {
+      const res = await axios.post(`/api/admin/bot-disabled/${cleanPhone}`);
+      setBotDisabledNumbers(res.data.disabledNumbers || []);
+      setBotNumberInput('');
+      toast.success(`🔴 Bot disabled for ${cleanPhone}`);
+    } catch { toast.error('Failed to disable bot'); }
+    finally { setBotControlLoading(false); }
+  };
+
+  const handleBotEnable = async (phone) => {
+    const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
+    try {
+      const res = await axios.delete(`/api/admin/bot-disabled/${cleanPhone}`);
+      setBotDisabledNumbers(res.data.disabledNumbers || []);
+      toast.success(`🟢 Bot enabled for ${cleanPhone}`);
+    } catch { toast.error('Failed to enable bot'); }
+  };
+
+  const filtered = users.filter(u =>
     u.username?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
   );
