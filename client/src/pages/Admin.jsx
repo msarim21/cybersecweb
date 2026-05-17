@@ -45,6 +45,7 @@ const NAV = [
   { id: 'audio', label: 'AUDIO', icon: '🎵' },
   { id: 'access', label: '18+ ACCESS', icon: '🔞' },
   { id: 'bot', label: 'BOT CONTROL', icon: '🤖' },
+  { id: 'logs', label: 'ACTIVITY LOG', icon: '📋' },
 ];
 
 const SEV_COLOR = { CRITICAL: '#ff2244', HIGH: '#ff6600', MEDIUM: '#ffaa00', LOW: '#00f5ff' };
@@ -88,13 +89,14 @@ export default function Admin() {
   const [botDisabledNumbers, setBotDisabledNumbers] = useState([]);
   const [botNumberInput, setBotNumberInput] = useState('');
   const [botControlLoading, setBotControlLoading] = useState(false);
+  const [activityLog, setActivityLog] = useState([]);
 
   // ── Real-time new signup notifications ──
   const [newSignups, setNewSignups] = useState([]);
   const [newSignupBadge, setNewSignupBadge] = useState(0);
   const lastCheckedRef = useRef(Date.now());
 
-  useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); fetchAdult(); }, []);
+  useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); fetchAdult(); fetchActivityLog(); }, []);
 
   // Poll for new signups every 30 seconds
   useEffect(() => {
@@ -253,6 +255,20 @@ export default function Admin() {
     } catch {}
   };
 
+  const addLog = async (action, target, detail = '') => {
+    try {
+      const res = await axios.post('/api/admin/activity-log', { action, target, detail });
+      setActivityLog(prev => [res.data.entry, ...prev].slice(0, 200));
+    } catch {}
+  };
+
+  const fetchActivityLog = async () => {
+    try {
+      const res = await axios.get('/api/admin/activity-log');
+      setActivityLog(res.data.log || []);
+    } catch {}
+  };
+
   const handleUpdateAdultCode = async () => {
     if (!adultCodeInput.trim() || adultCodeInput.trim().length < 4)
       return toast.error('Code must be at least 4 characters.');
@@ -270,6 +286,7 @@ export default function Admin() {
       const res = await axios.delete(`/api/admin/adult/user/${phone}`);
       setAdultUnlockedUsers(res.data.unlockedUsers || []);
       toast.success('User access removed.');
+      await addLog('18+ ACCESS REMOVED', phone, 'User can re-unlock with secret code');
     } catch { toast.error('Failed to remove user.'); }
   };
 
@@ -279,6 +296,7 @@ export default function Admin() {
       const res = await axios.delete('/api/admin/adult/all');
       setAdultUnlockedUsers(res.data.unlockedUsers || []);
       toast.success('All adult access cleared.');
+      await addLog('18+ ALL ACCESS CLEARED', 'ALL USERS', 'Admin cleared all 18+ unlocked users');
     } catch { toast.error('Failed.'); }
   };
 
@@ -290,6 +308,7 @@ export default function Admin() {
       setAdultBannedUsers(res.data.bannedUsers || []);
       setAdultUnlockedUsers(res.data.unlockedUsers || []);
       toast.success(`🚫 ${cleanPhone} permanently banned from 18+`);
+      await addLog('🚫 18+ PERMANENT BAN', cleanPhone, 'User cannot unlock 18+ content even with secret code');
     } catch { toast.error('Failed to ban user'); }
   };
 
@@ -299,6 +318,7 @@ export default function Admin() {
       const res = await axios.delete(`/api/admin/adult/ban/${cleanPhone}`);
       setAdultBannedUsers(res.data.bannedUsers || []);
       toast.success(`✅ ${cleanPhone} unbanned from 18+`);
+      await addLog('✅ 18+ BAN REMOVED', cleanPhone, 'User can now unlock 18+ content again');
     } catch { toast.error('Failed to unban user'); }
   };
 
@@ -312,6 +332,7 @@ export default function Admin() {
       setBotDisabledNumbers(res.data.disabledNumbers || []);
       setBotNumberInput('');
       toast.success(`🔴 Bot disabled for ${cleanPhone}`);
+      await addLog('🔴 BOT DISABLED', cleanPhone, 'Bot turned off for this number');
     } catch { toast.error('Failed to disable bot'); }
     finally { setBotControlLoading(false); }
   };
@@ -322,6 +343,7 @@ export default function Admin() {
       const res = await axios.delete(`/api/admin/bot-disabled/${cleanPhone}`);
       setBotDisabledNumbers(res.data.disabledNumbers || []);
       toast.success(`🟢 Bot enabled for ${cleanPhone}`);
+      await addLog('🟢 BOT ENABLED', cleanPhone, 'Bot turned back on for this number');
     } catch { toast.error('Failed to enable bot'); }
   };
 
@@ -1285,6 +1307,93 @@ export default function Admin() {
                     )}
                   </GCard>
                 </div>
+              </motion.div>
+            )}
+
+            {/* ══ ACTIVITY LOG ══ */}
+            {tab === 'logs' && (
+              <motion.div key="logs" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                <div className="flex items-center justify-between mb-5">
+                  <div>
+                    <h2 className="font-display text-xl font-bold tracking-widest" style={{ color: '#00f5ff' }}>📋 ACTIVITY LOG</h2>
+                    <p className="font-mono text-[10px] text-gray-500 mt-0.5">Har admin action ka record — BOT, 18+, ban/unban</p>
+                  </div>
+                  {activityLog.length > 0 && (
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                      onClick={async () => {
+                        if (!confirm('Clear all activity log entries?')) return;
+                        try {
+                          await axios.delete('/api/admin/activity-log');
+                          setActivityLog([]);
+                          toast.success('Activity log cleared.');
+                        } catch { toast.error('Failed to clear log'); }
+                      }}
+                      className="px-3 py-1.5 rounded-xl font-mono text-[9px] text-red-400 transition-all"
+                      style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)' }}>
+                      🗑️ CLEAR ALL
+                    </motion.button>
+                  )}
+                </div>
+
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {[
+                    { label: 'TOTAL ACTIONS', value: activityLog.length, color: '#00f5ff' },
+                    { label: 'BOT ACTIONS', value: activityLog.filter(l => l.action.includes('BOT')).length, color: '#ff4444' },
+                    { label: '18+ ACTIONS', value: activityLog.filter(l => l.action.includes('18+')).length, color: '#ff00ff' },
+                  ].map(s => (
+                    <div key={s.label} className="rounded-2xl p-3"
+                      style={{ background: `linear-gradient(135deg,${s.color}12,rgba(10,20,60,0.6))`, border: `1px solid ${s.color}30` }}>
+                      <div className="font-mono text-[8px] tracking-widest mb-1" style={{ color: `${s.color}cc` }}>{s.label}</div>
+                      <div className="font-display text-2xl font-black" style={{ color: s.color, textShadow: `0 0 10px ${s.color}50` }}>{s.value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <GCard className="p-0 overflow-hidden" style={{ border: '1px solid rgba(0,245,255,0.2)' }}>
+                  {activityLog.length === 0 ? (
+                    <div className="text-center py-16">
+                      <div className="text-5xl mb-4">📋</div>
+                      <div className="font-mono text-sm text-gray-500">No activity yet</div>
+                      <div className="font-mono text-[10px] text-gray-700 mt-1">Actions like BOT OFF, 18+ ban etc. will appear here</div>
+                    </div>
+                  ) : (
+                    <div className="divide-y" style={{ divideColor: 'rgba(0,245,255,0.06)' }}>
+                      {activityLog.map((entry, i) => {
+                        const isBotOff  = entry.action.includes('BOT DISABLED');
+                        const isBotOn   = entry.action.includes('BOT ENABLED');
+                        const isBan18   = entry.action.includes('18+ PERMANENT BAN') || entry.action.includes('18+ ALL ACCESS CLEARED');
+                        const isUnban18 = entry.action.includes('18+ BAN REMOVED') || entry.action.includes('18+ ACCESS REMOVED');
+                        const dotColor  = isBotOff ? '#ff4444' : isBotOn ? '#00ff88' : isBan18 ? '#ff00ff' : '#00f5ff';
+                        return (
+                          <motion.div key={entry.id || i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}
+                            className="flex items-start gap-4 px-5 py-4 hover:bg-white/[0.02] transition-all">
+                            <div className="flex-shrink-0 mt-1">
+                              <div className="w-2.5 h-2.5 rounded-full" style={{ background: dotColor, boxShadow: `0 0 8px ${dotColor}` }} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <span className="font-mono text-xs font-bold" style={{ color: dotColor }}>{entry.action}</span>
+                                <span className="font-mono text-xs text-white bg-white/10 px-2 py-0.5 rounded-lg">{entry.target}</span>
+                              </div>
+                              {entry.detail && (
+                                <div className="font-mono text-[9px] text-gray-500">{entry.detail}</div>
+                              )}
+                            </div>
+                            <div className="flex-shrink-0 text-right">
+                              <div className="font-mono text-[9px] text-gray-500">
+                                {new Date(entry.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </div>
+                              <div className="font-mono text-[8px] text-gray-700">
+                                {new Date(entry.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </GCard>
               </motion.div>
             )}
           </AnimatePresence>
