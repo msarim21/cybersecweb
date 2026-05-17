@@ -111,74 +111,6 @@ function loadSudoList() {
 function saveSudoList(data) {
   fs.writeFileSync(SUDO_FILE, JSON.stringify(data, null, 2));
 }
-
-// ============ ADULT UNLOCK SYSTEM ============
-const ADULT_FILE        = './database/adult_unlocked.json';
-const ADULT_SECRET_FILE = './database/adult_secret.json';
-const ADULT_BANNED_FILE = './database/adult_banned.json';
-const BOT_DISABLED_FILE = './database/bot_disabled.json';
-
-function loadAdultData() {
-  try {
-    if (!fs.existsSync(ADULT_FILE)) fs.writeFileSync(ADULT_FILE, JSON.stringify([]));
-    return JSON.parse(fs.readFileSync(ADULT_FILE));
-  } catch (e) { return []; }
-}
-function saveAdultData(data) {
-  try { fs.writeFileSync(ADULT_FILE, JSON.stringify(data, null, 2)); return true; }
-  catch (e) { return false; }
-}
-
-// Permanently banned from 18+ (cannot re-unlock even with secret code)
-function loadAdultBanned() {
-  try {
-    if (!fs.existsSync(ADULT_BANNED_FILE)) fs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify([]));
-    return JSON.parse(fs.readFileSync(ADULT_BANNED_FILE));
-  } catch (e) { return []; }
-}
-function saveAdultBanned(data) {
-  try { fs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(data, null, 2)); return true; }
-  catch (e) { return false; }
-}
-function isAdultBanned(senderId) {
-  return loadAdultBanned().includes(senderId);
-}
-
-// Bot disabled numbers (admin can turn bot off for specific numbers)
-function loadBotDisabled() {
-  try {
-    if (!fs.existsSync(BOT_DISABLED_FILE)) fs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify([]));
-    return JSON.parse(fs.readFileSync(BOT_DISABLED_FILE));
-  } catch (e) { return []; }
-}
-function saveBotDisabled(data) {
-  try { fs.writeFileSync(BOT_DISABLED_FILE, JSON.stringify(data, null, 2)); return true; }
-  catch (e) { return false; }
-}
-function isBotDisabled(senderId) {
-  if (!senderId) return false;
-  // Normalize: strip device suffix like :10 from 923326942269:10@s.whatsapp.net
-  const norm = (id) => id.replace(/:\d+@/, '@').toLowerCase();
-  const normalizedSender = norm(senderId);
-  return loadBotDisabled().some(id => norm(id) === normalizedSender);
-}
-
-function loadAdultSecret() {
-  try {
-    if (!fs.existsSync(ADULT_SECRET_FILE)) {
-      fs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: 'cybersecpro7898' }));
-    }
-    const data = JSON.parse(fs.readFileSync(ADULT_SECRET_FILE));
-    return data.code || 'cybersecpro7898';
-  } catch (e) { return 'cybersecpro7898'; }
-}
-
-global.adultUnlocked = loadAdultData();
-
-function isAdultUnlocked(senderId) {
-  return global.adultUnlocked.includes(senderId) && !isAdultBanned(senderId);
-}
-// =============================================
 // ========================================
 
 // ============ PREFIX FUNCTIONS ============
@@ -387,22 +319,32 @@ function saveAntieditCfg(cfg) {
         global._antieditConfig = cfg;
     } catch (e) { console.error('[ANTIEDIT] Config save error:', e); }
 }
-function loadAntideleteCfg() {
-    try {
-        if (fs.existsSync(ANTIDELETE_CONFIG_FILE)) {
-            const d = JSON.parse(fs.readFileSync(ANTIDELETE_CONFIG_FILE, 'utf-8'));
-            // migrate old format { enabled: true/false }
-            if (d.mode) return d;
-            if (d.enabled === true) return { mode: 'private' };
-            return { mode: 'off' };
-        }
-    } catch (e) {}
+function _antideleteCfgFile(botNum) {
+    if (botNum) return `./database/antidelete_config_${botNum}.json`;
+    return ANTIDELETE_CONFIG_FILE;
+}
+function loadAntideleteCfg(botNum) {
+    // Try per-bot config first, then fall back to shared global config
+    const filesToTry = botNum
+        ? [`./database/antidelete_config_${botNum}.json`, ANTIDELETE_CONFIG_FILE]
+        : [ANTIDELETE_CONFIG_FILE];
+    for (const f of filesToTry) {
+        try {
+            if (fs.existsSync(f)) {
+                const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
+                // migrate old format { enabled: true/false }
+                if (d.mode) return d;
+                if (d.enabled === true) return { mode: 'private' };
+            }
+        } catch (e) {}
+    }
     return { mode: 'off' };
 }
-function saveAntideleteCfg(cfg) {
+function saveAntideleteCfg(cfg, botNum) {
+    const cfgFile = _antideleteCfgFile(botNum);
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync(ANTIDELETE_CONFIG_FILE, JSON.stringify(cfg, null, 2));
+        fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
         global._antideleteConfig = cfg;
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
@@ -568,19 +510,6 @@ try {
 
 // ✅ GUARD: If socket not fully authenticated yet, skip silently
 if (!devtrust || !devtrust.user) return;
-
-// ======================[ BOT DISABLED CHECK — EARLY ]======================
-// Check before any processing so bot truly ignores disabled numbers
-{
-  const _senderJid = m.sender || (m.isGroup ? m.key?.participant : m.key?.remoteJid) || '';
-  const _chatJid   = m.key?.remoteJid || '';
-  // Don't block if it's the bot owner
-  const _ownerNums = [...(global.owner || [])].map(v => v.replace(/[^0-9]/g,'') + '@s.whatsapp.net');
-  const _isOwner   = _ownerNums.some(o => o === _senderJid.replace(/:\d+@/,'@'));
-  if (!_isOwner && (isBotDisabled(_senderJid) || isBotDisabled(_chatJid))) {
-    return; // Bot is OFF for this number — silently ignore ALL messages
-  }
-}
       
 // Newsletter configuration
 const NEWSLETTER_JID = '120363408022768294@newsletter';
@@ -3631,32 +3560,41 @@ if (_antieditProto?.editedMessage) {
 const _adelProto = m.message?.protocolMessage;
 // type 0 = REVOKE. type 5 = also used in some Baileys builds. Both mean "delete for everyone".
 if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
-    const _adCfg = loadAntideleteCfg();
+    // Get bot identity FIRST so we can load per-bot config
+    const _adBotNumPre = jidToNum(getBotJid(devtrust));
+    const _adCfg = loadAntideleteCfg(_adBotNumPre);
     const _adMode = _adCfg.mode || 'off';
     if (_adMode !== 'off') {
         try {
             const _adMsgId = _adelProto.key.id;
             const _adChatId = m.key?.remoteJid || _adelProto.key?.remoteJid || '';
             const _adDeletedBy = m.key?.participant || _adelProto.key?.participant || m.key?.remoteJid || '';
-            const _adBotNum = jidToNum(getBotJid(devtrust));
+            const _adBotNum = _adBotNumPre;
             const _adOwnerJid = getBotJid(devtrust);
             const _adIsGroup = (_adChatId || '').endsWith('@g.us');
 
             // Skip if the bot itself is the one who deleted
-            if (!_adOwnerJid || jidToNum(_adDeletedBy) === _adBotNum || m.key?.fromMe) {
+            // Note: even if _adOwnerJid is empty (socket not fully ready), still process but skip self-delete check
+            if (jidToNum(_adDeletedBy) === _adBotNum || m.key?.fromMe) {
+                global._antideleteStore.delete(`${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`);
                 global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
                 global._antideleteStore.delete(_adMsgId);
                 return;
             }
+            // If bot JID is still empty, fall back to chat as reporting target
+            const _adEffectiveOwnerJid = _adOwnerJid || _adChatId;
 
             // Mode filtering
             if (_adMode === 'private_pm' && _adIsGroup) { return; }
             if (_adMode === 'private_groups' && !_adIsGroup) { return; }
             if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
 
-            // Look up cached message — check memory store, then disk store
-            let _adOriginal = global._antideleteStore.get(antiStoreKey(_adChatId, _adMsgId))
+            // Look up cached message — check per-bot key first, then shared key for backward compat
+            const _adBotKey = `${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`;
+            let _adOriginal = global._antideleteStore.get(_adBotKey)
+                || global._antideleteStore.get(antiStoreKey(_adChatId, _adMsgId))
                 || global._antideleteStore.get(_adMsgId)
+                || _getFromDiskStore(_adBotKey)
                 || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
                 || _getFromDiskStore(_adMsgId);
 
@@ -3702,6 +3640,7 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
                 const _adSender = _adOriginal.sender || _adDeletedBy;
                 const _adSenderNum = _adSender.split('@')[0];
                 if (_adOriginal.fromMe || _adSenderNum === _adBotNum) {
+                    global._antideleteStore.delete(_adBotKey);
                     global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
                     global._antideleteStore.delete(_adMsgId);
                 } else {
@@ -3715,9 +3654,10 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
                     if (_adMode === 'chat' || _adMode === 'chat_groups') {
                         await _adSendReport(_adChatId, _adText, _adOriginal, _adSender);
                     } else {
-                        // private / private_pm / private_groups → bot's saved messages (message yourself)
-                        await _adSendReport(_adOwnerJid, _adText, _adOriginal, _adSender);
+                        // private / private_pm / private_groups → THIS bot's own saved messages (DM)
+                        await _adSendReport(_adEffectiveOwnerJid, _adText, _adOriginal, _adSender);
                     }
+                    global._antideleteStore.delete(_adBotKey);
                     global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
                     global._antideleteStore.delete(_adMsgId);
                 }
@@ -3731,7 +3671,8 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
                 if (_adMode === 'chat' || _adMode === 'chat_groups') {
                     await devtrust.sendMessage(_adChatId, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
                 } else {
-                    await devtrust.sendMessage(_adOwnerJid, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
+                    // Always send to THIS bot's own DM — even if owner JID was empty, fallback to chat
+                    await devtrust.sendMessage(_adEffectiveOwnerJid, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
                 }
             }
         } catch (e) { console.error('[ANTIDELETE]', e); }
@@ -3854,7 +3795,12 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
                 if (knownType) _adContent = `[${knownType.replace('Message', '')} message]`;
             }
 
-            global._antideleteStore.set(antiStoreKey(_adChatId2, _adMsgId2), {
+            // Store with per-bot key so each bot user's messages are tracked separately
+            const _adBotNum2 = jidToNum(getBotJid(devtrust));
+            const _adStoreKey2 = _adBotNum2
+                ? `${_adBotNum2}::${antiStoreKey(_adChatId2, _adMsgId2)}`
+                : antiStoreKey(_adChatId2, _adMsgId2);
+            const _adMsgData2 = {
                 content: _adContent,
                 mediaType: _adMediaType,
                 mediaPath: _adMediaPath,
@@ -3863,10 +3809,14 @@ if ((_adelProto?.type === 0 || _adelProto?.type === 5) && _adelProto?.key?.id) {
                 group: (_adChatId2 || '').endsWith('@g.us') ? _adChatId2 : null,
                 timestamp: new Date().toISOString(),
                 sessionJid: getBotJid(devtrust)
-            });
+            };
+            global._antideleteStore.set(_adStoreKey2, _adMsgData2);
+            // Also store with shared key for backward compat
+            global._antideleteStore.set(antiStoreKey(_adChatId2, _adMsgId2), _adMsgData2);
             // Save to disk so messages survive bot restarts
             _saveDiskStore();
             setTimeout(() => {
+                global._antideleteStore.delete(_adStoreKey2);
                 global._antideleteStore.delete(antiStoreKey(_adChatId2, _adMsgId2));
                 _saveDiskStore();
             }, 24 * 60 * 60 * 1000);
@@ -3991,8 +3941,6 @@ if (getSetting(m.sender, "banned", false)) {
     await reply(`⛔ You are banned from using this bot, @${m.sender.split('@')[0]}`, [m.sender])
     return
 }
-
-// [BOT DISABLED CHECK moved to top of handler]
 
 // ======================[ 🔇 MUTED USERS CHECK ]======================
 if (m.isGroup && global.muted?.[m.chat]?.includes(m.sender) && !isAdmins && !isCreator) {
@@ -4651,7 +4599,8 @@ case 'commandlist': {
 │❖ ${prefix}neko2
 │❖ ${prefix}nekonime
 │❖ ${prefix}nezuko
-${isAdultUnlocked(m.sender) ? '│❖ ${prefix}nsfw\n' : ''}│❖ ${prefix}onepiece
+│❖ ${prefix}nsfw
+│❖ ${prefix}onepiece
 │❖ ${prefix}pentol
 │❖ ${prefix}pokemon
 │❖ ${prefix}profil
@@ -4755,7 +4704,9 @@ ${isAdultUnlocked(m.sender) ? '│❖ ${prefix}nsfw\n' : ''}│❖ ${prefix}onep
 │❖ ${prefix}twitter
 │❖ ${prefix}twitterdl
 │❖ ${prefix}video
-${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xdl\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxx\n' : ''}│❖ ${prefix}ytdl
+│❖ ${prefix}xdl
+│❖ ${prefix}xnxx
+│❖ ${prefix}ytdl
 │❖ ${prefix}ytdown
 │❖ ${prefix}ytmp3
 │❖ ${prefix}ytmp4
@@ -5149,19 +5100,13 @@ ${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xdl\n' : ''}${isAdultUnlocked(m.s
 │❖ ${prefix}vvgh
 │❖ ${prefix}github
 │❖ ${prefix}setaccount
-${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideos\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideodl\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideosearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxxsearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxx\n' : ''}┗━━━━━━━━━━━━━━━━━━━━┛
-
-${isAdultUnlocked(m.sender) ? `╔══════════════════════╗
-║  🔞 18+ ADULT ZONE   ║  
-╚══════════════════════╝
-│❖ ${prefix}xnxx
-│❖ ${prefix}xnxxsearch
 │❖ ${prefix}xvideos
+│❖ ${prefix}xvideodl
 │❖ ${prefix}xvideosearch
-│❖ ${prefix}nsfw
+│❖ ${prefix}xnxxsearch
+│❖ ${prefix}xnxx
+┗━━━━━━━━━━━━━━━━━━━━┛
 
-` : `🔐 *Lock Section:* .addkey [code]
-`}
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
 `;
 
@@ -5522,7 +5467,8 @@ case 'CYBERanime': {
 │❖ ${prefix}neko2
 │❖ ${prefix}nekonime
 │❖ ${prefix}nezuko
-${isAdultUnlocked(m.sender) ? '│❖ ${prefix}nsfw\n' : ''}│❖ ${prefix}onepiece
+│❖ ${prefix}nsfw
+│❖ ${prefix}onepiece
 │❖ ${prefix}pentol
 │❖ ${prefix}pokemon
 │❖ ${prefix}profil
@@ -6839,7 +6785,12 @@ case 'CYBERother': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
-${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideos\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideodl\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xvideosearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxxsearch\n' : ''}${isAdultUnlocked(m.sender) ? '│❖ ${prefix}xnxx\n' : ''}┗━━━━━━━━━━━━━━━━━━━━┛
+│❖ ${prefix}xvideos
+│❖ ${prefix}xvideodl
+│❖ ${prefix}xvideosearch
+│❖ ${prefix}xnxxsearch
+│❖ ${prefix}xnxx
+┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by GAME CHANGER* | © 2026
 `;
@@ -10154,11 +10105,9 @@ case 'gfx12': {
 }
 
 case 'getpp': {
-    if (!isCreator) return reply("🔒 *Owner only*");
-    
     let userss = m.mentionedJid[0] ? m.mentionedJid[0] : 
                 m.quoted ? m.quoted.sender : 
-                text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+                text ? (text.replace(/[^0-9]/g, '') + '@s.whatsapp.net') : m.sender;
     
     try {
         var ppuser = await devtrust.profilePictureUrl(userss, 'image');
@@ -10166,13 +10115,16 @@ case 'getpp': {
         var ppuser = 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png';
     }
     
-    await devtrust.sendMessage(m.chat, 
+    // Send directly to the requester's DM (private message)
+    await devtrust.sendMessage(m.sender, 
         addNewsletterContext({
             image: { url: ppuser },
-            caption: `👤 *Profile Picture*`
-        }), 
-        { quoted: m }
+            caption: `👤 *Profile Picture*\n@${userss.split('@')[0]}`,
+            mentions: [userss]
+        })
     );
+    // Confirm in the current chat that it was sent to their DM
+    await reply(`✅ *Profile picture sent to your DM!*`);
 }
 break;
 
@@ -11228,14 +11180,14 @@ case 'ytmp3': {
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption }, { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption }), { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, {
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
             audio: audioBuf,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle}.mp3`
-        }, { quoted: m });
+        }), { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -11319,14 +11271,14 @@ case 'play2': {
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption2 }, { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption2 }), { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, {
+        await devtrust.sendMessage(m.chat, addNewsletterContext({
             audio: audioBuf2,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle2}.mp3`
-        }, { quoted: m });
+        }), { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -11541,6 +11493,7 @@ break;
 case 'dlstatus':
 case 'swdl':
 case 'statusdl': {
+    if (!isCreator) return reply('🔒 *Owner only*');
     const _m = m.message;
     const _type = Object.keys(_m)[0];
     const _ctxInfo = _m[_type]?.contextInfo;
@@ -11566,26 +11519,9 @@ case 'statusdl': {
         if (_quotedType === 'imageMessage') {
             await devtrust.sendMessage(m.chat, { image: _buf, caption: _mediaData.caption || '📸 *Status Image*' }, { quoted: m });
         } else if (_quotedType === 'videoMessage') {
-            const _mime = _mediaData.mimetype || 'video/mp4';
-            try {
-                await devtrust.sendMessage(m.chat, {
-                    video: _buf,
-                    caption: _mediaData.caption || '🎥 *Status Video*',
-                    mimetype: _mime,
-                    ptv: false,
-                    gifPlayback: false,
-                }, { quoted: m });
-            } catch (_ve) {
-                // Fallback: send as document so it is always accessible
-                await devtrust.sendMessage(m.chat, {
-                    document: _buf,
-                    mimetype: _mime,
-                    fileName: 'status_video.mp4',
-                    caption: _mediaData.caption || '🎥 *Status Video*',
-                }, { quoted: m });
-            }
+            await devtrust.sendMessage(m.chat, { video: _buf, caption: _mediaData.caption || '🎥 *Status Video*', mimetype: 'video/mp4' }, { quoted: m });
         } else if (_quotedType === 'audioMessage') {
-            await devtrust.sendMessage(m.chat, { audio: _buf, mimetype: _mediaData.mimetype || 'audio/mp4', ptt: false }, { quoted: m });
+            await devtrust.sendMessage(m.chat, { audio: _buf, mimetype: 'audio/mp4', ptt: false }, { quoted: m });
         } else if (_quotedType === 'documentMessage') {
             await devtrust.sendMessage(m.chat, { document: _buf, mimetype: _mediaData.mimetype || 'application/octet-stream', fileName: _mediaData.fileName || 'status_file' }, { quoted: m });
         } else {
@@ -12123,7 +12059,8 @@ case 'antidel':
 case 'adel': {
     if (!isCreator && !isSudo) return reply('🔒 *Owner/Sudo only*');
     if (isSettingsLocked() && !isCreator) return reply('🔒 *Settings are locked by owner*');
-    const _adCfgNow = loadAntideleteCfg();
+    const _adCfgBotNum = jidToNum(getBotJid(devtrust));
+    const _adCfgNow = loadAntideleteCfg(_adCfgBotNum);
     const _adCurrentMode = _adCfgNow.mode || 'off';
     const _adAction = args[0]?.toLowerCase();
     const _adModeLabel = {
@@ -12156,7 +12093,8 @@ case 'adel': {
     if (!_adValidModes.includes(_adAction)) {
         return reply(`❌ Invalid mode.\n\nValid: private, private_pm, private_groups, chat, chat_groups, off`);
     }
-    saveAntideleteCfg({ mode: _adAction });
+    const _adSaveBotNum = jidToNum(getBotJid(devtrust));
+    saveAntideleteCfg({ mode: _adAction }, _adSaveBotNum);
     return reply(`✅ *Antidelete set to:* ${_adModeLabel[_adAction]}`);
 }
 break;
@@ -12447,103 +12385,7 @@ case 'styletext': {
     await reply(teks);
 } 
 break;
-case 'addkey':
-case 'addsecret': {
-    const secretInput = text ? text.trim() : '';
-    const senderId = m.sender;
-    // Check if permanently banned — cannot unlock even with correct code
-    if (isAdultBanned(senderId)) {
-        return reply(`🚫 *Access Permanently Blocked!*\n\nAapko admin ne permanently 18+ access se ban kar diya hai.\nBot admin se contact karein.`);
-    }
-    if (!secretInput) {
-        return reply(`🔐 *CYBER Secret Access*\n\nUsage: ${prefix}addkey [code]\nExample: ${prefix}addkey xxxxxxxx\n\n🔞 Ye command 18+ content unlock karta hai.`);
-    }
-    if (secretInput !== loadAdultSecret()) {
-        return reply(`❌ *Wrong secret code!*\n\nPlease enter the correct secret code to unlock 18+ content.`);
-    }
-    if (!global.adultUnlocked.includes(senderId)) {
-        global.adultUnlocked.push(senderId);
-        saveAdultData(global.adultUnlocked);
-        return reply(`✅ *18+ Content Unlocked!*\n\n🔞 Ab aap ${prefix}xnxx, ${prefix}xvideos, ${prefix}xvideosearch, ${prefix}xnxxsearch commands use kar sakte hain.\n\n⚠️ Ye sirf aap ke liye unlock hua hai.\n💡 Content dobara hide karne ke liye: *${prefix}removekey*`);
-    } else {
-        return reply(`ℹ️ *Already Unlocked*\n\n🔞 Aapka 18+ access pehle se active hai.\n💡 Content hide karne ke liye: *${prefix}removekey*`);
-    }
-}
-break;
-
-case 'removekey':
-case 'removesecret': {
-    if (!isCreator) {
-        // Regular user removing themselves
-        const _selfId = m.sender;
-        if (!global.adultUnlocked.includes(_selfId)) {
-            return reply(`ℹ️ *Already Locked*\n\n🔞 Aapka 18+ content pehle se hide hai.\n💡 Unlock karne ke liye: *${prefix}addkey [code]*`);
-        }
-        global.adultUnlocked = global.adultUnlocked.filter(id => id !== _selfId);
-        saveAdultData(global.adultUnlocked);
-        return reply(`✅ *18+ Content Hidden!*\n\n🔒 Aapka 18+ access remove ho gaya.\n💡 Dobara unlock karne ke liye: *${prefix}addkey [code]*`);
-    }
-    const targetId = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
-    if (!targetId) {
-        // Clear all
-        global.adultUnlocked = [];
-        saveAdultData(global.adultUnlocked);
-        return reply('✅ *All users 18+ access removed.*');
-    }
-    // Remove access only (can re-add with code)
-    global.adultUnlocked = global.adultUnlocked.filter(id => id !== targetId);
-    saveAdultData(global.adultUnlocked);
-    return reply(`✅ *18+ Access Removed!*\n👤 @${targetId.split('@')[0]} ka 18+ access remove kar diya.\n\n💡 Permanent ban ke liye use karein: *${prefix}bankey @user*`, [targetId]);
-}
-break;
-
-case 'bankey': {
-    if (!isCreator) return reply('🔒 *Admin only*');
-    const _banTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
-    if (!_banTarget) return reply(`🚫 *Usage:* ${prefix}bankey @user\n_Permanently block 18+ access for a user_`);
-    const _banned = loadAdultBanned();
-    if (!_banned.includes(_banTarget)) _banned.push(_banTarget);
-    saveAdultBanned(_banned);
-    // Also remove from unlocked list
-    global.adultUnlocked = global.adultUnlocked.filter(id => id !== _banTarget);
-    saveAdultData(global.adultUnlocked);
-    return reply(`🚫 *Permanently Banned!*\n👤 @${_banTarget.split('@')[0]} ko 18+ access se permanently ban kar diya.\nWo ab .addkey command use nahi kar sakta.\n\n_Unban ke liye: ${prefix}unbankey @user_`, [_banTarget]);
-}
-break;
-
-case 'unbankey': {
-    if (!isCreator) return reply('🔒 *Admin only*');
-    const _unbanTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
-    if (!_unbanTarget) return reply(`✅ *Usage:* ${prefix}unbankey @user\n_Remove permanent 18+ ban from a user_`);
-    const _bannedList = loadAdultBanned().filter(id => id !== _unbanTarget);
-    saveAdultBanned(_bannedList);
-    return reply(`✅ *Unbanned!*\n👤 @${_unbanTarget.split('@')[0]} ka permanent 18+ ban remove kar diya.\nAb wo .addkey use kar sakta hai.`, [_unbanTarget]);
-}
-break;
-
-case 'botoff': {
-    if (!isCreator) return reply('🔒 *Admin only*');
-    const _offTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
-    if (!_offTarget) return reply(`⚙️ *Usage:* ${prefix}botoff @user\n_Turn off bot for a specific number_`);
-    const _disabled = loadBotDisabled();
-    if (!_disabled.includes(_offTarget)) _disabled.push(_offTarget);
-    saveBotDisabled(_disabled);
-    return reply(`🔴 *Bot OFF!*\n👤 @${_offTarget.split('@')[0]} ke liye bot band kar diya.\n_Dobara on karne ke liye: ${prefix}boton @user_`, [_offTarget]);
-}
-break;
-
-case 'boton': {
-    if (!isCreator) return reply('🔒 *Admin only*');
-    const _onTarget = m.mentionedJid?.[0] || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null);
-    if (!_onTarget) return reply(`⚙️ *Usage:* ${prefix}boton @user\n_Turn on bot for a specific number_`);
-    const _enabledList = loadBotDisabled().filter(id => id !== _onTarget);
-    saveBotDisabled(_enabledList);
-    return reply(`🟢 *Bot ON!*\n👤 @${_onTarget.split('@')[0]} ke liye bot chalu kar diya.`, [_onTarget]);
-}
-break;
-
   case 'xvideos': {
-    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
     if (!text) return reply(`🔞 *XVideos Search & Download*\n\nUsage: ${prefix}xvideos [search query]\nExample: ${prefix}xvideos step mom`);
 
     await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
@@ -12605,7 +12447,10 @@ break;
                     maxContentLength: 500 * 1024 * 1024
                 })).data);
 
-                await devtrust.sendMessage(m.chat, { video: videoBuf, caption: videoCaption, mimetype: 'video/mp4' }, { quoted: msg });
+                await devtrust.sendMessage(m.chat,
+                    addNewsletterContext({ video: videoBuf, caption: videoCaption, mimetype: 'video/mp4' }),
+                    { quoted: msg }
+                );
                 await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } });
 
             } catch (e) {
@@ -12672,7 +12517,6 @@ console.log(`Error downloading video: ${e}`);
 }
 break;
   case "xnxxvideodl": {
-    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!text) return reply("📌 *Usage:* .xnxxvideodl <xnxx link>\nExample: .xnxxvideodl https://www.xnxx.com/video-xxx/...");
     if (!text.includes("xnxx.com")) return reply("❌ *Link must be from xnxx.com*");
@@ -12687,7 +12531,10 @@ break;
             `📽️ *Title:* ${xdata.title.slice(0, 100)}\n` +
             `🎬 *Quality:* ${xdata.sources.high ? 'High (360p)' : 'Low (240p)'}`;
 
-        await devtrust.sendMessage(m.chat, { video: { url: videoUrl }, mimetype: 'video/mp4', caption }, { quoted: m });
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({ video: { url: videoUrl }, mimetype: 'video/mp4', caption }),
+            { quoted: m }
+        );
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
         console.error('xnxxvideodl error:', e.message);
@@ -12697,7 +12544,6 @@ break;
 }
 break;
 case 'xvideosearch':{
-    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
   if (!text) return m.reply(example(`Milf`))
   try {
     // checking data from api
@@ -12734,7 +12580,6 @@ case 'xvideosearch':{
 break; 
 // ✅ Command switch
 case 'xnxxsearch': {
-    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
         if (!text) return reply(`Enter Query`)
         reply(mess.wait)
         const fg = require('api-dylux')
@@ -12744,7 +12589,6 @@ case 'xnxxsearch': {
               }
               break;  
 case 'xnxx': {
-    if (!isAdultUnlocked(m.sender)) return reply(`🔐 *18+ Content Locked*\n\nYe command locked hai.\nUnlock karne ke liye:\n👉 *${prefix}addsecret [code]*\n\n⚠️ Sirf authorized users hi use kar sakte hain.`);
     if (!text) {
         return reply('❌ Please enter a name.\n📌 Example: *.xnxx mia*');
     }
@@ -15895,7 +15739,7 @@ case 'config': {
 
     if (!_setKey) {
         // Show current settings summary
-        const _adM = loadAntideleteCfg().mode || 'off';
+        const _adM = loadAntideleteCfg(jidToNum(getBotJid(devtrust))).mode || 'off';
         const _aeM = loadAntieditCfg().mode || 'off';
         const _acM = loadAnticallCfg().mode || 'off';
         const _locked = isSettingsLocked();
@@ -15928,7 +15772,7 @@ case 'config': {
         case 'antidelete': {
             const _adModes = ['private', 'private_pm', 'private_groups', 'chat', 'chat_groups', 'off'];
             if (!_adModes.includes(_setVal)) return reply(`❌ Valid: ${_adModes.join(', ')}`);
-            saveAntideleteCfg({ mode: _setVal });
+            saveAntideleteCfg({ mode: _setVal }, jidToNum(getBotJid(devtrust)));
             return reply(`✅ *antidelete* set to: *${_setVal}*`);
         }
         case 'antiedit': {
