@@ -339,4 +339,46 @@ router.delete('/security', (req, res) => {
   res.json({ message: 'Security log cleared.' });
 });
 
+// ── Activity Log ─────────────────────────────────────────────────────────────
+const _logFs   = require('fs');
+const _logPath = require('path').join(__dirname, '../../database/admin_activity_log.json');
+
+function loadActivityLog() {
+  try {
+    if (!_logFs.existsSync(_logPath)) _logFs.writeFileSync(_logPath, JSON.stringify([]));
+    return JSON.parse(_logFs.readFileSync(_logPath));
+  } catch { return []; }
+}
+function saveActivityLog(log) {
+  try { _logFs.writeFileSync(_logPath, JSON.stringify(log, null, 2)); } catch {}
+}
+
+// GET activity log
+router.get('/activity-log', (req, res) => {
+  try { res.json({ log: loadActivityLog() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST add a log entry
+router.post('/activity-log', (req, res) => {
+  try {
+    const { action, target, detail } = req.body;
+    if (!action || !target) return res.status(400).json({ error: 'action and target required' });
+    const log = loadActivityLog();
+    const entry = { id: Date.now(), action, target, detail: detail || '', timestamp: new Date().toISOString() };
+    log.unshift(entry);          // newest first
+    if (log.length > 200) log.splice(200); // keep max 200 entries
+    saveActivityLog(log);
+    res.json({ message: 'Logged.', entry });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE clear activity log
+router.delete('/activity-log', (req, res) => {
+  try {
+    saveActivityLog([]);
+    res.json({ message: 'Activity log cleared.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
