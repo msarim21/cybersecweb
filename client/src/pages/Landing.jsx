@@ -135,7 +135,7 @@ const PRICING = [
   {
     plan: 'FREE', color: '#00f5ff',
     price: 'FREE',
-    period: 'forever',
+    period: '24 hours',
     users: '1 User',
     features: ['1 User Account', 'Basic Dashboard', 'Standard Security', 'Community Support', 'Basic Analytics'],
     cta: 'Start Free', ctaLink: '/signup', isFree: true
@@ -446,7 +446,7 @@ export default function Landing() {
                 {tier.isFree ? (
                   <div className="mb-6 text-center">
                     <span className="font-display font-black text-3xl text-white">FREE</span>
-                    <span className="font-mono text-gray-500 text-xs ml-2">forever</span>
+                    <span className="font-mono text-gray-500 text-xs ml-2">/ 24 hours</span>
                   </div>
                 ) : (
                   <div className="mb-6 text-center">
