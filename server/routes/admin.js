@@ -16,6 +16,7 @@ const {
   rejectUpgrade,
   getSiteSetting,
   setSiteSetting,
+  setTrialExpiry,
 } = require('../db-service');
 
 router.use(protect, adminOnly);
@@ -378,6 +379,80 @@ router.delete('/activity-log', (req, res) => {
   try {
     saveActivityLog([]);
     res.json({ message: 'Activity log cleared.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ── Bot Status Check ─────────────────────────────────────────────────────────
+router.get('/bot-status/:phone', (req, res) => {
+  try {
+    const rawPhone = req.params.phone.replace(/[^0-9]/g, '');
+    const jid = rawPhone + '@s.whatsapp.net';
+    const norm = (id) => id.replace(/:\d+@/, '@').toLowerCase();
+    const normalizedJid = norm(jid);
+
+    // Check bot disabled
+    let botDisabled = false;
+    try {
+      const disabledList = _adultFs.existsSync(BOT_DISABLED_FILE)
+        ? JSON.parse(_adultFs.readFileSync(BOT_DISABLED_FILE))
+        : [];
+      botDisabled = disabledList.some(id => norm(id) === normalizedJid);
+    } catch {}
+
+    // Check 18+ banned
+    let adultBanned = false;
+    try {
+      const bannedList = _adultFs.existsSync(ADULT_BANNED_FILE)
+        ? JSON.parse(_adultFs.readFileSync(ADULT_BANNED_FILE))
+        : [];
+      adultBanned = bannedList.some(id => norm(id) === normalizedJid);
+    } catch {}
+
+    // Check 18+ unlocked
+    let adultUnlocked = false;
+    try {
+      const unlockedList = getUnlockedUsers();
+      adultUnlocked = unlockedList.some(id => norm(id) === normalizedJid);
+    } catch {}
+
+    res.json({
+      phone: rawPhone,
+      jid,
+      botDisabled,
+      adultBanned,
+      adultUnlocked,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Set Trial Duration (hours) for a specific user ────────────────────────────
+router.post('/users/:id/trial', async (req, res) => {
+  try {
+    const { hours } = req.body;
+    const h = parseFloat(hours);
+    if (!h || h <= 0 || h > 8760)
+      return res.status(400).json({ error: 'hours must be between 1 and 8760 (1 year).' });
+    const user = await findUserById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    const expiresAt = new Date(Date.now() + h * 60 * 60 * 1000);
+    await setTrialExpiry(user.id, expiresAt);
+    res.json({ message: `Trial set for ${h} hours.`, trialExpiresAt: expiresAt });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Bulk Free Trial — give ALL free users a trial for X hours ─────────────────
+router.post('/trial/bulk', async (req, res) => {
+  try {
+    const { hours } = req.body;
+    const h = parseFloat(hours);
+    if (!h || h <= 0 || h > 8760)
+      return res.status(400).json({ error: 'hours must be between 1 and 8760 (1 year).' });
+    const { users: allUsers } = await getAllUsers({ limit: 9999 });
+    const freeUsers = allUsers.filter(u => (u.subscriptionPlan || u.subscription_plan || 'free') === 'free');
+    const expiresAt = new Date(Date.now() + h * 60 * 60 * 1000);
+    await Promise.all(freeUsers.map(u => setTrialExpiry(u.id, expiresAt).catch(() => {})));
+    res.json({ message: `Bulk trial set for ${freeUsers.length} free users (${h} hours).`, count: freeUsers.length, trialExpiresAt: expiresAt });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
