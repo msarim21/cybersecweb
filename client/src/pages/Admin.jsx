@@ -9,102 +9,195 @@ import * as THREE from 'three';
 const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
 
 
-// ── 3D Cyber Graph (Three.js) ─────────────────────────────────────────────
-const TAB_COLORS = {
-  overview: [0x00f5ff, 0xff00ff, 0x00ff88],
-  users:    [0x00f5ff, 0x8b5cf6, 0x00ff88],
-  numbers:  [0xff00ff, 0x00f5ff, 0xffaa00],
-  upgrades: [0x8b5cf6, 0xff00ff, 0x00f5ff],
-  security: [0xff2244, 0xff6600, 0xffaa00],
-  audio:    [0x00f5ff, 0xff00ff, 0x8b5cf6],
-  access:   [0xff2244, 0xff00ff, 0xffaa00],
-  bot:      [0x00ff88, 0x00f5ff, 0x8b5cf6],
-  logs:     [0xffaa00, 0x00f5ff, 0xff00ff],
+// ── Live Data 3D Graph (Three.js + Real API Data) ───────────────────────────
+const TAB_CONFIG = {
+  overview: { label: 'TOTAL USERS',      color: '#00f5ff', hexColor: 0x00f5ff, fetch: () => axios.get('/api/admin/stats').then(r => r.data.totalUsers || 0) },
+  users:    { label: 'ACTIVE USERS',     color: '#8b5cf6', hexColor: 0x8b5cf6, fetch: () => axios.get('/api/admin/stats').then(r => r.data.onlineUsers || 0) },
+  numbers:  { label: 'ACTIVE NUMBERS',   color: '#ff00ff', hexColor: 0xff00ff, fetch: () => axios.get('/api/admin/numbers').then(r => Array.isArray(r.data) ? r.data.filter(n => n.status === 'active').length : 0) },
+  upgrades: { label: 'PENDING REQUESTS', color: '#ffaa00', hexColor: 0xffaa00, fetch: () => axios.get('/api/admin/upgrade-requests').then(r => Array.isArray(r.data) ? r.data.length : 0) },
+  security: { label: 'THREATS LOGGED',   color: '#ff2244', hexColor: 0xff2244, fetch: () => axios.get('/api/admin/security').then(r => r.data.total || 0) },
+  audio:    { label: 'BOT SESSIONS',     color: '#00f5ff', hexColor: 0x00f5ff, fetch: () => axios.get('/api/health').then(r => r.data.sessions || 0) },
+  access:   { label: 'UNLOCKED USERS',   color: '#ff00ff', hexColor: 0xff00ff, fetch: () => axios.get('/api/admin/adult').then(r => Array.isArray(r.data.unlockedUsers) ? r.data.unlockedUsers.length : 0) },
+  bot:      { label: 'BOT SESSIONS',     color: '#00ff88', hexColor: 0x00ff88, fetch: () => axios.get('/api/health').then(r => r.data.sessions || 0) },
+  logs:     { label: 'LOG ENTRIES',      color: '#ffaa00', hexColor: 0xffaa00, fetch: () => axios.get('/api/admin/activity-log').then(r => Array.isArray(r.data.log) ? r.data.log.length : 0) },
 };
 
-const ThreeGraph = ({ tabId = 'overview' }) => {
-  const mountRef = useRef(null);
+const BAR_COUNT = 24;
+
+const LiveDataGraph = ({ tabId = 'overview' }) => {
+  const mountRef    = useRef(null);
+  const dataRef     = useRef(Array(BAR_COUNT).fill(0));
+  const barsRef     = useRef([]);
+  const peakLineRef = useRef(null);
+  const rendRef     = useRef(null);
+  const rafRef      = useRef(null);
+  const [live, setLive]   = useState({ val: 0, trend: 0 });
+
+  const cfg = TAB_CONFIG[tabId] || TAB_CONFIG.overview;
+
+  // ─── Setup Three.js scene ──────────────────────────────────────────────
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
-    const w = container.clientWidth || 320;
-    const h = 110;
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 100);
-    camera.position.set(0, 3.5, 8);
+    const W = container.clientWidth || 500;
+    const H = 150;
+
+    const scene    = new THREE.Scene();
+    const camera   = new THREE.PerspectiveCamera(48, W / H, 0.1, 100);
+    camera.position.set(0, 6, 14);
     camera.lookAt(0, 0, 0);
+
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(w, h);
+    renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
     container.appendChild(renderer.domElement);
+    rendRef.current = renderer;
 
-    const colors = TAB_COLORS[tabId] || TAB_COLORS.overview;
-    const group = new THREE.Group();
-    const barCount = 14;
-    for (let i = 0; i < barCount; i++) {
-      const bh = 0.3 + Math.random() * 2.8;
-      const geo = new THREE.BoxGeometry(0.32, bh, 0.32);
-      const col = colors[i % colors.length];
-      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.7, transparent: true, opacity: 0.88 });
-      const bar = new THREE.Mesh(geo, mat);
-      const angle = (i / barCount) * Math.PI * 2;
-      bar.position.set(Math.cos(angle) * 2.8, bh / 2 - 1, Math.sin(angle) * 2.8);
-      group.add(bar);
-      // Top glow sphere
-      const sg = new THREE.SphereGeometry(0.18, 8, 8);
-      const sm = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.4, transparent: true, opacity: 0.9 });
-      const sphere = new THREE.Mesh(sg, sm);
-      sphere.position.set(bar.position.x, bh - 1, bar.position.z);
-      group.add(sphere);
-    }
-    // Connecting lines (edges)
-    const lineMat = new THREE.LineBasicMaterial({ color: colors[0], transparent: true, opacity: 0.25 });
-    for (let i = 0; i < barCount; i++) {
-      const b1 = group.children[i * 2];
-      const b2 = group.children[((i + 1) % barCount) * 2];
-      if (!b1 || !b2) continue;
-      const pts = [b1.position.clone(), b2.position.clone()];
-      const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      group.add(new THREE.Line(geo, lineMat));
-    }
-    scene.add(group);
+    // ── Floor grid ──────────────────────────────────────────────────────
+    const grid = new THREE.GridHelper(22, 22, cfg.hexColor & 0x333333, 0x111122);
+    grid.position.y = -0.05;
+    scene.add(grid);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
-    const pl1 = new THREE.PointLight(colors[0], 2.5, 18); pl1.position.set(0, 6, 0); scene.add(pl1);
-    const pl2 = new THREE.PointLight(colors[1], 1.8, 14); pl2.position.set(4, 2, -4); scene.add(pl2);
-
-    let frame = 0;
-    let raf;
-    const animate = () => {
-      raf = requestAnimationFrame(animate);
-      frame += 0.008;
-      group.rotation.y = frame * 0.45;
-      group.children.forEach((obj, i) => {
-        if (obj.isMesh) obj.scale.y = 1 + 0.12 * Math.sin(frame * 2.2 + i * 0.45);
+    // ── Bars ──────────────────────────────────────────────────────────
+    const bars = [];
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const geo = new THREE.BoxGeometry(0.4, 0.1, 0.4);
+      const mat = new THREE.MeshStandardMaterial({
+        color:            cfg.hexColor,
+        emissive:         cfg.hexColor,
+        emissiveIntensity: 0.5 + (i / BAR_COUNT) * 0.5,
+        transparent:      true,
+        opacity:          0.55 + (i / BAR_COUNT) * 0.4,
       });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.x = -5.5 + i * 0.48;
+      mesh.position.y = 0.05;
+      scene.add(mesh);
+      bars.push(mesh);
+    }
+    barsRef.current = bars;
+
+    // ── Peak line ──────────────────────────────────────────────────────
+    const linePts  = new Float32Array(BAR_COUNT * 3);
+    const lineGeo  = new THREE.BufferGeometry();
+    lineGeo.setAttribute('position', new THREE.BufferAttribute(linePts, 3));
+    const lineMat  = new THREE.LineBasicMaterial({ color: cfg.hexColor, transparent: true, opacity: 0.9 });
+    const line     = new THREE.Line(lineGeo, lineMat);
+    scene.add(line);
+    peakLineRef.current = line;
+
+    // ── Lights ──────────────────────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    const pl = new THREE.PointLight(cfg.hexColor, 3, 22);
+    pl.position.set(0, 8, 4);
+    scene.add(pl);
+
+    // ── Animate ──────────────────────────────────────────────────────────
+    let tick = 0;
+    const animate = () => {
+      rafRef.current = requestAnimationFrame(animate);
+      tick += 0.006;
+
+      const data   = dataRef.current;
+      const maxVal = Math.max(...data, 1);
+      const lastTrend = data[BAR_COUNT - 1] - data[BAR_COUNT - 2];
+
+      bars.forEach((bar, i) => {
+        const norm = data[i] / maxVal;
+        const targetH = Math.max(0.08, norm * 5);
+        bar.scale.y = THREE.MathUtils.lerp(bar.scale.y, targetH, 0.1);
+        bar.position.y = (bar.scale.y * 0.1) / 2;
+
+        // Last bar colour = trend
+        if (i === BAR_COUNT - 1) {
+          const c = lastTrend > 0 ? 0x00ff88 : lastTrend < 0 ? 0xff2244 : cfg.hexColor;
+          bar.material.color.setHex(c);
+          bar.material.emissive.setHex(c);
+          bar.material.emissiveIntensity = 1.2 + 0.4 * Math.sin(tick * 6);
+        } else {
+          bar.material.emissiveIntensity = 0.4 + (i / BAR_COUNT) * 0.5 + 0.1 * Math.sin(tick * 2 + i * 0.3);
+        }
+      });
+
+      // Update peak line
+      const pos = peakLineRef.current.geometry.attributes.position.array;
+      bars.forEach((bar, i) => {
+        pos[i * 3]     = bar.position.x;
+        pos[i * 3 + 1] = bar.scale.y * 0.1 + 0.05;
+        pos[i * 3 + 2] = 0;
+      });
+      peakLineRef.current.geometry.attributes.position.needsUpdate = true;
+
+      // Gentle camera drift
+      camera.position.x = Math.sin(tick * 0.3) * 0.8;
+      camera.position.y = 6 + Math.sin(tick * 0.5) * 0.4;
+      camera.lookAt(0, 1.5, 0);
+
       renderer.render(scene, camera);
     };
     animate();
 
-    const handleResize = () => {
-      const nw = container.clientWidth || 320;
-      camera.aspect = nw / h;
+    const onResize = () => {
+      const nw = container.clientWidth;
+      camera.aspect = nw / H;
       camera.updateProjectionMatrix();
-      renderer.setSize(nw, h);
+      renderer.setSize(nw, H);
     };
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', onResize);
 
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(rafRef.current);
+      window.removeEventListener('resize', onResize);
       renderer.dispose();
       try { container.removeChild(renderer.domElement); } catch (_) {}
     };
   }, [tabId]);
 
+  // ─── Poll API data every 4 seconds ───────────────────────────────────────
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const val = Number(await cfg.fetch()) || 0;
+        if (!active) return;
+        setLive(prev => ({ val, trend: val - prev.val }));
+        dataRef.current = [...dataRef.current.slice(1), val];
+      } catch (_) {}
+    };
+    poll();
+    const t = setInterval(poll, 4000);
+    return () => { active = false; clearInterval(t); };
+  }, [tabId]);
+
+  const { val, trend } = live;
+  const trendColor = trend > 0 ? '#00ff88' : trend < 0 ? '#ff4444' : '#888';
+  const trendIcon  = trend > 0 ? '▲' : trend < 0 ? '▼' : '—';
+
   return (
-    <div ref={mountRef} style={{ width: '100%', height: '110px', borderRadius: '14px', overflow: 'hidden', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,0,255,0.12)', marginBottom: '16px' }} />
+    <div style={{ position: 'relative', width: '100%', marginBottom: '18px', borderRadius: '16px', overflow: 'hidden', background: 'rgba(0,0,5,0.55)', border: `1px solid ${cfg.color}30`, boxShadow: `0 0 24px ${cfg.color}0a` }}>
+      <div ref={mountRef} style={{ width: '100%', height: '150px' }} />
+      {/* Overlay info */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.15em', color: cfg.color + 'bb', textShadow: `0 0 6px ${cfg.color}` }}>{cfg.label}</div>
+            <div style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: '26px', color: cfg.color, textShadow: `0 0 16px ${cfg.color}80`, lineHeight: 1.1 }}>{val}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontFamily: 'monospace', fontSize: '9px', color: '#00ff88', letterSpacing: '0.1em' }}>
+              ● LIVE
+            </span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontFamily: 'monospace', fontSize: '11px', color: trendColor, fontWeight: 700 }}>
+            {trendIcon} {Math.abs(trend) > 0 ? `${trend > 0 ? '+' : ''}${trend}` : 'NO CHANGE'}
+          </span>
+          <span style={{ fontFamily: 'monospace', fontSize: '9px', color: '#444', letterSpacing: '0.1em' }}>SINCE LAST POLL</span>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -703,7 +796,7 @@ Ye action immediately apply hoga.`)) return;
         </header>
 
         <main className="flex-1 p-4 pb-24 lg:pb-6 overflow-y-auto">
-          <ThreeGraph tabId={tab} />
+          <LiveDataGraph tabId={tab} />
           <AnimatePresence mode="wait">
 
             {/* ══ OVERVIEW ══ */}
