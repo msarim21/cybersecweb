@@ -12465,7 +12465,8 @@ break;
     const _xvid_num = (m.sender || '').split('@')[0].split(':')[0];
     const _xvid_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
     const _xvid_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
-    if (!isCreator && (_xvid_banned || !_xvid_unlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
+    if (_xvid_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_xvid_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) return reply(`🔞 *XVideos Search & Download*\n\nUsage: ${prefix}xvideos [search query]\nExample: ${prefix}xvideos step mom`);
 
     await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
@@ -12628,7 +12629,8 @@ case 'xvideosearch':{
     const _xvsrch_num = (m.sender || '').split('@')[0].split(':')[0];
     const _xvsrch_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
     const _xvsrch_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
-    if (!isCreator && (_xvsrch_banned || !_xvsrch_unlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
+    if (_xvsrch_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_xvsrch_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
   if (!text) return m.reply(example(`Milf`))
   try {
     // checking data from api
@@ -12669,7 +12671,8 @@ case 'xnxxsearch': {
     const _xnxxs_num = (m.sender || '').split('@')[0].split(':')[0];
     const _xnxxs_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
     const _xnxxs_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
-    if (!isCreator && (_xnxxs_banned || !_xnxxs_unlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
+    if (_xnxxs_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_xnxxs_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
         if (!text) return reply(`Enter Query`)
         reply(mess.wait)
         const fg = require('api-dylux')
@@ -12683,7 +12686,8 @@ case 'xnxx': {
     const _xnxxSenderNum = (m.sender || '').split('@')[0].split(':')[0];
     const _xnxxUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
     const _xnxxBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
-    if (!isCreator && (_xnxxBanned || !_xnxxUnlocked)) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
+    if (_xnxxBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_xnxxUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) {
         return reply('❌ Please enter a name.\n📌 Example: *.xnxx mia*');
     }
@@ -13497,7 +13501,9 @@ case "nsfw": {
     // Adult unlock check
     const _nsfwSenderNum = (m.sender || '').split('@')[0].split(':')[0];
     const _nsfwUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
-    if (!isCreator && !_nsfwUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
+    const _nsfwBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
+    if (_nsfwBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_nsfwUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     try {
         const res = await axios.get("https://apis.prexzyvilla.site/random/anhnsfw");
         const img = res.data?.message;
