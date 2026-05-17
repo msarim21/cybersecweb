@@ -109,7 +109,8 @@
     "youtube-yts": "^2.0.0",
     "youtubedl-core": "^4.11.4",
     "yt-search": "^2.12.1",
-    "ytdl-core": "^4.11.5"
+    "ytdl-core": "^4.11.5",
+    "compression": "^1.7.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
