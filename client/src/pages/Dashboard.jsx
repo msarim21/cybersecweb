@@ -679,6 +679,37 @@ export default function Dashboard() {
                             </ul>
                           </div>
                         </div>
+                        {/* ─── Upgrade Request Buttons (free/active users) ─── */}
+                        {upgradeRequest === 'none' ? (
+                          <div className="px-4 pt-3 pb-1 grid grid-cols-2 gap-2">
+                            <motion.button
+                              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                              disabled={!!upgradeLoading}
+                              onClick={() => handleRequestUpgrade('pro')}
+                              className="py-2.5 rounded-xl font-display text-[10px] tracking-widest transition-all disabled:opacity-50"
+                              style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.3),rgba(139,92,246,0.1))', border: '1.5px solid rgba(139,92,246,0.6)', color: '#8b5cf6', boxShadow: '0 0 14px rgba(139,92,246,0.2)' }}>
+                              {upgradeLoading === 'pro' ? '⏳ ...' : '⚡ REQUEST PRO'}
+                            </motion.button>
+                            <motion.button
+                              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                              disabled={!!upgradeLoading}
+                              onClick={() => handleRequestUpgrade('enterprise')}
+                              className="py-2.5 rounded-xl font-display text-[10px] tracking-widest transition-all disabled:opacity-50"
+                              style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(255,0,255,0.1))', border: '1.5px solid rgba(255,0,255,0.6)', color: '#ff00ff', boxShadow: '0 0 14px rgba(255,0,255,0.2)' }}>
+                              {upgradeLoading === 'enterprise' ? '⏳ ...' : '🚀 REQUEST ENTERPRISE'}
+                            </motion.button>
+                          </div>
+                        ) : (
+                          <div className="px-4 pt-3 pb-1">
+                            <div className="font-mono text-[10px] text-center py-2.5 rounded-xl"
+                              style={{ background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
+                              ⏳ {(upgradeRequest || '').toUpperCase()} REQUEST PENDING — Admin will review
+                            </div>
+                          </div>
+                        )}
+                        <div className="px-4 pb-1 mt-1">
+                          <div className="font-mono text-[9px] text-center text-gray-600">— or contact directly —</div>
+                        </div>
                         <div className="px-4 py-3">
                           <a href="https://wa.me/923417022212?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
                             target="_blank" rel="noopener noreferrer"
