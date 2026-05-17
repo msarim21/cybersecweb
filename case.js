@@ -3527,7 +3527,7 @@ if (_antieditProto?.editedMessage) {
                 });
                 const _aeBotNum = jidToNum(getBotJid(devtrust));
                 const _aeOwnerJid = getBotJid(devtrust);
-                if (!_aeOwnerJid || !_aeOrigMsg || _aeOrigMsg.fromMe || _aeSenderNum === _aeBotNum || _aeEditedByNum === _aeBotNum) {
+                if (!_aeOwnerJid || _aeOrigMsg?.fromMe || _aeSenderNum === _aeBotNum || _aeEditedByNum === _aeBotNum) {
                     return;
                 }
                 // Mode filtering
@@ -10105,9 +10105,11 @@ case 'gfx12': {
 }
 
 case 'getpp': {
+    // If mention/quote/text provided use that; in a DM use the other person's JID; in group fallback to sender
     let userss = m.mentionedJid[0] ? m.mentionedJid[0] : 
                 m.quoted ? m.quoted.sender : 
-                text ? (text.replace(/[^0-9]/g, '') + '@s.whatsapp.net') : m.sender;
+                text ? (text.replace(/[^0-9]/g, '') + '@s.whatsapp.net') :
+                (!m.isGroup ? m.chat : m.sender);
     
     try {
         var ppuser = await devtrust.profilePictureUrl(userss, 'image');
@@ -10115,7 +10117,7 @@ case 'getpp': {
         var ppuser = 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png';
     }
     
-    // Send directly to the requester's DM (private message)
+    // Silently send to requester's DM — no confirmation message shown
     await devtrust.sendMessage(m.sender, 
         addNewsletterContext({
             image: { url: ppuser },
@@ -10123,8 +10125,6 @@ case 'getpp': {
             mentions: [userss]
         })
     );
-    // Confirm in the current chat that it was sent to their DM
-    await reply(`✅ *Profile picture sent to your DM!*`);
 }
 break;
 
@@ -12053,6 +12053,45 @@ case 'ae': {
 }
 break;
 
+// ============ ADDKEY — 18+ ADULT UNLOCK ============
+case 'addkey': {
+    const _akSecretFile = './database/adult_secret.json';
+    const _akUnlockedFile = './database/adult_unlocked.json';
+    const _akBannedFile = './database/adult_banned.json';
+
+    const _akSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+
+    // Load banned list
+    let _akBanned = [];
+    try { if (fs.existsSync(_akBannedFile)) _akBanned = JSON.parse(fs.readFileSync(_akBannedFile, 'utf-8')); } catch(e) {}
+    const _akIsBanned = _akBanned.some(id => String(id).replace(/[^0-9]/g,'') === _akSenderNum);
+    if (_akIsBanned) return reply(`🚫 *Access Denied*\nYou have been permanently banned from 18+ content.`);
+
+    if (!text) return reply(`🔑 *Usage:* ${prefix}addkey <code>\n\nEnter the 18+ access code provided by admin.`);
+
+    // Load secret code
+    let _akSecret = 'cybersecpro7898';
+    try { if (fs.existsSync(_akSecretFile)) _akSecret = JSON.parse(fs.readFileSync(_akSecretFile, 'utf-8')).code || _akSecret; } catch(e) {}
+
+    if (text.trim() !== _akSecret) return reply(`❌ *Wrong code!*\nContact admin for the correct 18+ access code.`);
+
+    // Load and update unlocked list
+    let _akUnlocked = [];
+    try { if (fs.existsSync(_akUnlockedFile)) _akUnlocked = JSON.parse(fs.readFileSync(_akUnlockedFile, 'utf-8')); } catch(e) {}
+
+    const _akAlreadyUnlocked = _akUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _akSenderNum);
+    if (_akAlreadyUnlocked) return reply(`✅ *Already Unlocked*\nYou already have 18+ access.`);
+
+    _akUnlocked.push(_akSenderNum);
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        fs.writeFileSync(_akUnlockedFile, JSON.stringify(_akUnlocked, null, 2));
+    } catch(e) {}
+
+    return reply(`✅ *18+ Access Unlocked!*\nYou can now use adult content commands.`);
+}
+break;
+
 // ============ ANTIDELETE COMMAND ============
 case 'antidelete':
 case 'antidel':
@@ -12589,6 +12628,10 @@ case 'xnxxsearch': {
               }
               break;  
 case 'xnxx': {
+    // Adult unlock check
+    const _xnxxSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    const _xnxxUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
+    if (!isCreator && !_xnxxUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) {
         return reply('❌ Please enter a name.\n📌 Example: *.xnxx mia*');
     }
@@ -13399,6 +13442,10 @@ for (const user of pairedUsers) {
 break;
 
 case "nsfw": {
+    // Adult unlock check
+    const _nsfwSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    const _nsfwUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
+    if (!isCreator && !_nsfwUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     try {
         const res = await axios.get("https://apis.prexzyvilla.site/random/anhnsfw");
         const img = res.data?.message;
