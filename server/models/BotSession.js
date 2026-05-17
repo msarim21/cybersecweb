@@ -7,6 +7,7 @@ const botSessionSchema = new mongoose.Schema({
     enum: ['active', 'inactive', 'pending'],
     default: 'pending'
   },
+  sessionData: { type: mongoose.Schema.Types.Mixed, default: null },
   connectedAt: { type: Date },
   lastActive:  { type: Date, default: Date.now },
   createdAt:   { type: Date, default: Date.now }
