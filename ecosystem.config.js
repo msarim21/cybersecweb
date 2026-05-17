@@ -1,29 +1,44 @@
-
 module.exports = {
-  apps: [{
-    name: "tg-bot",
-    script: "./index.js",
-    watch: true,
-    ignore_watch: [
-      "**/*", 
-      "!index.js" 
-    ],
-    autorestart: true,
-    max_memory_restart: "800M",
-    node_args: "--max-old-space-size=700",
-    env: {
-      NODE_ENV: "production",
-      RESTART_COUNT: "0"
+  apps: [
+    {
+      name: "web-server",
+      script: "./server/index.js",
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "512M",
+      node_args: "--max-old-space-size=450",
+      env: { NODE_ENV: "production" },
+      error_file: "./logs/web-error.log",
+      out_file: "./logs/web-output.log",
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      combine_logs: true,
+      time: true,
+      restart_delay: 3000,
+      max_restarts: 50,
+      min_uptime: "5s",
+      exp_backoff_restart_delay: 100,
+      kill_timeout: 5000,
     },
-    error_file: "./logs/error.log",
-    out_file: "./logs/output.log",
-    log_date_format: "YYYY-MM-DD HH:mm:ss",
-    combine_logs: true,
-    time: true,
-    restart_delay: 5000,
-    max_restarts: 10,
-    min_uptime: "10s",
-    wait_ready: true,
-    listen_timeout: 30000
-  }]
+    {
+      name: "tg-bot",
+      script: "./index.js",
+      watch: false,
+      autorestart: true,
+      max_memory_restart: "800M",
+      node_args: "--max-old-space-size=700",
+      env: { NODE_ENV: "production", RESTART_COUNT: "0" },
+      error_file: "./logs/error.log",
+      out_file: "./logs/output.log",
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      combine_logs: true,
+      time: true,
+      restart_delay: 5000,
+      max_restarts: 999,
+      min_uptime: "10s",
+      exp_backoff_restart_delay: 100,
+      wait_ready: true,
+      listen_timeout: 30000,
+      kill_timeout: 8000,
+    }
+  ]
 };
