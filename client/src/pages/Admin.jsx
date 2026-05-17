@@ -284,7 +284,7 @@ export default function Admin() {
 
   const handleBanAdultUser = async (phone) => {
     const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
-    if (!confirm(`Permanently ban ${cleanPhone} from 18+ content? They cannot re-unlock even with the code.`)) return;
+    if (!confirm(`🚫 PERMANENT 18+ BAN\n\nAre you sure you want to permanently ban:\n\n📱 ${cleanPhone}\n\nThis user will NOT be able to unlock 18+ content even with the secret code.\n\nOnly you (admin) can unban them later.`)) return;
     try {
       const res = await axios.post(`/api/admin/adult/ban/${cleanPhone}`);
       setAdultBannedUsers(res.data.bannedUsers || []);
