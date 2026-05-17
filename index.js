@@ -10,7 +10,7 @@ const { startKeepAlive } = require('./keepalive');
 const AUTH_FILE = './auth.json';
 const PAIRING_DIR = './nexstore/pairing/';
 const startpairing = require('./pair');
-const { getActiveSessions, restoreCredsFromDb } = require('./session-db');
+const { getActiveSessions, getActiveLinkedNumbers, restoreCredsFromDb } = require('./session-db');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -25,19 +25,32 @@ function setAuthenticated(value) {
 const autoLoadPairs = async () => {
     console.log(chalk.cyan('🔄 Auto-loading all paired users...'));
 
-    // ── Step 1: Collect numbers from DB (works after Heroku restart) ──────────
+    // ── Step 1: Collect numbers from LinkedNumber (web panel) — primary source ─
     let dbNumbers = [];
     try {
-        const active = await getActiveSessions();
-        dbNumbers = (active || []).map(n => {
+        const webLinked = await getActiveLinkedNumbers();
+        dbNumbers = (webLinked || []).map(n => {
             const clean = String(n).replace(/[^0-9]/g, '');
             return clean ? `${clean}@s.whatsapp.net` : null;
         }).filter(Boolean);
         if (dbNumbers.length > 0) {
-            console.log(chalk.green(`📦 Found ${dbNumbers.length} active session(s) in database.`));
+            console.log(chalk.green(`🌐 Found ${dbNumbers.length} web-linked number(s) to reconnect.`));
         }
     } catch (e) {
-        console.log(chalk.yellow(`⚠️  Could not read DB sessions: ${e.message}`));
+        console.log(chalk.yellow(`⚠️  Could not read web-linked numbers: ${e.message}`));
+        // Fallback to BotSession active list
+        try {
+            const active = await getActiveSessions();
+            dbNumbers = (active || []).map(n => {
+                const clean = String(n).replace(/[^0-9]/g, '');
+                return clean ? `${clean}@s.whatsapp.net` : null;
+            }).filter(Boolean);
+            if (dbNumbers.length > 0) {
+                console.log(chalk.green(`📦 Fallback: Found ${dbNumbers.length} active session(s) from BotSession.`));
+            }
+        } catch (e2) {
+            console.log(chalk.yellow(`⚠️  Could not read BotSession either: ${e2.message}`));
+        }
     }
 
     // ── Step 2: Collect numbers from local filesystem (local / VPS) ───────────
