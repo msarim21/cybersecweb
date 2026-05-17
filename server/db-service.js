@@ -518,6 +518,18 @@ async function deleteNumberByPhone(phone) {
   } catch (e) { console.error('[db] deleteNumberByPhone pg error:', e.message); }
 }
 
+async function getAllActiveLinkedNumbers() {
+  if (isMongoMode()) {
+    const { LinkedNumber } = M();
+    const nums = await LinkedNumber.find({ status: 'active' }).sort({ createdAt: -1 });
+    return nums.map(n => String(n.number).replace(/[^0-9]/g, '')).filter(Boolean);
+  }
+  const { rows } = await pg().query(
+    "SELECT number FROM linked_numbers WHERE status = 'active' ORDER BY created_at DESC"
+  );
+  return rows.map(r => String(r.number).replace(/[^0-9]/g, '')).filter(Boolean);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SESSION CREDS BACKUP (for Heroku / ephemeral filesystem platforms)
 // ════════════════════════════════════════════════════════════════════════════
@@ -562,6 +574,7 @@ module.exports = {
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   upsertBotSession, getActiveBotSessions,
+  getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,
   countAdmins,
