@@ -43,7 +43,8 @@ const NAV = [
   { id: 'upgrades', label: 'UPGRADES', icon: '⚡' },
   { id: 'security', label: 'SECURITY', icon: '🛡️' },
   { id: 'audio', label: 'AUDIO', icon: '🎵' },
-  { id: 'access', label: 'ACCESS', icon: '🔞' },
+  { id: 'access', label: '18+ ACCESS', icon: '🔞' },
+  { id: 'bot', label: 'BOT CONTROL', icon: '🤖' },
 ];
 
 const SEV_COLOR = { CRITICAL: '#ff2244', HIGH: '#ff6600', MEDIUM: '#ffaa00', LOW: '#00f5ff' };
@@ -1183,47 +1184,101 @@ export default function Admin() {
                     )}
                   </GCard>
 
-                  {/* Bot Number Control */}
-                  <GCard className="p-5">
-                    <h2 className="font-display text-xl font-bold tracking-widest mb-1" style={{ color: '#00f5ff' }}>🤖 BOT NUMBER CONTROL</h2>
-                    <p className="font-mono text-[10px] text-gray-500 mb-4">Kisi bhi number ka bot on/off karein</p>
-                    <div className="space-y-3 mb-4">
-                      <div>
-                        <label className="font-mono text-[10px] text-[#00f5ff] tracking-widest block mb-2">PHONE NUMBER (digits only)</label>
-                        <div className="flex gap-2">
-                          <input type="text" value={botNumberInput} onChange={e => setBotNumberInput(e.target.value)}
-                            placeholder="e.g. 923001234567"
-                            className="flex-1 px-4 py-2.5 rounded-xl font-mono text-sm outline-none"
-                            style={{ background: 'rgba(0,245,255,0.06)', border: '1px solid rgba(0,245,255,0.3)', color: '#fff' }} />
-                          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                            onClick={() => handleBotDisable(botNumberInput)} disabled={botControlLoading}
-                            className="px-4 py-2.5 rounded-xl font-display text-xs tracking-widest text-white"
-                            style={{ background: 'linear-gradient(135deg,rgba(255,68,68,0.3),rgba(200,0,0,0.3))', border: '1px solid rgba(255,68,68,0.5)' }}>
-                            🔴 BOT OFF
-                          </motion.button>
-                        </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ══ BOT CONTROL ══ */}
+            {tab === 'bot' && (
+              <motion.div key="bot" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                <div className="mb-5">
+                  <h2 className="font-display text-xl font-bold tracking-widest" style={{ color: '#00f5ff' }}>🤖 BOT NUMBER CONTROL</h2>
+                  <p className="font-mono text-[10px] text-gray-500 mt-0.5">Kisi bhi WhatsApp number ka bot on ya off karein</p>
+                </div>
+
+                <div className="space-y-4 max-w-lg">
+                  {/* Stats row */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-2xl p-4 flex flex-col gap-1"
+                      style={{ background: 'linear-gradient(135deg,rgba(255,68,68,0.12),rgba(10,20,60,0.6))', border: '1px solid rgba(255,68,68,0.3)' }}>
+                      <div className="font-mono text-[9px] tracking-widest text-red-400">DISABLED NUMBERS</div>
+                      <div className="font-display text-3xl font-black text-red-400" style={{ textShadow: '0 0 12px rgba(255,68,68,0.5)' }}>
+                        {botDisabledNumbers.length}
                       </div>
                     </div>
+                    <div className="rounded-2xl p-4 flex flex-col gap-1"
+                      style={{ background: 'linear-gradient(135deg,rgba(0,255,100,0.08),rgba(10,20,60,0.6))', border: '1px solid rgba(0,255,100,0.25)' }}>
+                      <div className="font-mono text-[9px] tracking-widest text-green-400">BOT ACTIVE ON</div>
+                      <div className="font-display text-3xl font-black text-green-400" style={{ textShadow: '0 0 12px rgba(0,255,100,0.4)' }}>
+                        ALL OTHERS
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Add number to disable */}
+                  <GCard className="p-5" style={{ border: '1px solid rgba(0,245,255,0.3)' }}>
+                    <h3 className="font-mono text-[10px] tracking-widest mb-4" style={{ color: '#00f5ff' }}>DISABLE BOT FOR A NUMBER</h3>
+                    <label className="font-mono text-[10px] text-gray-400 block mb-2">PHONE NUMBER (digits only, with country code)</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={botNumberInput}
+                        onChange={e => setBotNumberInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleBotDisable(botNumberInput)}
+                        placeholder="e.g. 923001234567"
+                        className="flex-1 px-4 py-3 rounded-xl font-mono text-sm outline-none"
+                        style={{ background: 'rgba(0,245,255,0.06)', border: '1px solid rgba(0,245,255,0.25)', color: '#fff' }}
+                      />
+                      <motion.button
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        onClick={() => handleBotDisable(botNumberInput)}
+                        disabled={botControlLoading || !botNumberInput.trim()}
+                        className="px-5 py-3 rounded-xl font-display text-xs tracking-widest text-white flex items-center gap-2"
+                        style={{ background: 'linear-gradient(135deg,rgba(255,68,68,0.35),rgba(180,0,0,0.3))', border: '1px solid rgba(255,68,68,0.5)', opacity: (botControlLoading || !botNumberInput.trim()) ? 0.6 : 1 }}>
+                        {botControlLoading ? '⏳' : '🔴'} BOT OFF
+                      </motion.button>
+                    </div>
+                    <p className="font-mono text-[9px] text-gray-600 mt-2">Bot us number ke liye silently off ho jayega — koi error message nahi aayega</p>
+                  </GCard>
+
+                  {/* Disabled list */}
+                  <GCard className="p-5" style={{ border: '1px solid rgba(255,68,68,0.2)' }}>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-mono text-[10px] tracking-widest" style={{ color: '#ff4444' }}>
+                        🔴 DISABLED NUMBERS ({botDisabledNumbers.length})
+                      </h3>
+                      {botDisabledNumbers.length > 0 && (
+                        <span className="font-mono text-[9px] text-gray-600">Click 🟢 to re-enable</span>
+                      )}
+                    </div>
+
                     {botDisabledNumbers.length === 0 ? (
-                      <div className="text-center py-4">
-                        <div className="font-mono text-[10px] text-gray-600">Koi number disabled nahi hai</div>
+                      <div className="text-center py-8">
+                        <div className="text-4xl mb-3">🟢</div>
+                        <div className="font-mono text-[10px] text-gray-500">Sab numbers ke liye bot active hai</div>
+                        <div className="font-mono text-[9px] text-gray-700 mt-1">Koi number disable nahi hai</div>
                       </div>
                     ) : (
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        <div className="font-mono text-[9px] text-gray-500 mb-2">DISABLED NUMBERS ({botDisabledNumbers.length})</div>
+                      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                         {botDisabledNumbers.map((u, i) => (
-                          <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2"
-                            style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">🔴</span>
-                              <span className="font-mono text-xs text-red-300">{u.split('@')[0]}</span>
+                          <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+                            className="flex items-center justify-between rounded-xl px-4 py-3"
+                            style={{ background: 'rgba(255,68,68,0.06)', border: '1px solid rgba(255,68,68,0.18)' }}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" style={{ boxShadow: '0 0 6px #ff4444' }} />
+                              <div>
+                                <div className="font-mono text-sm text-red-300 font-bold">{u.split('@')[0]}</div>
+                                <div className="font-mono text-[9px] text-gray-600">Bot disabled</div>
+                              </div>
                             </div>
-                            <button onClick={() => handleBotEnable(u.split('@')[0])}
-                              className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
-                              style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.2)' }}>
+                            <motion.button
+                              whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                              onClick={() => handleBotEnable(u.split('@')[0])}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-display text-[10px] tracking-widest text-green-400 transition-all"
+                              style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.25)' }}>
                               🟢 BOT ON
-                            </button>
-                          </div>
+                            </motion.button>
+                          </motion.div>
                         ))}
                       </div>
                     )}
