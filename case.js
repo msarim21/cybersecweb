@@ -5127,7 +5127,7 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}vvgh
 │❖ ${prefix}github
 │❖ ${prefix}setaccount
-${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 Locked Commands'}
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 *Locked Commands*\n│  Use .addkey to access these'}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
@@ -6808,7 +6808,7 @@ case 'CYBERother': {
 │❖ ${prefix}vv
 │❖ ${prefix}vv2
 │❖ ${prefix}vvgh
-${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 Locked Commands'}
+${_senderAdultUnlocked ? '│❖ ' + prefix + 'xvideos\n│❖ ' + prefix + 'xvideodl\n│❖ ' + prefix + 'xvideosearch\n│❖ ' + prefix + 'xnxxsearch\n│❖ ' + prefix + 'xnxx' : '│🔒 *Locked Commands*\n│  Use .addkey to access these'}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ⚙️ *Powered by GAME CHANGER* | © 2026
@@ -12036,7 +12036,6 @@ break;
 // ============ ANTIEDIT COMMAND ============
 case 'antiedit':
 case 'ae': {
-    if (!isCreator && !isSudo) return reply('🔒 *Owner/Sudo only*');
     if (isSettingsLocked() && !isCreator) return reply('🔒 *Settings are locked by owner*');
     const _aeCfgNow = loadAntieditCfg();
     const _aeCurrentMode = _aeCfgNow.mode || 'off';
@@ -12132,7 +12131,6 @@ break;
 case 'antidelete':
 case 'antidel':
 case 'adel': {
-    if (!isCreator && !isSudo) return reply('🔒 *Owner/Sudo only*');
     if (isSettingsLocked() && !isCreator) return reply('🔒 *Settings are locked by owner*');
     const _adCfgBotNum = jidToNum(getBotJid(devtrust));
     const _adCfgNow = loadAntideleteCfg(_adCfgBotNum);
