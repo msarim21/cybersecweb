@@ -1,4 +1,5 @@
 require('dotenv').config();
+const compression = require('compression');
 
 process.on('uncaughtException',  err => { console.error('[Server] Uncaught exception:', err.message); console.error('[Server] Stack:', err.stack); });
 process.on('unhandledRejection', err => { console.error('[Server] Unhandled rejection:', err?.message || err); if (err?.stack) console.error('[Server] Stack:', err.stack); });
@@ -68,6 +69,9 @@ const corsOptions = {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
+
+// ── Compression — gzip/brotli for all responses (major speed boost) ────────
+app.use(compression({ level: 6, threshold: 1024 }));
 
 // ── Helmet — strong security headers ──────────────────────────────────────
 app.use(helmet({
@@ -142,6 +146,7 @@ app.use('/api/admin/', adminLimiter);
 
 // ── Security: Remove X-Powered-By header ──────────────────────────────────
 app.disable('x-powered-by');
+app.use((req, res, next) => { res.setHeader('Connection', 'keep-alive'); next(); });
 
 // ── Serve uploaded audio files ──────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, '../uploads');
@@ -285,6 +290,7 @@ app.use((err, req, res, next) => {
 const clientDist = path.join(__dirname, '../client/dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, {
+    maxAge: '7d',
     setHeaders: (res) => {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
