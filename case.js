@@ -11199,14 +11199,14 @@ case 'ytmp3': {
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption }), { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption }, { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
+        await devtrust.sendMessage(m.chat, {
             audio: audioBuf,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle}.mp3`
-        }), { quoted: m });
+        }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
