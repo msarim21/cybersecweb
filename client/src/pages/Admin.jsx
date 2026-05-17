@@ -88,7 +88,47 @@ export default function Admin() {
   const [botNumberInput, setBotNumberInput] = useState('');
   const [botControlLoading, setBotControlLoading] = useState(false);
 
+  // ── Real-time new signup notifications ──
+  const [newSignups, setNewSignups] = useState([]);
+  const [newSignupBadge, setNewSignupBadge] = useState(0);
+  const lastCheckedRef = useRef(Date.now());
+
   useEffect(() => { fetchData(); fetchAudio(); fetchThreats(); fetchAdult(); }, []);
+
+  // Poll for new signups every 30 seconds
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const since = lastCheckedRef.current;
+        lastCheckedRef.current = Date.now();
+        const res = await axios.get(`/api/admin/new-signups?since=${since}`);
+        const arrived = res.data.newUsers || [];
+        if (arrived.length > 0) {
+          setNewSignups(prev => [...arrived, ...prev].slice(0, 20));
+          setNewSignupBadge(prev => prev + arrived.length);
+          arrived.forEach(u => {
+            toast.success(`🆕 New signup: ${u.username}`, {
+              duration: 6000,
+              style: {
+                background: 'rgba(15,5,30,0.95)',
+                border: '1px solid rgba(0,245,255,0.4)',
+                color: '#00f5ff',
+                fontFamily: 'monospace',
+                fontSize: '12px'
+              }
+            });
+          });
+          // Refresh users list silently
+          try {
+            const uRes = await axios.get('/api/admin/users');
+            setUsers(uRes.data.users || []);
+          } catch {}
+        }
+      } catch {}
+    };
+    const id = setInterval(poll, 30000);
+    return () => clearInterval(id);
+  }, []);
 
   const fetchThreats = async () => {
     setThreatLoading(true);
@@ -306,6 +346,10 @@ export default function Admin() {
                 <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full"
                   style={{ background: '#ff00ff', color: '#fff' }}>{pendingCount}</span>
               )}
+              {item.id === 'users' && newSignupBadge > 0 && (
+                <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-pulse"
+                  style={{ background: '#00f5ff', color: '#000' }}>{newSignupBadge}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -474,6 +518,56 @@ export default function Admin() {
                     <p className="font-mono text-[10px] text-gray-500 mt-0.5">{users.length} operators registered</p>
                   </div>
                 </div>
+
+                {/* ── Recent Signups Live Feed ── */}
+                {newSignups.length > 0 && (
+                  <GCard className="p-4 mb-4" style={{ border: '1px solid rgba(0,245,255,0.35)' }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-[#00f5ff] animate-pulse" style={{ boxShadow: '0 0 6px #00f5ff' }} />
+                        <span className="font-mono text-[10px] tracking-widest" style={{ color: '#00f5ff' }}>
+                          NEW SIGNUPS — LIVE FEED
+                        </span>
+                        {newSignupBadge > 0 && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                            style={{ background: '#00f5ff', color: '#000' }}>{newSignupBadge} NEW</span>
+                        )}
+                      </div>
+                      <button onClick={() => { setNewSignups([]); setNewSignupBadge(0); }}
+                        className="font-mono text-[9px] text-gray-500 hover:text-white transition-all px-2 py-1 rounded"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        CLEAR
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {newSignups.map((u, i) => (
+                        <motion.div key={u.id || i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+                          className="flex items-center justify-between rounded-xl px-3 py-2"
+                          style={{ background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.15)' }}>
+                          <div className="flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold"
+                              style={{ background: 'rgba(0,245,255,0.15)', color: '#00f5ff' }}>
+                              {u.username?.[0]?.toUpperCase() || '?'}
+                            </div>
+                            <div>
+                              <div className="font-mono text-xs font-bold" style={{ color: '#00f5ff' }}>{u.username}</div>
+                              <div className="font-mono text-[9px] text-gray-500">{u.email}</div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-mono text-[9px] px-2 py-0.5 rounded-full"
+                              style={{ background: u.plan === 'enterprise' ? 'rgba(255,0,255,0.15)' : u.plan === 'pro' ? 'rgba(139,92,246,0.15)' : 'rgba(0,245,255,0.08)', color: u.plan === 'enterprise' ? '#ff00ff' : u.plan === 'pro' ? '#8b5cf6' : '#00f5ff', border: `1px solid ${u.plan === 'enterprise' ? 'rgba(255,0,255,0.3)' : u.plan === 'pro' ? 'rgba(139,92,246,0.3)' : 'rgba(0,245,255,0.2)'}` }}>
+                              {(u.plan || 'FREE').toUpperCase()}
+                            </div>
+                            <div className="font-mono text-[8px] text-gray-600 mt-1">
+                              {new Date(u.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </GCard>
+                )}
 
                 <input value={search} onChange={e => setSearch(e.target.value)}
                   className="input-neon rounded-xl w-full mb-4" placeholder="🔍  SEARCH USERS..."
