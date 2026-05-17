@@ -44,4 +44,21 @@ async function getActiveSessions() {
   }
 }
 
-module.exports = { updateSession, getActiveSessions };
+
+/**
+ * Remove a linked number from the database when WhatsApp logout is detected.
+ * @param {string} number  – digits only, or JID like "263xxx@s.whatsapp.net"
+ */
+async function removeLinkedNumber(number) {
+  try {
+    await _init();
+    const { deleteNumberByPhone } = require('./server/db-service');
+    const clean = number.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+    await deleteNumberByPhone(clean);
+    console.log(`[session-db] ✅ Auto-removed linked number on logout: ${clean}`);
+  } catch (err) {
+    console.error('[session-db] removeLinkedNumber failed:', err.message);
+  }
+}
+
+module.exports = { updateSession, getActiveSessions, removeLinkedNumber };
