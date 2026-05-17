@@ -15,7 +15,7 @@ const {
 } = require("@whiskeysockets/baileys");
 
 // Persist session state to PostgreSQL so restarts can reload sessions
-const { updateSession, removeLinkedNumber } = require('./session-db');
+const { updateSession, removeLinkedNumber, saveCredsToDb } = require('./session-db');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -1002,7 +1002,29 @@ Your bot is ready. Send *.menu* to see all available commands.
         }
     });
 
-    nexus.ev.on('creds.update', saveCreds);
+    nexus.ev.on('creds.update', async () => {
+        saveCreds();
+        // Backup all session files to MongoDB so Heroku restarts can restore them
+        try {
+            const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
+            if (fs.existsSync(sessionPath)) {
+                const sessionFiles = {};
+                fs.readdirSync(sessionPath).forEach(file => {
+                    try {
+                        const filePath = path.join(sessionPath, file);
+                        if (fs.lstatSync(filePath).isFile()) {
+                            const raw = fs.readFileSync(filePath, 'utf8');
+                            try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
+                        }
+                    } catch (_) {}
+                });
+                if (Object.keys(sessionFiles).length > 0) {
+                    const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                    saveCredsToDb(cleanNum, sessionFiles).catch(() => {});
+                }
+            }
+        } catch (_) {}
+    });
 
     // ✅ Deleted-Status Auto-Save — when a status is deleted, send it to bot owner's DM
     nexus.ev.on('messages.delete', async (item) => {
