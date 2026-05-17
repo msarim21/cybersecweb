@@ -90,6 +90,17 @@ export default function Admin() {
   const [botNumberInput, setBotNumberInput] = useState('');
   const [botControlLoading, setBotControlLoading] = useState(false);
   const [activityLog, setActivityLog] = useState([]);
+  // Bot status check
+  const [botStatusPhone, setBotStatusPhone] = useState('');
+  const [botStatusResult, setBotStatusResult] = useState(null);
+  const [botStatusLoading, setBotStatusLoading] = useState(false);
+  // Per-user trial modal
+  const [trialModalUser, setTrialModalUser] = useState(null);
+  const [trialHours, setTrialHours] = useState('');
+  const [trialLoading, setTrialLoading] = useState(false);
+  // Bulk free trial
+  const [bulkTrialHours, setBulkTrialHours] = useState('');
+  const [bulkTrialLoading, setBulkTrialLoading] = useState(false);
 
   // ── Real-time new signup notifications ──
   const [newSignups, setNewSignups] = useState([]);
@@ -347,6 +358,58 @@ export default function Admin() {
     } catch { toast.error('Failed to enable bot'); }
   };
 
+  // ── Bot Status Check ──
+  const handleBotStatusCheck = async () => {
+    const clean = botStatusPhone.trim().replace(/[^0-9]/g, '');
+    if (!clean) return toast.error('Phone number daalo');
+    setBotStatusLoading(true);
+    setBotStatusResult(null);
+    try {
+      const res = await axios.get(`/api/admin/bot-status/${clean}`);
+      setBotStatusResult(res.data);
+    } catch { toast.error('Status check fail'); }
+    finally { setBotStatusLoading(false); }
+  };
+
+  // ── Set Trial for Individual User ──
+  const handleSetTrial = async () => {
+    if (!trialModalUser || !trialHours) return;
+    const h = parseFloat(trialHours);
+    if (!h || h <= 0) return toast.error('Valid hours daalo');
+    setTrialLoading(true);
+    try {
+      const uid = trialModalUser.id || trialModalUser._id;
+      const res = await axios.post(`/api/admin/users/${uid}/trial`, { hours: h });
+      setUsers(p => p.map(u => (u.id === uid || u._id === uid)
+        ? { ...u, trialExpiresAt: res.data.trialExpiresAt } : u));
+      toast.success(`✅ Trial set: ${h} hours for ${trialModalUser.username}`);
+      await addLog('⏱️ TRIAL SET', trialModalUser.username, `${h} hours trial`);
+      setTrialModalUser(null); setTrialHours('');
+    } catch { toast.error('Trial set fail'); }
+    finally { setTrialLoading(false); }
+  };
+
+  // ── Bulk Free Trial ──
+  const handleBulkTrial = async () => {
+    const h = parseFloat(bulkTrialHours);
+    if (!h || h <= 0) return toast.error('Valid hours daalo');
+    const freeCount = users.filter(u => (u.subscriptionPlan || 'free') === 'free').length;
+    if (!confirm(`⚠️ Sab ${freeCount} free users ko ${h} hours ka trial dena hai?
+
+Ye action immediately apply hoga.`)) return;
+    setBulkTrialLoading(true);
+    try {
+      const res = await axios.post('/api/admin/trial/bulk', { hours: h });
+      toast.success(`✅ ${res.data.count} free users ko ${h} hrs trial mila!`);
+      await addLog('🎁 BULK TRIAL', 'ALL FREE USERS', `${h} hours trial - ${res.data.count} users`);
+      setBulkTrialHours('');
+      // Refresh users
+      const uRes = await axios.get('/api/admin/users');
+      setUsers(uRes.data.users || []);
+    } catch { toast.error('Bulk trial fail'); }
+    finally { setBulkTrialLoading(false); }
+  };
+
   const filtered = users.filter(u =>
     u.username?.toLowerCase().includes(search.toLowerCase()) ||
     u.email?.toLowerCase().includes(search.toLowerCase())
@@ -366,6 +429,77 @@ export default function Admin() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 z-30 lg:hidden"
             onClick={() => setSidebarOpen(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* ════ TRIAL MODAL ════ */}
+      <AnimatePresence>
+        {trialModalUser && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}
+            onClick={e => e.target === e.currentTarget && setTrialModalUser(null)}>
+            <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
+              className="rounded-2xl p-6 w-full max-w-sm"
+              style={{ background: 'rgba(12,5,28,0.98)', border: '1px solid rgba(0,255,136,0.4)', boxShadow: '0 0 40px rgba(0,255,136,0.15)' }}>
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <div className="font-display font-bold text-base tracking-widest" style={{ color: '#00ff88' }}>⏱️ SET TRIAL</div>
+                  <div className="font-mono text-[10px] text-gray-500 mt-0.5">{trialModalUser.username}</div>
+                </div>
+                <button onClick={() => setTrialModalUser(null)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>✕</button>
+              </div>
+
+              <div className="mb-4">
+                <label className="font-mono text-[10px] text-gray-400 block mb-2">TRIAL DURATION (HOURS)</label>
+                <input
+                  type="number" min="1" max="8760"
+                  value={trialHours}
+                  onChange={e => setTrialHours(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSetTrial()}
+                  placeholder="e.g. 24"
+                  autoFocus
+                  className="w-full px-4 py-3 rounded-xl font-mono text-sm outline-none"
+                  style={{ background: 'rgba(0,255,136,0.06)', border: '1px solid rgba(0,255,136,0.3)', color: '#fff' }}
+                />
+                <div className="font-mono text-[9px] text-gray-600 mt-2 space-y-0.5">
+                  <div>24 = 1 din · 168 = 1 hafta · 720 = 1 mahina</div>
+                  {trialHours && parseFloat(trialHours) > 0 && (
+                    <div style={{ color: '#00ff88' }}>
+                      ✅ Expires: {new Date(Date.now() + parseFloat(trialHours) * 3600000).toLocaleString('en-PK')}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {[['1 Din', 24], ['1 Hafta', 168], ['1 Mahina', 720]].map(([label, h]) => (
+                  <button key={h} onClick={() => setTrialHours(String(h))}
+                    className="py-2 rounded-lg font-mono text-[10px] transition-all"
+                    style={{ background: trialHours == h ? 'rgba(0,255,136,0.2)' : 'rgba(0,255,136,0.06)', border: `1px solid ${trialHours == h ? 'rgba(0,255,136,0.5)' : 'rgba(0,255,136,0.15)'}`, color: '#00ff88' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={() => setTrialModalUser(null)}
+                  className="flex-1 py-2.5 rounded-xl font-mono text-xs transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#888' }}>
+                  CANCEL
+                </button>
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                  onClick={handleSetTrial}
+                  disabled={trialLoading || !trialHours}
+                  className="flex-1 py-2.5 rounded-xl font-display text-xs tracking-widest font-bold transition-all"
+                  style={{ background: trialLoading || !trialHours ? 'rgba(0,255,136,0.15)' : 'linear-gradient(135deg,#00ff88,#00cc66)', color: '#000', opacity: (trialLoading || !trialHours) ? 0.6 : 1 }}>
+                  {trialLoading ? '⏳ SAVING...' : '✅ SET TRIAL'}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -640,6 +774,38 @@ export default function Admin() {
                   </GCard>
                 )}
 
+                {/* ══ BULK FREE TRIAL ══ */}
+                <GCard className="p-5 mb-4" style={{ border: '1px solid rgba(0,255,136,0.3)' }}>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="flex-1">
+                      <div className="font-mono text-[10px] tracking-widest mb-0.5" style={{ color: '#00ff88' }}>🎁 BULK FREE TRIAL</div>
+                      <div className="font-mono text-[9px] text-gray-500">Sab FREE plan users ko ek saath trial do — apni marzi ka time</div>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="number" min="1" max="8760"
+                        value={bulkTrialHours}
+                        onChange={e => setBulkTrialHours(e.target.value)}
+                        placeholder="Hours"
+                        className="w-24 px-3 py-2 rounded-xl font-mono text-sm outline-none text-center"
+                        style={{ background: 'rgba(0,255,136,0.06)', border: '1px solid rgba(0,255,136,0.25)', color: '#fff' }}
+                      />
+                      <span className="font-mono text-[10px] text-gray-500 whitespace-nowrap">hrs</span>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        onClick={handleBulkTrial}
+                        disabled={bulkTrialLoading || !bulkTrialHours}
+                        className="px-4 py-2 rounded-xl font-display text-[10px] tracking-widest text-black font-bold"
+                        style={{ background: bulkTrialLoading || !bulkTrialHours ? 'rgba(0,255,136,0.2)' : 'linear-gradient(135deg,#00ff88,#00cc66)', opacity: (bulkTrialLoading || !bulkTrialHours) ? 0.6 : 1 }}>
+                        {bulkTrialLoading ? '⏳' : '🎁'} GIVE ALL
+                      </motion.button>
+                    </div>
+                  </div>
+                  <div className="font-mono text-[9px] text-gray-600 mt-2">
+                    💡 1 hour = 1 ghanta · 24 = 1 din · 168 = 1 hafta · 720 = 1 mahina
+                  </div>
+                </GCard>
+
                 <input value={search} onChange={e => setSearch(e.target.value)}
                   className="input-neon rounded-xl w-full mb-4" placeholder="🔍  SEARCH USERS..."
                   style={{ borderColor: 'rgba(255,0,255,0.3)' }} />
@@ -740,6 +906,13 @@ export default function Admin() {
                                 <td className="text-right">
                                   {u.role !== 'admin' && (
                                     <div className="flex gap-3 justify-end">
+                                      {(u.subscriptionPlan || 'free') === 'free' && (
+                                        <button onClick={() => { setTrialModalUser(u); setTrialHours(''); }}
+                                          className="font-mono text-xs transition-colors"
+                                          style={{ color: '#00ff88' }}>
+                                          ⏱️ TRIAL
+                                        </button>
+                                      )}
                                       <button onClick={() => handleBan(uid)}
                                         className={`font-mono text-xs transition-colors ${u.banned ? 'text-green-400 hover:text-green-300' : 'text-yellow-400 hover:text-yellow-300'}`}>
                                         {u.banned ? 'UNBAN' : 'BAN'}
@@ -1304,6 +1477,55 @@ export default function Admin() {
                           </motion.div>
                         ))}
                       </div>
+                    )}
+                  </GCard>
+                  {/* Check Status Card */}
+                  <GCard className="p-5" style={{ border: '1px solid rgba(139,92,246,0.35)' }}>
+                    <h3 className="font-mono text-[10px] tracking-widest mb-4" style={{ color: '#8b5cf6' }}>🔍 CHECK NUMBER STATUS</h3>
+                    <label className="font-mono text-[10px] text-gray-400 block mb-2">PHONE NUMBER (digits only)</label>
+                    <div className="flex gap-2 mb-4">
+                      <input
+                        type="text"
+                        value={botStatusPhone}
+                        onChange={e => setBotStatusPhone(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleBotStatusCheck()}
+                        placeholder="e.g. 923001234567"
+                        className="flex-1 px-4 py-3 rounded-xl font-mono text-sm outline-none"
+                        style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)', color: '#fff' }}
+                      />
+                      <motion.button
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        onClick={handleBotStatusCheck}
+                        disabled={botStatusLoading || !botStatusPhone.trim()}
+                        className="px-5 py-3 rounded-xl font-display text-xs tracking-widest text-white"
+                        style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.4),rgba(80,0,180,0.3))', border: '1px solid rgba(139,92,246,0.5)', opacity: (botStatusLoading || !botStatusPhone.trim()) ? 0.6 : 1 }}>
+                        {botStatusLoading ? '⏳' : '🔍'} CHECK
+                      </motion.button>
+                    </div>
+                    {botStatusResult && (
+                      <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                        className="rounded-xl p-4 space-y-2"
+                        style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                        <div className="font-mono text-[10px] text-gray-400 mb-3">📱 {botStatusResult.phone}</div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-[10px] text-gray-400">BOT STATUS</span>
+                          <span className="font-mono text-[11px] font-bold" style={{ color: botStatusResult.botDisabled ? '#ff4444' : '#00ff88' }}>
+                            {botStatusResult.botDisabled ? '🔴 DISABLED' : '🟢 ACTIVE'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-[10px] text-gray-400">18+ ACCESS</span>
+                          <span className="font-mono text-[11px] font-bold" style={{ color: botStatusResult.adultUnlocked ? '#00ff88' : '#555' }}>
+                            {botStatusResult.adultUnlocked ? '✅ UNLOCKED' : '🔒 LOCKED'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-[10px] text-gray-400">18+ BAN</span>
+                          <span className="font-mono text-[11px] font-bold" style={{ color: botStatusResult.adultBanned ? '#ff4444' : '#00ff88' }}>
+                            {botStatusResult.adultBanned ? '🚫 PERMANENTLY BANNED' : '✅ NOT BANNED'}
+                          </span>
+                        </div>
+                      </motion.div>
                     )}
                   </GCard>
                 </div>
