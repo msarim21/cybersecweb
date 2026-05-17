@@ -4,8 +4,109 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
+import * as THREE from 'three';
 
 const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
+
+
+// ── 3D Cyber Graph (Three.js) ─────────────────────────────────────────────
+const TAB_COLORS = {
+  overview: [0x00f5ff, 0xff00ff, 0x00ff88],
+  users:    [0x00f5ff, 0x8b5cf6, 0x00ff88],
+  numbers:  [0xff00ff, 0x00f5ff, 0xffaa00],
+  upgrades: [0x8b5cf6, 0xff00ff, 0x00f5ff],
+  security: [0xff2244, 0xff6600, 0xffaa00],
+  audio:    [0x00f5ff, 0xff00ff, 0x8b5cf6],
+  access:   [0xff2244, 0xff00ff, 0xffaa00],
+  bot:      [0x00ff88, 0x00f5ff, 0x8b5cf6],
+  logs:     [0xffaa00, 0x00f5ff, 0xff00ff],
+};
+
+const ThreeGraph = ({ tabId = 'overview' }) => {
+  const mountRef = useRef(null);
+  useEffect(() => {
+    const container = mountRef.current;
+    if (!container) return;
+    const w = container.clientWidth || 320;
+    const h = 110;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 100);
+    camera.position.set(0, 3.5, 8);
+    camera.lookAt(0, 0, 0);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0);
+    container.appendChild(renderer.domElement);
+
+    const colors = TAB_COLORS[tabId] || TAB_COLORS.overview;
+    const group = new THREE.Group();
+    const barCount = 14;
+    for (let i = 0; i < barCount; i++) {
+      const bh = 0.3 + Math.random() * 2.8;
+      const geo = new THREE.BoxGeometry(0.32, bh, 0.32);
+      const col = colors[i % colors.length];
+      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.7, transparent: true, opacity: 0.88 });
+      const bar = new THREE.Mesh(geo, mat);
+      const angle = (i / barCount) * Math.PI * 2;
+      bar.position.set(Math.cos(angle) * 2.8, bh / 2 - 1, Math.sin(angle) * 2.8);
+      group.add(bar);
+      // Top glow sphere
+      const sg = new THREE.SphereGeometry(0.18, 8, 8);
+      const sm = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.4, transparent: true, opacity: 0.9 });
+      const sphere = new THREE.Mesh(sg, sm);
+      sphere.position.set(bar.position.x, bh - 1, bar.position.z);
+      group.add(sphere);
+    }
+    // Connecting lines (edges)
+    const lineMat = new THREE.LineBasicMaterial({ color: colors[0], transparent: true, opacity: 0.25 });
+    for (let i = 0; i < barCount; i++) {
+      const b1 = group.children[i * 2];
+      const b2 = group.children[((i + 1) % barCount) * 2];
+      if (!b1 || !b2) continue;
+      const pts = [b1.position.clone(), b2.position.clone()];
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      group.add(new THREE.Line(geo, lineMat));
+    }
+    scene.add(group);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+    const pl1 = new THREE.PointLight(colors[0], 2.5, 18); pl1.position.set(0, 6, 0); scene.add(pl1);
+    const pl2 = new THREE.PointLight(colors[1], 1.8, 14); pl2.position.set(4, 2, -4); scene.add(pl2);
+
+    let frame = 0;
+    let raf;
+    const animate = () => {
+      raf = requestAnimationFrame(animate);
+      frame += 0.008;
+      group.rotation.y = frame * 0.45;
+      group.children.forEach((obj, i) => {
+        if (obj.isMesh) obj.scale.y = 1 + 0.12 * Math.sin(frame * 2.2 + i * 0.45);
+      });
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const handleResize = () => {
+      const nw = container.clientWidth || 320;
+      camera.aspect = nw / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(nw, h);
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+      try { container.removeChild(renderer.domElement); } catch (_) {}
+    };
+  }, [tabId]);
+
+  return (
+    <div ref={mountRef} style={{ width: '100%', height: '110px', borderRadius: '14px', overflow: 'hidden', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,0,255,0.12)', marginBottom: '16px' }} />
+  );
+};
 
 const GCard = ({ children, className = '', style = {} }) => (
   <div className={`rounded-2xl ${className}`}
@@ -602,6 +703,7 @@ Ye action immediately apply hoga.`)) return;
         </header>
 
         <main className="flex-1 p-4 pb-24 lg:pb-6 overflow-y-auto">
+          <ThreeGraph tabId={tab} />
           <AnimatePresence mode="wait">
 
             {/* ══ OVERVIEW ══ */}
@@ -832,7 +934,7 @@ Ye action immediately apply hoga.`)) return;
                                 <div className="font-mono text-[10px] text-gray-500 truncate">{u.email}</div>
                                 {u.upgradeRequest && u.upgradeRequest !== 'none' && (
                                   <div className="font-mono text-[10px] mt-1" style={{ color: '#ff00ff' }}>
-                                    ⚡ Requesting {u.upgradeRequest?.toUpperCase()}
+                                    ⚡ UPGRADE REQUEST
                                   </div>
                                 )}
                                 {u.trialExpiresAt && (
@@ -880,7 +982,7 @@ Ye action immediately apply hoga.`)) return;
                                   {u.username}
                                   {u.upgradeRequest && u.upgradeRequest !== 'none' && (
                                     <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,0,255,0.2)', color: '#ff00ff' }}>
-                                      ⚡ {u.upgradeRequest?.toUpperCase()} REQ
+                                      ⚡ REQUEST
                                     </span>
                                   )}
                                 </td>
@@ -1142,19 +1244,19 @@ Ye action immediately apply hoga.`)) return;
                             )}
                           </div>
                           <div className="text-right flex-shrink-0">
-                            <div className="font-mono text-[10px] text-gray-500 mb-1">REQUESTING</div>
+                            <div className="font-mono text-[10px] text-gray-500 mb-1">STATUS</div>
                             <span className="font-display text-lg font-bold"
-                              style={{ color: req.upgradeRequest === 'enterprise' ? '#ff00ff' : '#8b5cf6', textShadow: `0 0 12px ${req.upgradeRequest === 'enterprise' ? '#ff00ff60' : '#8b5cf660'}` }}>
-                              {req.upgradeRequest?.toUpperCase()}
+                              style={{ color: '#ff00ff', textShadow: '0 0 12px #ff00ff60' }}>
+                              REQUEST
                             </span>
                           </div>
                         </div>
                         <div className="flex gap-3">
                           <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                            onClick={() => handleApproveUpgrade(req.id, req.upgradeRequest)}
+                            onClick={() => handleApproveUpgrade(req.id, req.upgradeRequest || 'pro')}
                             className="flex-1 py-2.5 rounded-xl font-display text-xs tracking-widest text-white"
                             style={{ background: 'linear-gradient(135deg,rgba(0,255,136,0.25),rgba(0,245,255,0.15))', border: '1px solid rgba(0,255,136,0.4)' }}>
-                            ✅ APPROVE {req.upgradeRequest?.toUpperCase()}
+                            ✅ APPROVE REQUEST
                           </motion.button>
                           <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
                             onClick={() => handleRejectUpgrade(req.id)}
