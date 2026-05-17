@@ -48,13 +48,13 @@ const TrialExpiredBanner = ({ onRequestUpgrade }) => (
         <div className="font-mono text-[11px] text-gray-400 mb-3">Your 24-hour free trial has ended. Upgrade to continue using your bot.</div>
         <div className="flex flex-wrap gap-2">
           <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-            onClick={() => onRequestUpgrade('pro')}
+            onClick={onRequestUpgrade}
             className="px-4 py-2 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.4),rgba(255,0,255,0.2))', border: '1px solid rgba(139,92,246,0.5)' }}>
             ⚡ REQUEST PRO (5 numbers)
           </motion.button>
           <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-            onClick={() => onRequestUpgrade('enterprise')}
+            onClick={onRequestUpgrade}
             className="px-4 py-2 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(139,92,246,0.2))', border: '1px solid rgba(255,0,255,0.4)' }}>
             🚀 REQUEST ENTERPRISE (Unlimited)
@@ -206,12 +206,12 @@ const PlanLimitModal = ({ onClose, trialExpired, onRequestUpgrade }) => (
       </p>
       {trialExpired ? (
         <div className="space-y-2 mb-4">
-          <button onClick={() => { onRequestUpgrade('pro'); onClose(); }}
+          <button onClick={() => { onRequestUpgrade(); onClose(); }}
             className="w-full py-3 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.5),rgba(255,0,255,0.3))', border: '1px solid rgba(139,92,246,0.5)' }}>
             ⚡ REQUEST PRO — 5 Numbers
           </button>
-          <button onClick={() => { onRequestUpgrade('enterprise'); onClose(); }}
+          <button onClick={() => { onRequestUpgrade(); onClose(); }}
             className="w-full py-3 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(139,92,246,0.2))', border: '1px solid rgba(255,0,255,0.4)' }}>
             🚀 REQUEST ENTERPRISE — Unlimited
@@ -497,11 +497,13 @@ export default function Dashboard() {
     finally { setProfileLoading(false); }
   };
 
-  const handleRequestUpgrade = async (plan) => {
-    setUpgradeLoading(plan);
+  const handleRequestUpgrade = async () => {
+    setUpgradeLoading('upgrade');
     try {
-      await axios.post('/api/user/upgrade-request', { plan });
-      toast.success(`Upgrade request to ${plan.toUpperCase()} sent! Admin will review shortly.`);
+      await axios.post('/api/user/upgrade-request', { plan: 'pro' });
+      toast.success('Upgrade request sent! Admin will review shortly.');
+      const waMsg = encodeURIComponent('I want to upgrade my CYBERSECPRO account. Please review my upgrade request sent via dashboard.');
+      window.open('https://wa.me/923417022212?text=' + waMsg, '_blank');
       await fetchData();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to send request');
@@ -679,36 +681,26 @@ export default function Dashboard() {
                             </ul>
                           </div>
                         </div>
-                        {/* ─── Upgrade Request Buttons (free/active users) ─── */}
-                        {upgradeRequest === 'none' ? (
-                          <div className="px-4 pt-3 pb-1 grid grid-cols-2 gap-2">
+                        {/* ─── Single Upgrade Now Button ─── */}
+                        <div className="px-4 pt-3 pb-1">
+                          {upgradeRequest === 'none' ? (
                             <motion.button
-                              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                              disabled={!!upgradeLoading}
-                              onClick={() => handleRequestUpgrade('pro')}
-                              className="py-2.5 rounded-xl font-display text-[10px] tracking-widest transition-all disabled:opacity-50"
-                              style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.3),rgba(139,92,246,0.1))', border: '1.5px solid rgba(139,92,246,0.6)', color: '#8b5cf6', boxShadow: '0 0 14px rgba(139,92,246,0.2)' }}>
-                              {upgradeLoading === 'pro' ? '⏳ ...' : '⚡ REQUEST PRO'}
+                              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                              disabled={upgradeLoading === 'upgrade'}
+                              onClick={handleRequestUpgrade}
+                              className="w-full py-3 rounded-xl font-display text-xs tracking-widest transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                              style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.45),rgba(255,0,255,0.3))', border: '1.5px solid rgba(139,92,246,0.7)', color: '#fff', boxShadow: '0 0 22px rgba(139,92,246,0.35)' }}>
+                              {upgradeLoading === 'upgrade' ? '⏳ Sending request...' : '⚡ UPGRADE NOW'}
                             </motion.button>
-                            <motion.button
-                              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                              disabled={!!upgradeLoading}
-                              onClick={() => handleRequestUpgrade('enterprise')}
-                              className="py-2.5 rounded-xl font-display text-[10px] tracking-widest transition-all disabled:opacity-50"
-                              style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(255,0,255,0.1))', border: '1.5px solid rgba(255,0,255,0.6)', color: '#ff00ff', boxShadow: '0 0 14px rgba(255,0,255,0.2)' }}>
-                              {upgradeLoading === 'enterprise' ? '⏳ ...' : '🚀 REQUEST ENTERPRISE'}
-                            </motion.button>
-                          </div>
-                        ) : (
-                          <div className="px-4 pt-3 pb-1">
+                          ) : (
                             <div className="font-mono text-[10px] text-center py-2.5 rounded-xl"
                               style={{ background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
-                              ⏳ {(upgradeRequest || '').toUpperCase()} REQUEST PENDING — Admin will review
+                              ⏳ UPGRADE REQUEST PENDING — Admin will review shortly
                             </div>
-                          </div>
-                        )}
-                        <div className="px-4 pb-1 mt-1">
-                          <div className="font-mono text-[9px] text-center text-gray-600">— or contact directly —</div>
+                          )}
+                        </div>
+                        <div className="px-4 pb-1 mt-0.5">
+                          <div className="font-mono text-[9px] text-center text-gray-500">Sends request to admin panel + opens WhatsApp</div>
                         </div>
                         <div className="px-4 py-3">
                           <a href="https://wa.me/923417022212?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
