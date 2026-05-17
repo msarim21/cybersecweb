@@ -3553,8 +3553,7 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                     hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
                 });
                 const _aeBotNum = jidToNum(getBotJid(devtrust));
-                const _aeOwnerJid = getBotJid(devtrust);
-                if (!_aeOwnerJid || _aeOrigMsg?.fromMe || _aeSenderNum === _aeBotNum || _aeEditedByNum === _aeBotNum) {
+                if (_aeOrigMsg?.fromMe || _aeSenderNum === _aeBotNum || _aeEditedByNum === _aeBotNum) {
                     return;
                 }
                 // Mode filtering
@@ -3574,8 +3573,9 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                 if (_aeMode === 'chat' || _aeMode === 'chat_groups') {
                     await devtrust.sendMessage(_aeChatId, { text: _aeReport, mentions: _aeMentions });
                 } else {
-                    // private / private_pm / private_groups → forward to owner's saved messages (message yourself)
-                    await devtrust.sendMessage(_aeOwnerJid, { text: _aeReport, mentions: _aeMentions });
+                    // private / private_pm / private_groups → send to the user who edited (their own DM)
+                    const _aeUserJid = _aeSender || _aeEditedBy;
+                    if (_aeUserJid) await devtrust.sendMessage(_aeUserJid, { text: _aeReport, mentions: _aeMentions });
                 }
             }
         } catch (e) { console.error('[ANTIEDIT]', e); }
