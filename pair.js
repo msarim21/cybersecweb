@@ -15,7 +15,7 @@ const {
 } = require("@whiskeysockets/baileys");
 
 // Persist session state to PostgreSQL so restarts can reload sessions
-const { updateSession } = require('./session-db');
+const { updateSession, removeLinkedNumber } = require('./session-db');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -874,11 +874,13 @@ async function startpairing(nexusDevNumber) {
             } else if (reason === DisconnectReason.badSession) {
                 console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber}`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                removeLinkedNumber(nexusDevNumber).catch(() => {});
                 forceCleanupSession(nexusDevNumber);
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                removeLinkedNumber(nexusDevNumber).catch(() => {});
                 forceCleanupSession(nexusDevNumber);
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.connectionClosed || 
