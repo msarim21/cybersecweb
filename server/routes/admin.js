@@ -53,7 +53,9 @@ router.put('/adult/code', (req, res) => {
     const clean = code.trim();
     _adultFs.mkdirSync(_adultPath.join(__dirname, '../../database'), { recursive: true });
     _adultFs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: clean }, null, 2));
-    res.json({ message: 'Secret code updated.', code: clean });
+    // Clear all unlocked users — they must re-enter the new key
+    _adultFs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify([], null, 2));
+    res.json({ message: 'Secret code updated. All adult access cleared.', code: clean });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
