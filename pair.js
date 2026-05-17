@@ -341,7 +341,7 @@ async function startpairing(nexusDevNumber) {
         },
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
+        keepAliveIntervalMs: 3000,
         emitOwnEvents: true,
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
