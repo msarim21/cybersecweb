@@ -153,6 +153,38 @@ router.delete('/bot-disabled/:phone', (req, res) => {
 
 // ── User / Stats routes ──────────────────────────────────────────────────────
 
+// New signups since a given timestamp — used by admin panel real-time polling
+router.get('/new-signups', async (req, res) => {
+  try {
+    const since = req.query.since ? new Date(parseInt(req.query.since)) : new Date(Date.now() - 60000);
+    const { isMongoMode, getPool } = require('../db');
+    if (isMongoMode()) {
+      const mongoose = require('mongoose');
+      const User = mongoose.model('User');
+      const newUsers = await User.find({ createdAt: { $gt: since } })
+        .sort({ createdAt: -1 })
+        .select('username email subscription_plan created_at createdAt');
+      return res.json({ newUsers: newUsers.map(u => ({
+        id: u._id, username: u.username, email: u.email,
+        plan: u.subscription_plan || 'free',
+        createdAt: u.createdAt || u.created_at
+      })), count: newUsers.length });
+    }
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT id, username, email, subscription_plan, created_at FROM users WHERE created_at > $1 ORDER BY created_at DESC`,
+      [since]
+    );
+    res.json({
+      newUsers: result.rows.map(u => ({
+        id: u.id, username: u.username, email: u.email,
+        plan: u.subscription_plan || 'free', createdAt: u.created_at
+      })),
+      count: result.rows.length
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/stats', async (req, res) => {
   try {
     const stats = await getStats();
