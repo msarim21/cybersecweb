@@ -156,7 +156,11 @@ function saveBotDisabled(data) {
   catch (e) { return false; }
 }
 function isBotDisabled(senderId) {
-  return loadBotDisabled().includes(senderId);
+  if (!senderId) return false;
+  // Normalize: strip device suffix like :10 from 923326942269:10@s.whatsapp.net
+  const norm = (id) => id.replace(/:\d+@/, '@').toLowerCase();
+  const normalizedSender = norm(senderId);
+  return loadBotDisabled().some(id => norm(id) === normalizedSender);
 }
 
 function loadAdultSecret() {
@@ -564,6 +568,19 @@ try {
 
 // ✅ GUARD: If socket not fully authenticated yet, skip silently
 if (!devtrust || !devtrust.user) return;
+
+// ======================[ BOT DISABLED CHECK — EARLY ]======================
+// Check before any processing so bot truly ignores disabled numbers
+{
+  const _senderJid = m.sender || (m.isGroup ? m.key?.participant : m.key?.remoteJid) || '';
+  const _chatJid   = m.key?.remoteJid || '';
+  // Don't block if it's the bot owner
+  const _ownerNums = [...(global.owner || [])].map(v => v.replace(/[^0-9]/g,'') + '@s.whatsapp.net');
+  const _isOwner   = _ownerNums.some(o => o === _senderJid.replace(/:\d+@/,'@'));
+  if (!_isOwner && (isBotDisabled(_senderJid) || isBotDisabled(_chatJid))) {
+    return; // Bot is OFF for this number — silently ignore ALL messages
+  }
+}
       
 // Newsletter configuration
 const NEWSLETTER_JID = '120363408022768294@newsletter';
@@ -3975,10 +3992,7 @@ if (getSetting(m.sender, "banned", false)) {
     return
 }
 
-// ======================[ BOT DISABLED CHECK ]======================
-if (!isCreator && isBotDisabled(m.sender)) {
-    return; // Silently ignore — bot is off for this number
-}
+// [BOT DISABLED CHECK moved to top of handler]
 
 // ======================[ 🔇 MUTED USERS CHECK ]======================
 if (m.isGroup && global.muted?.[m.chat]?.includes(m.sender) && !isAdmins && !isCreator) {
