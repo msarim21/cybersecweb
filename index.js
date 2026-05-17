@@ -10,6 +10,7 @@ const { startKeepAlive } = require('./keepalive');
 const AUTH_FILE = './auth.json';
 const PAIRING_DIR = './nexstore/pairing/';
 const startpairing = require('./pair');
+const { getActiveSessions, restoreCredsFromDb } = require('./session-db');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -23,45 +24,75 @@ function setAuthenticated(value) {
 
 const autoLoadPairs = async () => {
     console.log(chalk.cyan('🔄 Auto-loading all paired users...'));
-    
-    if (!fs.existsSync(PAIRING_DIR)) {
-        console.log(chalk.red('❌ Pairing directory not found.'));
+
+    // ── Step 1: Collect numbers from DB (works after Heroku restart) ──────────
+    let dbNumbers = [];
+    try {
+        const active = await getActiveSessions();
+        dbNumbers = (active || []).map(n => {
+            const clean = String(n).replace(/[^0-9]/g, '');
+            return clean ? `${clean}@s.whatsapp.net` : null;
+        }).filter(Boolean);
+        if (dbNumbers.length > 0) {
+            console.log(chalk.green(`📦 Found ${dbNumbers.length} active session(s) in database.`));
+        }
+    } catch (e) {
+        console.log(chalk.yellow(`⚠️  Could not read DB sessions: ${e.message}`));
+    }
+
+    // ── Step 2: Collect numbers from local filesystem (local / VPS) ───────────
+    let fileNumbers = [];
+    if (fs.existsSync(PAIRING_DIR)) {
+        fileNumbers = fs.readdirSync(PAIRING_DIR, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name)
+            .filter(n => n.endsWith('@s.whatsapp.net'));
+    }
+
+    // ── Step 3: Merge — DB takes priority, add any extra from files ───────────
+    const seen = new Set(dbNumbers);
+    for (const n of fileNumbers) {
+        if (!seen.has(n)) { seen.add(n); dbNumbers.push(n); }
+    }
+
+    const allUsers = dbNumbers;
+
+    if (allUsers.length === 0) {
+        console.log(chalk.yellow('ℹ️  No paired users found in DB or filesystem.'));
         return;
     }
 
-    const pairedUsers = fs.readdirSync(PAIRING_DIR, { withFileTypes: true })
-        .filter(dirent => dirent.isDirectory())
-        .map(dirent => dirent.name)
-        .filter(name => name.endsWith('@s.whatsapp.net'));
-
-    if (pairedUsers.length === 0) {
-        console.log(chalk.yellow('ℹ️  No paired users found.'));
-        return;
-    }
-
-    console.log(chalk.green(`✅ Found ${pairedUsers.length} paired users. Starting connections...`));
+    console.log(chalk.green(`✅ Total ${allUsers.length} user(s) to reconnect.`));
     console.log(chalk.blue('⏳ Waiting 4 seconds before starting connections...'));
     await delay(4000);
 
-    for (let i = 0; i < pairedUsers.length; i++) {
-        const userNumber = pairedUsers[i];
-        
+    for (let i = 0; i < allUsers.length; i++) {
+        const userNumber = allUsers[i];
+        const cleanNum   = userNumber.replace(/[^0-9]/g, '');
+        const sessionPath = path.join(PAIRING_DIR, userNumber);
+
         try {
-            console.log(chalk.blue(`🔄 Connecting user ${i + 1}/${pairedUsers.length}: ${userNumber}`));
-            await startpairing(userNumber);
-            console.log(chalk.green(`✅ Connected successfully: ${userNumber}`));
-            
-            if (i < pairedUsers.length - 1) {
-                console.log(chalk.blue('⏳ Waiting 4 seconds before next connection...'));
-                await delay(4000);
+            // ── Restore creds from DB if local files are missing (Heroku wipe) ─
+            const credsPath = path.join(sessionPath, 'creds.json');
+            if (!fs.existsSync(credsPath)) {
+                console.log(chalk.blue(`🔁 Restoring session from DB for ${userNumber}...`));
+                const restored = await restoreCredsFromDb(cleanNum, sessionPath);
+                if (!restored) {
+                    console.log(chalk.yellow(`⚠️  No DB backup for ${userNumber} — skipping (needs re-pair).`));
+                    continue;
+                }
             }
+
+            console.log(chalk.blue(`🔄 Connecting user ${i + 1}/${allUsers.length}: ${userNumber}`));
+            await startpairing(userNumber);
+            console.log(chalk.green(`✅ Connected: ${userNumber}`));
         } catch (error) {
             console.log(chalk.red(`❌ Failed for ${userNumber}: ${error.message}`));
-            
-            if (i < pairedUsers.length - 1) {
-                console.log(chalk.blue('⏳ Waiting 4 seconds before retry...'));
-                await delay(4000);
-            }
+        }
+
+        if (i < allUsers.length - 1) {
+            console.log(chalk.blue('⏳ Waiting 4 seconds before next connection...'));
+            await delay(4000);
         }
     }
 
