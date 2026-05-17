@@ -61,16 +61,16 @@ function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Ping every 30 seconds — aggressive keep-alive to prevent Heroku sleep
-    _timer = setInterval(selfPing, 30 * 1000);
+    // Ping every 5 seconds — ultra-fast keep-alive to prevent bot sleep
+    _timer = setInterval(selfPing, 5 * 1000);
 
     // Keep Node.js event loop alive — prevents process exit on empty queue
     _noopTimer = setInterval(() => {}, 10 * 60 * 1000);
 
-    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 30 sec)');
+    console.log('[KeepAlive] 🔄 24/7 keep-alive started (ping every 5 sec — bot stays alive)');
 
     // First ping immediately after 8 seconds
-    setTimeout(selfPing, 8000);
+    setTimeout(selfPing, 2000);
 }
 
 function stopKeepAlive() {
