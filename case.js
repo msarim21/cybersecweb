@@ -11159,15 +11159,13 @@ case 'ytmp3': {
     if (!text) return reply(`🎵 *CYBER Play*\n\nUsage: ${prefix}play [song name or YouTube URL]\nExample: ${prefix}play faded`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '🎧', key: m.key } });
-        reply(`🔍 Searching: ${text}...`);
+        reply(`🔍 Searching: *${text}*...`);
 
         const yts = require('yt-search');
         let videoUrl = text;
         let videoInfo = null;
 
-        if (text.includes('youtube.com') || text.includes('youtu.be')) {
-            videoUrl = text;
-        } else {
+        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
             const { videos } = await yts(text);
             if (!videos?.length) {
                 await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
@@ -11177,30 +11175,27 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytAudio(videoUrl);
-        if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
+        // ── Use PrinceTech API ────────────────────────────────────────────────
+        const apiRes = await axios.get(`https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`, { timeout: 60000 });
+        const apiData = apiRes.data?.result;
+        if (!apiData?.audio_url) throw new Error('API did not return audio URL');
 
-        const d = result.data;
-        if (!d.best_audio && !d.audio_formats?.length) throw new Error('No audio format found');
-
-        const audioFmt = d.best_audio || d.audio_formats[0];
-        const titleStr = d.title || videoInfo?.title || 'Unknown';
-        const thumb    = d.thumbnail || videoInfo?.thumbnail || null;
-        const dur      = d.duration_formatted || videoInfo?.timestamp || 'N/A';
-
+        const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
+        const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
+        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
+        const quality   = apiData.audio_quality || '128kbps';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
-        const audioCaption = `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}`;
+        const caption   = `🎵 *${titleStr}*\n⏱️ Duration: ${dur}\n🎚️ Quality: ${quality}`;
 
-        // Download buffer + send thumbnail in parallel
-        const [audioBuf] = await Promise.all([
-            axios.get(audioFmt.url, {
-                responseType: 'arraybuffer',
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-                timeout: 180000,
-                maxContentLength: 200 * 1024 * 1024
-            }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption }, { quoted: m }) : Promise.resolve()
-        ]);
+        // Send thumbnail first, then download audio
+        if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
+
+        const audioBuf = await axios.get(apiData.audio_url, {
+            responseType: 'arraybuffer',
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            timeout: 180000,
+            maxContentLength: 200 * 1024 * 1024
+        }).then(r => Buffer.from(r.data));
 
         await devtrust.sendMessage(m.chat, {
             audio: audioBuf,
@@ -11312,28 +11307,16 @@ case 'ytmp4':
 case 'video':
 case 'mp4':
 case 'ytvideo': {
-    if (!text) {
-        return reply(`🎬 *YouTube Video Downloader*\n\nUsage: ${prefix}video <song name or YouTube link>\nExample: ${prefix}video shape of you\nExample: ${prefix}video https://youtu.be/dQw4w9WgXcQ`);
-    }
+    if (!text) return reply(`🎬 *YouTube Video Downloader*\n\nUsage: ${prefix}video [song name or YouTube link]\nExample: ${prefix}video shape of you`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
+        reply(`🔍 Searching: *${text}*...`);
 
-        // ── 1. Resolve URL (search by name if not a direct link) ─────────────
+        const yts = require('yt-search');
         let videoUrl = text;
         let videoInfo = null;
-        const yts = require('yt-search');
-        if (text.includes('youtube.com') || text.includes('youtu.be')) {
-            let videoId = null;
-            if (text.includes('/shorts/')) {
-                videoId = text.split('/shorts/')[1].split('?')[0].split('/')[0].trim();
-            } else {
-                videoId = text.match(/(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/i)?.[1];
-            }
-            if (videoId) {
-                const r = await yts({ videoId });
-                videoInfo = ('videos' in r && Array.isArray(r.videos)) ? r.videos[0] : r;
-            }
-        } else {
+
+        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
             const { videos } = await yts(text);
             if (!videos?.length) {
                 await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
@@ -11343,99 +11326,40 @@ case 'ytvideo': {
             videoUrl = videoInfo.url;
         }
 
-        // ── 2. Fetch all formats via VidsSave API ─────────────────────────────
-        const result = await ytDownload(videoUrl);
-        if (!result?.data) throw new Error('Could not fetch video info');
+        // ── Use PrinceTech YTDL API ───────────────────────────────────────────
+        const apiRes = await axios.get(`https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`, { timeout: 60000 });
+        const apiData = apiRes.data?.result;
+        if (!apiData?.video_url) throw new Error('API did not return video URL');
 
-        const info      = result.data;
-        const vidFmts   = info.video_formats || [];
-        const audioFmts = info.audio_formats || [];
+        const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
+        const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
+        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
+        const quality   = apiData.video_quality || '720p';
+        const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
+        const caption   = `🎬 *${titleStr}*\n⏱️ Duration: ${dur}\n🎚️ Quality: ${quality}\n\n⬇️ Downloading...`;
 
-        if (!vidFmts.length && !info.best_video) throw new Error('No video formats found');
+        if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
 
-        // Build quality menu from actual available formats
-        const menuFmts = vidFmts.length ? vidFmts : [info.best_video];
-        const qualityMenu = menuFmts.map((f, i) => `*${i + 1}.* ${f.quality} — ${f.format} (${f.size_mb})`).join('\n');
+        const videoBuf = await axios.get(apiData.video_url, {
+            responseType: 'arraybuffer',
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            timeout: 300000,
+            maxContentLength: 500 * 1024 * 1024
+        }).then(r => Buffer.from(r.data));
 
-        // ── 3. Show info card with quality menu ───────────────────────────────
-        const thumb = videoInfo?.thumbnail || (info.thumbnail ? info.thumbnail : null);
-        const titleStr = info.title || videoInfo?.title || 'Unknown Title';
-        const duration = info.duration_formatted || videoInfo?.timestamp || 'N/A';
-        const channel  = videoInfo?.author?.name || 'Unknown';
-        const views    = videoInfo?.views ? videoInfo.views.toLocaleString() : 'N/A';
-
-        const caption =
-            `🎬 *${titleStr}*\n\n` +
-            `⏱️ *Duration:* ${duration}\n` +
-            `👤 *Channel:* ${channel}\n` +
-            `👀 *Views:* ${views}\n\n` +
-            `📋 *Available Qualities:*\n${qualityMenu}\n\n` +
-            `📌 *Reply with a number* to download that quality`;
-
-        const sentMsg = await devtrust.sendMessage(
-            m.chat,
-            addNewsletterContext(thumb
-                ? { image: { url: thumb }, caption }
-                : { text: caption }),
-            { quoted: m }
-        );
-
-        // ── 4. Wait for user quality selection ────────────────────────────────
-        const _videoHandler = async (messageUpdate) => {
-            try {
-                const msgData  = messageUpdate?.messages[0];
-                if (!msgData?.message) return;
-                const replyTxt = (msgData.message.extendedTextMessage?.text || msgData.message.conversation || '').trim();
-                const stanzaId = msgData.message.extendedTextMessage?.contextInfo?.stanzaId;
-                if (stanzaId !== sentMsg?.key?.id) return;
-                const sel = parseInt(replyTxt);
-                if (isNaN(sel) || sel < 1 || sel > menuFmts.length) return;
-
-                devtrust.ev.off('messages.upsert', _videoHandler);
-                await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: msgData.key } });
-
-                const chosen = menuFmts[sel - 1];
-                const fetchMsg = await devtrust.sendMessage(
-                    m.chat,
-                    { text: `🎬 *Downloading ${chosen.quality} (${chosen.size_mb})...*\nPlease wait ⏳` },
-                    { quoted: msgData }
-                );
-
-                // ── 5. Download buffer and send as actual file ────────────────
-                const chosenUrl = chosen.download_url || chosen.url;
-                const fileName  = `${titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${chosen.quality}.mp4`;
-
-                const videoResp = await axios.get(chosenUrl, {
-                    responseType: 'arraybuffer',
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-                    timeout: 300000,
-                    maxContentLength: 500 * 1024 * 1024
-                });
-                const videoBuf = Buffer.from(videoResp.data);
-                const sizeMB   = (videoBuf.length / 1024 / 1024).toFixed(2);
-
-                await devtrust.sendMessage(m.chat, { delete: fetchMsg.key });
-                await devtrust.sendMessage(m.chat, {
-                    video: videoBuf,
-                    caption: `🎬 *${titleStr}*\n🎚️ *Quality:* ${chosen.quality}\n📦 *Size:* ${sizeMB} MB`,
-                    mimetype: 'video/mp4',
-                    fileName
-                }, { quoted: msgData });
-                await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msgData.key } });
-
-            } catch (err) {
-                console.error('Video quality handler error:', err.message);
-                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-                reply(`❌ Download failed: ${err.message}`);
-            }
-        };
-        devtrust.ev.on('messages.upsert', _videoHandler);
-        setTimeout(() => devtrust.ev.off('messages.upsert', _videoHandler), 180000);
+        const sizeMB = (videoBuf.length / 1024 / 1024).toFixed(2);
+        await devtrust.sendMessage(m.chat, {
+            video: videoBuf,
+            caption: `🎬 *${titleStr}*\n🎚️ Quality: ${quality}\n📦 Size: ${sizeMB} MB`,
+            mimetype: 'video/mp4',
+            fileName: `${safeTitle}.mp4`
+        }, { quoted: m });
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (err) {
         console.error('Video command error:', err.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply(`❌ Failed: ${err.message}`);
+        reply(`❌ *Video failed:* ${err.message}`);
     }
 }
 break;
