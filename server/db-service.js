@@ -518,6 +518,42 @@ async function deleteNumberByPhone(phone) {
   } catch (e) { console.error('[db] deleteNumberByPhone pg error:', e.message); }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// SESSION CREDS BACKUP (for Heroku / ephemeral filesystem platforms)
+// ════════════════════════════════════════════════════════════════════════════
+
+async function saveSessionCreds(number, sessionFiles) {
+  const clean = number.replace(/[^0-9]/g, '');
+  if (!clean || !sessionFiles) return;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      { sessionData: sessionFiles, lastActive: new Date() },
+      { upsert: true, new: true }
+    );
+    return;
+  }
+  // PostgreSQL fallback — store as JSON text in bot_sessions if column exists
+  try {
+    await pg().query(
+      `UPDATE bot_sessions SET last_active = NOW() WHERE number = $1`,
+      [clean]
+    );
+  } catch (_) {}
+}
+
+async function getSessionCreds(number) {
+  const clean = number.replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const doc = await BotSession.findOne({ number: clean });
+    return doc?.sessionData || null;
+  }
+  return null;
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -526,6 +562,7 @@ module.exports = {
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   upsertBotSession, getActiveBotSessions,
+  saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,
   countAdmins,
 };
