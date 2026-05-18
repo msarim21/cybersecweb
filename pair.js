@@ -1204,3 +1204,24 @@ module.exports.stopBot = function stopBot(number) {
         if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
     } catch (_) {}
 };
+
+// ── clearSession: wipe session files so number cannot auto-reconnect ──────
+// After calling this, the number MUST go through fresh pairing to reconnect.
+module.exports.clearSession = function clearSession(number) {
+    const clean = String(number).replace(/[^0-9]/g, '');
+    const jid   = clean + '@s.whatsapp.net';
+    // Delete the full session folder (creds, keys, app state, etc.)
+    const sessionPath = path.join(process.cwd(), 'nexstore', 'pairing', jid);
+    try {
+        if (fs.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
+    } catch (_) {}
+    // Also clean pairing.json if it belongs to this number
+    try {
+        const pairingFile = path.join(process.cwd(), 'nexstore', 'pairing', 'pairing.json');
+        if (fs.existsSync(pairingFile)) {
+            const data = JSON.parse(fs.readFileSync(pairingFile, 'utf8'));
+            const storedClean = String(data.phoneNumber || '').replace(/[^0-9]/g, '');
+            if (storedClean === clean) fs.unlinkSync(pairingFile);
+        }
+    } catch (_) {}
+};
