@@ -135,7 +135,7 @@ router.post('/adult/unban/:phone', (req, res) => {
     let banned = getAdultBanned().filter(u => !u.includes(phone));
     _adultFs.mkdirSync(_adultPath.dirname(ADULT_BANNED_FILE), { recursive: true });
     _adultFs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(banned, null, 2));
-    res.json({ message: 'User unbanned from 18+.', bannedUsers: banned });
+    res.json({ message: 'User unbanned from 18+.', bannedUsers: banned, unlockedUsers: getUnlockedUsers() });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
