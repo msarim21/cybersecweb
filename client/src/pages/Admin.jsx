@@ -349,6 +349,7 @@ export default function Admin() {
   const [adultBannedUsers, setAdultBannedUsers] = useState([]);
   const [adultBannedSearch, setAdultBannedSearch] = useState('');
   const [adultLoading, setAdultLoading] = useState(false);
+  const [unbanningPhone, setUnbanningPhone] = useState(null);
   const [botDisabledNumbers, setBotDisabledNumbers] = useState([]);
   const [botNumberInput, setBotNumberInput] = useState('');
   const [botControlLoading, setBotControlLoading] = useState(false);
@@ -593,24 +594,21 @@ export default function Admin() {
   };
 
   const handleUnbanAdultUser = async (phone) => {
-    const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
-    if (!confirm(`✅ UNBAN CONFIRMATION\n\nKya aap sure hain ke is number ko unban karna chahte hain?\n\n📱 ${cleanPhone}\n\nUnban hone ke baad yeh user dobara .addkey se 18+ access le sakta hai.`)) return;
-    // Step 1: perform unban — isolated so addLog failure never masks this
-    let unbanned = false;
+    const cleanPhone = String(phone).replace(/@.*$/, '').replace(/[^0-9]/g, '');
+    if (!cleanPhone) return toast.error('Invalid phone number');
+    setUnbanningPhone(cleanPhone);
     try {
       const res = await axios.post(`/api/admin/adult/unban/${cleanPhone}`);
-      setAdultBannedUsers(res.data.bannedUsers || []);
+      if (res.data.bannedUsers !== undefined) setAdultBannedUsers(res.data.bannedUsers);
       if (res.data.unlockedUsers !== undefined) setAdultUnlockedUsers(res.data.unlockedUsers);
-      unbanned = true;
-    } catch {
-      toast.error('Failed to unban user');
-      return;
-    }
-    // Step 2: show success, log, and refresh full adult data from server
-    if (unbanned) {
-      toast.success(`✅ ${cleanPhone} unbanned successfully`);
+      toast.success(`✅ ${cleanPhone} unban ho gaya — ab .addkey use kar sakta hai`);
       try { await addLog('✅ 18+ BAN REMOVED', cleanPhone, 'User can now unlock content again'); } catch (_) {}
       try { await fetchAdult(); } catch (_) {}
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.message || 'Network error';
+      toast.error(`Unban failed: ${msg}`);
+    } finally {
+      setUnbanningPhone(null);
     }
   };
 
@@ -1725,10 +1723,12 @@ Ye action immediately apply hoga.`)) return;
                                 <span className="text-sm">🚫</span>
                                 <span className="font-mono text-xs text-red-300">{u.split('@')[0]}</span>
                               </div>
-                              <button onClick={() => handleUnbanAdultUser(u.split('@')[0])}
-                                className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
+                              <button
+                                onClick={() => handleUnbanAdultUser(u)}
+                                disabled={unbanningPhone === u.replace(/@.*$/, '').replace(/[^0-9]/g, '')}
+                                className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.2)' }}>
-                                ✅ UNBAN
+                                {unbanningPhone === u.replace(/@.*$/, '').replace(/[^0-9]/g, '') ? '⏳...' : '✅ UNBAN'}
                               </button>
                             </div>
                           ))}
