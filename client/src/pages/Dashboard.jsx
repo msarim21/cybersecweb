@@ -481,7 +481,7 @@ export default function Dashboard() {
   };
 
   const handleDisconnect = async id => {
-    if (!confirm('Disconnect this number?\n\nYeh number WhatsApp se disconnect ho jayega aur session files delete ho jayengi. Dubara connect karne ke liye naya pairing code generate karna hoga.')) return;
+    if (!confirm('Disconnect this number?\n\nThe WhatsApp session will be terminated and all session files will be deleted. To reconnect, a fresh pairing code must be generated.')) return;
     try {
       await axios.post(`/api/numbers/${id}/disconnect`);
       setNumbers(p => p.filter(n => n._id !== id));
