@@ -347,6 +347,7 @@ export default function Admin() {
   const [adultCodeInput, setAdultCodeInput] = useState('');
   const [adultUnlockedUsers, setAdultUnlockedUsers] = useState([]);
   const [adultBannedUsers, setAdultBannedUsers] = useState([]);
+  const [adultBannedSearch, setAdultBannedSearch] = useState('');
   const [adultLoading, setAdultLoading] = useState(false);
   const [botDisabledNumbers, setBotDisabledNumbers] = useState([]);
   const [botNumberInput, setBotNumberInput] = useState('');
@@ -1695,28 +1696,45 @@ Ye action immediately apply hoga.`)) return;
                     <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
                       <div className="font-mono text-[9px] text-gray-500">Ye users dobara .addkey se 18+ access nahi le sakte. Admin hi unban kar sakta hai.</div>
                     </div>
+                    {adultBannedUsers.length > 0 && (
+                      <input
+                        type="text"
+                        placeholder="🔍 Number search karein..."
+                        value={adultBannedSearch}
+                        onChange={e => setAdultBannedSearch(e.target.value)}
+                        className="w-full mb-3 px-3 py-2 rounded-xl font-mono text-xs bg-transparent text-red-300 placeholder-gray-600 outline-none"
+                        style={{ border: '1px solid rgba(255,68,68,0.25)', background: 'rgba(255,68,68,0.04)' }}
+                      />
+                    )}
                     {adultBannedUsers.length === 0 ? (
                       <div className="text-center py-4">
                         <div className="font-mono text-[10px] text-gray-600">No permanently banned users</div>
                       </div>
-                    ) : (
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {adultBannedUsers.map((u, i) => (
-                          <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2"
-                            style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">🚫</span>
-                              <span className="font-mono text-xs text-red-300">{u.split('@')[0]}</span>
+                    ) : (() => {
+                      const filtered = adultBannedUsers.filter(u => u.split('@')[0].includes(adultBannedSearch.trim()));
+                      return filtered.length === 0 ? (
+                        <div className="text-center py-4">
+                          <div className="font-mono text-[10px] text-gray-600">Koi number nahi mila: "{adultBannedSearch}"</div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {filtered.map((u, i) => (
+                            <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2"
+                              style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm">🚫</span>
+                                <span className="font-mono text-xs text-red-300">{u.split('@')[0]}</span>
+                              </div>
+                              <button onClick={() => handleUnbanAdultUser(u.split('@')[0])}
+                                className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
+                                style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.2)' }}>
+                                ✅ UNBAN
+                              </button>
                             </div>
-                            <button onClick={() => handleUnbanAdultUser(u.split('@')[0])}
-                              className="text-green-400 font-mono text-[9px] px-2 py-1 rounded transition-all"
-                              style={{ background: 'rgba(0,255,100,0.08)', border: '1px solid rgba(0,255,100,0.2)' }}>
-                              ✅ UNBAN
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </GCard>
 
                 </div>
