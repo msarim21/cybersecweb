@@ -329,7 +329,7 @@ async function startpairing(nexusDevNumber) {
         printQRInTerminal: false,
         auth: state,
         version,
-        browser: Browsers.ubuntu("Edge"),
+        browser: Browsers.windows("Chrome"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
@@ -1195,7 +1195,16 @@ module.exports.stopBot = function stopBot(number) {
         if (tracker) {
             tracker.disconnected = true;
             if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
-            try { tracker.connection?.ws?.terminate(); } catch (_) {}
+            // Properly logout from WhatsApp so device shows as disconnected
+            try {
+                if (tracker.connection?.logout) {
+                    tracker.connection.logout().catch(() => {});
+                }
+            } catch (_) {}
+            // Then force-close the WebSocket
+            setTimeout(() => {
+                try { tracker.connection?.ws?.terminate(); } catch (_) {}
+            }, 1500);
             rentbotTracker.delete(key);
         }
     });
