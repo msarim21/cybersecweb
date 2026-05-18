@@ -393,15 +393,19 @@ async function deleteNumber(id, userId) {
   if (isMongoMode()) {
     const { LinkedNumber } = M();
     try {
-      const result = await LinkedNumber.findOneAndDelete({ _id: id, ownerId: userId });
-      return !!result;
-    } catch { return false; }
+      const n = await LinkedNumber.findById(id);
+      if (!n) return null;
+      if (String(n.ownerId) !== String(userId)) return null;
+      await n.deleteOne();
+      return { number: n.number };
+    } catch { return null; }
   }
   const { rows } = await pg().query(
-    'DELETE FROM linked_numbers WHERE id=$1 AND owner_id=$2 RETURNING id',
+    'DELETE FROM linked_numbers WHERE id=$1 AND owner_id=$2 RETURNING *',
     [id, userId]
   );
-  return rows.length > 0;
+  if (!rows.length) return null;
+  return { number: rows[0].number };
 }
 
 async function getAllNumbers() {
