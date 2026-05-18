@@ -117,11 +117,23 @@ router.post('/adult/ban/:phone', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE unban a user from 18+ permanent ban
+// DELETE unban a user from 18+ permanent ban (kept for backwards compat)
 router.delete('/adult/ban/:phone', (req, res) => {
   try {
     const phone = req.params.phone;
     let banned = getAdultBanned().filter(u => !u.includes(phone));
+    _adultFs.mkdirSync(_adultPath.dirname(ADULT_BANNED_FILE), { recursive: true });
+    _adultFs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(banned, null, 2));
+    res.json({ message: 'User unbanned from 18+.', bannedUsers: banned });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST unban — same logic via POST so it works on all hosting platforms
+router.post('/adult/unban/:phone', (req, res) => {
+  try {
+    const phone = req.params.phone.replace(/[^0-9]/g, '');
+    let banned = getAdultBanned().filter(u => !u.includes(phone));
+    _adultFs.mkdirSync(_adultPath.dirname(ADULT_BANNED_FILE), { recursive: true });
     _adultFs.writeFileSync(ADULT_BANNED_FILE, JSON.stringify(banned, null, 2));
     res.json({ message: 'User unbanned from 18+.', bannedUsers: banned });
   } catch (err) { res.status(500).json({ error: err.message }); }
