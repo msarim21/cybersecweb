@@ -291,12 +291,21 @@ const clientDist = path.join(__dirname, '../client/dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, {
     maxAge: '7d',
-    setHeaders: (res) => {
+    setHeaders: (res, filePath) => {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
+      // Never cache index.html — browser must always fetch fresh
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
     }
   }));
-  app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+  app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
 } else {
   console.warn('⚠️  client/dist not found — frontend will not be served. Run the build step first.');
 }
