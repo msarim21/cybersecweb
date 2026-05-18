@@ -593,12 +593,21 @@ export default function Admin() {
 
   const handleUnbanAdultUser = async (phone) => {
     const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
+    // Step 1: perform unban — isolated so addLog failure never masks this
+    let unbanned = false;
     try {
       const res = await axios.delete(`/api/admin/adult/ban/${cleanPhone}`);
       setAdultBannedUsers(res.data.bannedUsers || []);
-      toast.success(`✅ ${cleanPhone} unbanned from 18+`);
-      await addLog('✅ 18+ BAN REMOVED', cleanPhone, 'User can now unlock 18+ content again');
-    } catch { toast.error('Failed to unban user'); }
+      unbanned = true;
+    } catch {
+      toast.error('Failed to unban user');
+      return;
+    }
+    // Step 2: show success and log (independently — won't affect unban result)
+    if (unbanned) {
+      toast.success(`✅ ${cleanPhone} unbanned successfully`);
+      try { await addLog('✅ 18+ BAN REMOVED', cleanPhone, 'User can now unlock content again'); } catch (_) {}
+    }
   };
 
   const handleBotDisable = async (phone) => {
