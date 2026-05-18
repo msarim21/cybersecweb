@@ -398,12 +398,6 @@ const LinkModal = ({ onClose, onAdd }) => {
                       <span className="font-mono text-xs text-gray-300 leading-relaxed">{s}</span>
                     </div>
                   ))}
-                  <div className="mt-3 rounded-xl p-3 flex items-start gap-2" style={{ background: 'rgba(255,200,0,0.07)', border: '1px solid rgba(255,200,0,0.25)' }}>
-                    <span className="text-base flex-shrink-0">⚠️</span>
-                    <span className="font-mono text-[10px] text-yellow-400 leading-relaxed">
-                      WhatsApp may show a <b>"Scam Alert"</b> popup — this is normal for server-linked bots. Simply tap <b>"Continue"</b> to proceed. Your account is safe.
-                    </span>
-                  </div>
                 </div>
                 <div className="flex gap-3">
                   <button onClick={() => { setStep(1); setTimer(300); }} className="py-3 px-4 rounded-xl font-mono text-xs text-gray-400"
