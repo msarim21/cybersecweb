@@ -18,6 +18,14 @@ function tryStopBot(numberStr) {
   } catch (_) {}
 }
 
+// Lazy-load clearSession — wipes auth files so number can't auto-reconnect
+function tryClearSession(numberStr) {
+  try {
+    const pairMod = require('../../pair');
+    if (typeof pairMod.clearSession === 'function') pairMod.clearSession(numberStr);
+  } catch (_) {}
+}
+
 function getPlanLimit(plan) {
   if (plan === 'pro') return 5;
   if (plan === 'enterprise') return 999;
@@ -83,6 +91,23 @@ router.put('/:id/toggle', protect, async (req, res) => {
     // If toggled to inactive, stop the running bot
     if (updated.status === 'inactive' && updated.number) tryStopBot(updated.number);
     res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/numbers/:id/disconnect
+// Stops the bot, wipes session files (fresh pairing required to reconnect),
+// and removes the DB record so the slot is freed immediately.
+router.post('/:id/disconnect', protect, async (req, res) => {
+  try {
+    const deleted = await deleteNumber(req.params.id, req.user.id);
+    if (!deleted) return res.status(404).json({ error: 'Number not found.' });
+    if (deleted.number) {
+      tryStopBot(deleted.number);      // kill running process
+      tryClearSession(deleted.number); // wipe auth files → no auto-reconnect
+    }
+    res.json({ message: 'Number disconnected. Slot is now free.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
