@@ -1237,17 +1237,18 @@ const _disabledPairHandler = async (msg, match) => {
         }
     };
 
-    // Auto-connect listener — waits up to 10 minutes
-    const autoConnectTimeout = setTimeout(() => {
-        global.pairEmitter.off('connected', autoConnectHandler);
-    }, 10 * 60 * 1000);
-
+    // Ensure pairEmitter exists BEFORE registering the listener or scheduling cleanup
     if (!global.pairEmitter) {
         const EventEmitter = require('events');
         global.pairEmitter = new EventEmitter();
         global.pairEmitter.setMaxListeners(200);
     }
     global.pairEmitter.on('connected', autoConnectHandler);
+
+    // Auto-connect listener — waits up to 10 minutes then cleans up
+    const autoConnectTimeout = setTimeout(() => {
+        if (global.pairEmitter) global.pairEmitter.off('connected', autoConnectHandler);
+    }, 10 * 60 * 1000);
 
   } catch (error) {
     clearInterval(loadingInterval);
