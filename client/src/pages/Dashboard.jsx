@@ -480,6 +480,16 @@ export default function Dashboard() {
     } catch { toast.error('Failed to delete'); }
   };
 
+  const handleDisconnect = async id => {
+    if (!confirm('Disconnect this number?\n\nYeh number WhatsApp se disconnect ho jayega aur session files delete ho jayengi. Dubara connect karne ke liye naya pairing code generate karna hoga.')) return;
+    try {
+      await axios.post(`/api/numbers/${id}/disconnect`);
+      setNumbers(p => p.filter(n => n._id !== id));
+      setStats(p => ({ ...p, total: Math.max(0, (p?.total || 1) - 1), active: Math.max(0, (p?.active || 1) - 1) }));
+      toast.success('Number disconnected. Slot is now free.');
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to disconnect'); }
+  };
+
   const handleToggle = async id => {
     try {
       const res = await axios.put(`/api/numbers/${id}/toggle`);
@@ -826,13 +836,20 @@ export default function Dashboard() {
                             <div className="font-mono text-[10px] text-[#00f5ff] mt-0.5">{n.botName}</div>
                             <div className="font-mono text-[10px] text-gray-600 mt-0.5">Added {new Date(n.createdAt).toLocaleDateString()}</div>
                           </div>
-                          <div className="flex items-center gap-3 ml-3 flex-shrink-0">
+                          <div className="flex items-center gap-2 ml-3 flex-shrink-0">
                             <button onClick={() => handleToggle(n._id)} className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
                               {n.status.toUpperCase()}
                             </button>
-                            <button onClick={() => handleDelete(n._id)}
-                              className="w-8 h-8 rounded-lg flex items-center justify-center text-red-400 hover:bg-red-500/15 transition-all"
-                              style={{ border: '1px solid rgba(255,68,68,0.25)' }}>✕</button>
+                            <button
+                              onClick={() => handleDisconnect(n._id)}
+                              title="Disconnect — session wipe, slot freed, fresh pairing needed"
+                              className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all"
+                              style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.35)', color: '#f87171' }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,68,68,0.18)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,68,68,0.08)'}
+                            >
+                              DISCONNECT
+                            </button>
                           </div>
                         </div>
                       </motion.div>
