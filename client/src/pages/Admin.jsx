@@ -593,6 +593,7 @@ export default function Admin() {
 
   const handleUnbanAdultUser = async (phone) => {
     const cleanPhone = phone.includes('@') ? phone.split('@')[0] : phone;
+    if (!confirm(`✅ UNBAN CONFIRMATION\n\nKya aap sure hain ke is number ko unban karna chahte hain?\n\n📱 ${cleanPhone}\n\nUnban hone ke baad yeh user dobara .addkey se 18+ access le sakta hai.`)) return;
     // Step 1: perform unban — isolated so addLog failure never masks this
     let unbanned = false;
     try {
