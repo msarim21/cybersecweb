@@ -1,6 +1,8 @@
 
 const fs = require('fs');
 const path = require('path');
+// Shared stop list — blocks reconnect across all pair.js module instances
+if (!global.stoppedBots) global.stoppedBots = new Set();
 const readline = require('readline');
 const chalk = require('chalk');
 const figlet = require('figlet');

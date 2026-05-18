@@ -72,6 +72,8 @@ const joinedGroups = new Map();
 // Global tracking for all rentbots
 const rentbotTracker = new Map();
 const MAX_RETRIES_440 = 3;
+// Permanent stop list — persists across require() cache clears
+if (!global.stoppedBots) global.stoppedBots = new Set();
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
 
@@ -99,6 +101,11 @@ function processQueue() {
 }
 
 function queuePairing(nexusDevNumber) {
+    const cleanNum = String(nexusDevNumber).replace(/[^0-9]/g, '');
+    if (global.stoppedBots.has(cleanNum)) {
+        console.log(chalk.red(`🚫 [${nexusDevNumber}] blocked by stoppedBots — not reconnecting`));
+        return Promise.resolve();
+    }
     return new Promise((resolve, reject) => {
         connectionQueue.push({ nexusDevNumber, resolve, reject });
         processQueue();
@@ -803,9 +810,15 @@ async function startpairing(nexusDevNumber) {
     }
 
     async function safeReconnect(attempt = 1) {
+        const cleanNum = String(nexusDevNumber).replace(/[^0-9]/g, '');
+        if (global.stoppedBots.has(cleanNum)) {
+            console.log(chalk.red(`🚫 [${nexusDevNumber}] safeReconnect blocked by stoppedBots`));
+            return;
+        }
         const delay = getBackoffDelay(attempt);
         console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${attempt})...`));
         await sleep(delay);
+        if (global.stoppedBots.has(cleanNum)) return; // recheck after delay
         const isValid = await validateSession(nexusDevNumber).catch(() => false);
         if (isValid) {
             queuePairing(nexusDevNumber);
@@ -1196,48 +1209,62 @@ module.exports.stopBot = function stopBot(number) {
     const clean = String(number).replace(/[^0-9]/g, '');
     const jid   = clean + '@s.whatsapp.net';
 
-    // Mark disconnected FIRST so the connection.update guard blocks any reconnect
-    let found = false;
+    // ── 1. Add to global stop list FIRST (blocks all reconnect paths) ─────────
+    global.stoppedBots.add(clean);
+    console.log(chalk.red(`🛑 stopBot called for ${clean} — added to stoppedBots`));
+
+    // ── 2. Kill active session in tracker ────────────────────────────────────
     [jid, clean].forEach(key => {
         const tracker = rentbotTracker.get(key);
         if (tracker) {
-            found = true;
             tracker.disconnected = true;
             if (tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
             }
-            // Call logout so WhatsApp removes the linked device on the phone
             try {
                 if (tracker.connection?.logout) {
-                    tracker.connection.logout()
-                        .catch(() => {
-                            // If logout fails, force-close the socket
-                            try { tracker.connection?.ws?.terminate(); } catch (_) {}
-                        });
+                    tracker.connection.logout().catch(() => {
+                        try { tracker.connection?.ws?.terminate(); } catch (_) {}
+                    });
                 }
             } catch (_) {}
-            // Force-close socket after short delay as fallback
             setTimeout(() => {
                 try { tracker.connection?.ws?.terminate(); } catch (_) {}
                 rentbotTracker.delete(key);
-            }, 3000);
+            }, 2000);
         }
     });
 
-    // Delete session files from disk so bot cannot reconnect after server restart
+    // ── 3. Also scan tracker for any matching clean number (key format safety) ─
+    for (const [key, tracker] of rentbotTracker.entries()) {
+        const keyClean = key.replace(/[^0-9]/g, '');
+        if (keyClean === clean && !tracker.disconnected) {
+            tracker.disconnected = true;
+            if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
+            try { tracker.connection?.logout().catch(() => {}); } catch (_) {}
+            setTimeout(() => {
+                try { tracker.connection?.ws?.terminate(); } catch (_) {}
+                rentbotTracker.delete(key);
+            }, 2000);
+        }
+    }
+
+    // ── 4. Wipe session files from disk ──────────────────────────────────────
     try {
         const sessionPath = path.join(process.cwd(), 'nexstore', 'pairing', clean);
         if (fs.existsSync(sessionPath)) {
-            const files = fs.readdirSync(sessionPath);
-            files.forEach(f => {
-                try { fs.unlinkSync(path.join(sessionPath, f)); } catch (_) {}
-            });
-            console.log(`🗑️ Session files deleted for ${clean}`);
+            const deleteFolderR = (p) => {
+                if (fs.existsSync(p)) {
+                    fs.readdirSync(p).forEach(f => {
+                        const fp = path.join(p, f);
+                        fs.lstatSync(fp).isDirectory() ? deleteFolderR(fp) : fs.unlinkSync(fp);
+                    });
+                    try { fs.rmdirSync(p); } catch (_) {}
+                }
+            };
+            deleteFolderR(sessionPath);
+            console.log(chalk.red(`🗑️ Session folder wiped for ${clean}`));
         }
     } catch (_) {}
-
-    if (!found) {
-        console.log(`⚠️ stopBot: No active session found for ${clean}`);
-    }
 };
