@@ -350,6 +350,8 @@ export default function Admin() {
   const [adultBannedSearch, setAdultBannedSearch] = useState('');
   const [adultLoading, setAdultLoading] = useState(false);
   const [unbanningPhone, setUnbanningPhone] = useState(null);
+  const [manualBanInput, setManualBanInput] = useState('');
+  const [manualBanning, setManualBanning] = useState(false);
   const [botDisabledNumbers, setBotDisabledNumbers] = useState([]);
   const [botNumberInput, setBotNumberInput] = useState('');
   const [botControlLoading, setBotControlLoading] = useState(false);
@@ -591,6 +593,26 @@ export default function Admin() {
       toast.success(`🚫 ${cleanPhone} permanently banned from 18+`);
       await addLog('🚫 18+ PERMANENT BAN', cleanPhone, 'User cannot unlock 18+ content even with secret code');
     } catch { toast.error('Failed to ban user'); }
+  };
+
+  const handleManualBanAdult = async () => {
+    const cleanPhone = manualBanInput.trim().replace(/[^0-9]/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) return toast.error('Valid phone number daalo (sirf numbers)');
+    if (adultBannedUsers.some(u => u.includes(cleanPhone))) return toast.error(`${cleanPhone} already banned hai`);
+    setManualBanning(true);
+    try {
+      const res = await axios.post(`/api/admin/adult/ban/${cleanPhone}`);
+      setAdultBannedUsers(res.data.bannedUsers || []);
+      setAdultUnlockedUsers(res.data.unlockedUsers || []);
+      setManualBanInput('');
+      toast.success(`🚫 ${cleanPhone} permanently banned from 18+`);
+      try { await addLog('🚫 18+ MANUAL BAN', cleanPhone, 'Manually banned by admin from panel'); } catch (_) {}
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.message || 'Network error';
+      toast.error(`Ban failed: ${msg}`);
+    } finally {
+      setManualBanning(false);
+    }
   };
 
   const handleUnbanAdultUser = async (phone) => {
@@ -1693,6 +1715,25 @@ Ye action immediately apply hoga.`)) return;
                     </div>
                     <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(255,68,68,0.05)', border: '1px solid rgba(255,68,68,0.15)' }}>
                       <div className="font-mono text-[9px] text-gray-500">Ye users dobara .addkey se 18+ access nahi le sakte. Admin hi unban kar sakta hai.</div>
+                    </div>
+                    {/* Manual Ban Input */}
+                    <div className="flex gap-2 mb-4">
+                      <input
+                        type="text"
+                        placeholder="📱 Number type karo (e.g. 923001234567)"
+                        value={manualBanInput}
+                        onChange={e => setManualBanInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleManualBanAdult()}
+                        className="flex-1 px-3 py-2 rounded-xl font-mono text-xs outline-none"
+                        style={{ background: 'rgba(255,68,68,0.06)', border: '1px solid rgba(255,68,68,0.3)', color: '#fff' }}
+                      />
+                      <button
+                        onClick={handleManualBanAdult}
+                        disabled={manualBanning || !manualBanInput.trim()}
+                        className="px-3 py-2 rounded-xl font-mono text-[10px] font-bold text-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        style={{ background: 'rgba(255,68,68,0.15)', border: '1px solid rgba(255,68,68,0.4)' }}>
+                        {manualBanning ? '⏳' : '🚫 BAN'}
+                      </button>
                     </div>
                     {adultBannedUsers.length > 0 && (
                       <input
