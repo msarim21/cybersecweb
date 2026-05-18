@@ -596,7 +596,7 @@ export default function Admin() {
     // Step 1: perform unban — isolated so addLog failure never masks this
     let unbanned = false;
     try {
-      const res = await axios.delete(`/api/admin/adult/ban/${cleanPhone}`);
+      const res = await axios.post(`/api/admin/adult/unban/${cleanPhone}`);
       setAdultBannedUsers(res.data.bannedUsers || []);
       unbanned = true;
     } catch {
