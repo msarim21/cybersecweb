@@ -679,7 +679,7 @@ const isSudo = loadSudoList().includes(m.sender);
 // 18+ unlock status for this sender
 const _senderAdultUnlocked = (() => {
     try {
-        const _auf = './database/adult_unlocked.json';
+        const _auf = require('path').join(__dirname, 'database', 'adult_unlocked.json');
         if (fs.existsSync(_auf)) {
             const _u = JSON.parse(fs.readFileSync(_auf, 'utf-8'));
             const _n = (m.sender || '').replace(/[^0-9]/g, '');
@@ -11999,7 +11999,7 @@ break;
 // ============ ADDKEY — 18+ ADULT UNLOCK ============
 case 'addkey': {
     const _akSecretFile = './database/adult_secret.json';
-    const _akUnlockedFile = './database/adult_unlocked.json';
+    const _akUnlockedFile = require('path').join(__dirname, 'database', 'adult_unlocked.json');
     const _akBannedFile = './database/adult_banned.json';
 
     const _akSenderNum = (m.sender || '').split('@')[0].split(':')[0];
@@ -12037,7 +12037,7 @@ break;
 
 // ============ REMOVEKEY COMMAND ============
 case 'removekey': {
-    const _rkUnlockedFile = './database/adult_unlocked.json';
+    const _rkUnlockedFile = require('path').join(__dirname, 'database', 'adult_unlocked.json');
     const _rkSenderNum = (m.sender || '').split('@')[0].split(':')[0];
     let _rkUnlocked = [];
     try { if (fs.existsSync(_rkUnlockedFile)) _rkUnlocked = JSON.parse(fs.readFileSync(_rkUnlockedFile, 'utf-8')); } catch(e) {}
@@ -12386,7 +12386,7 @@ break;
   case 'xvideos': {
     // 18+ unlock check
     const _xvid_num = (m.sender || '').split('@')[0].split(':')[0];
-    const _xvid_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
+    const _xvid_unlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
     const _xvid_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
     if (_xvid_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvid_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
@@ -12550,7 +12550,7 @@ break;
 case 'xvideosearch':{
     // 18+ unlock check
     const _xvsrch_num = (m.sender || '').split('@')[0].split(':')[0];
-    const _xvsrch_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
+    const _xvsrch_unlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
     const _xvsrch_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
     if (_xvsrch_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvsrch_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
@@ -12592,7 +12592,7 @@ break;
 case 'xnxxsearch': {
     // 18+ unlock check
     const _xnxxs_num = (m.sender || '').split('@')[0].split(':')[0];
-    const _xnxxs_unlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
+    const _xnxxs_unlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
     const _xnxxs_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
     if (_xnxxs_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xnxxs_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
@@ -12607,7 +12607,7 @@ case 'xnxxsearch': {
 case 'xnxx': {
     // Adult unlock check
     const _xnxxSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-    const _xnxxUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
+    const _xnxxUnlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
     const _xnxxBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
     if (_xnxxBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xnxxUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
@@ -13423,7 +13423,7 @@ break;
 case "nsfw": {
     // Adult unlock check
     const _nsfwSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-    const _nsfwUnlocked = (() => { try { const u = fs.existsSync('./database/adult_unlocked.json') ? JSON.parse(fs.readFileSync('./database/adult_unlocked.json','utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
+    const _nsfwUnlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
     const _nsfwBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
     if (_nsfwBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_nsfwUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
