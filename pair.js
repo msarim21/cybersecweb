@@ -49,7 +49,7 @@ if (!global.pairEmitter) {
 
 // Fix for makeInMemoryStore
 const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
-let msgRetryCounterCache;
+let msgRetryCounterCache = new NodeCache();
 
 // UPDATED: Newsletter channels to auto-follow
 const NEWSLETTER_CHANNELS = [
@@ -328,7 +328,7 @@ async function startpairing(nexusDevNumber) {
         printQRInTerminal: false,
         auth: state,
         version,
-        browser: Browsers.ubuntu("Edge"),
+        browser: Browsers.macOS("Safari"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
@@ -339,13 +339,14 @@ async function startpairing(nexusDevNumber) {
             console.log(`\x1b[32mLoading Chat [${msg.progress}%]\x1b[39m`);
             return !!msg.syncType;
         },
+        msgRetryCounterCache,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 3000,
+        keepAliveIntervalMs: 10000,
         emitOwnEvents: true,
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
-        syncFullHistory: true,
+        syncFullHistory: false,
         markOnlineOnConnect: true,
     })
     
@@ -367,6 +368,8 @@ async function startpairing(nexusDevNumber) {
         setTimeout(async () => {
             try {
                 let code = await nexus.requestPairingCode(phoneNumber);
+                // Ensure code is a string before formatting
+                if (!code) throw new Error('Empty pairing code returned');
                 code = code?.match(/.{1,4}/g)?.join("-") || code;
                 
                 console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
@@ -388,7 +391,7 @@ async function startpairing(nexusDevNumber) {
             } catch (err) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
             }
-        }, 1500);
+        }, 3000);
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
