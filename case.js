@@ -12010,13 +12010,13 @@ case 'addkey': {
     const _akIsBanned = _akBanned.some(id => String(id).replace(/[^0-9]/g,'') === _akSenderNum);
     if (_akIsBanned) return reply(`🚫 *Access Denied*\nYou have been permanently banned from 18+ content.`);
 
-    if (!text) return reply(`🔑 *Usage:* ${prefix}addkey <code>\n\nEnter the 18+ access code provided by admin.`);
+    if (!text) return reply(`🔑 *Usage:* ${prefix}addkey <code>\n\nEnter the access code provided by admin.`);
 
     // Load secret code
     let _akSecret = 'cybersecpro7898';
     try { if (fs.existsSync(_akSecretFile)) _akSecret = JSON.parse(fs.readFileSync(_akSecretFile, 'utf-8')).code || _akSecret; } catch(e) {}
 
-    if (text.trim() !== _akSecret) return reply(`❌ *Wrong code!*\nContact admin for the correct 18+ access code.`);
+    if (text.trim() !== _akSecret) return reply(`❌ *Wrong code!*\nContact admin for the correct access code.`);
 
     // Load and update unlocked list
     let _akUnlocked = [];
