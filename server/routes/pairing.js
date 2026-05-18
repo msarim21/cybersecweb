@@ -69,7 +69,7 @@ router.post('/request', protect, async (req, res) => {
     let code = null;
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
-      await sleep(1000);
+      await sleep(500);
       try {
         const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
         const obj = JSON.parse(raw);
