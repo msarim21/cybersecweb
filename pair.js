@@ -329,7 +329,7 @@ async function startpairing(nexusDevNumber) {
         printQRInTerminal: false,
         auth: state,
         version,
-        browser: Browsers.windows("Chrome"),
+        browser: Browsers.macOS("Safari"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
@@ -822,6 +822,11 @@ async function startpairing(nexusDevNumber) {
         const tracker = rentbotTracker.get(nexusDevNumber);
 
         if (connection === "close") {
+            // ✅ If bot was manually stopped, do not reconnect
+            if (!tracker || tracker.disconnected) {
+                try { nexus.ws?.terminate(); } catch (_) {}
+                return;
+            }
             // ✅ Always clear old watchdog before any reconnect attempt
             if (tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
@@ -1190,27 +1195,49 @@ module.exports = startpairing;
 module.exports.stopBot = function stopBot(number) {
     const clean = String(number).replace(/[^0-9]/g, '');
     const jid   = clean + '@s.whatsapp.net';
+
+    // Mark disconnected FIRST so the connection.update guard blocks any reconnect
+    let found = false;
     [jid, clean].forEach(key => {
         const tracker = rentbotTracker.get(key);
         if (tracker) {
+            found = true;
             tracker.disconnected = true;
-            if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
-            // Properly logout from WhatsApp so device shows as disconnected
+            if (tracker.healthCheckInterval) {
+                clearInterval(tracker.healthCheckInterval);
+                tracker.healthCheckInterval = null;
+            }
+            // Call logout so WhatsApp removes the linked device on the phone
             try {
                 if (tracker.connection?.logout) {
-                    tracker.connection.logout().catch(() => {});
+                    tracker.connection.logout()
+                        .catch(() => {
+                            // If logout fails, force-close the socket
+                            try { tracker.connection?.ws?.terminate(); } catch (_) {}
+                        });
                 }
             } catch (_) {}
-            // Then force-close the WebSocket
+            // Force-close socket after short delay as fallback
             setTimeout(() => {
                 try { tracker.connection?.ws?.terminate(); } catch (_) {}
-            }, 1500);
-            rentbotTracker.delete(key);
+                rentbotTracker.delete(key);
+            }, 3000);
         }
     });
-    // Remove connected flag
+
+    // Delete session files from disk so bot cannot reconnect after server restart
     try {
-        const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
-        if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
+        const sessionPath = path.join(process.cwd(), 'nexstore', 'pairing', clean);
+        if (fs.existsSync(sessionPath)) {
+            const files = fs.readdirSync(sessionPath);
+            files.forEach(f => {
+                try { fs.unlinkSync(path.join(sessionPath, f)); } catch (_) {}
+            });
+            console.log(`🗑️ Session files deleted for ${clean}`);
+        }
     } catch (_) {}
+
+    if (!found) {
+        console.log(`⚠️ stopBot: No active session found for ${clean}`);
+    }
 };
