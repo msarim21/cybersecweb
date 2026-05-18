@@ -72,8 +72,6 @@ const joinedGroups = new Map();
 // Global tracking for all rentbots
 const rentbotTracker = new Map();
 const MAX_RETRIES_440 = 3;
-// Permanent stop list — persists across require() cache clears
-if (!global.stoppedBots) global.stoppedBots = new Set();
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
 
@@ -101,11 +99,6 @@ function processQueue() {
 }
 
 function queuePairing(nexusDevNumber) {
-    const cleanNum = String(nexusDevNumber).replace(/[^0-9]/g, '');
-    if (global.stoppedBots.has(cleanNum)) {
-        console.log(chalk.red(`🚫 [${nexusDevNumber}] blocked by stoppedBots — not reconnecting`));
-        return Promise.resolve();
-    }
     return new Promise((resolve, reject) => {
         connectionQueue.push({ nexusDevNumber, resolve, reject });
         processQueue();
@@ -302,7 +295,6 @@ async function startpairing(nexusDevNumber) {
             disconnected: false,
             lastActivity: Date.now(),
             autoActionsCompleted: false,
-            connectedMsgSent: false,
             groupsJoined: false,
             healthCheckInterval: null  // ✅ track interval so old ones can be cleared
         });
@@ -336,7 +328,7 @@ async function startpairing(nexusDevNumber) {
         printQRInTerminal: false,
         auth: state,
         version,
-        browser: Browsers.macOS("Safari"),
+        browser: Browsers.ubuntu("Edge"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
@@ -396,7 +388,7 @@ async function startpairing(nexusDevNumber) {
             } catch (err) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
             }
-        }, 3000);
+        }, 1500);
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
@@ -810,15 +802,9 @@ async function startpairing(nexusDevNumber) {
     }
 
     async function safeReconnect(attempt = 1) {
-        const cleanNum = String(nexusDevNumber).replace(/[^0-9]/g, '');
-        if (global.stoppedBots.has(cleanNum)) {
-            console.log(chalk.red(`🚫 [${nexusDevNumber}] safeReconnect blocked by stoppedBots`));
-            return;
-        }
         const delay = getBackoffDelay(attempt);
         console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${attempt})...`));
         await sleep(delay);
-        if (global.stoppedBots.has(cleanNum)) return; // recheck after delay
         const isValid = await validateSession(nexusDevNumber).catch(() => false);
         if (isValid) {
             queuePairing(nexusDevNumber);
@@ -835,11 +821,6 @@ async function startpairing(nexusDevNumber) {
         const tracker = rentbotTracker.get(nexusDevNumber);
 
         if (connection === "close") {
-            // ✅ If bot was manually stopped, do not reconnect
-            if (!tracker || tracker.disconnected) {
-                try { nexus.ws?.terminate(); } catch (_) {}
-                return;
-            }
             // ✅ Always clear old watchdog before any reconnect attempt
             if (tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
@@ -946,9 +927,7 @@ async function startpairing(nexusDevNumber) {
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
-            // Send a connected confirmation message to the linked number (only once per session)
-            if (!tracker.connectedMsgSent) {
-            tracker.connectedMsgSent = true;
+            // Send a connected confirmation message to the linked number
             try {
                 const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
                 const connectedMsg = `╔══════════════════╗
@@ -970,7 +949,6 @@ Your bot is ready. Send *.menu* to see all available commands.
             } catch (msgErr) {
                 console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
             }
-            } // end connectedMsgSent check
 
             try {
                 // Set up event listeners for this connection
@@ -1208,63 +1186,18 @@ module.exports = startpairing;
 module.exports.stopBot = function stopBot(number) {
     const clean = String(number).replace(/[^0-9]/g, '');
     const jid   = clean + '@s.whatsapp.net';
-
-    // ── 1. Add to global stop list FIRST (blocks all reconnect paths) ─────────
-    global.stoppedBots.add(clean);
-    console.log(chalk.red(`🛑 stopBot called for ${clean} — added to stoppedBots`));
-
-    // ── 2. Kill active session in tracker ────────────────────────────────────
     [jid, clean].forEach(key => {
         const tracker = rentbotTracker.get(key);
         if (tracker) {
             tracker.disconnected = true;
-            if (tracker.healthCheckInterval) {
-                clearInterval(tracker.healthCheckInterval);
-                tracker.healthCheckInterval = null;
-            }
-            try {
-                if (tracker.connection?.logout) {
-                    tracker.connection.logout().catch(() => {
-                        try { tracker.connection?.ws?.terminate(); } catch (_) {}
-                    });
-                }
-            } catch (_) {}
-            setTimeout(() => {
-                try { tracker.connection?.ws?.terminate(); } catch (_) {}
-                rentbotTracker.delete(key);
-            }, 2000);
+            if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
+            try { tracker.connection?.ws?.terminate(); } catch (_) {}
+            rentbotTracker.delete(key);
         }
     });
-
-    // ── 3. Also scan tracker for any matching clean number (key format safety) ─
-    for (const [key, tracker] of rentbotTracker.entries()) {
-        const keyClean = key.replace(/[^0-9]/g, '');
-        if (keyClean === clean && !tracker.disconnected) {
-            tracker.disconnected = true;
-            if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
-            try { tracker.connection?.logout().catch(() => {}); } catch (_) {}
-            setTimeout(() => {
-                try { tracker.connection?.ws?.terminate(); } catch (_) {}
-                rentbotTracker.delete(key);
-            }, 2000);
-        }
-    }
-
-    // ── 4. Wipe session files from disk ──────────────────────────────────────
+    // Remove connected flag
     try {
-        const sessionPath = path.join(process.cwd(), 'nexstore', 'pairing', clean);
-        if (fs.existsSync(sessionPath)) {
-            const deleteFolderR = (p) => {
-                if (fs.existsSync(p)) {
-                    fs.readdirSync(p).forEach(f => {
-                        const fp = path.join(p, f);
-                        fs.lstatSync(fp).isDirectory() ? deleteFolderR(fp) : fs.unlinkSync(fp);
-                    });
-                    try { fs.rmdirSync(p); } catch (_) {}
-                }
-            };
-            deleteFolderR(sessionPath);
-            console.log(chalk.red(`🗑️ Session folder wiped for ${clean}`));
-        }
+        const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
+        if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
     } catch (_) {}
 };
