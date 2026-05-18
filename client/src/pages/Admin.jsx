@@ -352,6 +352,8 @@ export default function Admin() {
   const [unbanningPhone, setUnbanningPhone] = useState(null);
   const [manualBanInput, setManualBanInput] = useState('');
   const [manualBanning, setManualBanning] = useState(false);
+  const [manualUnbanInput, setManualUnbanInput] = useState('');
+  const [manualUnbanning, setManualUnbanning] = useState(false);
   const [botDisabledNumbers, setBotDisabledNumbers] = useState([]);
   const [botNumberInput, setBotNumberInput] = useState('');
   const [botControlLoading, setBotControlLoading] = useState(false);
@@ -612,6 +614,27 @@ export default function Admin() {
       toast.error(`Ban failed: ${msg}`);
     } finally {
       setManualBanning(false);
+    }
+  };
+
+  const handleManualUnbanAdult = async () => {
+    const cleanPhone = manualUnbanInput.trim().replace(/[^0-9]/g, '');
+    if (!cleanPhone || cleanPhone.length < 7) return toast.error('Valid phone number daalo (sirf numbers)');
+    if (!adultBannedUsers.some(u => u.includes(cleanPhone))) return toast.error(`${cleanPhone} banned list mein nahi hai`);
+    setManualUnbanning(true);
+    try {
+      const res = await axios.post(`/api/admin/adult/unban/${cleanPhone}`);
+      if (res.data.bannedUsers !== undefined) setAdultBannedUsers(res.data.bannedUsers);
+      if (res.data.unlockedUsers !== undefined) setAdultUnlockedUsers(res.data.unlockedUsers);
+      setManualUnbanInput('');
+      toast.success(`✅ ${cleanPhone} unban ho gaya — ab .addkey use kar sakta hai`);
+      try { await addLog('✅ 18+ MANUAL UNBAN', cleanPhone, 'Manually unbanned by admin from panel'); } catch (_) {}
+      try { await fetchAdult(); } catch (_) {}
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.message || 'Network error';
+      toast.error(`Unban failed: ${msg}`);
+    } finally {
+      setManualUnbanning(false);
     }
   };
 
@@ -1717,23 +1740,48 @@ Ye action immediately apply hoga.`)) return;
                       <div className="font-mono text-[9px] text-gray-500">Ye users dobara .addkey se 18+ access nahi le sakte. Admin hi unban kar sakta hai.</div>
                     </div>
                     {/* Manual Ban Input */}
-                    <div className="flex gap-2 mb-4">
-                      <input
-                        type="text"
-                        placeholder="📱 Number type karo (e.g. 923001234567)"
-                        value={manualBanInput}
-                        onChange={e => setManualBanInput(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && handleManualBanAdult()}
-                        className="flex-1 px-3 py-2 rounded-xl font-mono text-xs outline-none"
-                        style={{ background: 'rgba(255,68,68,0.06)', border: '1px solid rgba(255,68,68,0.3)', color: '#fff' }}
-                      />
-                      <button
-                        onClick={handleManualBanAdult}
-                        disabled={manualBanning || !manualBanInput.trim()}
-                        className="px-3 py-2 rounded-xl font-mono text-[10px] font-bold text-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                        style={{ background: 'rgba(255,68,68,0.15)', border: '1px solid rgba(255,68,68,0.4)' }}>
-                        {manualBanning ? '⏳' : '🚫 BAN'}
-                      </button>
+                    <div className="mb-2">
+                      <div className="font-mono text-[9px] text-gray-500 mb-1 tracking-widest">BAN KARO</div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="📱 Number (e.g. 923001234567)"
+                          value={manualBanInput}
+                          onChange={e => setManualBanInput(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleManualBanAdult()}
+                          className="flex-1 px-3 py-2 rounded-xl font-mono text-xs outline-none"
+                          style={{ background: 'rgba(255,68,68,0.06)', border: '1px solid rgba(255,68,68,0.3)', color: '#fff' }}
+                        />
+                        <button
+                          onClick={handleManualBanAdult}
+                          disabled={manualBanning || !manualBanInput.trim()}
+                          className="px-3 py-2 rounded-xl font-mono text-[10px] font-bold text-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                          style={{ background: 'rgba(255,68,68,0.15)', border: '1px solid rgba(255,68,68,0.4)' }}>
+                          {manualBanning ? '⏳' : '🚫 BAN'}
+                        </button>
+                      </div>
+                    </div>
+                    {/* Manual Unban Input */}
+                    <div className="mb-4">
+                      <div className="font-mono text-[9px] text-gray-500 mb-1 tracking-widest">UNBAN KARO</div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="📱 Number (e.g. 923001234567)"
+                          value={manualUnbanInput}
+                          onChange={e => setManualUnbanInput(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleManualUnbanAdult()}
+                          className="flex-1 px-3 py-2 rounded-xl font-mono text-xs outline-none"
+                          style={{ background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.25)', color: '#fff' }}
+                        />
+                        <button
+                          onClick={handleManualUnbanAdult}
+                          disabled={manualUnbanning || !manualUnbanInput.trim()}
+                          className="px-3 py-2 rounded-xl font-mono text-[10px] font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                          style={{ background: 'rgba(0,245,255,0.1)', border: '1px solid rgba(0,245,255,0.35)', color: '#00f5ff' }}>
+                          {manualUnbanning ? '⏳' : '✅ UNBAN'}
+                        </button>
+                      </div>
                     </div>
                     {adultBannedUsers.length > 0 && (
                       <input
