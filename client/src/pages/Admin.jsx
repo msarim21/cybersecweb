@@ -598,15 +598,17 @@ export default function Admin() {
     try {
       const res = await axios.post(`/api/admin/adult/unban/${cleanPhone}`);
       setAdultBannedUsers(res.data.bannedUsers || []);
+      if (res.data.unlockedUsers !== undefined) setAdultUnlockedUsers(res.data.unlockedUsers);
       unbanned = true;
     } catch {
       toast.error('Failed to unban user');
       return;
     }
-    // Step 2: show success and log (independently — won't affect unban result)
+    // Step 2: show success, log, and refresh full adult data from server
     if (unbanned) {
       toast.success(`✅ ${cleanPhone} unbanned successfully`);
       try { await addLog('✅ 18+ BAN REMOVED', cleanPhone, 'User can now unlock content again'); } catch (_) {}
+      try { await fetchAdult(); } catch (_) {}
     }
   };
 
