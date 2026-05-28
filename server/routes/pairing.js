@@ -65,7 +65,6 @@ router.post('/request', protect, async (req, res) => {
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
   try {
-    delete require.cache[require.resolve(PAIR_MODULE)];
     const startpairing = require(PAIR_MODULE);
 
     const jid = clean + '@s.whatsapp.net';

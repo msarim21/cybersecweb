@@ -604,38 +604,45 @@ async function startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
-        setTimeout(async () => {
-            try {
-                let code = await nexus.requestPairingCode(phoneNumber);
-                // Ensure code is a string before formatting
-                if (!code) throw new Error('Empty pairing code returned');
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                
-                console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+        // Wait 3s then request pairing code with up to 5 retries
+        const _requestCode = async () => {
+            const MAX_ATTEMPTS = 5;
+            const RETRY_DELAY = 3000;
+            for (let _attempt = 1; _attempt <= MAX_ATTEMPTS; _attempt++) {
+                try {
+                    await sleep(RETRY_DELAY);
+                    let code = await nexus.requestPairingCode(phoneNumber);
+                    if (!code) throw new Error('Empty pairing code returned');
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
 
-                // Ensure pairing directory exists
-                ensureDirectoryExists('./nexstore/pairing');
-                
-                // Write to BOTH relative and absolute path to ensure route can read it
-                const pairingData = JSON.stringify({ 
-                    number: nexusDevNumber,
-                    code: code,
-                    timestamp: new Date().toISOString()
-                }, null, 2);
-                
-                fs.writeFileSync('./nexstore/pairing/pairing.json', pairingData, 'utf8');
-                
-                // Also write to __dirname based path for cross-directory compatibility
-                const absPath = path.join(__dirname, 'nexstore', 'pairing', 'pairing.json');
-                if (absPath !== path.resolve('./nexstore/pairing/pairing.json')) {
-                    try { fs.writeFileSync(absPath, pairingData, 'utf8'); } catch(_) {}
+                    console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+
+                    ensureDirectoryExists('./nexstore/pairing');
+
+                    const pairingData = JSON.stringify({
+                        number: nexusDevNumber,
+                        code: code,
+                        timestamp: new Date().toISOString()
+                    }, null, 2);
+
+                    fs.writeFileSync('./nexstore/pairing/pairing.json', pairingData, 'utf8');
+
+                    const absPath = path.join(__dirname, 'nexstore', 'pairing', 'pairing.json');
+                    if (absPath !== path.resolve('./nexstore/pairing/pairing.json')) {
+                        try { fs.writeFileSync(absPath, pairingData, 'utf8'); } catch(_) {}
+                    }
+
+                    console.log(chalk.green(`✓ Pairing code saved to pairing.json (attempt ${_attempt})`));
+                    return; // success — stop retrying
+                } catch (err) {
+                    console.log(chalk.red(`❌ Pairing code attempt ${_attempt}/${MAX_ATTEMPTS} failed: ${err.message}`));
+                    if (_attempt === MAX_ATTEMPTS) {
+                        console.log(chalk.red(`❌ All ${MAX_ATTEMPTS} pairing code attempts failed for ${nexusDevNumber}`));
+                    }
                 }
-                
-                console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
-            } catch (err) {
-                console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
             }
-        }, 500);
+        };
+        _requestCode();
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
@@ -1338,6 +1345,7 @@ async function startpairing(nexusDevNumber) {
                 safeReconnect(Math.min(tracker.unknownRetry, 8));
             }
         } else if (connection === "open") {
+          try {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             tracker.retryCount = 0;
             tracker.disconnected = false;
@@ -1346,8 +1354,11 @@ async function startpairing(nexusDevNumber) {
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
 
+            // Define userJid once here — used by setTimeout callbacks below
+            const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
+
             // 🛡️ Start human-like presence cycle (makes bot look like real user)
-            SecurityGuard.startPresenceCycle(nexus, botNumber);
+            SecurityGuard.startPresenceCycle(nexus, nexusDevNumber);
 
             // Add small delay to ensure everything is initialized
             await sleep(2000);
@@ -1487,6 +1498,9 @@ async function startpairing(nexusDevNumber) {
             } catch (e) {
                 console.log(chalk.yellow(`⚠️ Auto-actions failed: ${e.message}`));
             }
+          } catch (openErr) {
+              console.log(chalk.red(`❌ [${nexusDevNumber}] connection "open" handler error: ${openErr.message}`));
+          }
         } else if (connection === "connecting") {
             console.log(chalk.blue(`🔄 Connecting ${nexusDevNumber}...`));
         }
