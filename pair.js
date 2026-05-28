@@ -1725,6 +1725,25 @@ async function startpairing(nexusDevNumber) {
             return;
         }
 
+        // ── Auto-disconnect unregistered bots every 30 sec ──
+        // If this number is not in linked_numbers DB, terminate the connection.
+        try {
+            const { getActiveLinkedNumbers } = require('./session-db');
+            const linkedNums = await getActiveLinkedNumbers();
+            const cleanThis = nexusDevNumber.replace(/[^0-9]/g, '');
+            const isLinked = Array.isArray(linkedNums) && linkedNums.some(n => String(n).replace(/[^0-9]/g, '') === cleanThis);
+            if (!isLinked) {
+                console.log(chalk.yellow(`🔒 [${nexusDevNumber}] Not registered in DB — auto-disconnecting unregistered bot.`));
+                clearInterval(tracker.healthCheckInterval);
+                tracker.healthCheckInterval = null;
+                tracker.disconnected = true;
+                try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
+                return;
+            }
+        } catch (_linkedErr) {
+            // DB unavailable — skip this check silently
+        }
+
         const wsState = nexus.ws?.readyState;
 
         if (wsState === 1) {
@@ -1948,9 +1967,9 @@ async function autoScanBroadcastList(nexus, userNumber, storeObj) {
             }
         } catch (_pcErr) {}
 
-        // ── Source 4: Fallback to store.contacts if store.chats is empty ──
-        // Some fresh bot connections have empty store.chats. Use contacts as fallback.
-        if (entries.length === 0 && storeObj && storeObj.contacts) {
+        // ── Source 4: store.contacts — always supplement list with contacts not yet seen ──
+        // Runs regardless of groups found, to capture private chats from phonebook.
+        if (storeObj && storeObj.contacts) {
             const allContacts = storeObj.contacts;
             const contactEntries = typeof allContacts.entries === 'function'
                 ? [...allContacts.entries()]
@@ -1968,7 +1987,7 @@ async function autoScanBroadcastList(nexus, userNumber, storeObj) {
                 });
             }
             if (entries.length > 0) {
-                console.log(chalk.yellow('[AutoScan] Fallback: used store.contacts — ' + entries.length + ' contacts (no chat history yet)'));
+                console.log(chalk.cyan('[AutoScan] Source4 contacts: added ' + entries.filter(e=>e.type==='private').length + ' private contacts from store.contacts'));
             }
         }
 
