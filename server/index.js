@@ -15,15 +15,13 @@ process.on('uncaughtException', err => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
+  // Sirf log karo — exit mat karo. Server chalta rahe.
   console.error('');
-  console.error('╔══════════════════════════════════════════════════╗');
-  console.error('║         FATAL: UNHANDLED PROMISE REJECTION       ║');
-  console.error('╚══════════════════════════════════════════════════╝');
-  console.error('Reason  :', reason?.message || reason);
-  if (reason?.stack) console.error('Stack   :', reason.stack);
-  console.error('Time    :', new Date().toISOString());
+  console.error('⚠️  UNHANDLED PROMISE REJECTION (server continues running)');
+  console.error('   Reason :', reason?.message || reason);
+  if (reason?.stack) console.error('   Stack  :', reason.stack);
+  console.error('   Time   :', new Date().toISOString());
   console.error('');
-  process.exit(1);
 });
 
 // ── Startup Diagnostics — Heroku logs mein dikh jaega kya set hai kya nahi ──
