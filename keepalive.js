@@ -8,6 +8,11 @@ let _noopTimer = null;
 let _started = false;
 
 function getAppUrl() {
+    // Replit support
+    if (process.env.REPLIT_DEV_DOMAIN) return `https://${process.env.REPLIT_DEV_DOMAIN}`;
+    if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
+        return `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
+    }
     return process.env.RENDER_EXTERNAL_URL ||
            process.env.APP_URL ||
            (process.env.HEROKU_APP_NAME ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com` : null) ||
@@ -38,22 +43,18 @@ function ping(url) {
 async function selfPing() {
     const appUrl = getAppUrl();
     if (!appUrl) {
-        console.log('[KeepAlive] ⚠️  Heroku par APP_URL set nahi hai!');
-        console.log('[KeepAlive] 💡 Heroku Config Vars mein add karo: APP_URL = https://yourappname.herokuapp.com');
+        console.log('[KeepAlive] ⚠️  APP_URL set nahi hai! Set karo: APP_URL=https://yourapp.repl.co');
         return;
     }
 
     const base = appUrl.replace(/\/$/, '');
 
-    // Primary: ping lightweight /api/ping (no DB needed, instant response)
     const ok = await ping(`${base}/api/ping`);
-    // Fallback: ping /api/health, then root
     if (!ok) {
         const ok2 = await ping(`${base}/api/health`);
         if (!ok2) await ping(`${base}/`);
     }
 
-    // Also ping any additional URLs set in EXTRA_PING_URLS (comma-separated)
     const extra = process.env.EXTRA_PING_URLS;
     if (extra) {
         for (const url of extra.split(',').map(u => u.trim()).filter(Boolean)) {
@@ -66,20 +67,20 @@ function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Ping every 20 minutes — Heroku sleeps after 30 min, so 20 min is safe margin
-    _timer = setInterval(selfPing, 20 * 60 * 1000);
+    // Har 10 minute pe ping — Replit/Heroku ke liye safe
+    _timer = setInterval(selfPing, 10 * 60 * 1000);
 
-    // Keep Node.js event loop alive — prevents process exit on empty queue
-    _noopTimer = setInterval(() => {}, 10 * 60 * 1000);
+    // Node.js event loop alive rakhne ke liye
+    _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 20 min (Heroku dyno stays awake)`);
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 10 min`);
     } else {
-        console.log('[KeepAlive] ⚠️  Started but NO APP_URL — set APP_URL in Heroku Config Vars!');
+        console.log('[KeepAlive] ⚠️  Started but NO APP_URL — set APP_URL in Heroku/Replit Config Vars!');
     }
 
-    // First ping after 5 seconds (give server time to fully start)
+    // Pehla ping 5 second baad
     setTimeout(selfPing, 5000);
 }
 
