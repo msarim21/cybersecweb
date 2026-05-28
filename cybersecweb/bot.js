@@ -98,6 +98,13 @@ const RATE_LIMIT = {
 };
 
 // ==================== INITIALIZATION ====================
+// BOT_TOKEN optional hai — agar set nahi to bot silently skip hoga
+if (!BOT_TOKEN || BOT_TOKEN.trim() === '') {
+  console.log('[Telegram Bot] BOT_TOKEN nahi mila — bot disabled hai. Set TELEGRAM_BOT_TOKEN to enable.');
+  module.exports = null;
+  return;
+}
+
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // Data Stores
