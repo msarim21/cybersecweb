@@ -371,13 +371,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
   startKeepAlive();
 
-  // ── Start Telegram bot (DIGITAL DON) ───────────────────────────────────────
-  try {
-    require('../bot');
-    console.log('🤖 Telegram bot started successfully');
-  } catch (err) {
-    console.error('⚠️  Telegram bot failed to start:', err.message);
-  }
 });
 
 // ── Graceful shutdown (fixes Heroku R12 Exit Timeout error) ─────────────────
@@ -417,3 +410,4 @@ initDb()
     console.error('   → Set MONGO_URL or DATABASE_URL in your Heroku config vars.');
     console.error('   → The website frontend is still running but API features are disabled.');
   });
+
