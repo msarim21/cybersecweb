@@ -1,8 +1,80 @@
 require('dotenv').config();
 const compression = require('compression');
 
-process.on('uncaughtException',  err => { console.error('[Server] Uncaught exception:', err.message); console.error('[Server] Stack:', err.stack); });
-process.on('unhandledRejection', err => { console.error('[Server] Unhandled rejection:', err?.message || err); if (err?.stack) console.error('[Server] Stack:', err.stack); });
+// ── Crash Logging — detailed errors taake Heroku logs mein exact problem pata chale ──
+process.on('uncaughtException', err => {
+  console.error('');
+  console.error('╔══════════════════════════════════════════════════╗');
+  console.error('║         FATAL: UNCAUGHT EXCEPTION                ║');
+  console.error('╚══════════════════════════════════════════════════╝');
+  console.error('Error   :', err.message);
+  console.error('Stack   :', err.stack);
+  console.error('Time    :', new Date().toISOString());
+  console.error('');
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('');
+  console.error('╔══════════════════════════════════════════════════╗');
+  console.error('║         FATAL: UNHANDLED PROMISE REJECTION       ║');
+  console.error('╚══════════════════════════════════════════════════╝');
+  console.error('Reason  :', reason?.message || reason);
+  if (reason?.stack) console.error('Stack   :', reason.stack);
+  console.error('Time    :', new Date().toISOString());
+  console.error('');
+  process.exit(1);
+});
+
+// ── Startup Diagnostics — Heroku logs mein dikh jaega kya set hai kya nahi ──
+(function printStartupDiagnostics() {
+  console.log('');
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║           CYBERSECPRO — STARTUP CHECK            ║');
+  console.log('╚══════════════════════════════════════════════════╝');
+  console.log('Node.js  :', process.version);
+  console.log('Env      :', process.env.NODE_ENV || 'development');
+  console.log('Port     :', process.env.PORT || '3001 (default)');
+  console.log('');
+
+  const checks = [
+    { key: 'MONGO_URL',          label: 'MongoDB URL',          required: false },
+    { key: 'DATABASE_URL',       label: 'PostgreSQL URL',       required: false },
+    { key: 'JWT_SECRET',         label: 'JWT Secret',           required: true  },
+    { key: 'TELEGRAM_BOT_TOKEN', label: 'Telegram Bot Token',   required: false },
+    { key: 'ADMIN_EMAIL',        label: 'Admin Email',          required: false },
+    { key: 'ADMIN_PASSWORD',     label: 'Admin Password',       required: false },
+  ];
+
+  let hasDatabase = !!(process.env.MONGO_URL || process.env.DATABASE_URL);
+  let hasCriticalError = false;
+
+  checks.forEach(({ key, label, required }) => {
+    const val = process.env[key];
+    if (val) {
+      console.log(`  ✅ ${label.padEnd(22)} SET`);
+    } else if (required) {
+      console.error(`  ❌ ${label.padEnd(22)} MISSING — app will crash!`);
+      hasCriticalError = true;
+    } else {
+      console.log(`  ⚠️  ${label.padEnd(22)} not set (optional)`);
+    }
+  });
+
+  if (!hasDatabase) {
+    console.error('  ❌ Database URL         MISSING — set MONGO_URL or DATABASE_URL in Heroku config vars!');
+    hasCriticalError = true;
+  }
+
+  console.log('');
+  if (hasCriticalError) {
+    console.error('💥 Critical config missing — please set the above vars in Heroku Dashboard → Settings → Config Vars');
+    console.error('   Then restart dynos.');
+  } else {
+    console.log('✅ All required config vars are set. Starting server...');
+  }
+  console.log('');
+})();
 
 const path          = require('path');
 const fs            = require('fs');
@@ -431,4 +503,5 @@ initDb()
     console.error('   → Set MONGO_URL or DATABASE_URL in your Heroku config vars.');
     console.error('   → The website frontend is still running but API features are disabled.');
   });
+
 
