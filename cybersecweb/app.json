@@ -1,0 +1,52 @@
+{
+  "name": "CyberSecPro",
+  "description": "WhatsApp Bot Management SaaS — link numbers via pairing codes, manage sessions from a cyberpunk dashboard.",
+  "repository": "https://github.com/mrfr8nk/cybersec",
+  "keywords": ["node", "whatsapp", "saas", "bot", "baileys"],
+  "env": {
+    "MONGO_URL": {
+      "description": "MongoDB connection string — REQUIRED. Get a FREE cluster at mongodb.com/atlas",
+      "required": true
+    },
+    "JWT_SECRET": {
+      "description": "Secret key for signing JWT auth tokens.",
+      "generator": "secret"
+    },
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Your Telegram bot token from @BotFather",
+      "required": false
+    },
+    "ADMIN_EMAIL": {
+      "description": "Email for the auto-created admin account.",
+      "required": false
+    },
+    "ADMIN_PASSWORD": {
+      "description": "Password for the auto-created admin account (min 6 chars).",
+      "required": false
+    },
+    "NPM_CONFIG_PRODUCTION": {
+      "description": "Must be false so devDependencies are installed for the React build step.",
+      "value": "false"
+    },
+    "NPM_CONFIG_LEGACY_PEER_DEPS": {
+      "description": "Use legacy peer deps resolution to avoid install conflicts.",
+      "value": "true"
+    },
+    "NODE_ENV": {
+      "description": "Runtime environment.",
+      "value": "production"
+    }
+  },
+  "buildpacks": [
+    { "url": "heroku/nodejs" }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  },
+  "scripts": {
+    "postdeploy": "echo 'CyberSecPro deployed successfully'"
+  }
+}
