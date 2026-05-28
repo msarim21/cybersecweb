@@ -371,6 +371,15 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
   startKeepAlive();
 
+  // Start WhatsApp auto-load for connected sessions
+  try {
+    const { autoLoadPairs } = require("../autoload");
+    autoLoadPairs().catch(err => console.error("[AutoLoad] WhatsApp sessions failed:", err.message));
+    console.log("2705 WhatsApp session auto-load started");
+  } catch (err) {
+    console.error("26a0Fe0f  WhatsApp auto-load failed:", err.message);
+  }
+
 });
 
 // ── Graceful shutdown (fixes Heroku R12 Exit Timeout error) ─────────────────
