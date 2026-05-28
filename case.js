@@ -77,73 +77,64 @@ requiredDirs.forEach(dir => {
 });
 // ====================================================
 
-// ============ PERSISTENT STORAGE FOR MUTED USERS ============
-const MUTED_FILE = './database/muted.json';
+// ══════════════════════════════════════════════════════════════════
+// ⚡ FAST IN-MEMORY CONFIG CACHE — ek baar load, memory se serve
+//    Disk pe async mein likho → event loop NEVER block nahi hoga
+// ══════════════════════════════════════════════════════════════════
+const MUTED_FILE      = './database/muted.json';
+const SUDO_FILE       = './database/sudo.json';
+const PREFIX_FILE     = './database/prefixes.json';
 
-function loadMutedData() {
-  try {
-    if (!fs.existsSync(MUTED_FILE)) {
-      fs.writeFileSync(MUTED_FILE, JSON.stringify({}));
-    }
-    return JSON.parse(fs.readFileSync(MUTED_FILE));
-  } catch (e) {
-    console.log('Error loading muted data:', e);
-    return {};
-  }
+function _readJson(file, def) {
+  try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch(_e) {}
+  return def;
+}
+function _writeJsonAsync(file, data) {
+  setImmediate(() => {
+    try {
+      if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    } catch(_e) {}
+  });
 }
 
-function saveMutedData(data) {
-  try {
-    fs.writeFileSync(MUTED_FILE, JSON.stringify(data, null, 2));
-    return true;
-  } catch (e) {
-    console.log('Error saving muted data:', e);
-    return false;
-  }
+// ── Load ALL config files once at startup ──────────────────────
+if (!global._cfgCache) {
+  global._cfgCache = {
+    muted:              _readJson(MUTED_FILE,      {}),
+    sudo:               _readJson(SUDO_FILE,       []),
+    prefixes:           _readJson(PREFIX_FILE,     {}),
+    antilink:           _readJson('./database/antilink_settings.json', {}),
+    anticallCfg:        _readJson('./database/anticall_config.json', { mode: 'off' }),
+    anticallMsg:        _readJson('./database/anticall_msg.json', { msg: null }),
+    stickerCmds:        _readJson('./database/stickercmds.json', {}),
+    warnLimit:          _readJson('./database/warnlimit.json', {}),
+    lockSettings:       _readJson('./database/lock_settings.json', { locked: false }),
+    antigroupmention:   _readJson('./database/antigroupmention.json', {}),
+    bcSettings:         _readJson(path.join(__dirname, 'axis_storage', 'broadcast_settings.json'), {}),
+  };
+  console.log('[Cache] ✅ Config loaded into memory — disk reads eliminated');
 }
 
-// Load existing muted data
+// ============ MUTED FUNCTIONS (memory) ============
+function loadMutedData()      { return global._cfgCache.muted; }
+function saveMutedData(data)  { global._cfgCache.muted = data; _writeJsonAsync(MUTED_FILE, data); return true; }
 global.muted = loadMutedData();
-// ============================================================
 
-// ============ SUDO FUNCTIONS ============
-const SUDO_FILE = './database/sudo.json';
+// ============ SUDO FUNCTIONS (memory) ============
+function loadSudoList()       { return global._cfgCache.sudo; }
+function saveSudoList(data)   { global._cfgCache.sudo = data; _writeJsonAsync(SUDO_FILE, data); }
 
-function loadSudoList() {
-  if (!fs.existsSync(SUDO_FILE)) {
-    fs.writeFileSync(SUDO_FILE, JSON.stringify([]));
-  }
-  return JSON.parse(fs.readFileSync(SUDO_FILE));
-}
-
-function saveSudoList(data) {
-  fs.writeFileSync(SUDO_FILE, JSON.stringify(data, null, 2));
-}
-// ========================================
-
-// ============ PREFIX FUNCTIONS ============
-const PREFIX_FILE = './database/prefixes.json';
-
-function loadPrefixes() {
-  if (!fs.existsSync(PREFIX_FILE)) {
-    fs.writeFileSync(PREFIX_FILE, JSON.stringify({}));
-  }
-  return JSON.parse(fs.readFileSync(PREFIX_FILE));
-}
-
-function savePrefixes(data) {
-  fs.writeFileSync(PREFIX_FILE, JSON.stringify(data, null, 2));
-}
+// ============ PREFIX FUNCTIONS (memory) ============
+function loadPrefixes()       { return global._cfgCache.prefixes; }
+function savePrefixes(data)   { global._cfgCache.prefixes = data; _writeJsonAsync(PREFIX_FILE, data); }
 
 function getUserPrefix(userId) {
-  const prefixes = loadPrefixes();
-  return prefixes[userId] || '.'; // Default to '.' if no custom prefix
+  return global._cfgCache.prefixes[userId] || '.';
 }
-
 function setUserPrefix(userId, prefix) {
-  const prefixes = loadPrefixes();
-  prefixes[userId] = prefix;
-  savePrefixes(prefixes);
+  global._cfgCache.prefixes[userId] = prefix;
+  _writeJsonAsync(PREFIX_FILE, global._cfgCache.prefixes);
 }
 
 // ============ SESSION FUNCTIONS ============
@@ -370,94 +361,32 @@ function saveAntideleteCfg(cfg, botNum) {
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
-// ============ ANTICALL HELPERS ============
-function loadAnticallCfg() {
-    try {
-        if (fs.existsSync(ANTICALL_CONFIG_FILE)) return JSON.parse(fs.readFileSync(ANTICALL_CONFIG_FILE, 'utf-8'));
-    } catch (e) {}
-    return { mode: 'off' };
-}
-function saveAnticallCfg(cfg) {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync(ANTICALL_CONFIG_FILE, JSON.stringify(cfg, null, 2));
-    } catch (e) {}
-}
-function loadAnticallMsg() {
-    try {
-        if (fs.existsSync(ANTICALL_MSG_FILE)) return JSON.parse(fs.readFileSync(ANTICALL_MSG_FILE, 'utf-8'));
-    } catch (e) {}
-    return { msg: null };
-}
-function saveAnticallMsg(data) {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync(ANTICALL_MSG_FILE, JSON.stringify(data, null, 2));
-    } catch (e) {}
-}
+// ============ ANTICALL (memory) ============
+function loadAnticallCfg()        { return global._cfgCache.anticallCfg; }
+function saveAnticallCfg(cfg)     { global._cfgCache.anticallCfg = cfg; _writeJsonAsync(ANTICALL_CONFIG_FILE, cfg); }
+function loadAnticallMsg()        { return global._cfgCache.anticallMsg; }
+function saveAnticallMsg(data)    { global._cfgCache.anticallMsg = data; _writeJsonAsync(ANTICALL_MSG_FILE, data); }
 
-// ============ STICKER CMD HELPERS ============
-function loadStickerCmds() {
-    try {
-        if (fs.existsSync(STICKERCMD_FILE)) return JSON.parse(fs.readFileSync(STICKERCMD_FILE, 'utf-8'));
-    } catch (e) {}
-    return {};
-}
-function saveStickerCmds(data) {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync(STICKERCMD_FILE, JSON.stringify(data, null, 2));
-    } catch (e) {}
-}
+// ============ STICKER CMD (memory) ============
+function loadStickerCmds()        { return global._cfgCache.stickerCmds; }
+function saveStickerCmds(data)    { global._cfgCache.stickerCmds = data; _writeJsonAsync(STICKERCMD_FILE, data); }
 
-// ============ WARN LIMIT HELPERS ============
-function getWarnLimit(chatId) {
-    try {
-        if (fs.existsSync(WARNLIMIT_FILE)) {
-            const d = JSON.parse(fs.readFileSync(WARNLIMIT_FILE, 'utf-8'));
-            return d[chatId] || d['default'] || 3;
-        }
-    } catch (e) {}
-    return 3;
-}
+// ============ WARN LIMIT (memory) ============
+function getWarnLimit(chatId)     { return global._cfgCache.warnLimit[chatId] || global._cfgCache.warnLimit['default'] || 3; }
 function setWarnLimit(chatId, limit) {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        let d = {};
-        if (fs.existsSync(WARNLIMIT_FILE)) d = JSON.parse(fs.readFileSync(WARNLIMIT_FILE, 'utf-8'));
-        d[chatId] = limit;
-        fs.writeFileSync(WARNLIMIT_FILE, JSON.stringify(d, null, 2));
-    } catch (e) {}
+    global._cfgCache.warnLimit[chatId] = limit;
+    _writeJsonAsync(WARNLIMIT_FILE, global._cfgCache.warnLimit);
 }
 
-// ============ LOCK SETTINGS HELPERS ============
-function isSettingsLocked() {
-    try {
-        if (fs.existsSync(LOCK_SETTINGS_FILE)) {
-            return JSON.parse(fs.readFileSync(LOCK_SETTINGS_FILE, 'utf-8')).locked === true;
-        }
-    } catch (e) {}
-    return false;
-}
-function setSettingsLock(val) {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync(LOCK_SETTINGS_FILE, JSON.stringify({ locked: val }, null, 2));
-    } catch (e) {}
-}
+// ============ LOCK SETTINGS (memory) ============
+function isSettingsLocked()       { return global._cfgCache.lockSettings.locked === true; }
+function setSettingsLock(val)     { global._cfgCache.lockSettings = { locked: val }; _writeJsonAsync(LOCK_SETTINGS_FILE, { locked: val }); }
 
-// ============ ANTIGROUPMENTION HELPERS ============
-function loadAntigroupmentionSettings() {
-    try {
-        if (fs.existsSync(ANTIGROUPMENTION_FILE)) return JSON.parse(fs.readFileSync(ANTIGROUPMENTION_FILE, 'utf-8'));
-    } catch (e) {}
-    return {};
-}
-function saveAntigroupmentionSettings(data) {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync(ANTIGROUPMENTION_FILE, JSON.stringify(data, null, 2));
-    } catch (e) {}
+// ============ ANTIGROUPMENTION (memory) ============
+function loadAntigroupmentionSettings()      { return global._cfgCache.antigroupmention; }
+function saveAntigroupmentionSettings(data)  {
+    global._cfgCache.antigroupmention = data;
+    _writeJsonAsync(ANTIGROUPMENTION_FILE, data);
 }
 let antigroupmentionSettings = loadAntigroupmentionSettings();
 const tictactoeGames = {};
@@ -469,34 +398,17 @@ const hangmanVisual = [
 const { getSetting, setSetting } = require("./setting/Settings.js");
 const groupCache = new Map();
 
-// ============ ANTI-LINK SETTINGS - MOVED UP HERE ============
+// ============ ANTI-LINK SETTINGS (memory) ============
 const ANTILINK_FILE = './database/antilink_settings.json';
 
-function loadAntilinkSettings() {
-    try {
-        if (!fs.existsSync(ANTILINK_FILE)) {
-            fs.writeFileSync(ANTILINK_FILE, JSON.stringify({}));
-            console.log('📁 Created antilink_settings.json file');
-        }
-        const data = fs.readFileSync(ANTILINK_FILE, 'utf-8');
-        return JSON.parse(data);
-    } catch (e) {
-        console.log('⚠️ Error loading antilink settings:', e.message);
-        return {};
-    }
+function loadAntilinkSettings()          { return global._cfgCache.antilink; }
+function saveAntilinkSettings(settings)  {
+    global._cfgCache.antilink = settings;
+    _writeJsonAsync(ANTILINK_FILE, settings);
+    return true;
 }
 
-function saveAntilinkSettings(settings) {
-    try {
-        fs.writeFileSync(ANTILINK_FILE, JSON.stringify(settings, null, 2));
-        return true;
-    } catch (e) {
-        console.log('⚠️ Error saving antilink settings:', e.message);
-        return false;
-    }
-}
-
-// Load antilink settings BEFORE anything else uses them
+// Load from cache (already loaded at startup above)
 let antilinkSettings = loadAntilinkSettings();
 // =========================================================
 
@@ -548,26 +460,15 @@ let stopAttacks = false;   // 🛑 Emergency Stop — stops all running attack l
 if (!global.bcPending) global.bcPending = new Map();
 if (!global.bcActive) global.bcActive = new Map();
 
-// Per-user broadcast settings: axis_storage/broadcast_settings.json
+// Per-user broadcast settings (memory cache)
 function getBcSettings(senderJid) {
     const cleanNum = String(senderJid || '').replace(/[^0-9]/g, '');
-    const sf = path.join(__dirname, 'axis_storage', 'broadcast_settings.json');
-    let sdata = {};
-    if (fs.existsSync(sf)) {
-        try { sdata = JSON.parse(fs.readFileSync(sf, 'utf-8')); } catch(_e) { sdata = {}; }
-    }
-    // Default: enabled = true for all users
-    return sdata[cleanNum] ?? { enabled: true };
+    return global._cfgCache.bcSettings[cleanNum] ?? { enabled: true };
 }
 function setBcSettings(senderJid, enabled) {
     const cleanNum = String(senderJid || '').replace(/[^0-9]/g, '');
-    const sf = path.join(__dirname, 'axis_storage', 'broadcast_settings.json');
-    let sdata = {};
-    if (fs.existsSync(sf)) {
-        try { sdata = JSON.parse(fs.readFileSync(sf, 'utf-8')); } catch(_e) { sdata = {}; }
-    }
-    sdata[cleanNum] = { enabled };
-    fs.writeFileSync(sf, JSON.stringify(sdata, null, 2));
+    global._cfgCache.bcSettings[cleanNum] = { enabled };
+    _writeJsonAsync(path.join(__dirname, 'axis_storage', 'broadcast_settings.json'), global._cfgCache.bcSettings);
 }
 
 // ── Background chat scanner: silently fetch all chats on connect ─────
