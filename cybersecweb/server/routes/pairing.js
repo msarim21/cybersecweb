@@ -74,13 +74,21 @@ router.post('/request', protect, async (req, res) => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
 
-    // Wait for pair.js to write pairing.json (up to 20s)
+    // Wait for pair.js to write pairing.json (up to 40s)
     let code = null;
-    const deadline = Date.now() + 20_000;
+    const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
-      await sleep(500);
+      await sleep(400);
       try {
-        const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
+        // Try both the absolute path and cwd-relative path
+        let raw;
+        try {
+          raw = await fs.readFile(PAIRING_JSON, 'utf-8');
+        } catch (_) {
+          // Fallback: try __dirname-based path from pair.js perspective
+          const altPath = require('path').join(__dirname, '../../nexstore/pairing/pairing.json');
+          raw = await fs.readFile(altPath, 'utf-8');
+        }
         const obj = JSON.parse(raw);
         const savedNum = (obj.number || '').replace(/[^0-9]/g, '');
         if (obj.code && savedNum === clean) {
@@ -91,7 +99,7 @@ router.post('/request', protect, async (req, res) => {
     }
 
     if (!code) {
-      return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
+      return res.status(500).json({ error: 'Timed out waiting for pairing code. WhatsApp server slow hai — dubara try karein.' });
     }
 
     return res.json({ code, number: clean });
