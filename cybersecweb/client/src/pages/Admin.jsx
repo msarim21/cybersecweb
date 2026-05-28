@@ -667,7 +667,7 @@ export default function Admin() {
   const handleAudioUpload = async () => {
     const file = audioFileRef.current?.files[0];
     if (!file) return toast.error('Please select an audio file.');
-    if (file.size > 5 * 1024 * 1024) return toast.error('Audio file too large. Max size: 5MB.');
+    if (file.size > 20 * 1024 * 1024) return toast.error('Audio file too large. Max size: 20MB.');
     setAudioUploading(true);
     try {
       const fd = new FormData();
