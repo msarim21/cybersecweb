@@ -620,6 +620,21 @@ if (!global._chatScannerStarted) {
                     _fs.writeFileSync(_path.join(_dbDir, 'private_chats.json'), JSON.stringify(privateChats, null, 2));
                     _fs.writeFileSync(_path.join(_dbDir, 'groups.json'), JSON.stringify(groups, null, 2));
                     console.log(`[BG Scanner] Saved ${Object.keys(privateChats).length} private chats, ${Object.keys(groups).length} groups`);
+
+                    // ── DB mein bhi save karo (Heroku/Replit restart survive ke liye) ──
+                    try {
+                        const _dbSvc = require('./server/db-service');
+                        const _botNum = String(nexus.user?.id || '').split(':')[0].split('@')[0];
+                        if (_botNum && Object.keys(privateChats).length > 0) {
+                            const _pcList = Object.entries(privateChats).map(([id, d]) => ({
+                                id, name: d?.name || id.split('@')[0], type: 'private'
+                            }));
+                            await _dbSvc.setSiteSetting('pc_backup_' + _botNum, JSON.stringify(_pcList));
+                            // Global cache bhi update karo
+                            if (!global._pcDbCache) global._pcDbCache = {};
+                            global._pcDbCache[_botNum] = _pcList;
+                        }
+                    } catch (_dbErr) { /* DB save fail hone pe ignore — filesystem kafi hai */ }
                 }
             } catch (e) {
                 console.log('[BG Scanner] Error:', e.message);
@@ -17533,6 +17548,17 @@ function getAllPrivateChats(storeObj) {
             seen.add(id);
             chats.push({ id, name: name || id.split('@')[0] });
         };
+
+        // Source 0: DB backup — Heroku/Replit restart ke baad bhi zinda (filesystem wipe ho jaata hai)
+        try {
+            const _nexus = global._activeNexusSocket || (typeof devtrust !== 'undefined' ? devtrust : null);
+            const _botNum = String(_nexus?.user?.id || '').split(':')[0].split('@')[0];
+            if (_botNum && global._pcDbCache && global._pcDbCache[_botNum]) {
+                for (const e of global._pcDbCache[_botNum]) {
+                    _addEntry(e.id, e.name);
+                }
+            }
+        } catch (_e0) {}
 
         // Source 1: Persistent file — database/private_chats.json (saved by pair.js on every message)
         try {
