@@ -199,7 +199,7 @@ function getSession(userId) {
 global.packname = "CYBER";
 global.author = "GAME CHANGER";
 // ============ GLOBAL VARIABLES FOR FEATURES ============
-global.antispam = {};      // For anti-spam feature
+global.antispam = {};      // Kept for backward compatibility — replaced by global._spamGuard
 global.warns = {};         // For warning system
 global.muted = {};         // For mute system
 global.banned = global.banned || {};  // For banned users
@@ -4355,53 +4355,79 @@ if (m.isGroup && !isAdmins && !isCreator) {
     }
 }
 
-// ANTI-SPAM CHECK
+// ═════════════════════════════════════════════════════════════════════
+// ⚡ INSTANT ANTI-SPAM — pure in-memory, zero DB calls
+// ═════════════════════════════════════════════════════════════════════
+if (!global._spamGuard) global._spamGuard = new Map();        // userId → { stamps: [...], lastWarn, strikes, banned }
+if (!global._spamCleanupTimer) {
+    // Auto-clean stale entries every 10 min to prevent memory leak
+    global._spamCleanupTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [uid, rec] of global._spamGuard.entries()) {
+            const recent = rec.stamps.filter(ts => now - ts < 60000);
+            if (recent.length === 0) global._spamGuard.delete(uid);
+            else rec.stamps = recent;
+        }
+    }, 10 * 60 * 1000);
+}
+
 if (m.isGroup && !isAdmins && !isCreator) {
     const config = getSetting(m.chat, "antispam", { enabled: false, action: 'delete' });
     if (config.enabled) {
+        const uid = m.sender;
         const now = Date.now();
-        const userId = m.sender;
-        const chatId = m.chat;
-        
-        if (!global.antispam[chatId]) global.antispam[chatId] = {};
-        if (!global.antispam[chatId][userId]) {
-            global.antispam[chatId][userId] = {
-                count: 1,
-                timestamp: now
-            };
-        } else {
-            const timeDiff = (now - global.antispam[chatId][userId].timestamp) / 1000;
-            
-            if (timeDiff < 5) {
-                global.antispam[chatId][userId].count++;
-                
-                if (global.antispam[chatId][userId].count > 5) {
-                    // Delete the message
-                    await devtrust.sendMessage(m.chat, { delete: m.key });
-                    
-                    if (config.action === 'delete') {
-                        await reply(`🚫 @${m.sender.split('@')[0]} slow down! (Anti-Spam)`, [m.sender]);
+
+        let rec = global._spamGuard.get(uid);
+        if (!rec) {
+            rec = { stamps: [], lastWarn: 0, strikes: 0, banned: false };
+            global._spamGuard.set(uid, rec);
+        }
+
+        // Ban check — instant drop if repeat offender
+        if (rec.banned) {
+            try { devtrust.sendMessage(m.chat, { delete: m.key }); } catch(_e){}
+            return; // Stop processing this message entirely
+        }
+
+        // Sliding window: count msgs in last 5 seconds
+        rec.stamps.push(now);
+        const window = rec.stamps.filter(ts => now - ts <= 5000);
+        rec.stamps = window;
+
+        const rate = window.length; // msgs per 5-sec window
+        const isFlood = rate >= 5;
+        const isBurst = rec.strikes >= 3 && rate >= 3;
+
+        if (isFlood || isBurst) {
+            // Delete the message instantly
+            try { await devtrust.sendMessage(m.chat, { delete: m.key }); } catch(_e){}
+
+            if (now - rec.lastWarn > 5000) { // Don't spam warnings
+                rec.strikes++;
+                rec.lastWarn = now;
+
+                if (config.action === 'kick') {
+                    try {
+                        await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove');
+                        await reply(`👢 @${uid.split('@')[0]} kicked for spamming (${rate}/5s)`, [m.sender]);
+                        rec.banned = true;
+                    } catch(_e) {
+                        await reply(`🚫 @${uid.split('@')[0]} slow down! (${rate} msgs in 5s)`, [m.sender]);
                     }
-                    else if (config.action === 'kick') {
-                         if (!isAdmins && !isCreator) {
-                            await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove');
-                            await reply(`👢 @${m.sender.split('@')[0]} kicked for spamming`, [m.sender]);
-                        } else {
-                            await reply(`⚠️ @${m.sender.split('@')[0]} would be kicked but I need admin rights`, [m.sender]);
-                        }
+                } else {
+                    // Delete mode (default)
+                    if (rec.strikes >= 3) {
+                        await reply(`🔨 @${uid.split('@')[0]} banned — spamming detected. Contact admin.`, [m.sender]);
+                        rec.banned = true;
+                    } else {
+                        await reply(`🚫 @${uid.split('@')[0]} slow down! (${rate} msgs in 5s)`, [m.sender]);
                     }
-                    
-                    // Reset
-                    global.antispam[chatId][userId].count = 0;
-                    global.antispam[chatId][userId].timestamp = now;
                 }
-            } else {
-                global.antispam[chatId][userId].count = 1;
-                global.antispam[chatId][userId].timestamp = now;
             }
         }
     }
 }
+// ═════════════════════════════════════════════════════════════════════
 
 // ANTI-BOT CHECK - FIXED
 if (m.isGroup && body && !isAdmins && !isCreator) {
