@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "f-ngOM6YZqToTF4VLCcNT"
+uri = "file://cybersecweb/BUGFIXES.md"
+type = "text"
+title = "Bug Fixes Summary"
