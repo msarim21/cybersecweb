@@ -16,6 +16,7 @@ const {
 
 // Persist session state to PostgreSQL so restarts can reload sessions
 const { updateSession, removeLinkedNumber, saveCredsToDb, restoreCredsFromDb } = require('./session-db');
+const { addNumber } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
@@ -1353,6 +1354,13 @@ async function startpairing(nexusDevNumber) {
 
             // Persist active status to DB (awaited so web panel status poll works immediately)
             try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+
+            // ── Auto-register main bot in linked_numbers so website dashboard shows it ──
+            try {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
+                console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
+            } catch (_) {}
 
             // Write connected flag so web panel can auto-save the number
             try {
