@@ -103,7 +103,20 @@ const initializeBot = async () => {
     if (isAuthenticated()) {
         console.log(chalk.green('✅ Welcome back! Skipping password...'));
         launchBot();
+    } else if (process.env.STARTUP_PASSWORD) {
+        // ── Auto-restart fix: Heroku/Replit Config Var se password uthao ──
+        // Heroku → Settings → Config Vars → STARTUP_PASSWORD = apna password
+        if (process.env.STARTUP_PASSWORD === startupPassword) {
+            console.log(chalk.green('✅ Heroku Config Var se auto-authenticate. Bot start ho raha hai...'));
+            setAuthenticated(true);
+            launchBot();
+        } else {
+            console.log(chalk.red('❌ STARTUP_PASSWORD galat hai!'));
+            console.log(chalk.yellow('   Heroku Settings → Config Vars → STARTUP_PASSWORD check karo'));
+            process.exit(1);
+        }
     } else {
+        // Manual password — local development ke liye
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
