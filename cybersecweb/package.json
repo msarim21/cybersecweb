@@ -21,11 +21,9 @@
   ],
   "author": "Nexus",
   "license": "MIT",
-  "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": "22.x",
-    "npm": ">=10.x",
-    "pnpm": ">=9.x"
+    "node": "20.x",
+    "npm": ">=10.x"
   },
   "dependencies": {
     "@adiwajshing/keyed-db": "^0.2.4",
@@ -34,7 +32,7 @@
     "@hapi/boom": "^10.0.0",
     "@vitalets/google-translate-api": "^9.2.0",
     "@vreden/youtube_scraper": "^1.2.0",
-    "@whiskeysockets/baileys": "latest",
+    "@whiskeysockets/baileys": "^6.7.9",
     "api-dylux": "^1.4.4",
     "awesome-phonenumber": "^2.64.0",
     "axios": "^1.7.7",
