@@ -2,7 +2,7 @@ uploads = []
 generated = []
 
 [[outputs]]
-id = "f-ngOM6YZqToTF4VLCcNT"
-uri = "file://cybersecweb/BUGFIXES.md"
+id = "89CTSYsaO6gV7gGzkC91o"
+uri = "file://README.md"
 type = "text"
-title = "Bug Fixes Summary"
+title = "CyberSecPro — Deployment README"

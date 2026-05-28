@@ -1,32 +1,73 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-20", "web", "bash", "nix", "postgresql-16"]
+[nix]
+channel = "stable-25_05"
 
-[deployment]
-router = "application"
-deploymentTarget = "autoscale"
-
-[deployment.postBuild]
-args = ["pnpm", "store", "prune"]
-env = { "CI" = "true" }
+[agent]
+expertMode = true
+stack = "BEST_EFFORT_FALLBACK"
 
 [workflows]
 runButton = "Project"
 
-[agent]
-stack = "PNPM_WORKSPACE"
-expertMode = true
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
 
-[postMerge]
-path = "scripts/post-merge.sh"
-timeoutMs = 20000
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Backend API"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd client && npx vite --port 5000 --host 0.0.0.0"
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Backend API"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node server/index.js"
+waitForPort = 3001
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [[ports]]
-localPort = 8080
-externalPort = 8080
+localPort = 3001
+externalPort = 3001
 
 [[ports]]
-localPort = 8081
+localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 8082
+localPort = 5001
 externalPort = 3000
+
+[[ports]]
+localPort = 5002
+externalPort = 3002
+
+[userenv]
+
+[userenv.shared]
+PORT = "3001"
+NODE_ENV = "development"
+
+[deployment]
+deploymentTarget = "cloudrun"
+run = ["sh", "-c", "/nix/store/1lagpgadaybvs1n2312gysg2phjk89y8-nodejs-20.20.0-wrapped/bin/node $file"]
