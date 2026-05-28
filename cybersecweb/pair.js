@@ -615,21 +615,26 @@ async function startpairing(nexusDevNumber) {
                 // Ensure pairing directory exists
                 ensureDirectoryExists('./nexstore/pairing');
                 
-                fs.writeFileSync(
-                    './nexstore/pairing/pairing.json',
-                    JSON.stringify({ 
-                        number: nexusDevNumber,
-                        code: code,
-                        timestamp: new Date().toISOString()
-                    }, null, 2),
-                    'utf8'
-                );
+                // Write to BOTH relative and absolute path to ensure route can read it
+                const pairingData = JSON.stringify({ 
+                    number: nexusDevNumber,
+                    code: code,
+                    timestamp: new Date().toISOString()
+                }, null, 2);
+                
+                fs.writeFileSync('./nexstore/pairing/pairing.json', pairingData, 'utf8');
+                
+                // Also write to __dirname based path for cross-directory compatibility
+                const absPath = path.join(__dirname, 'nexstore', 'pairing', 'pairing.json');
+                if (absPath !== path.resolve('./nexstore/pairing/pairing.json')) {
+                    try { fs.writeFileSync(absPath, pairingData, 'utf8'); } catch(_) {}
+                }
                 
                 console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
             } catch (err) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
             }
-        }, 3000);
+        }, 500);
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
