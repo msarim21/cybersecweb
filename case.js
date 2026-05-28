@@ -831,8 +831,24 @@ const quoted = m.quoted ? m.quoted : m;
 const from = m.key.remoteJid;
 const sender = (m.isGroup || m.isNewsletter) ? (m.key.participant ? m.key.participant : m.participant) : m.key.remoteJid;
 const userMovieSessions = {};
-const botNumber = await devtrust.decodeJid(devtrust.user.id);
-const groupMetadata = m.isGroup ? await devtrust.groupMetadata(from).catch(() => null) : null;
+// ── Cache botNumber per-connection (unchanged until reconnect) ──
+if (!devtrust._cachedBotNumber) {
+  devtrust._cachedBotNumber = await devtrust.decodeJid(devtrust.user.id);
+}
+const botNumber = devtrust._cachedBotNumber;
+
+// ── Cache groupMetadata with 5-min TTL (avoids WA API call on every message) ──
+if (!global._groupMetaCache) global._groupMetaCache = new Map();
+let groupMetadata = null;
+if (m.isGroup) {
+  const _gmc = global._groupMetaCache.get(from);
+  if (_gmc && (Date.now() - _gmc.ts) < 5 * 60 * 1000) {
+    groupMetadata = _gmc.data;
+  } else {
+    groupMetadata = await devtrust.groupMetadata(from).catch(() => null);
+    if (groupMetadata) global._groupMetaCache.set(from, { data: groupMetadata, ts: Date.now() });
+  }
+}
 const participants = m.isGroup ? groupMetadata?.participants || [] : [];
 const groupAdmins = m.isGroup ? await getGroupAdmins(participants) : (m.isNewsletter ? [botNumber, m.sender] : []);
 
