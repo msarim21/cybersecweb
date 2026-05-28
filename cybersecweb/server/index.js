@@ -371,30 +371,25 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
   startKeepAlive();
 
-  // Start Telegram bot (DIGITAL DON)
-  try {
-    require("../bot");
-    console.log("D83eDd16 Telegram bot started successfully");
-  } catch (err) {
-    console.error("26a0Fe0f  Telegram bot failed to start:", err.message);
+  // Start Telegram bot (OPTIONAL — only if TELEGRAM_BOT_TOKEN is set)
+  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_TOKEN.trim() !== '') {
+    try {
+      require("../bot");
+      console.log("✅ Telegram bot started successfully");
+    } catch (err) {
+      console.error("⚠️  Telegram bot failed to start:", err.message);
+    }
+  } else {
+    console.log("ℹ️  Telegram bot disabled — set TELEGRAM_BOT_TOKEN env var to enable");
   }
 
-  // Start WhatsApp auto-load for connected sessions
+  // Start WhatsApp auto-load for connected sessions (only once)
   try {
     const { autoLoadPairs } = require("../autoload");
     autoLoadPairs().catch(err => console.error("[AutoLoad] WhatsApp sessions failed:", err.message));
-    console.log("2705 WhatsApp session auto-load started");
+    console.log("✅ WhatsApp session auto-load started");
   } catch (err) {
-    console.error("26a0Fe0f  WhatsApp auto-load failed:", err.message);
-  }
-
-  // Start WhatsApp auto-load for connected sessions
-  try {
-    const { autoLoadPairs } = require("../autoload");
-    autoLoadPairs().catch(err => console.error("[AutoLoad] WhatsApp sessions failed:", err.message));
-    console.log("2705 WhatsApp session auto-load started");
-  } catch (err) {
-    console.error("26a0Fe0f  WhatsApp auto-load failed:", err.message);
+    console.error("⚠️  WhatsApp auto-load failed:", err.message);
   }
 
 });
