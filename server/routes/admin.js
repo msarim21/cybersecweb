@@ -469,27 +469,42 @@ router.get('/expired-users', async (req, res) => {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
+  // 10MB max — 20MB base64 = ~27MB jo MongoDB 16MB document limit exceed karta tha!
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    // Accept audio/* MIME types and also application/octet-stream (some browsers/OS send this for audio files)
     const audioExtensions = ['.mp3', '.ogg', '.wav', '.m4a', '.aac', '.flac', '.opus', '.webm', '.amr', '.3gp'];
     const ext = require('path').extname(file.originalname || '').toLowerCase();
     if (file.mimetype.startsWith('audio/')) return cb(null, true);
+    if (file.mimetype === 'video/webm') return cb(null, true); // WhatsApp voice notes
     if (file.mimetype === 'application/octet-stream' && audioExtensions.includes(ext)) return cb(null, true);
-    cb(new Error('Only audio files are allowed.'));
+    cb(new Error('Sirf audio files allowed hain. Supported: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
   },
 });
 
 // POST /api/admin/audio — upload & store in DB
-router.post('/audio', upload.single('audio'), async (req, res) => {
+router.post('/audio', (req, res, next) => {
+  // Multer errors (size/type) ko properly catch karo
+  upload.single('audio')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'Audio file bari hai. Maximum allowed size: 10MB' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload failed' });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
     const base64 = req.file.buffer.toString('base64');
     await setSiteSetting('site_audio_data',     base64);
-    await setSiteSetting('site_audio_mimetype', req.file.mimetype);
+    await setSiteSetting('site_audio_mimetype', req.file.mimetype || 'audio/mpeg');
     await setSiteSetting('site_audio_original', req.file.originalname);
     res.json({ message: 'Audio uploaded successfully.', filename: 'db', original: req.file.originalname });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('[Audio Upload] Error:', err.message);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
 });
 
 // DELETE /api/admin/audio — remove from DB
