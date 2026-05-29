@@ -438,6 +438,13 @@ if (!JWT_SECRET || JWT_SECRET.includes('default') || JWT_SECRET.length < 32) {
 const { startKeepAlive, stopKeepAlive } = require('../keepalive');
 
 const server = app.listen(PORT, '0.0.0.0', () => {
+  // ── Server-level timeout — audio upload jaise bade requests ke liye ──
+  // Default Node.js timeout 120s hai; hum 10 min karte hain.
+  // Audio upload route apna timeout khud 0 (unlimited) set karta hai.
+  server.timeout = 10 * 60 * 1000;        // 10 minutes
+  server.keepAliveTimeout = 65000;         // Heroku load balancer ke saath sync
+  server.headersTimeout   = 66000;         // keepAliveTimeout se thoda zyada
+
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
   startKeepAlive();
 
