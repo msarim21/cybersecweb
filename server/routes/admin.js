@@ -464,63 +464,95 @@ router.get('/expired-users', async (req, res) => {
 });
 
 // ── Audio Management — stored in DATABASE (not disk) ────────────────────────
-// Audio is base64-encoded and saved via setSiteSetting so it survives
-// Heroku dyno restarts (ephemeral filesystem would wipe /uploads/).
+// Audio is gzip-compressed then base64-encoded before DB save.
+// This reduces ~20MB file to ~6-8MB base64 — 3-4x faster DB write.
+// Background job pattern: respond immediately, save to DB in background,
+// frontend polls /api/admin/audio/upload-status/:jobId for result.
+
+const zlib = require('zlib');
+
+// In-memory upload job tracker (auto-cleaned after 10 min)
+const _audioUploadJobs = new Map();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  // 10MB max — 20MB base64 = ~27MB jo MongoDB 16MB document limit exceed karta tha!
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
   fileFilter: (req, file, cb) => {
     const audioExtensions = ['.mp3', '.ogg', '.wav', '.m4a', '.aac', '.flac', '.opus', '.webm', '.amr', '.3gp'];
     const ext = require('path').extname(file.originalname || '').toLowerCase();
     if (file.mimetype.startsWith('audio/')) return cb(null, true);
-    if (file.mimetype === 'video/webm') return cb(null, true); // WhatsApp voice notes
+    if (file.mimetype === 'video/webm') return cb(null, true);
     if (file.mimetype === 'application/octet-stream' && audioExtensions.includes(ext)) return cb(null, true);
     cb(new Error('Sirf audio files allowed hain. Supported: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
   },
 });
 
-// POST /api/admin/audio — upload & store in DB
-router.post('/audio', (req, res, next) => {
-  // ── Timeout disable: large audio files DB mein save hone mein waqt lagta hai ──
-  req.setTimeout(0);
-  if (req.socket) req.socket.setTimeout(0);
-  res.setTimeout(0);
+// GET /api/admin/audio/upload-status/:jobId — frontend poll karta hai
+router.get('/audio/upload-status/:jobId', (req, res) => {
+  const job = _audioUploadJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ status: 'not_found' });
+  res.json(job);
+});
 
-  // Multer errors (size/type) ko properly catch karo
+// POST /api/admin/audio — file receive karo, TURANT respond karo, DB mein background mein save karo
+router.post('/audio', (req, res, next) => {
   upload.single('audio')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: 'Audio file bari hai. Maximum allowed size: 10MB' });
+        return res.status(400).json({ error: 'Audio file bari hai. Maximum allowed size: 20MB' });
       }
       return res.status(400).json({ error: err.message || 'File upload failed' });
     }
     next();
   });
-}, async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
-    const base64 = req.file.buffer.toString('base64');
-    // ── Parallel DB writes — 3 alag awaits ki jagah ek saath save karo ──
-    await Promise.all([
-      setSiteSetting('site_audio_data',     base64),
-      setSiteSetting('site_audio_mimetype', req.file.mimetype || 'audio/mpeg'),
-      setSiteSetting('site_audio_original', req.file.originalname),
-    ]);
-    res.json({ message: 'Audio uploaded successfully.', filename: 'db', original: req.file.originalname });
-  } catch (err) {
-    console.error('[Audio Upload] Error:', err.message);
-    res.status(500).json({ error: err.message || 'Upload failed' });
-  }
+}, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
+
+  // ── Job ID generate karo ────────────────────────────────────────────────
+  const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  _audioUploadJobs.set(jobId, { status: 'processing', original: req.file.originalname });
+
+  // ── Turant respond karo — proxy/platform timeout se bachao ─────────────
+  res.json({ jobId, status: 'processing', original: req.file.originalname });
+
+  // ── DB mein background mein save karo (response de chuke hain) ──────────
+  const fileBuffer   = req.file.buffer;
+  const mimetype     = req.file.mimetype || 'audio/mpeg';
+  const originalname = req.file.originalname;
+
+  setImmediate(async () => {
+    try {
+      // Gzip compress → base64: 20MB → ~6-8MB (3-4x smaller, faster DB write)
+      const compressed = zlib.gzipSync(fileBuffer, { level: 6 });
+      const base64     = compressed.toString('base64');
+
+      await Promise.all([
+        setSiteSetting('site_audio_data',       base64),
+        setSiteSetting('site_audio_mimetype',   mimetype),
+        setSiteSetting('site_audio_original',   originalname),
+        setSiteSetting('site_audio_compressed', 'true'),
+      ]);
+
+      _audioUploadJobs.set(jobId, { status: 'done', original: originalname, filename: 'db' });
+      console.log(`[Audio Upload] ✅ ${originalname} saved (jobId=${jobId})`);
+    } catch (err) {
+      _audioUploadJobs.set(jobId, { status: 'error', error: err.message });
+      console.error(`[Audio Upload] ❌ ${err.message} (jobId=${jobId})`);
+    }
+    // Job 10 min ke baad clean karo
+    setTimeout(() => _audioUploadJobs.delete(jobId), 10 * 60 * 1000);
+  });
 });
 
 // DELETE /api/admin/audio — remove from DB
 router.delete('/audio', async (req, res) => {
   try {
-    await setSiteSetting('site_audio_data',     '');
-    await setSiteSetting('site_audio_mimetype', '');
-    await setSiteSetting('site_audio_original', '');
+    await Promise.all([
+      setSiteSetting('site_audio_data',       ''),
+      setSiteSetting('site_audio_mimetype',   ''),
+      setSiteSetting('site_audio_original',   ''),
+      setSiteSetting('site_audio_compressed', ''),
+    ]);
     res.json({ message: 'Audio removed.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
