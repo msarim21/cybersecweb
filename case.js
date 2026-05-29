@@ -765,18 +765,22 @@ if (m.isGroup) {
 const participants = m.isGroup ? groupMetadata?.participants || [] : [];
 const groupAdmins = m.isGroup ? await getGroupAdmins(participants) : (m.isNewsletter ? [botNumber, m.sender] : []);
 
+// ── Per-message flag cache (30s TTL) — avoids fs.readFileSync on every message ──
+if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [], bug: [] };
+const _flagNow = Date.now();
+if (_flagNow - global._flagCache.ts > 30000) {
+    try { const _bdf = './database/bot_disabled.json';
+        global._flagCache.botDisabled = fs.existsSync(_bdf) ? JSON.parse(fs.readFileSync(_bdf, 'utf8')) : []; } catch(e) { global._flagCache.botDisabled = []; }
+    try { const _auf = require('path').join(__dirname, 'database', 'adult_unlocked.json');
+        global._flagCache.adult = fs.existsSync(_auf) ? JSON.parse(fs.readFileSync(_auf, 'utf-8')) : []; } catch(e) { global._flagCache.adult = []; }
+    try { const _buf = require('path').join(__dirname, 'database', 'bug_unlocked.json');
+        global._flagCache.bug = fs.existsSync(_buf) ? JSON.parse(fs.readFileSync(_buf, 'utf-8')) : []; } catch(e) { global._flagCache.bug = []; }
+    global._flagCache.ts = _flagNow;
+}
+
 // ── Bot disable check (admin panel → database/bot_disabled.json) ──
-const _botDisabled = (() => {
-    try {
-        const _bdf = './database/bot_disabled.json';
-        if (fs.existsSync(_bdf)) {
-            const _list = JSON.parse(fs.readFileSync(_bdf, 'utf8'));
-            const _cleanBot = botNumber.replace(/[^0-9]/g, '');
-            return _list.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBot || String(id) === botNumber);
-        }
-    } catch(e) {}
-    return false;
-})();
+const _cleanBotNum = botNumber.replace(/[^0-9]/g, '');
+const _botDisabled = global._flagCache.botDisabled.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBotNum || String(id) === botNumber);
 if (_botDisabled) return;
 
 const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
@@ -784,30 +788,11 @@ const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
 const isOwner = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
 const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
 const isSudo = loadSudoList().includes(m.sender);
-// 18+ unlock status for this sender
-const _senderAdultUnlocked = (() => {
-    try {
-        const _auf = require('path').join(__dirname, 'database', 'adult_unlocked.json');
-        if (fs.existsSync(_auf)) {
-            const _u = JSON.parse(fs.readFileSync(_auf, 'utf-8'));
-            const _n = (m.sender || '').replace(/[^0-9]/g, '');
-            return _u.some(id => String(id).replace(/[^0-9]/g, '') === _n);
-        }
-    } catch(e) {}
-    return false;
-})();
-// Bug & SIM Database unlock status for this sender
-const _senderBugUnlocked = (() => {
-    try {
-        const _buf = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-        if (fs.existsSync(_buf)) {
-            const _u = JSON.parse(fs.readFileSync(_buf, 'utf-8'));
-            const _n = (m.sender || '').replace(/[^0-9]/g, '');
-            return _u.some(id => String(id).replace(/[^0-9]/g, '') === _n);
-        }
-    } catch(e) {}
-    return false;
-})();
+// 18+ unlock status for this sender (cached)
+const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
+const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+// Bug & SIM Database unlock status for this sender (cached)
+const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
 const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : (m.isNewsletter ? true : false);
 const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
@@ -4220,11 +4205,7 @@ if (getSetting(m.chat, "autoRecordType", false)) {
 }
 
 if (getSetting(m.sender, "autoread", false)) {
-   try {
-      await devtrust.readMessages([m.key]) 
-   } catch (e) {
-      console.log("Auto-Read Error:", e)
-   }
+   devtrust.readMessages([m.key]).catch(e => {});
 }
 
 // ======================[ BANNED USERS CHECK ]======================
@@ -4626,7 +4607,8 @@ function formatRam(total, free) {
 
 function countCommands() {
     try {
-        const caseFileContent = fs.readFileSync(__filename).toString();
+        if (!global._caseFileContent) global._caseFileContent = fs.readFileSync(__filename).toString();
+      const caseFileContent = global._caseFileContent;
         // Count all unique case statements
         const commandRegex = /case ['"]([^'"]+)['"]:/g;
         const matches = [...caseFileContent.matchAll(commandRegex)];
@@ -4670,7 +4652,8 @@ function getLagosTime() {
 }
 
 // FIXED: Changed variable name from "penis" to avoid issues
-const caseFileContent = fs.readFileSync(__filename).toString();
+if (!global._caseFileContent) global._caseFileContent = fs.readFileSync(__filename).toString();
+const caseFileContent = global._caseFileContent;
 const matches = caseFileContent.match(/case '[^']+'(?!.*case '[^']+')/g) || [];
 const caseCount = matches.length;
 const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
