@@ -89,6 +89,15 @@ async function startWorker() {
         svc.getActiveBotSessions().catch(() => []),
         svc.getAllActiveLinkedNumbers().catch(() => [])
       ]);
+      // 🛡️ SAFETY GUARD: if DB returned 0 linked numbers, it's a DB blip —
+      // killing every active bot would be catastrophic, so skip this cycle.
+      if (!linkedNumbers || linkedNumbers.length === 0) {
+        console.log(chalk.yellow('[Worker] Auto-disconnect skipped — DB returned 0 linked numbers (likely DB issue)'));
+        return;
+      }
+      // 🛡️ SAFETY GUARD: if activeSessions is empty, nothing to check
+      if (!activeSessions || activeSessions.length === 0) return;
+
       const linkedSet = new Set(linkedNumbers.map(n => String(n).replace(/[^0-9]/g, '')));
       for (const num of activeSessions) {
         const clean = String(num).replace(/[^0-9]/g, '');
