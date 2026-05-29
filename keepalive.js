@@ -131,16 +131,15 @@ function isBotProcess() {
     return typeof global.stoppedBots !== 'undefined';
 }
 
-// ── Scheduled bot restart ─────────────────────────────────────────────────────
-// Bot ko har 30 min baad gracefully restart karo taake memory leaks aur
-// dead WhatsApp connections accumulate na hon. PM2 autorestart: true hai
-// is liye process.exit(0) ke baad PM2 immediately restart kar deta hai.
+// ── Scheduled bot restart — DISABLED ─────────────────────────────────────────
+// SPEED FIX: 30-min auto-restart permanently removed.
+// process.exit(0) every 30min was causing:
+//   → bot reconnects to WhatsApp after every restart
+//   → first command after idle period takes 30-60 seconds
+//   → users experience "bot slow after long gap" problem
+// The healthCheckInterval in pair.js already handles dead connections properly.
 function scheduledBotRestart() {
-    if (!isBotProcess()) return; // web server mein restart mat karo
-    console.log('[KeepAlive] 🔁 30-min scheduled restart — bot gracefully restarting...');
-    setTimeout(() => {
-        process.exit(0); // PM2 will auto-restart
-    }, 2000);
+    // intentionally disabled — do NOT restart the bot on a timer
 }
 
 function startKeepAlive() {
@@ -156,15 +155,12 @@ function startKeepAlive() {
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 
-    // Bot restart every 30 min — sirf bot process mein
-    if (isBotProcess()) {
-        setInterval(scheduledBotRestart, 30 * 60 * 1000);
-        console.log('[KeepAlive] 🔁 Bot auto-restart: every 30 min');
-    }
+    // SPEED FIX: auto-restart removed — bot runs continuously, no cold-start delays
+    // (was: setInterval(scheduledBotRestart, 30 * 60 * 1000))
 
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 30 min`);
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min (no auto-restart)`);
     } else {
         console.log('[KeepAlive] ⚠️  Started but NO APP_URL detected.');
         console.log('[KeepAlive] 👉 Heroku pe: heroku config:set APP_URL=https://your-app.herokuapp.com');
