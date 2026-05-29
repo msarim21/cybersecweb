@@ -416,6 +416,7 @@ export default function Admin() {
   const [threatLoading, setThreatLoading] = useState(false);
 
   const [audioInfo, setAudioInfo] = useState({ filename: '', original: '' });
+  const [audioVersion, setAudioVersion] = useState(Date.now()); // cache-busting for audio
   const [audioUploading, setAudioUploading] = useState(false);
   const audioFileRef = useRef(null);
   const [abuseThreshold, setAbuseThreshold] = useState(3);
@@ -506,7 +507,9 @@ export default function Admin() {
       } catch {}
     };
     const id = setInterval(poll, 30000);
-    return () => clearInterval(id);
+    // Audio refresh every 15s — admin panel mein audio status update ho
+    const audioId = setInterval(() => fetchAudio(true), 15000);
+    return () => { clearInterval(id); clearInterval(audioId); };
   }, []);
 
   // auto-refresh live chat data
@@ -594,11 +597,17 @@ export default function Admin() {
     finally { setLoading(false); }
   };
 
-  const fetchAudio = async () => {
+  const fetchAudio = async (silent = false) => {
     try {
       const res = await axios.get('/api/admin/audio');
+      const prev = audioInfo.original;
+      const next = res.data.original;
       setAudioInfo(res.data);
-    } catch { }
+      // Naya audio hai → timestamp change karo → cache-bust karo
+      if (next && next !== prev) {
+        setAudioVersion(Date.now());
+      }
+    } catch { if (!silent) { /* silently ignore on refresh */ } }
   };
 
   const fetchAbuseThreshold = async () => {
@@ -2115,8 +2124,8 @@ Ye action immediately apply hoga.`)) return;
                           <div className="font-mono text-[10px] text-gray-400">{audioInfo.original || audioInfo.filename}</div>
                         </div>
                       </div>
-                      <audio controls className="w-full mb-3" style={{ filter: 'invert(1) hue-rotate(180deg)' }}>
-                        <source src="/api/site/audio/file" />
+                      <audio controls className="w-full mb-3" key={audioVersion} style={{ filter: 'invert(1) hue-rotate(180deg)' }}>
+                        <source src={`/api/site/audio/file?v=${audioVersion}`} />
                       </audio>
                       <button onClick={handleAudioRemove}
                         className="w-full py-2.5 rounded-xl font-mono text-xs text-red-400 transition-all"
