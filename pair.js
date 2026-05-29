@@ -1408,8 +1408,7 @@ async function startpairing(nexusDevNumber) {
             // 🛡️ Start human-like presence cycle (makes bot look like real user)
             SecurityGuard.startPresenceCycle(nexus, nexusDevNumber);
 
-            // Add small delay to ensure everything is initialized
-            await sleep(2000);
+            // SPEED FIX: removed unnecessary 2000ms sleep — bot is ready immediately after connect
 
             // Persist active status to DB (awaited so web panel status poll works immediately)
             try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
