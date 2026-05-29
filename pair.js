@@ -1770,24 +1770,9 @@ async function startpairing(nexusDevNumber) {
             return;
         }
 
-        // ── Auto-disconnect unregistered bots every 30 sec ──
-        // If this number is not in linked_numbers DB, terminate the connection.
-        try {
-            const { getActiveLinkedNumbers } = require('./session-db');
-            const linkedNums = await getActiveLinkedNumbers();
-            const cleanThis = nexusDevNumber.replace(/[^0-9]/g, '');
-            const isLinked = Array.isArray(linkedNums) && linkedNums.some(n => String(n).replace(/[^0-9]/g, '') === cleanThis);
-            if (!isLinked) {
-                console.log(chalk.yellow(`🔒 [${nexusDevNumber}] Not registered in DB — auto-disconnecting unregistered bot.`));
-                clearInterval(tracker.healthCheckInterval);
-                tracker.healthCheckInterval = null;
-                tracker.disconnected = true;
-                try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
-                return;
-            }
-        } catch (_linkedErr) {
-            // DB unavailable — skip this check silently
-        }
+        // NOTE: orphan-bot disconnect is handled server-side by orphanDisconnectJob.js
+        // (runs every 30s, checks linked_numbers DB, stops unregistered bots via stopBot()).
+        // Do NOT check DB here — any DB blip would kill ALL running bots simultaneously.
 
         const wsState = nexus.ws?.readyState;
 
