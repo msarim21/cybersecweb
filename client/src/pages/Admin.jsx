@@ -669,18 +669,25 @@ export default function Admin() {
     if (!file) return toast.error('Please select an audio file.');
     if (file.size > 10 * 1024 * 1024) return toast.error('Audio file too large. Max size: 10MB.');
     setAudioUploading(true);
+    const uploadToast = toast.loading(`Uploading "${file.name}"… please wait, large files take a moment.`);
     try {
       const fd = new FormData();
       fd.append('audio', file);
       const res = await axios.post('/api/admin/audio', fd, {
-        timeout: 60000,
+        timeout: 5 * 60 * 1000, // 5 minutes — large audio + DB write ke liye
+        onUploadProgress: (e) => {
+          if (e.total) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            toast.loading(`Uploading… ${pct}%`, { id: uploadToast });
+          }
+        },
       });
-      toast.success('Audio uploaded successfully!');
+      toast.success('Audio uploaded successfully!', { id: uploadToast });
       setAudioInfo({ filename: res.data.filename, original: file.name });
       if (audioFileRef.current) audioFileRef.current.value = '';
     } catch (err) {
       const msg = err.response?.data?.error || err.message || 'Upload failed';
-      toast.error(msg);
+      toast.error(msg, { id: uploadToast });
     } finally { setAudioUploading(false); }
   };
 
