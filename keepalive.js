@@ -108,14 +108,14 @@ function startKeepAlive() {
     _timer = setInterval(selfPing, 14 * 60 * 1000);
 
     // Every 20 min: silently reconnect any dead WhatsApp sessions
-    setInterval(refreshBotSessions, 20 * 60 * 1000);
+    setInterval(refreshBotSessions, 5 * 60 * 1000);
 
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min, bot refresh every 20 min`);
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min, bot refresh every 5 min`);
     } else {
         console.log('[KeepAlive] ⚠️  Started but NO APP_URL detected.');
         console.log('[KeepAlive] 👉 Heroku pe: heroku config:set APP_URL=https://your-app.herokuapp.com');
