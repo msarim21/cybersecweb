@@ -57,7 +57,8 @@ const FormData = require('form-data');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 const { smsg, tanggal, getTime, isUrl, sleep, clockString, runtime, fetchJson, getBuffer, jsonformat, format, parseMention, getRandom, getGroupAdmins, generateProfilePicture } = require('./allfunc/storage')
 const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, addExif } = require('./allfunc/exif.js')
-const richpic = fs.readFileSync(`./media/image1.jpg`)
+let richpic = Buffer.alloc(0);
+try { richpic = fs.readFileSync(`./media/image1.jpg`); } catch(_e) { console.warn("[case.js] media/image1.jpg missing - richpic disabled"); }
 const numberEmojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣"];
 
 // ============ CREATE REQUIRED DIRECTORIES ============
