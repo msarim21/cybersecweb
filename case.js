@@ -13050,6 +13050,12 @@ case 'public': {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'public' }, null, 2));
     } catch (e) {}
+    // Save to DB so mode survives Heroku restarts
+    try {
+        const { setBotMode } = require('./server/db-service');
+        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
+        setBotMode(_modeNum, 'public').catch(() => {});
+    } catch (_) {}
     reply("🌍 *Public mode activated*\nEveryone can use the bot");
 }
 break;
@@ -13062,6 +13068,12 @@ case 'self': {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'self' }, null, 2));
     } catch (e) {}
+    // Save to DB so mode survives Heroku restarts
+    try {
+        const { setBotMode } = require('./server/db-service');
+        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
+        setBotMode(_modeNum, 'self').catch(() => {});
+    } catch (_) {}
     reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
 }
 break;

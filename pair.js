@@ -16,7 +16,7 @@ const {
 
 // Persist session state to PostgreSQL so restarts can reload sessions
 const { updateSession, removeLinkedNumber, saveCredsToDb, restoreCredsFromDb } = require('./session-db');
-const { addNumber } = require('./server/db-service');
+const { addNumber, getBotMode, setBotMode } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
@@ -50,6 +50,22 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
   
 // Define sleep function directly here to avoid import issues
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// ── Baileys version cache — fetch once at startup, reuse on every reconnect ──
+// fetchLatestBaileysVersion() makes a network call to GitHub which can take 2-5s on Heroku
+let _baileysVersionCache = null;
+async function getCachedBaileysVersion() {
+    if (_baileysVersionCache) return _baileysVersionCache;
+    try {
+        _baileysVersionCache = await fetchLatestBaileysVersion();
+        console.log('[Baileys] ✅ Version cached:', _baileysVersionCache.version);
+    } catch (_e) {
+        // Fallback to a known stable version if fetch fails
+        _baileysVersionCache = { version: [2, 3000, 1023267588], isLatest: false };
+        console.log('[Baileys] ⚠️  Using fallback version (fetch failed)');
+    }
+    return _baileysVersionCache;
+}
 
 // ────────────────────────────────────────────────────────
 // 🛡️  MILITARY SECURITY GUARD  — Anti-Restriction / Anti-Detection Layer
@@ -475,7 +491,7 @@ async function startpairing(nexusDevNumber) {
     tracker.disconnected = false;
     tracker.lastActivity = Date.now();
 
-    const { version, isLatest } = await fetchLatestBaileysVersion();
+    const { version, isLatest } = await getCachedBaileysVersion();
     
     // Ensure session directory exists
     const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
@@ -1102,16 +1118,23 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode from saved settings
+    // Restore public/private mode — DB first (survives Heroku restarts), file fallback
     try {
-        const _modeFile = './database/bot_mode.json';
-        const _fs = require('fs');
-        if (_fs.existsSync(_modeFile)) {
-            const _savedMode = JSON.parse(_fs.readFileSync(_modeFile, 'utf-8'));
-            nexus.public = _savedMode.mode !== 'self';
+        const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+        const dbMode = await getBotMode(cleanNum).catch(() => null);
+        if (dbMode) {
+            nexus.public = dbMode !== 'self';
         } else {
-            nexus.public = true;
+            // File fallback for numbers not yet in DB
+            const _modeFile = './database/bot_mode.json';
+            if (require('fs').existsSync(_modeFile)) {
+                const _savedMode = JSON.parse(require('fs').readFileSync(_modeFile, 'utf-8'));
+                nexus.public = _savedMode.mode !== 'self';
+            } else {
+                nexus.public = true;
+            }
         }
+        console.log(chalk.cyan(`[pair] 📋 Mode restored for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE'}`));
     } catch (e) {
         nexus.public = true;
     }
@@ -2063,6 +2086,11 @@ module.exports.stopBot = function stopBot(number) {
         if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
     } catch (_) {}
 };
+
+// ── Expose tracker to index.js health check (25-min reconnect) ────────────
+module.exports._getTracker = function() { return rentbotTracker; };
+// Also set on global so index.js can access without circular require issues
+global._rentbotTracker = rentbotTracker;
 
 // ── clearSession: wipe session files so number cannot auto-reconnect ──────
 // After calling this, the number MUST go through fresh pairing to reconnect.

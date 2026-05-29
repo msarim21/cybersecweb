@@ -154,6 +154,36 @@ function launchBot() {
     // 24/7 keep-alive — prevents hosting platform from sleeping the bot
     try { startKeepAlive(); } catch (e) {}
 
+    // ── Silent 25-min connection health check ────────────────────────────────
+    // Silently reconnects any dead/dropped connections without notifying users.
+    // Runs every 25 minutes — well under Heroku's 30-min sleep threshold.
+    setInterval(async () => {
+        try {
+            const pairMod = require('./pair');
+            const tracker = global._rentbotTracker || pairMod._getTracker?.();
+            if (!tracker) return;
+            const now = Date.now();
+            const STALE_THRESHOLD = 20 * 60 * 1000; // 20 min no activity = stale
+            for (const [num, t] of tracker) {
+                if (t.disconnected) continue;
+                const lastActivity = t.lastActivity || t.lastWAMessage || 0;
+                const isStale = (now - lastActivity) > STALE_THRESHOLD;
+                const wsState = t.connection?.ws?.readyState;
+                const isDead = wsState !== undefined && wsState !== 1 && wsState !== 0; // not OPEN or CONNECTING
+                if (isStale || isDead) {
+                    console.log(chalk.yellow(`[HealthCheck] 🔄 Silently reconnecting ${num} (stale=${isStale}, dead=${isDead})`));
+                    try {
+                        if (t.healthCheckInterval) { clearInterval(t.healthCheckInterval); t.healthCheckInterval = null; }
+                        if (t.proactiveReconnectTimer) { clearTimeout(t.proactiveReconnectTimer); t.proactiveReconnectTimer = null; }
+                        t.connection?.ws?.terminate?.();
+                    } catch (_) {}
+                }
+            }
+        } catch (e) {
+            // Silent — never crash the bot over health check
+        }
+    }, 25 * 60 * 1000); // every 25 minutes
+
     let telegramLoaded = false;
     let whatsappLoaded = false;
 

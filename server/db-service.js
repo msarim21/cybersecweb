@@ -602,6 +602,51 @@ async function getActiveBotSessions() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// BOT MODE (public / private) — persisted in DB so Heroku restarts keep it
+// ════════════════════════════════════════════════════════════════════════════
+
+async function setBotMode(number, mode) {
+  const clean = String(number).replace(/[^0-9]/g, '') || 'global';
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      { $set: { botMode: mode } },
+      { upsert: true }
+    );
+    return;
+  }
+  // Ensure column exists (safe — only runs once, ignored if already there)
+  try {
+    await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'public'`);
+  } catch (_) {}
+  await pg().query(
+    `INSERT INTO bot_sessions (number, bot_mode, status, last_active)
+     VALUES ($1, $2, 'active', NOW())
+     ON CONFLICT (number) DO UPDATE SET bot_mode = $2, last_active = NOW()`,
+    [clean, mode]
+  ).catch(() => {});
+}
+
+async function getBotMode(number) {
+  const clean = String(number).replace(/[^0-9]/g, '') || 'global';
+  try {
+    if (isMongoMode()) {
+      const { BotSession } = M();
+      const doc = await BotSession.findOne({ number: clean }).lean();
+      return (doc && doc.botMode) ? doc.botMode : 'public';
+    }
+    const { rows } = await pg().query(
+      `SELECT bot_mode FROM bot_sessions WHERE number = $1`,
+      [clean]
+    );
+    return (rows.length && rows[0].bot_mode) ? rows[0].bot_mode : 'public';
+  } catch (_) {
+    return 'public';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // SITE SETTINGS (for audio and other config)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -833,6 +878,7 @@ module.exports = {
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   upsertBotSession, getActiveBotSessions,
+  setBotMode, getBotMode,
   getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds, deleteSessionCreds,
   getSiteSetting, setSiteSetting,
