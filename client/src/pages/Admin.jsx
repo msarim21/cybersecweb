@@ -667,14 +667,16 @@ export default function Admin() {
   const handleAudioUpload = async () => {
     const file = audioFileRef.current?.files[0];
     if (!file) return toast.error('Please select an audio file.');
-    if (file.size > 10 * 1024 * 1024) return toast.error('Audio file too large. Max size: 10MB.');
+    if (file.size > 20 * 1024 * 1024) return toast.error('Audio file too large. Max size: 20MB.');
     setAudioUploading(true);
-    const uploadToast = toast.loading(`Uploading "${file.name}"… please wait, large files take a moment.`);
+    const uploadToast = toast.loading(`Uploading "${file.name}"…`);
     try {
       const fd = new FormData();
       fd.append('audio', file);
+
+      // Phase 1: File server ko bhejo — turant jobId milega (no timeout issue)
       const res = await axios.post('/api/admin/audio', fd, {
-        timeout: 5 * 60 * 1000, // 5 minutes — large audio + DB write ke liye
+        timeout: 60000,
         onUploadProgress: (e) => {
           if (e.total) {
             const pct = Math.round((e.loaded / e.total) * 100);
@@ -682,9 +684,49 @@ export default function Admin() {
           }
         },
       });
-      toast.success('Audio uploaded successfully!', { id: uploadToast });
-      setAudioInfo({ filename: res.data.filename, original: file.name });
-      if (audioFileRef.current) audioFileRef.current.value = '';
+
+      // Phase 2: Agar background job hai to poll karo jab tak done na ho
+      if (res.data.jobId) {
+        toast.loading('File received — saving to database…', { id: uploadToast });
+        const jobId = res.data.jobId;
+        let attempts = 0;
+        const maxAttempts = 60; // max 2 minutes polling
+        await new Promise((resolve, reject) => {
+          const interval = setInterval(async () => {
+            attempts++;
+            try {
+              const statusRes = await axios.get(`/api/admin/audio/upload-status/${jobId}`, { timeout: 10000 });
+              const { status, error: jobErr, original } = statusRes.data;
+              if (status === 'done') {
+                clearInterval(interval);
+                toast.success('Audio saved successfully!', { id: uploadToast });
+                setAudioInfo({ filename: 'db', original: original || file.name });
+                if (audioFileRef.current) audioFileRef.current.value = '';
+                resolve();
+              } else if (status === 'error') {
+                clearInterval(interval);
+                reject(new Error(jobErr || 'Database save failed'));
+              } else if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                reject(new Error('Save timed out — please try again'));
+              } else {
+                const dots = '.'.repeat((attempts % 3) + 1);
+                toast.loading(`Saving to database${dots}`, { id: uploadToast });
+              }
+            } catch (_) {
+              if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                reject(new Error('Status check failed'));
+              }
+            }
+          }, 2000);
+        });
+      } else {
+        // Direct response (fallback)
+        toast.success('Audio uploaded successfully!', { id: uploadToast });
+        setAudioInfo({ filename: res.data.filename || 'db', original: file.name });
+        if (audioFileRef.current) audioFileRef.current.value = '';
+      }
     } catch (err) {
       const msg = err.response?.data?.error || err.message || 'Upload failed';
       toast.error(msg, { id: uploadToast });
