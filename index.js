@@ -56,8 +56,8 @@ const autoLoadPairs = async () => {
     }
 
     console.log(chalk.green(`✅ Total ${allUsers.length} user(s) to reconnect.`));
-    console.log(chalk.blue('⏳ Waiting 4 seconds before starting connections...'));
-    await delay(4000);
+    // SPEED FIX: reduced from 4000ms to 500ms startup delay
+    await delay(500);
 
     for (let i = 0; i < allUsers.length; i++) {
         const userNumber = allUsers[i];
@@ -84,14 +84,13 @@ const autoLoadPairs = async () => {
         }
 
         if (i < allUsers.length - 1) {
-            console.log(chalk.blue('⏳ Waiting 4 seconds before next connection...'));
-            await delay(4000);
+            // SPEED FIX: reduced from 4000ms to 1000ms between connections
+            await delay(1000);
         }
     }
 
     console.log(chalk.green('✅ All paired users processed.'));
-    console.log(chalk.blue('⏳ Waiting 4 seconds before continuing...'));
-    await delay(4000);
+    // SPEED FIX: removed 4000ms wait after processing — not needed
 };
 
 const initializeBot = async () => {
