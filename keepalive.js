@@ -100,22 +100,46 @@ async function refreshBotSessions() {
     } catch (_) {}
 }
 
+// ── Bot process detector ──────────────────────────────────────────────────────
+// global.stoppedBots is set only in the bot's index.js — not in the web server.
+function isBotProcess() {
+    return typeof global.stoppedBots !== 'undefined';
+}
+
+// ── Scheduled bot restart ─────────────────────────────────────────────────────
+// Bot ko har 30 min baad gracefully restart karo taake memory leaks aur
+// dead WhatsApp connections accumulate na hon. PM2 autorestart: true hai
+// is liye process.exit(0) ke baad PM2 immediately restart kar deta hai.
+function scheduledBotRestart() {
+    if (!isBotProcess()) return; // web server mein restart mat karo
+    console.log('[KeepAlive] 🔁 30-min scheduled restart — bot gracefully restarting...');
+    setTimeout(() => {
+        process.exit(0); // PM2 will auto-restart
+    }, 2000);
+}
+
 function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Ping every 14 min — safe margin before Heroku 30-min sleep threshold
+    // Website ping every 14 min — Heroku sleep threshold se pehle
     _timer = setInterval(selfPing, 14 * 60 * 1000);
 
-    // Every 20 min: silently reconnect any dead WhatsApp sessions
-    setInterval(refreshBotSessions, 5 * 60 * 1000);
+    // Every 10 min: silently reconnect any dead WhatsApp sessions
+    setInterval(refreshBotSessions, 10 * 60 * 1000);
 
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 
+    // Bot restart every 30 min — sirf bot process mein
+    if (isBotProcess()) {
+        setInterval(scheduledBotRestart, 30 * 60 * 1000);
+        console.log('[KeepAlive] 🔁 Bot auto-restart: every 30 min');
+    }
+
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min, bot refresh every 5 min`);
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 30 min`);
     } else {
         console.log('[KeepAlive] ⚠️  Started but NO APP_URL detected.');
         console.log('[KeepAlive] 👉 Heroku pe: heroku config:set APP_URL=https://your-app.herokuapp.com');
