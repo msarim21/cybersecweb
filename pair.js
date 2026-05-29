@@ -1317,39 +1317,56 @@ async function startpairing(nexusDevNumber) {
             }
 
             if (reason === 405) {
-                console.log(chalk.red.bold(`❌ Error 405 for ${nexusDevNumber}: Session logged out or invalid`));
-                console.log(chalk.yellow(`🗑️ Force cleaning session for ${nexusDevNumber}...`));
-                updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                forceCleanupSession(nexusDevNumber);
-                
-                tracker.disconnected = true;
-                tracker.connection = null;
-                
-                console.log(chalk.red(`🚫 ${nexusDevNumber} will NOT reconnect. User must re-pair.`));
-                return;
-            } else if (reason === 440) {
-                if (tracker.retryCount < MAX_RETRIES_440) {
-                    console.warn(chalk.yellow(`⚠️ Error 440 for ${nexusDevNumber}. Retry ${tracker.retryCount}/${MAX_RETRIES_440}...`));
-                    await sleep(5000);
+                // ♻️ 405 can be a temporary WA server issue — retry 10 times before giving up
+                tracker.err405Retry = (tracker.err405Retry || 0) + 1;
+                if (tracker.err405Retry <= 10) {
+                    const d405 = Math.min(tracker.err405Retry * 15000, 5 * 60 * 1000);
+                    console.warn(chalk.yellow(`⚠️ Error 405 for ${nexusDevNumber} — retry #${tracker.err405Retry}/10 in ${d405/1000}s...`));
+                    await sleep(d405);
                     queuePairing(nexusDevNumber);
                 } else {
-                    console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} attempts for ${nexusDevNumber}`));
+                    console.log(chalk.red.bold(`❌ Error 405 for ${nexusDevNumber}: 10 retries exhausted — session invalid`));
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
                     forceCleanupSession(nexusDevNumber);
                     tracker.disconnected = true;
+                    tracker.connection = null;
                 }
+                return;
+            } else if (reason === 440) {
+                // ♻️ 440 = connection replaced (another WA client opened) — ALWAYS retry, no limit
+                tracker.err440Retry = (tracker.err440Retry || 0) + 1;
+                const d440 = Math.min(tracker.err440Retry * 10000, 5 * 60 * 1000); // up to 5-min gap
+                console.warn(chalk.yellow(`⚠️ Error 440 for ${nexusDevNumber} — retry #${tracker.err440Retry} in ${d440/1000}s...`));
+                await sleep(d440);
+                queuePairing(nexusDevNumber);
             } else if (reason === DisconnectReason.badSession) {
-                console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber}`));
-                updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                removeLinkedNumber(nexusDevNumber).catch(() => {});
-                forceCleanupSession(nexusDevNumber);
-                tracker.disconnected = true;
+                // ♻️ badSession can be a temporary Baileys parse error — retry 3 times
+                tracker.badSessionRetry = (tracker.badSessionRetry || 0) + 1;
+                if (tracker.badSessionRetry <= 3) {
+                    console.warn(chalk.yellow(`⚠️ Bad session for ${nexusDevNumber} — retry #${tracker.badSessionRetry}/3 in 15s...`));
+                    await sleep(15000);
+                    queuePairing(nexusDevNumber);
+                } else {
+                    console.log(chalk.red(`❌ Bad session for ${nexusDevNumber} — 3 retries done, cleaning`));
+                    updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                    removeLinkedNumber(nexusDevNumber).catch(() => {});
+                    forceCleanupSession(nexusDevNumber);
+                    tracker.disconnected = true;
+                }
             } else if (reason === DisconnectReason.loggedOut) {
-                console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
-                updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                removeLinkedNumber(nexusDevNumber).catch(() => {});
-                forceCleanupSession(nexusDevNumber);
-                tracker.disconnected = true;
+                // ♻️ loggedOut can be a false positive from WA — retry 5 times before giving up
+                tracker.logoutRetry = (tracker.logoutRetry || 0) + 1;
+                if (tracker.logoutRetry <= 5) {
+                    console.warn(chalk.yellow(`⚠️ Logged-out signal for ${nexusDevNumber} — retry #${tracker.logoutRetry}/5 in 20s (may be false positive)...`));
+                    await sleep(20000);
+                    queuePairing(nexusDevNumber);
+                } else {
+                    console.log(chalk.bgRed(`❌ ${nexusDevNumber} truly logged out — cleaning session`));
+                    updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                    removeLinkedNumber(nexusDevNumber).catch(() => {});
+                    forceCleanupSession(nexusDevNumber);
+                    tracker.disconnected = true;
+                }
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
                        reason === DisconnectReason.timedOut) {
@@ -1378,6 +1395,10 @@ async function startpairing(nexusDevNumber) {
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
+            tracker.err405Retry = 0;
+            tracker.err440Retry = 0;
+            tracker.badSessionRetry = 0;
+            tracker.logoutRetry = 0;
             tracker.lastActivity = Date.now();
 
             // Define userJid once here — used by setTimeout callbacks below
