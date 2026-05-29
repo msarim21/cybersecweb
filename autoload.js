@@ -133,10 +133,22 @@ async function buildUserList() {
     }
   } catch (_) {}
 
-  // ── Primary: load from DB (works even after Heroku wipe) ────────────────
+  // ── Primary: load from DB — retry 3 times if 0 returned (DB slow on startup) ──
   try {
     const { getActiveLinkedNumbers } = require('./session-db');
-    const dbNumbers = await getActiveLinkedNumbers();
+    let dbNumbers = [];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        dbNumbers = await getActiveLinkedNumbers();
+      } catch (e) {
+        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt ${attempt}/3: ${e.message}`));
+      }
+      if (dbNumbers && dbNumbers.length > 0) break;
+      if (attempt < 3) {
+        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt ${attempt}/3) — retrying in 6s...`));
+        await delay(6000);
+      }
+    }
 
     if (dbNumbers && dbNumbers.length > 0) {
       const jids = dbNumbers
@@ -154,7 +166,7 @@ async function buildUserList() {
       console.log(chalk.green(`[AutoLoad] 📦 DB source: found ${jids.length} linked numbers`));
       return jids;
     }
-    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers — falling back to filesystem'));
+    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 3 attempts — falling back to filesystem'));
   } catch (err) {
     console.error(`[AutoLoad] ⚠️  DB query failed (${err.message}) — falling back to filesystem`);
   }
