@@ -483,6 +483,11 @@ const upload = multer({
 
 // POST /api/admin/audio — upload & store in DB
 router.post('/audio', (req, res, next) => {
+  // ── Timeout disable: large audio files DB mein save hone mein waqt lagta hai ──
+  req.setTimeout(0);
+  if (req.socket) req.socket.setTimeout(0);
+  res.setTimeout(0);
+
   // Multer errors (size/type) ko properly catch karo
   upload.single('audio')(req, res, (err) => {
     if (err) {
@@ -497,9 +502,12 @@ router.post('/audio', (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
     const base64 = req.file.buffer.toString('base64');
-    await setSiteSetting('site_audio_data',     base64);
-    await setSiteSetting('site_audio_mimetype', req.file.mimetype || 'audio/mpeg');
-    await setSiteSetting('site_audio_original', req.file.originalname);
+    // ── Parallel DB writes — 3 alag awaits ki jagah ek saath save karo ──
+    await Promise.all([
+      setSiteSetting('site_audio_data',     base64),
+      setSiteSetting('site_audio_mimetype', req.file.mimetype || 'audio/mpeg'),
+      setSiteSetting('site_audio_original', req.file.originalname),
+    ]);
     res.json({ message: 'Audio uploaded successfully.', filename: 'db', original: req.file.originalname });
   } catch (err) {
     console.error('[Audio Upload] Error:', err.message);
