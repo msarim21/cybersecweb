@@ -4108,15 +4108,7 @@ const example = (teks) => {
 let antilinkStatus = {};
 if (!global.banned) global.banned = {} // stores banned users JIDs
 
-if (getSetting(m.sender, "autobio", true)) {
-    // SPEED FIX: throttle autobio — call once per 5 min max, NOT on every single message
-    // Calling updateProfileStatus on every message floods WhatsApp → rate-limit → 2min delay
-    const _bioNow = Date.now();
-    if (!global._lastBioUpdate || (_bioNow - global._lastBioUpdate) > 5 * 60 * 1000) {
-        global._lastBioUpdate = _bioNow;
-        devtrust.updateProfileStatus(`CYBER by GAME CHANGER`).catch(_ => _);
-    }
-}
+// autobio feature permanently removed — caused WhatsApp rate-limiting & 2min command delay
 
 if (isCmd) {
     console.log(chalk.black(chalk.bgWhite('[ CYBER ]')), chalk.black(chalk.bgGreen(new Date)), chalk.black(chalk.bgBlue(body || m.mtype)) + '\n' + chalk.magenta('=> From'), chalk.green(pushname), chalk.yellow(m.sender) + '\n' + chalk.blueBright('=>In'), chalk.green(m.isGroup ? pushname : 'Private Chat', m.chat))
@@ -5212,7 +5204,6 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}antidelete
 │❖ ${prefix}antiedit
 │❖ ${prefix}anticall
-│❖ ${prefix}autobio
 │❖ ${prefix}autoreact
 │❖ ${prefix}autoread
 │❖ ${prefix}autorecording
@@ -6666,7 +6657,6 @@ case 'CYBERowner': {
 │❖ ${prefix}antidelete
 │❖ ${prefix}antiedit
 │❖ ${prefix}anticall
-│❖ ${prefix}autobio
 │❖ ${prefix}autoreact
 │❖ ${prefix}autoread
 │❖ ${prefix}autorecording
@@ -8761,18 +8751,7 @@ case 'getsudo': case 'listsudo': {
 break;
 
 case "autobio": {
-    if (!isCreator && !isSudo) 
-        return reply('🔒 *Owner/Sudo only*');
-    
-    if (!args[0]) return reply("⚙️ *Usage:* autobio on/off");
-    
-    if (args[0].toLowerCase() === "on") {
-        setSetting(m.sender, "autobio", true);
-        reply("✅ *Auto bio enabled* • Status will update automatically");
-    } else if (args[0].toLowerCase() === "off") {
-        setSetting(m.sender, "autobio", false);
-        reply("❌ *Auto bio disabled*");
-    } else reply("⚙️ *Usage:* autobio on/off");
+    reply("⚠️ *autobio command permanently disabled* — it was causing 2 minute reply delays.");
 }
 break;
 
