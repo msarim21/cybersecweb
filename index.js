@@ -28,22 +28,30 @@ const autoLoadPairs = async () => {
     console.log(chalk.cyan('🔄 Auto-loading all paired users...'));
 
     // ── Only reconnect numbers that are actively linked in the web panel ────────
+    // Retry up to 3 times — DB may still be connecting right after restart
     let allUsers = [];
-    try {
-        const webLinked = await getActiveLinkedNumbers();
-        allUsers = (webLinked || []).map(n => {
-            const clean = String(n).replace(/[^0-9]/g, '');
-            return clean ? `${clean}@s.whatsapp.net` : null;
-        }).filter(Boolean);
-        if (allUsers.length > 0) {
-            console.log(chalk.green(`🌐 Found ${allUsers.length} web-linked number(s) to reconnect.`));
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const webLinked = await getActiveLinkedNumbers();
+            allUsers = (webLinked || []).map(n => {
+                const clean = String(n).replace(/[^0-9]/g, '');
+                return clean ? `${clean}@s.whatsapp.net` : null;
+            }).filter(Boolean);
+            if (allUsers.length > 0) {
+                console.log(chalk.green(`🌐 Found ${allUsers.length} web-linked number(s) to reconnect.`));
+                break; // success — stop retrying
+            }
+        } catch (e) {
+            console.log(chalk.yellow(`⚠️  Could not read web-linked numbers (attempt ${attempt}/3): ${e.message}`));
         }
-    } catch (e) {
-        console.log(chalk.yellow(`⚠️  Could not read web-linked numbers: ${e.message}`));
+        if (allUsers.length === 0 && attempt < 3) {
+            console.log(chalk.yellow(`⏳ DB returned 0 numbers (attempt ${attempt}/3) — retrying in 8s...`));
+            await delay(8000);
+        }
     }
 
     if (allUsers.length === 0) {
-        console.log(chalk.yellow('ℹ️  No web-linked active numbers found. Nothing to reconnect.'));
+        console.log(chalk.yellow('ℹ️  No web-linked active numbers found after 3 attempts. Nothing to reconnect.'));
         return;
     }
 
