@@ -667,7 +667,7 @@ export default function Admin() {
   const handleAudioUpload = async () => {
     const file = audioFileRef.current?.files[0];
     if (!file) return toast.error('Please select an audio file.');
-    if (file.size > 20 * 1024 * 1024) return toast.error('Audio file too large. Max size: 20MB.');
+    if (file.size > 10 * 1024 * 1024) return toast.error('Audio file too large. Max size: 10MB.');
     setAudioUploading(true);
     try {
       const fd = new FormData();
@@ -2089,7 +2089,7 @@ Ye action immediately apply hoga.`)) return;
                           onClick={() => audioFileRef.current?.click()}>
                           <div className="text-3xl mb-2">🎵</div>
                           <div className="font-mono text-xs text-gray-400">Click to select audio file</div>
-                          <div className="font-mono text-[10px] text-gray-600 mt-1">MP3, WAV, OGG — Max 20MB</div>
+                          <div className="font-mono text-[10px] text-gray-600 mt-1">MP3, WAV, OGG — Max 10MB</div>
                           <input ref={audioFileRef} type="file" accept="audio/*" className="hidden"
                             onChange={e => e.target.files[0] && toast.success(`Selected: ${e.target.files[0].name}`)} />
                         </div>
