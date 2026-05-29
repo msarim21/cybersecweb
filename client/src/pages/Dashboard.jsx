@@ -116,12 +116,17 @@ const SiteAudioPlayer = ({ audioUrl }) => {
   const audioRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const startedRef = useRef(false);
 
   useEffect(() => {
+    setLoadError(false);
     if (!audioRef.current || !audioUrl) return;
-    audioRef.current.loop = true;
-    audioRef.current.volume = 0.4;
+    const el = audioRef.current;
+    el.loop = true;
+    el.volume = 0.4;
+    el.crossOrigin = 'anonymous';
+    el.preload = 'auto';
 
     const tryPlay = () => {
       if (startedRef.current) return;
@@ -136,7 +141,7 @@ const SiteAudioPlayer = ({ audioUrl }) => {
     };
 
     // Try autoplay first — if blocked, wait for first user interaction
-    audioRef.current.play()
+    el.play()
       .then(() => { startedRef.current = true; setPlaying(true); })
       .catch(() => {
         document.addEventListener('click', tryPlay);
@@ -167,7 +172,17 @@ const SiteAudioPlayer = ({ audioUrl }) => {
   const btnIcon  = !playing ? '▶' : muted ? '🔇' : '🔊';
   return (
     <div className="fixed bottom-20 lg:bottom-6 right-4 z-30 flex flex-col items-center gap-1">
-      <audio ref={audioRef} src={audioUrl} />
+      <audio
+        key={audioUrl}
+        ref={audioRef}
+        src={audioUrl}
+        crossOrigin="anonymous"
+        preload="auto"
+        onError={() => {
+          setLoadError(true);
+          console.error('[Audio] failed to load:', audioUrl);
+        }}
+      />
       <motion.button
         whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.94 }}
         onClick={toggle}
@@ -458,6 +473,7 @@ export default function Dashboard() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [upgradeLoading, setUpgradeLoading] = useState('');
   const [siteAudio, setSiteAudio] = useState({ filename: '', original: '' });
+  const [audioVersion, setAudioVersion] = useState(Date.now()); // cache-busting timestamp
   const [broadcast, setBroadcast] = useState(null);
   const [licenseKey, setLicenseKey] = useState('');
   const [chatMessages, setChatMessages] = useState([]);
@@ -475,9 +491,14 @@ export default function Dashboard() {
     const refreshInterval = setInterval(() => {
       fetchData(true); // silent refresh, no loading spinner
     }, 30000);
+    // Auto-refresh audio info every 30s — admin new audio upload karta hai to user panel pe bhi update ho
+    const audioRefreshInterval = setInterval(() => {
+      fetchAudio(true);
+    }, 30000);
     return () => {
       if (chatPollRef.current) clearInterval(chatPollRef.current);
       clearInterval(refreshInterval);
+      clearInterval(audioRefreshInterval);
     };
   }, []);
 
@@ -497,10 +518,16 @@ export default function Dashboard() {
     finally { if (!silent) setLoading(false); }
   };
 
-  const fetchAudio = async () => {
+  const fetchAudio = async (silent = false) => {
     try {
       const res = await axios.get('/api/site/audio');
+      const prev = siteAudio.original;
+      const next = res.data.original;
       setSiteAudio(res.data);
+      // Naya audio upload hua hai → timestamp change karo → cache-bust karo
+      if (next && next !== prev) {
+        setAudioVersion(Date.now());
+      }
     } catch { }
   };
 
@@ -617,7 +644,7 @@ export default function Dashboard() {
   const trialExpired = stats?.trialExpired;
   const trialExpiresAt = stats?.trialExpiresAt;
   const upgradeRequest = stats?.upgradeRequest;
-  const audioUrl = siteAudio.filename ? '/api/site/audio/file' : '';
+  const audioUrl = siteAudio.filename ? `/api/site/audio/file?v=${audioVersion}` : '';
 
   const canAddNumber = !trialExpired && (stats?.total ?? 0) < (stats?.limit ?? 1);
 
