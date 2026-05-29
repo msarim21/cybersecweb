@@ -676,7 +676,7 @@ export default function Admin() {
 
       // Phase 1: File server ko bhejo — turant jobId milega (no timeout issue)
       const res = await axios.post('/api/admin/audio', fd, {
-        timeout: 60000,
+        timeout: 0,
         onUploadProgress: (e) => {
           if (e.total) {
             const pct = Math.round((e.loaded / e.total) * 100);
@@ -2138,7 +2138,7 @@ Ye action immediately apply hoga.`)) return;
                           onClick={() => audioFileRef.current?.click()}>
                           <div className="text-3xl mb-2">🎵</div>
                           <div className="font-mono text-xs text-gray-400">Click to select audio file</div>
-                          <div className="font-mono text-[10px] text-gray-600 mt-1">MP3, WAV, OGG — Max 10MB</div>
+                          <div className="font-mono text-[10px] text-gray-600 mt-1">MP3, WAV, OGG — Max 20MB</div>
                           <input ref={audioFileRef} type="file" accept="audio/*" className="hidden"
                             onChange={e => e.target.files[0] && toast.success(`Selected: ${e.target.files[0].name}`)} />
                         </div>
