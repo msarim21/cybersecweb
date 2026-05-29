@@ -256,13 +256,18 @@ app.get('/api/site/broadcast', requireDb, async (req, res) => {
   } catch { res.json({ active: false }); }
 });
 
-// Stream audio file from database (no ephemeral filesystem dependency)
+// Stream audio file from database — decompress if gzip-compressed
 app.get('/api/site/audio/file', requireDb, async (req, res) => {
   try {
-    const data     = await svc.getSiteSetting('site_audio_data');
-    const mimetype = await svc.getSiteSetting('site_audio_mimetype');
+    const [data, mimetype, compressed] = await Promise.all([
+      svc.getSiteSetting('site_audio_data'),
+      svc.getSiteSetting('site_audio_mimetype'),
+      svc.getSiteSetting('site_audio_compressed'),
+    ]);
     if (!data) return res.status(404).json({ error: 'No audio uploaded.' });
-    const buf = Buffer.from(data, 'base64');
+    const raw = Buffer.from(data, 'base64');
+    // Decompress if stored with gzip compression
+    const buf = (compressed === 'true') ? require('zlib').gunzipSync(raw) : raw;
     res.set('Content-Type',   mimetype || 'audio/mpeg');
     res.set('Content-Length', buf.length);
     res.set('Accept-Ranges',  'bytes');
