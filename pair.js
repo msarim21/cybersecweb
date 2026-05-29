@@ -1074,19 +1074,22 @@ async function startpairing(nexusDevNumber) {
             } catch (_e) { /* silent fail — chatbot guard */ }
 
             // ── Save private chat to persistent list for .bcusers ──
+            // PERF FIX: use in-memory cache — avoids blocking readFileSync+writeFileSync on every DM
             try {
                 const _pcJid = nexusboijid.key?.remoteJid || '';
                 if (_pcJid && _pcJid.endsWith('@s.whatsapp.net')) {
                     const _pcFile = require('path').join(__dirname, 'database', 'private_chats.json');
                     const _pcFs = require('fs');
-                    let _pcList = {};
-                    if (_pcFs.existsSync(_pcFile)) {
-                        try { _pcList = JSON.parse(_pcFs.readFileSync(_pcFile, 'utf-8')); } catch(_e) { _pcList = {}; }
+                    // Load from disk once into memory; reuse on all subsequent messages
+                    if (!global._pcMemCache) {
+                        try { global._pcMemCache = _pcFs.existsSync(_pcFile) ? JSON.parse(_pcFs.readFileSync(_pcFile, 'utf-8')) : {}; }
+                        catch(_e) { global._pcMemCache = {}; }
                     }
-                    if (!_pcList[_pcJid]) {
+                    if (!global._pcMemCache[_pcJid]) {
                         const _pcName = nexusboijid.pushName || nexusboijid.key?.participant?.split('@')[0] || _pcJid.split('@')[0];
-                        _pcList[_pcJid] = { name: _pcName, lastSeen: Date.now() };
-                        _pcFs.writeFileSync(_pcFile, JSON.stringify(_pcList, null, 2));
+                        global._pcMemCache[_pcJid] = { name: _pcName, lastSeen: Date.now() };
+                        // Non-blocking async write — don't stall message handling
+                        _pcFs.promises.writeFile(_pcFile, JSON.stringify(global._pcMemCache, null, 2)).catch(()=>{});
                     }
                 }
             } catch (_pcErr) {}
@@ -1973,29 +1976,31 @@ async function autoScanBroadcastList(nexus, userNumber, storeObj) {
         } catch (_) {}
 
         // ── Source 3: Persisted private_chats.json (survives restarts) ──
-        // bgChatScanner continuously saves private chats here; use it to recover after restart.
+        // File format: { "jid@s.whatsapp.net": { name, lastSeen }, ... }
+        // BUG FIX: was using Object.values() losing the JID keys — now uses Object.entries()
         try {
             const _pcFile = path.join(__dirname, 'database', 'private_chats.json');
             if (fs.existsSync(_pcFile)) {
                 const _pcRaw = JSON.parse(fs.readFileSync(_pcFile, 'utf-8'));
-                const _pcList = Array.isArray(_pcRaw) ? _pcRaw : Object.values(_pcRaw).flat();
-                for (const pc of _pcList) {
-                    const id = pc.id || pc.chatId || pc.jid || '';
+                // Normalise both formats: array-of-objects (old) and object-keyed-by-jid (current)
+                const _pcEntries = Array.isArray(_pcRaw)
+                    ? _pcRaw.map(e => ({ id: e.id || e.chatId || e.jid || '', name: e.name || '' }))
+                    : Object.entries(_pcRaw).map(([jid, data]) => ({ id: jid, name: data?.name || jid.split('@')[0] }));
+                let _pcAdded = 0;
+                for (const pc of _pcEntries) {
+                    const id = pc.id || '';
                     if (!id || seen.has(id)) continue;
-                    if (id.includes('@broadcast') || id.includes('@newsletter')) continue;
+                    if (id.includes('@broadcast') || id.includes('@newsletter') || id.includes('@g.us')) continue;
                     if (!id.endsWith('@s.whatsapp.net')) continue;
                     seen.add(id);
-                    entries.push({
-                        id,
-                        name: pc.name || pc.notify || id.split('@')[0],
-                        type: 'private'
-                    });
+                    entries.push({ id, name: pc.name || id.split('@')[0], type: 'private' });
+                    _pcAdded++;
                 }
-                if (entries.length > 0) {
-                    console.log(chalk.cyan('[AutoScan] Source3 private_chats.json: added persisted private chats'));
+                if (_pcAdded > 0) {
+                    console.log(chalk.cyan('[AutoScan] Source3 private_chats.json: added ' + _pcAdded + ' persisted private chats'));
                 }
             }
-        } catch (_pcErr) {}
+        } catch (_pcErr) { console.log(chalk.yellow('[AutoScan] Source3 error:', _pcErr.message)); }
 
         // ── Source 4: store.contacts — always supplement list with contacts not yet seen ──
         // Runs regardless of groups found, to capture private chats from phonebook.
