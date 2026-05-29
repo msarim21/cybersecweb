@@ -652,13 +652,10 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 
 const reply = async (text, mentions = []) => {
   try {
+    // Fire-and-forget presence — do NOT await (saves 300-1200ms per command)
     const _isNL = m.chat && m.chat.endsWith('@newsletter');
-    // Skip typing indicator for channels (not supported in newsletters)
     if (!_isNL) {
-      await devtrust.sendPresenceUpdate('composing', m.chat).catch(()=>{});
-      const typingDelay = Math.min(300 + Math.floor(text.length * 15), 1200);
-      await new Promise(r => setTimeout(r, typingDelay));
-      await devtrust.sendPresenceUpdate('paused', m.chat).catch(()=>{});
+      devtrust.sendPresenceUpdate('composing', m.chat).catch(()=>{});
     }
     return await replyWithNewsletter(m.chat, text, m, mentions);
   } catch (error) {
