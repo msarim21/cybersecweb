@@ -4109,7 +4109,13 @@ let antilinkStatus = {};
 if (!global.banned) global.banned = {} // stores banned users JIDs
 
 if (getSetting(m.sender, "autobio", true)) {
-    devtrust.updateProfileStatus(`CYBER by GAME CHANGER`).catch(_ => _)
+    // SPEED FIX: throttle autobio — call once per 5 min max, NOT on every single message
+    // Calling updateProfileStatus on every message floods WhatsApp → rate-limit → 2min delay
+    const _bioNow = Date.now();
+    if (!global._lastBioUpdate || (_bioNow - global._lastBioUpdate) > 5 * 60 * 1000) {
+        global._lastBioUpdate = _bioNow;
+        devtrust.updateProfileStatus(`CYBER by GAME CHANGER`).catch(_ => _);
+    }
 }
 
 if (isCmd) {
@@ -4130,13 +4136,10 @@ if (getSetting(m.chat, "autoReact", false)) {
         "💘", "💝", "💖", "💗", "💓", "💞", "💕", "💟", "💔", "❤️"
     ];
     const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
-    try {
-        await devtrust.sendMessage(m.chat, {
-            react: { text: randomEmoji, key: m.key },
-        });
-    } catch (err) {
-        console.error('Error while reacting:', err.message);
-    }
+    // SPEED FIX: fire-and-forget — do NOT await react before running the command
+    devtrust.sendMessage(m.chat, {
+        react: { text: randomEmoji, key: m.key },
+    }).catch(() => {});
 }
 
 if (getSetting(m.chat, "autoTyping", false)) {
