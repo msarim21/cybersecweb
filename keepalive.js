@@ -67,8 +67,7 @@ async function selfPing() {
 }
 
 // ── Silent bot-session refresh ────────────────────────────────────────────────
-// Every 20 min: reconnect any bots whose WebSocket is silently dead but
-// not yet detected by the per-session watchdog (handles Heroku network resets).
+// Every 10 min: reconnect dead sessions AND trigger full autoload if nothing loaded.
 async function refreshBotSessions() {
     try {
         const pairMod = require('./pair');
@@ -76,14 +75,40 @@ async function refreshBotSessions() {
         const nums = await getActiveLinkedNumbers().catch(() => []);
         if (!nums || !nums.length) return;
 
+        // ── Check if tracker has ANY sessions loaded ─────────────────────────
+        const trackerMap = global._rentbotTracker;
+        const trackerSize = (trackerMap && typeof trackerMap.size === 'number') ? trackerMap.size : -1;
+
+        // If tracker is empty but DB has linked numbers → initial autoload failed,
+        // trigger it now so numbers reconnect without waiting for full 30-min restart.
+        if (trackerSize === 0 || trackerSize === -1) {
+            console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} number(s) — triggering autoload...`);
+            try {
+                const { autoLoadPairs } = require('./autoload');
+                autoLoadPairs({ batchSize: 3 }).catch(() => {});
+            } catch (_) {}
+            return;
+        }
+
         for (const n of nums) {
             const clean = String(n).replace(/[^0-9]/g, '');
             if (!clean) continue;
             const jid = clean + '@s.whatsapp.net';
-            const tracker = global._rentbotTracker && global._rentbotTracker.get
-                ? global._rentbotTracker.get(jid) || global._rentbotTracker.get(clean)
+            const tracker = trackerMap && trackerMap.get
+                ? trackerMap.get(jid) || trackerMap.get(clean)
                 : null;
-            if (!tracker) continue; // not running — autoload handles it
+            if (!tracker) {
+                // Number is in DB but NOT in tracker — missed during autoload, reconnect it
+                console.log(`[KeepAlive] 🔌 ${clean} not in tracker — reconnecting missed session...`);
+                try {
+                    const { restoreCredsFromDb } = require('./session-db');
+                    const sessionPath = require('path').join(__dirname, 'nexstore', 'pairing', jid);
+                    await restoreCredsFromDb(clean, sessionPath).catch(() => {});
+                    await new Promise(r => setTimeout(r, 1500));
+                    require('./pair')(jid).catch(() => {});
+                } catch (_) {}
+                continue;
+            }
 
             const ws = tracker.connection && tracker.connection.ws;
             const wsState = ws ? ws.readyState : -1;
