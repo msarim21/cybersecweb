@@ -12991,10 +12991,9 @@ break;
 
 case 'ping':
 case 'speed': {
-    const speed = require('performance-now');
-    const timestampp = speed();
-    const latensi = speed() - timestampp;
-    
+    const _t1 = process.hrtime.bigint();
+    const _t2 = process.hrtime.bigint();
+    const latensi = Number(_t2 - _t1) / 1e6; // nanoseconds → ms
     reply(`⚡ *CYBER Ping*\n\n📡 ${latensi.toFixed(4)} ms`);
 }
 break;
