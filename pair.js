@@ -229,6 +229,7 @@ const joinedGroups = new Map();
 
 // Global tracking for all rentbots
 const rentbotTracker = new Map();
+global._rentbotTracker = rentbotTracker; // expose for keepalive.js reconnect checker
 const MAX_RETRIES_440 = 3;
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
