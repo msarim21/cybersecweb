@@ -5204,6 +5204,7 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}antidelete
 │❖ ${prefix}antiedit
 │❖ ${prefix}anticall
+│❖ ${prefix}setbio
 │❖ ${prefix}autoreact
 │❖ ${prefix}autoread
 │❖ ${prefix}autorecording
@@ -6657,6 +6658,7 @@ case 'CYBERowner': {
 │❖ ${prefix}antidelete
 │❖ ${prefix}antiedit
 │❖ ${prefix}anticall
+│❖ ${prefix}setbio
 │❖ ${prefix}autoreact
 │❖ ${prefix}autoread
 │❖ ${prefix}autorecording
@@ -8752,6 +8754,20 @@ break;
 
 case "autobio": {
     reply("⚠️ *autobio command permanently disabled* — it was causing 2 minute reply delays.");
+}
+break;
+
+case "setbio":
+case "setabout": {
+    if (!isCreator && !isSudo) return reply('🔒 *Owner/Sudo only*');
+    const newBio = args.join(' ').trim();
+    if (!newBio) return reply(`⚙️ *Usage:* ${prefix}setbio <text>\n\n*Example:* ${prefix}setbio CYBER Bot Active 🔥`);
+    try {
+        await devtrust.updateProfileStatus(newBio);
+        reply(`✅ *Bio updated!*\n\n📝 *New Bio:* ${newBio}`);
+    } catch (err) {
+        reply(`❌ *Bio update failed:* ${err.message}`);
+    }
 }
 break;
 
