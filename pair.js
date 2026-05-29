@@ -545,12 +545,12 @@ async function startpairing(nexusDevNumber) {
         msgRetryCounterCache,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
+        keepAliveIntervalMs: 10000, // SPEED FIX: 30s→10s — WA connection stays warm, no idle drop
         emitOwnEvents: false,
         fireInitQueries: false,
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        markOnlineOnConnect: false,
+        markOnlineOnConnect: true, // SPEED FIX: appear online → WA delivers messages instantly
         shouldIgnoreJid: jid => jid === 'status@broadcast',
         // 🇵🇰 Pakistani proxy agent — WhatsApp ko Pakistan ka IP dikhayega
         agent: _pkProxyAgent || undefined,
