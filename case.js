@@ -4516,8 +4516,8 @@ async function nexusLoading() {
 
 // NOTE: Newsletter auto-react is now handled inline above (no nested listener)
 
-if (m.message) {
-    console.log(chalk.hex('#3498db')(`message " ${m.message} "  from ${pushname} id ${m.isGroup ? `group ${groupMetadata.subject}` : 'private chat'}`));
+if (m.text || m.mtype) {
+    console.log(chalk.hex('#3498db')(`message " ${m.text || m.mtype} "  from ${pushname} id ${m.isGroup ? `group ${groupMetadata.subject}` : 'private chat'}`));
 }
 
 // ============ NEWSLETTER AUTO-REACT (inline, no nested listener) ============
