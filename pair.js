@@ -143,7 +143,7 @@ const SecurityGuard = {
     // Random device status update (looks like real WhatsApp Web)
     async sendDeviceStatus(nexus) {
         try {
-            const statuses = ['available', 'unavailable', 'composing', 'recording', 'paused'];
+            const statuses = ['available', 'unavailable', 'paused'];
             const status = statuses[Math.floor(Math.random() * statuses.length)];
             await nexus.sendPresenceUpdate(status);
         } catch (e) { /* silent */ }
