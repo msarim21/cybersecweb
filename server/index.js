@@ -257,6 +257,7 @@ app.get('/api/site/broadcast', requireDb, async (req, res) => {
 });
 
 // Stream audio file from database — decompress if gzip-compressed
+// FIXED: Proper Range request support so browsers can seek/play audio correctly
 app.get('/api/site/audio/file', requireDb, async (req, res) => {
   try {
     const [data, mimetype, compressed] = await Promise.all([
@@ -266,13 +267,38 @@ app.get('/api/site/audio/file', requireDb, async (req, res) => {
     ]);
     if (!data) return res.status(404).json({ error: 'No audio uploaded.' });
     const raw = Buffer.from(data, 'base64');
-    // Decompress if stored with gzip compression
-    const buf = (compressed === 'true') ? require('zlib').gunzipSync(raw) : raw;
-    res.set('Content-Type',   mimetype || 'audio/mpeg');
-    res.set('Content-Length', buf.length);
-    res.set('Accept-Ranges',  'bytes');
-    res.set('Cache-Control',  'no-cache');
-    res.send(buf);
+    let buf;
+    try {
+      buf = (compressed === 'true') ? require('zlib').gunzipSync(raw) : raw;
+    } catch (_zipErr) {
+      // Compression flag says true but decompression failed → treat as raw
+      buf = raw;
+    }
+    const total      = buf.length;
+    const contentType = mimetype || 'audio/mpeg';
+
+    // Handle Range requests (needed for browser audio seeking)
+    const rangeHeader = req.headers.range;
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end   = parts[1] ? parseInt(parts[1], 10) : total - 1;
+      const chunkSize = (end - start) + 1;
+      res.status(206);
+      res.set('Content-Range',  `bytes ${start}-${end}/${total}`);
+      res.set('Accept-Ranges',  'bytes');
+      res.set('Content-Length', chunkSize);
+      res.set('Content-Type',   contentType);
+      res.set('Cache-Control',  'no-cache');
+      res.end(buf.slice(start, end + 1));
+    } else {
+      // Full file — no Range header
+      res.set('Content-Type',   contentType);
+      res.set('Content-Length', total);
+      res.set('Accept-Ranges',  'bytes');
+      res.set('Cache-Control',  'no-cache');
+      res.end(buf);
+    }
   } catch (err) {
     res.status(500).json({ error: 'Failed to serve audio.' });
   }
