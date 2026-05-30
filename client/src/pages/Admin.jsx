@@ -694,71 +694,14 @@ export default function Admin() {
         },
       });
 
-      // Phase 2: Agar background job hai to poll karo jab tak done na ho
-      if (res.data.jobId) {
-        toast.loading('File received — saving to database…', { id: uploadToast });
-        const jobId = res.data.jobId;
-        let attempts = 0;
-        const maxAttempts = 60; // max 2 minutes polling
-        await new Promise((resolve, reject) => {
-          const interval = setInterval(async () => {
-            attempts++;
-            try {
-              const statusRes = await axios.get(`/api/admin/audio/upload-status/${jobId}`, { timeout: 10000 });
-              const { status, error: jobErr, original } = statusRes.data;
-              if (status === 'done') {
-                clearInterval(interval);
-                toast.success('Audio saved successfully!', { id: uploadToast });
-                setAudioInfo({ filename: 'db', original: original || file.name });
-                if (audioFileRef.current) audioFileRef.current.value = '';
-                resolve();
-              } else if (status === 'error') {
-                clearInterval(interval);
-                reject(new Error(jobErr || 'Database save failed'));
-              } else if (attempts >= maxAttempts) {
-                clearInterval(interval);
-                reject(new Error('Save timed out — please try again'));
-              } else {
-                const dots = '.'.repeat((attempts % 3) + 1);
-                toast.loading(`Saving to database${dots}`, { id: uploadToast });
-              }
-            } catch (_pollErr) {
-              // Poll failed (network error or 404 — server may have restarted)
-              // Fallback: check DB directly to see if audio was actually saved
-              try {
-                const dbCheck = await axios.get('/api/admin/audio', { timeout: 8000 });
-                if (dbCheck.data?.filename && (dbCheck.data.original === file.name || dbCheck.data.original)) {
-                  // Audio is in DB — upload succeeded even though job tracker lost it
-                  clearInterval(interval);
-                  toast.success('Audio saved!', { id: uploadToast });
-                  setAudioInfo({ filename: 'db', original: dbCheck.data.original || file.name });
-                  if (audioFileRef.current) audioFileRef.current.value = '';
-                  resolve();
-                  return;
-                }
-              } catch (_) { /* DB check failed too — keep polling */ }
-              if (attempts >= maxAttempts) {
-                clearInterval(interval);
-                // Last resort: check DB one more time before giving up
-                try {
-                  const finalCheck = await axios.get('/api/admin/audio', { timeout: 8000 });
-                  if (finalCheck.data?.filename) {
-                    toast.success('Audio saved!', { id: uploadToast });
-                    setAudioInfo({ filename: 'db', original: finalCheck.data.original || file.name });
-                    if (audioFileRef.current) audioFileRef.current.value = '';
-                    resolve(); return;
-                  }
-                } catch (_) {}
-                reject(new Error('Upload failed — please try again'));
-              }
-            }
-          }, 2000);
-        });
-      } else {
-        // Direct response (fallback)
-        toast.success('Audio uploaded successfully!', { id: uploadToast });
-        setAudioInfo({ filename: res.data.filename || 'db', original: file.name });
+      // Direct response — server saves synchronously, no polling needed
+      if (res.data.status === 'done' || res.data.filename) {
+        toast.success('Audio saved successfully!', { id: uploadToast });
+        setAudioInfo({ filename: 'db', original: res.data.original || file.name });
         if (audioFileRef.current) audioFileRef.current.value = '';
+        setAudioVersion(Date.now());
+      } else {
+        throw new Error(res.data.error || 'Upload failed — please try again');
       }
     } catch (err) {
       const msg = err.response?.data?.error || err.message || 'Upload failed';
