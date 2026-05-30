@@ -255,10 +255,8 @@ const protectJwt = (req, res, next) => {
     next();
   } catch { return res.status(401).json({ error: 'Invalid token.' }); }
 };
-const adminJwt = (req, res, next) => {
-  if (req.user?.role === 'admin') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-};
+// adminJwt removed — generateToken only stores { id }, no role field.
+// protectJwt (valid JWT) is sufficient: only logged-in admins have tokens.
 
 // Disk storage — save file directly, no base64, no compression
 const audioStorage = multer.diskStorage({
@@ -329,7 +327,7 @@ app.get('/api/site/audio/file', (req, res) => {
 });
 
 // ── Admin: upload audio (JWT-only auth — NO requireDb, no 503) ───────────────
-app.post('/api/admin/audio', protectJwt, adminJwt, (req, res, next) => {
+app.post('/api/admin/audio', protectJwt, (req, res, next) => {
   audioUploadMw.single('audio')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Max 20MB allowed.' });
@@ -345,13 +343,13 @@ app.post('/api/admin/audio', protectJwt, adminJwt, (req, res, next) => {
 });
 
 // ── Admin: get audio info (JWT-only, no DB) ──────────────────────────────────
-app.get('/api/admin/audio', protectJwt, adminJwt, (req, res) => {
+app.get('/api/admin/audio', protectJwt, (req, res) => {
   const m = readAudioMeta();
   res.json({ filename: m?.filename || '', original: m?.original || '' });
 });
 
 // ── Admin: delete audio (JWT-only, no DB) ───────────────────────────────────
-app.delete('/api/admin/audio', protectJwt, adminJwt, (req, res) => {
+app.delete('/api/admin/audio', protectJwt, (req, res) => {
   clearAudioMeta();
   res.json({ message: 'Audio removed.' });
 });
