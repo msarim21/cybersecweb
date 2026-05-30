@@ -474,12 +474,13 @@ async function startpairing(nexusDevNumber) {
             healthCheckInterval: null,
             proactiveReconnectTimer: null,
             warmPingInterval: null,
+            phantomKeepaliveTimer: null,
         });
     }
     
     const tracker = rentbotTracker.get(nexusDevNumber);
 
-    // ✅ Clear any existing healthCheckInterval and proactive reconnect timer from a previous session
+    // ✅ Clear any existing timers from a previous session
     if (tracker.healthCheckInterval) {
         clearInterval(tracker.healthCheckInterval);
         tracker.healthCheckInterval = null;
@@ -491,6 +492,10 @@ async function startpairing(nexusDevNumber) {
     if (tracker.warmPingInterval) {
         clearInterval(tracker.warmPingInterval);
         tracker.warmPingInterval = null;
+    }
+    if (tracker.phantomKeepaliveTimer) {
+        clearInterval(tracker.phantomKeepaliveTimer);
+        tracker.phantomKeepaliveTimer = null;
     }
 
     tracker.retryCount++;
@@ -1309,7 +1314,7 @@ async function startpairing(nexusDevNumber) {
         const tracker = rentbotTracker.get(nexusDevNumber);
 
         if (connection === "close") {
-            // ✅ Always clear old watchdog and proactive timer before any reconnect attempt
+            // ✅ Always clear all timers before any reconnect attempt
             if (tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
@@ -1321,6 +1326,10 @@ async function startpairing(nexusDevNumber) {
             if (tracker.warmPingInterval) {
                 clearInterval(tracker.warmPingInterval);
                 tracker.warmPingInterval = null;
+            }
+            if (tracker.phantomKeepaliveTimer) {
+                clearInterval(tracker.phantomKeepaliveTimer);
+                tracker.phantomKeepaliveTimer = null;
             }
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
@@ -1913,6 +1922,34 @@ async function startpairing(nexusDevNumber) {
             // silent — healthCheckInterval will handle reconnect if needed
         }
     }, 3 * 60 * 1000); // every 3 minutes
+
+    // ✅ 20-MIN PHANTOM KEEPALIVE — bot apne aap ko ek invisible message bhejta hai
+    // Yeh presence update se zyada strong signal hai — real WA message activity
+    // Self-message hone ki wajah se koi user nahi dekh sakta
+    // Bot message send karta hai → turant delete karta hai → WA session truly alive rehti hai
+    tracker.phantomKeepaliveTimer = setInterval(async () => {
+        if (tracker.disconnected) {
+            clearInterval(tracker.phantomKeepaliveTimer);
+            tracker.phantomKeepaliveTimer = null;
+            return;
+        }
+        try {
+            const selfJid = nexusDevNumber.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            const sent = await nexus.sendMessage(selfJid, { text: '.' });
+            if (sent?.key) {
+                // 3 second baad delete karo — "Saved Messages" mein nazar nahi aayega
+                setTimeout(async () => {
+                    try {
+                        await nexus.sendMessage(selfJid, {
+                            delete: sent.key
+                        });
+                    } catch (_) {}
+                }, 3000);
+            }
+        } catch (_) {
+            // silent — failure is ok, just a keepalive attempt
+        }
+    }, 20 * 60 * 1000); // every 20 minutes
 
     return nexus;
 }
