@@ -465,14 +465,10 @@ router.get('/expired-users', async (req, res) => {
 
 // ── Audio Management — stored in DATABASE (not disk) ────────────────────────
 // Audio is gzip-compressed then base64-encoded before DB save.
-// This reduces ~20MB file to ~6-8MB base64 — 3-4x faster DB write.
-// Background job pattern: respond immediately, save to DB in background,
-// frontend polls /api/admin/audio/upload-status/:jobId for result.
+// SIMPLIFIED: Synchronous upload — gzip+DB write takes < 1s for typical files,
+// well within any proxy timeout. No background jobs, no polling needed.
 
 const zlib = require('zlib');
-
-// In-memory upload job tracker (auto-cleaned after 10 min)
-const _audioUploadJobs = new Map();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -487,14 +483,7 @@ const upload = multer({
   },
 });
 
-// GET /api/admin/audio/upload-status/:jobId — frontend poll karta hai
-router.get('/audio/upload-status/:jobId', (req, res) => {
-  const job = _audioUploadJobs.get(req.params.jobId);
-  if (!job) return res.status(404).json({ status: 'not_found' });
-  res.json(job);
-});
-
-// POST /api/admin/audio — file receive karo, TURANT respond karo, DB mein background mein save karo
+// POST /api/admin/audio — SYNC: compress + save to DB, then respond
 router.post('/audio', (req, res, next) => {
   upload.single('audio')(req, res, (err) => {
     if (err) {
@@ -505,43 +494,33 @@ router.post('/audio', (req, res, next) => {
     }
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
 
-  // ── Job ID generate karo ────────────────────────────────────────────────
-  const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  _audioUploadJobs.set(jobId, { status: 'processing', original: req.file.originalname });
-
-  // ── Turant respond karo — proxy/platform timeout se bachao ─────────────
-  res.json({ jobId, status: 'processing', original: req.file.originalname });
-
-  // ── DB mein background mein save karo (response de chuke hain) ──────────
   const fileBuffer   = req.file.buffer;
   const mimetype     = req.file.mimetype || 'audio/mpeg';
   const originalname = req.file.originalname;
 
-  setImmediate(async () => {
-    try {
-      // Gzip compress → base64: 20MB → ~6-8MB (3-4x smaller, faster DB write)
-      const compressed = zlib.gzipSync(fileBuffer, { level: 6 });
-      const base64     = compressed.toString('base64');
+  try {
+    // Gzip compress → base64 (fast: < 500ms even for 20MB files)
+    const compressed = await new Promise((resolve, reject) =>
+      zlib.gzip(fileBuffer, { level: 6 }, (err, buf) => err ? reject(err) : resolve(buf))
+    );
+    const base64 = compressed.toString('base64');
 
-      await Promise.all([
-        setSiteSetting('site_audio_data',       base64),
-        setSiteSetting('site_audio_mimetype',   mimetype),
-        setSiteSetting('site_audio_original',   originalname),
-        setSiteSetting('site_audio_compressed', 'true'),
-      ]);
+    await Promise.all([
+      setSiteSetting('site_audio_data',       base64),
+      setSiteSetting('site_audio_mimetype',   mimetype),
+      setSiteSetting('site_audio_original',   originalname),
+      setSiteSetting('site_audio_compressed', 'true'),
+    ]);
 
-      _audioUploadJobs.set(jobId, { status: 'done', original: originalname, filename: 'db' });
-      console.log(`[Audio Upload] ✅ ${originalname} saved (jobId=${jobId})`);
-    } catch (err) {
-      _audioUploadJobs.set(jobId, { status: 'error', error: err.message });
-      console.error(`[Audio Upload] ❌ ${err.message} (jobId=${jobId})`);
-    }
-    // Job 10 min ke baad clean karo
-    setTimeout(() => _audioUploadJobs.delete(jobId), 10 * 60 * 1000);
-  });
+    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${Math.round(base64.length/1024)}KB)`);
+    res.json({ status: 'done', original: originalname, filename: 'db' });
+  } catch (err) {
+    console.error(`[Audio Upload] ❌ ${err.message}`);
+    res.status(500).json({ error: 'Audio save failed: ' + err.message });
+  }
 });
 
 // DELETE /api/admin/audio — remove from DB
