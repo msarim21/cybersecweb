@@ -5545,8 +5545,10 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 `;
 
     // TRY-CATCH for image sending with fallback to text only
+    // AUTO-DELETE: .menu command + bot response dono 2 second baad delete
+    let _menuSent;
     try {
-        await devtrust.sendMessage(from, 
+        _menuSent = await devtrust.sendMessage(from, 
             addNewsletterContext({
                 image: { url: randomImage },
                 caption: menuText
@@ -5555,13 +5557,17 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
         );
     } catch (imageError) {
         console.log('❌ Menu image failed, sending text only:', imageError.message);
-        await devtrust.sendMessage(from, 
+        _menuSent = await devtrust.sendMessage(from, 
             addNewsletterContext({
                 text: menuText
             }), 
             { quoted: m }
         );
     }
+    setTimeout(async () => {
+        try { await devtrust.sendMessage(from, { delete: m.key }); } catch(_) {}
+        try { if (_menuSent?.key) await devtrust.sendMessage(from, { delete: _menuSent.key }); } catch(_) {}
+    }, 2000);
 }
 break;
 
