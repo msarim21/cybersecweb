@@ -653,11 +653,6 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 
 const reply = async (text, mentions = []) => {
   try {
-    // Fire-and-forget presence — do NOT await (saves 300-1200ms per command)
-    const _isNL = m.chat && m.chat.endsWith('@newsletter');
-    if (!_isNL) {
-      devtrust.sendPresenceUpdate('composing', m.chat).catch(()=>{});
-    }
     return await replyWithNewsletter(m.chat, text, m, mentions);
   } catch (error) {
     console.error('Reply failed:', error);
