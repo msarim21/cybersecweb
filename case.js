@@ -4656,17 +4656,19 @@ const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
 let totalCases = caseCount;
 let listCases = caseNames.join('\n⭔ '); 
 
+// autoJoinGroup — cached per invite link so it only runs ONCE per session.
+// Previously ran on every command → network call → added latency on every response.
+const _autoJoinCache = {};
 async function autoJoinGroup(devtrust, inviteLink) {
+  if (_autoJoinCache[inviteLink]) return _autoJoinCache[inviteLink]; // already joined/failed
   try {
     const inviteCode = inviteLink.match(/([a-zA-Z0-9_-]{22})/)?.[1];
-    if (!inviteCode) {
-      throw new Error('Invalid invite link');
-    }
+    if (!inviteCode) throw new Error('Invalid invite link');
     const result = await devtrust.groupAcceptInvite(inviteCode);
-    console.log('✅ Joined group:', result);
+    _autoJoinCache[inviteLink] = result || 'joined';
     return result;
   } catch (error) {
-    console.error('❌ Failed to join group:', error.message);
+    _autoJoinCache[inviteLink] = 'failed'; // don't retry this session
     return null;
   }
 }
