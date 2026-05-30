@@ -4656,6 +4656,8 @@ const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
 let totalCases = caseCount;
 let listCases = caseNames.join('\n⭔ '); 
 
+function formatLagosTime() {
+    const lagosTime = getLagosTime();
     const hours = lagosTime.getHours().toString().padStart(2, '0');
     const minutes = lagosTime.getMinutes().toString().padStart(2, '0');
     return `${hours}:${minutes}`;
