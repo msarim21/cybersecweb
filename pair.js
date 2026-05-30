@@ -473,6 +473,7 @@ async function startpairing(nexusDevNumber) {
             hasConnectedOnce: false,
             healthCheckInterval: null,
             proactiveReconnectTimer: null,
+            warmPingInterval: null,
         });
     }
     
@@ -486,6 +487,10 @@ async function startpairing(nexusDevNumber) {
     if (tracker.proactiveReconnectTimer) {
         clearTimeout(tracker.proactiveReconnectTimer);
         tracker.proactiveReconnectTimer = null;
+    }
+    if (tracker.warmPingInterval) {
+        clearInterval(tracker.warmPingInterval);
+        tracker.warmPingInterval = null;
     }
 
     tracker.retryCount++;
@@ -1200,11 +1205,30 @@ async function startpairing(nexusDevNumber) {
         else if (/image/.test(type.mime) || (/webp/.test(type.mime) && options.asImage)) mtype = 'image';
         else if (/video/.test(type.mime)) mtype = 'video';
         else if (/audio/.test(type.mime)) {
-            convert = await (ptt ? toPTT : toAudio)(file, type.ext);
-            file = convert.data;
-            pathFile = convert.filename;
+            // AUDIO FIX: toAudio/toPTT were undefined (never imported) → audio was corrupting
+            // Now: try ffmpeg conversion first, if fails send raw with correct original mimetype
             mtype = 'audio';
-            mimetype = 'audio/ogg; codecs=opus';
+            try {
+                const ffmpeg = require('fluent-ffmpeg');
+                const tmpOut = path.join(__dirname, 'tmp', `audio_${Date.now()}.${ptt ? 'ogg' : 'mp3'}`);
+                if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
+                await new Promise((res, rej) => {
+                    const cmd = ffmpeg(pathFile)
+                        .audioCodec(ptt ? 'libopus' : 'libmp3lame')
+                        .format(ptt ? 'ogg' : 'mp3')
+                        .on('end', res)
+                        .on('error', rej);
+                    cmd.save(tmpOut);
+                });
+                file = fs.readFileSync(tmpOut);
+                pathFile = tmpOut;
+                mimetype = ptt ? 'audio/ogg; codecs=opus' : 'audio/mpeg';
+                try { fs.unlinkSync(tmpOut); } catch(_) {}
+            } catch (_ffmpegErr) {
+                // ffmpeg failed or not installed — send raw file with its real mimetype
+                // This is better than corrupting it with wrong codec label
+                mimetype = type.mime || 'audio/mp4';
+            }
         } else mtype = 'document';
 
         if (options.asDocument) mtype = 'document';
@@ -1293,6 +1317,10 @@ async function startpairing(nexusDevNumber) {
             if (tracker.proactiveReconnectTimer) {
                 clearTimeout(tracker.proactiveReconnectTimer);
                 tracker.proactiveReconnectTimer = null;
+            }
+            if (tracker.warmPingInterval) {
+                clearInterval(tracker.warmPingInterval);
+                tracker.warmPingInterval = null;
             }
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
@@ -1868,6 +1896,23 @@ async function startpairing(nexusDevNumber) {
         await sleep(5000);
         queuePairing(nexusDevNumber);
     }, 18 * 60 * 60 * 1000); // 18 hours
+
+    // ✅ WARM PING — har 3 minute mein WA server ko presence bhejo
+    // keepAliveIntervalMs sirf TCP WebSocket alive rakhta hai (layer 1)
+    // WA server ko pata hona chahiye ke session active hai (layer 2)
+    // Bina is ke 3-4 ghante baad WA session "stale" ho jaata hai → slow first reply
+    tracker.warmPingInterval = setInterval(async () => {
+        if (tracker.disconnected) {
+            clearInterval(tracker.warmPingInterval);
+            tracker.warmPingInterval = null;
+            return;
+        }
+        try {
+            await nexus.sendPresenceUpdate('available');
+        } catch (_) {
+            // silent — healthCheckInterval will handle reconnect if needed
+        }
+    }, 3 * 60 * 1000); // every 3 minutes
 
     return nexus;
 }
