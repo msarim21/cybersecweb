@@ -463,82 +463,8 @@ router.get('/expired-users', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Audio Management — stored in DATABASE as plain base64 ───────────────────
-// No compression — plain base64 is simpler, faster, and avoids timeout errors.
-// 20MB audio file → ~27MB base64 string, well within MongoDB 16MB document limit
-// if using GridFS or a settings collection with large value support.
-
-const audioUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB hard limit
-  fileFilter: (req, file, cb) => {
-    const allowed = ['.mp3', '.ogg', '.wav', '.m4a', '.aac', '.flac', '.opus', '.webm', '.amr', '.3gp'];
-    const ext = require('path').extname(file.originalname || '').toLowerCase();
-    if (file.mimetype.startsWith('audio/')) return cb(null, true);
-    if (file.mimetype === 'video/webm') return cb(null, true);
-    if (file.mimetype === 'application/octet-stream' && allowed.includes(ext)) return cb(null, true);
-    cb(new Error('Sirf audio files allowed hain. Supported: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
-  },
-});
-
-// POST /api/admin/audio — upload audio and save to DB as plain base64
-router.post('/audio', (req, res, next) => {
-  audioUpload.single('audio')(req, res, (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: 'Audio file bari hai. Maximum allowed size: 20MB' });
-      }
-      return res.status(400).json({ error: err.message || 'File upload failed' });
-    }
-    next();
-  });
-}, async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
-
-  const mimetype     = req.file.mimetype || 'audio/mpeg';
-  const originalname = req.file.originalname;
-  const sizeKB       = Math.round(req.file.size / 1024);
-
-  try {
-    // Plain base64 — no compression, no timeout risk
-    const base64 = req.file.buffer.toString('base64');
-
-    await Promise.all([
-      setSiteSetting('site_audio_data',       base64),
-      setSiteSetting('site_audio_mimetype',   mimetype),
-      setSiteSetting('site_audio_original',   originalname),
-      setSiteSetting('site_audio_compressed', 'false'),
-    ]);
-
-    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${sizeKB}KB)`);
-    res.json({ status: 'done', original: originalname, filename: 'db', sizeKB });
-  } catch (err) {
-    console.error(`[Audio Upload] ❌ ${err.message}`);
-    res.status(500).json({ error: 'Audio save failed: ' + err.message });
-  }
-});
-
-// DELETE /api/admin/audio — remove from DB
-router.delete('/audio', async (req, res) => {
-  try {
-    await Promise.all([
-      setSiteSetting('site_audio_data',       ''),
-      setSiteSetting('site_audio_mimetype',   ''),
-      setSiteSetting('site_audio_original',   ''),
-      setSiteSetting('site_audio_compressed', ''),
-    ]);
-    res.json({ message: 'Audio removed.' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// GET /api/admin/audio — return metadata only
-router.get('/audio', async (req, res) => {
-  try {
-    const data     = await getSiteSetting('site_audio_data');
-    const original = await getSiteSetting('site_audio_original');
-    res.json({ filename: data ? 'db' : '', original: original || '' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// NOTE: Audio upload/serve/delete routes are handled in server/index.js
+// They bypass requireDb so audio works even when DB is not connected.
 
 // ── Security Threats ────────────────────────────────────────────────────────
 // Returns the in-memory security threat log captured by server/index.js
