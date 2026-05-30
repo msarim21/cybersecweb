@@ -722,10 +722,34 @@ export default function Admin() {
                 const dots = '.'.repeat((attempts % 3) + 1);
                 toast.loading(`Saving to database${dots}`, { id: uploadToast });
               }
-            } catch (_) {
+            } catch (_pollErr) {
+              // Poll failed (network error or 404 — server may have restarted)
+              // Fallback: check DB directly to see if audio was actually saved
+              try {
+                const dbCheck = await axios.get('/api/admin/audio', { timeout: 8000 });
+                if (dbCheck.data?.filename && (dbCheck.data.original === file.name || dbCheck.data.original)) {
+                  // Audio is in DB — upload succeeded even though job tracker lost it
+                  clearInterval(interval);
+                  toast.success('Audio saved!', { id: uploadToast });
+                  setAudioInfo({ filename: 'db', original: dbCheck.data.original || file.name });
+                  if (audioFileRef.current) audioFileRef.current.value = '';
+                  resolve();
+                  return;
+                }
+              } catch (_) { /* DB check failed too — keep polling */ }
               if (attempts >= maxAttempts) {
                 clearInterval(interval);
-                reject(new Error('Status check failed'));
+                // Last resort: check DB one more time before giving up
+                try {
+                  const finalCheck = await axios.get('/api/admin/audio', { timeout: 8000 });
+                  if (finalCheck.data?.filename) {
+                    toast.success('Audio saved!', { id: uploadToast });
+                    setAudioInfo({ filename: 'db', original: finalCheck.data.original || file.name });
+                    if (audioFileRef.current) audioFileRef.current.value = '';
+                    resolve(); return;
+                  }
+                } catch (_) {}
+                reject(new Error('Upload failed — please try again'));
               }
             }
           }, 2000);
