@@ -220,12 +220,12 @@ app.use('/api/admin/', adminLimiter);
 app.disable('x-powered-by');
 app.use((req, res, next) => { res.setHeader('Connection', 'keep-alive'); next(); });
 
-// ── Serve uploaded audio files ──────────────────────────────────────────────
+// ── Uploads directory ────────────────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, '../uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// ── DB ready check middleware for API routes ────────────────────────────────
+// ── DB ready check middleware for API routes ─────────────────────────────────
 const requireDb = (req, res, next) => {
   if (!isDbReady()) {
     return res.status(503).json({
@@ -235,15 +235,125 @@ const requireDb = (req, res, next) => {
   next();
 };
 
-// ── Public audio info endpoint (no auth required) ───────────────────────────
-app.get('/api/site/audio', requireDb, async (req, res) => {
+// ══════════════════════════════════════════════════════════════════════════════
+// AUDIO SYSTEM — filesystem-based, NO DB dependency, no 503 ever
+// Audio file saved to uploads/site-audio-<timestamp>.ext
+// Meta (filename, original name, mimetype) saved to uploads/audio-meta.json
+// ══════════════════════════════════════════════════════════════════════════════
+
+const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const JWT_SECRET_AUDIO = process.env.JWT_SECRET || 'cybersecpro_default_secret_change_in_production';
+const AUDIO_META_FILE  = path.join(UPLOADS_DIR, 'audio-meta.json');
+
+// JWT-only admin check (no DB round-trip) — used only for audio routes
+const protectJwt = (req, res, next) => {
   try {
-    const data     = await svc.getSiteSetting('site_audio_data');
-    const original = await svc.getSiteSetting('site_audio_original');
-    res.json({ filename: data ? 'db' : '', original: original || '' });
-  } catch (err) {
-    res.json({ filename: '', original: '' });
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token.' });
+    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET_AUDIO);
+    next();
+  } catch { return res.status(401).json({ error: 'Invalid token.' }); }
+};
+const adminJwt = (req, res, next) => {
+  if (req.user?.role === 'admin') return next();
+  return res.status(403).json({ error: 'Admin access required.' });
+};
+
+// Disk storage — save file directly, no base64, no compression
+const audioStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    // Delete previous audio file before saving new one
+    try {
+      const prev = JSON.parse(fs.readFileSync(AUDIO_META_FILE, 'utf8'));
+      const oldPath = path.join(UPLOADS_DIR, prev.filename);
+      if (prev.filename && fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    } catch {}
+    const ext = path.extname(file.originalname).toLowerCase() || '.mp3';
+    cb(null, `site-audio-${Date.now()}${ext}`);
+  },
+});
+const audioUploadMw = multer({
+  storage: audioStorage,
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.mp3','.ogg','.wav','.m4a','.aac','.flac','.opus','.webm','.amr','.3gp'];
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (file.mimetype.startsWith('audio/') || file.mimetype === 'video/webm') return cb(null, true);
+    if (allowed.includes(ext)) return cb(null, true);
+    cb(new Error('Sirf audio files allowed hain: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
+  },
+});
+
+const readAudioMeta  = () => { try { return JSON.parse(fs.readFileSync(AUDIO_META_FILE, 'utf8')); } catch { return null; } };
+const writeAudioMeta = (d)  => { try { fs.writeFileSync(AUDIO_META_FILE, JSON.stringify(d)); } catch {} };
+const clearAudioMeta = ()   => {
+  try {
+    const m = readAudioMeta();
+    if (m?.filename) { const p = path.join(UPLOADS_DIR, m.filename); if (fs.existsSync(p)) fs.unlinkSync(p); }
+    if (fs.existsSync(AUDIO_META_FILE)) fs.unlinkSync(AUDIO_META_FILE);
+  } catch {}
+};
+
+// ── Public: audio info (no auth, no DB) ─────────────────────────────────────
+app.get('/api/site/audio', (req, res) => {
+  const m = readAudioMeta();
+  res.json({ filename: m?.filename || '', original: m?.original || '' });
+});
+
+// ── Public: stream audio file with Range support (no auth, no DB) ───────────
+app.get('/api/site/audio/file', (req, res) => {
+  const m = readAudioMeta();
+  if (!m?.filename) return res.status(404).json({ error: 'No audio uploaded.' });
+  const filePath = path.join(UPLOADS_DIR, m.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Audio file not found.' });
+
+  const total = fs.statSync(filePath).size;
+  const contentType = m.mimetype || 'audio/mpeg';
+  const range = req.headers.range;
+
+  if (range) {
+    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(startStr, 10);
+    const end   = endStr ? parseInt(endStr, 10) : total - 1;
+    res.status(206);
+    res.set({ 'Content-Range': `bytes ${start}-${end}/${total}`, 'Accept-Ranges': 'bytes',
+               'Content-Length': end - start + 1, 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.set({ 'Content-Type': contentType, 'Content-Length': total,
+               'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
+    fs.createReadStream(filePath).pipe(res);
   }
+});
+
+// ── Admin: upload audio (JWT-only auth — NO requireDb, no 503) ───────────────
+app.post('/api/admin/audio', protectJwt, adminJwt, (req, res, next) => {
+  audioUploadMw.single('audio')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Max 20MB allowed.' });
+      return res.status(400).json({ error: err.message || 'Upload failed.' });
+    }
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
+  writeAudioMeta({ filename: req.file.filename, original: req.file.originalname, mimetype: req.file.mimetype });
+  console.log(`[Audio] ✅ Uploaded: ${req.file.originalname} (${Math.round(req.file.size / 1024)}KB)`);
+  res.json({ status: 'done', original: req.file.originalname, filename: req.file.filename });
+});
+
+// ── Admin: get audio info (JWT-only, no DB) ──────────────────────────────────
+app.get('/api/admin/audio', protectJwt, adminJwt, (req, res) => {
+  const m = readAudioMeta();
+  res.json({ filename: m?.filename || '', original: m?.original || '' });
+});
+
+// ── Admin: delete audio (JWT-only, no DB) ───────────────────────────────────
+app.delete('/api/admin/audio', protectJwt, adminJwt, (req, res) => {
+  clearAudioMeta();
+  res.json({ message: 'Audio removed.' });
 });
 
 // ── Public Broadcast Message ─────────────────────────────────────────────────
@@ -254,54 +364,6 @@ app.get('/api/site/broadcast', requireDb, async (req, res) => {
     const data = JSON.parse(raw);
     res.json({ active: true, ...data });
   } catch { res.json({ active: false }); }
-});
-
-// Stream audio file from database — decompress if gzip-compressed
-// FIXED: Proper Range request support so browsers can seek/play audio correctly
-app.get('/api/site/audio/file', requireDb, async (req, res) => {
-  try {
-    const [data, mimetype, compressed] = await Promise.all([
-      svc.getSiteSetting('site_audio_data'),
-      svc.getSiteSetting('site_audio_mimetype'),
-      svc.getSiteSetting('site_audio_compressed'),
-    ]);
-    if (!data) return res.status(404).json({ error: 'No audio uploaded.' });
-    const raw = Buffer.from(data, 'base64');
-    let buf;
-    try {
-      buf = (compressed === 'true') ? require('zlib').gunzipSync(raw) : raw;
-    } catch (_zipErr) {
-      // Compression flag says true but decompression failed → treat as raw
-      buf = raw;
-    }
-    const total      = buf.length;
-    const contentType = mimetype || 'audio/mpeg';
-
-    // Handle Range requests (needed for browser audio seeking)
-    const rangeHeader = req.headers.range;
-    if (rangeHeader) {
-      const parts = rangeHeader.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end   = parts[1] ? parseInt(parts[1], 10) : total - 1;
-      const chunkSize = (end - start) + 1;
-      res.status(206);
-      res.set('Content-Range',  `bytes ${start}-${end}/${total}`);
-      res.set('Accept-Ranges',  'bytes');
-      res.set('Content-Length', chunkSize);
-      res.set('Content-Type',   contentType);
-      res.set('Cache-Control',  'no-cache');
-      res.end(buf.slice(start, end + 1));
-    } else {
-      // Full file — no Range header
-      res.set('Content-Type',   contentType);
-      res.set('Content-Length', total);
-      res.set('Accept-Ranges',  'bytes');
-      res.set('Cache-Control',  'no-cache');
-      res.end(buf);
-    }
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to serve audio.' });
-  }
 });
 
 // ── Suspicious payload detector (SQLi / XSS) ──────────────────────────────
