@@ -463,29 +463,27 @@ router.get('/expired-users', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Audio Management — stored in DATABASE (not disk) ────────────────────────
-// Audio is gzip-compressed then base64-encoded before DB save.
-// SIMPLIFIED: Synchronous upload — gzip+DB write takes < 1s for typical files,
-// well within any proxy timeout. No background jobs, no polling needed.
+// ── Audio Management — stored in DATABASE as plain base64 ───────────────────
+// No compression — plain base64 is simpler, faster, and avoids timeout errors.
+// 20MB audio file → ~27MB base64 string, well within MongoDB 16MB document limit
+// if using GridFS or a settings collection with large value support.
 
-const zlib = require('zlib');
-
-const upload = multer({
+const audioUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB hard limit
   fileFilter: (req, file, cb) => {
-    const audioExtensions = ['.mp3', '.ogg', '.wav', '.m4a', '.aac', '.flac', '.opus', '.webm', '.amr', '.3gp'];
+    const allowed = ['.mp3', '.ogg', '.wav', '.m4a', '.aac', '.flac', '.opus', '.webm', '.amr', '.3gp'];
     const ext = require('path').extname(file.originalname || '').toLowerCase();
     if (file.mimetype.startsWith('audio/')) return cb(null, true);
     if (file.mimetype === 'video/webm') return cb(null, true);
-    if (file.mimetype === 'application/octet-stream' && audioExtensions.includes(ext)) return cb(null, true);
+    if (file.mimetype === 'application/octet-stream' && allowed.includes(ext)) return cb(null, true);
     cb(new Error('Sirf audio files allowed hain. Supported: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
   },
 });
 
-// POST /api/admin/audio — SYNC: compress + save to DB, then respond
+// POST /api/admin/audio — upload audio and save to DB as plain base64
 router.post('/audio', (req, res, next) => {
-  upload.single('audio')(req, res, (err) => {
+  audioUpload.single('audio')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ error: 'Audio file bari hai. Maximum allowed size: 20MB' });
@@ -497,26 +495,23 @@ router.post('/audio', (req, res, next) => {
 }, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
 
-  const fileBuffer   = req.file.buffer;
   const mimetype     = req.file.mimetype || 'audio/mpeg';
   const originalname = req.file.originalname;
+  const sizeKB       = Math.round(req.file.size / 1024);
 
   try {
-    // Gzip compress → base64 (fast: < 500ms even for 20MB files)
-    const compressed = await new Promise((resolve, reject) =>
-      zlib.gzip(fileBuffer, { level: 6 }, (err, buf) => err ? reject(err) : resolve(buf))
-    );
-    const base64 = compressed.toString('base64');
+    // Plain base64 — no compression, no timeout risk
+    const base64 = req.file.buffer.toString('base64');
 
     await Promise.all([
       setSiteSetting('site_audio_data',       base64),
       setSiteSetting('site_audio_mimetype',   mimetype),
       setSiteSetting('site_audio_original',   originalname),
-      setSiteSetting('site_audio_compressed', 'true'),
+      setSiteSetting('site_audio_compressed', 'false'),
     ]);
 
-    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${Math.round(base64.length/1024)}KB)`);
-    res.json({ status: 'done', original: originalname, filename: 'db' });
+    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${sizeKB}KB)`);
+    res.json({ status: 'done', original: originalname, filename: 'db', sizeKB });
   } catch (err) {
     console.error(`[Audio Upload] ❌ ${err.message}`);
     res.status(500).json({ error: 'Audio save failed: ' + err.message });
