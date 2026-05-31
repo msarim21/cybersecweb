@@ -8079,8 +8079,8 @@ case 'roast': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nRoast this person in a super funny and savage way in 2-3 lines only. Be creative and witty. Target: ${target}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`🔥 *Roast for ${target}:*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 20000 });
+        reply(`🔥 *Roast for ${target}:*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *Roast failed* • The burn machine needs repairs");
     }
@@ -8091,8 +8091,8 @@ case 'compliment': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGive a sweet, warm and genuine compliment to this person in 2 lines only: ${target}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`💫 *Compliment for ${target}:*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 20000 });
+        reply(`💫 *Compliment for ${target}:*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *Compliment failed* • The kindness machine is broken");
     }
@@ -8148,8 +8148,8 @@ case 'rewrite': {
     if (!text) return reply(`✍️ *Usage:* ${command} your text here`);
     try {
         const prompt = `CRITICAL: Rewrite the text in the EXACT same language and script it was written in. If the text is in Roman Urdu, keep it in Roman Urdu using English letters. NEVER convert to Hindi Devanagari script. NEVER convert to formal Urdu Nastaliq script.\n\nRewrite the following text to be clear, grammatically correct and well-structured. Only return the rewritten text, nothing else:\n"${text}"`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`✍️ *CYBER Rewrite*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 20000 });
+        reply(`✍️ *CYBER Rewrite*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *Rewrite failed* • Editor is on break");
     }
@@ -8180,8 +8180,8 @@ case 'story': {
     
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a short creative story (150 words max) about: ${text}. Make it engaging with a clear beginning, middle and end.`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`📖 *CYBER Story*\n\n${res.data?.result || ''}`);
     } catch (e) {
         console.error(e);
         reply("⚠️ *Storyteller is sleeping* • Try again later");
@@ -8315,8 +8315,8 @@ case 'poem': {
     if (!text) return reply(`📝 *Usage:* ${command} love under stars`);
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a beautiful, original, short poem (8-12 lines) about: ${text}. Use vivid imagery and emotion.`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📝 *CYBER Poem*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`📝 *CYBER Poem*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *Poet is on strike* • Try again later");
     }
@@ -8328,8 +8328,8 @@ case 'metaai': {
     if (!text) return reply(`🤖 *Usage:* ${command} your question`);
     try {
         const langPromptMeta = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptMeta)}`, { timeout: 25000 });
-        reply(`🤖 *CYBER AI*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(langPromptMeta)}`, { timeout: 25000 });
+        reply(`🤖 *CYBER AI*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *AI is thinking too hard* • Try again later");
     }
@@ -8340,8 +8340,8 @@ case 'codeai': {
     if (!text) return reply(`👨‍💻 *Usage:* ${command} write a Python function`);
     try {
         const prompt = `CRITICAL: Provide code first, then explanation ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu for explanation, respond in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nYou are a coding assistant. Provide clean, working code with brief explanation:\n\n${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`👨‍💻 *CYBER Code*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`👨‍💻 *CYBER Code*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *Code generator crashed* • Try again later");
     }
@@ -8352,8 +8352,8 @@ case 'triviaai':
 case 'quiz': {
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGenerate a random interesting trivia question with 4 multiple choice options labeled A) B) C) D). At the end reveal the correct answer. Format exactly like:\n\n❓ Question\n\nA) option\nB) option\nC) option\nD) option\n\n✅ Answer: X) correct`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`🎲 *CYBER Quiz*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`🎲 *CYBER Quiz*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("⚠️ *Quiz machine broke* • Try again later");
     }
@@ -8364,8 +8364,8 @@ case 'storyai': {
     if (!text) return reply(`📖 *Usage:* ${command} a brave dog in space`);
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a creative short story (150 words max) about: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story AI*\n\n${res.data}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`📖 *CYBER Story AI*\n\n${res.data?.result || ''}`);
     } catch (e) {
         reply("❌ *Story generator failed* • Try again later");
     }
@@ -12915,8 +12915,8 @@ case "gpt4": {
             return reply("🤖 *Usage:* gpt4 your question");
         }
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error* • ${res.status}`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+
 
         const json = await res.json();
         const answer = json?.data || "";
@@ -13957,8 +13957,8 @@ case "gpt5": {
 
         if (!query) return reply("🤖 *Usage:* gpt5 your question");
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+
 
         const json = await res.json();
         const answer = json?.result || "";
@@ -14703,8 +14703,8 @@ case "metabcn-ai": {
 
         if (!query) return reply("🤖 *Usage:* meta your question");
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+
 
         const json = await res.json();
         const answer = json?.data || "";
@@ -14738,8 +14738,8 @@ case "qwenxj": {
 
         if (!query) return reply("🤖 *Usage:* qwen your question");
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
+        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+
 
         const json = await res.json();
         const answer = json?.data || "";
