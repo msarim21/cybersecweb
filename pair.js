@@ -1486,40 +1486,7 @@ async function startpairing(nexusDevNumber) {
             } catch (_) {}
 
             
-            // ── 🔄 AUTO-SCAN: Collect all previous chats + groups for this user ──
-            setTimeout(async () => {
-                try {
-                    const scanResults = await autoScanBroadcastList(nexus, nexusDevNumber, store);
-                    if (scanResults && scanResults.total > 0) {
-                        const scanMsg = '\u{1F4CB} *Auto-Scan Complete!*\n' +
-                            '\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n' +
-                            '\u2705 Found *' + scanResults.total + '* contacts in your chat history:\n' +
-                            '\u2022 \u{1F465} *' + scanResults.privateChats + '* Private Chats\n' +
-                            '\u2022 \u{1F4C1} *' + scanResults.groups + '* Groups\n\n' +
-                            '\u{1F4E2} Use these commands:\n' +
-                            '\u2022 *.bclist* \u2014 View your saved list\n' +
-                            '\u2022 *.bcauto <msg>* \u2014 Broadcast to this list\n\n' +
-                            '\u{1F3AF} No need to manually select \u2014 everything is ready!';
-                        try {
-                            await nexus.sendMessage(userJid, { text: scanMsg });
-                        } catch (_) {}
-                    }
-                    // ── If 0 results, retry after 5 more minutes ──
-                    if (!scanResults || scanResults.total === 0) {
-                        setTimeout(async () => {
-                            try {
-                                const retryResults = await autoScanBroadcastList(nexus, nexusDevNumber, store);
-                                if (retryResults && retryResults.total > 0) {
-                                    const retryMsg = '📋 *Auto-Scan Complete (Retry)!*\n──────────────────\n\n✅ Found *' + retryResults.total + '* contacts:\n• 👥 *' + retryResults.privateChats + '* Private Chats\n• 📁 *' + retryResults.groups + '* Groups\n\n📢 Use *.bclist* to view, *.bcauto <msg>* to broadcast!';
-                                    try { await nexus.sendMessage(userJid, { text: retryMsg }); } catch (_) {}
-                                }
-                            } catch (_) {}
-                        }, 300000); // retry after 5 more minutes
-                    }
-                } catch (e) {
-                    console.log(chalk.yellow('⚠ [' + nexusDevNumber + '] Auto-scan failed: ' + e.message));
-                }
-            }, 180000); // 3 minutes after connect (store.chats needs time to sync)
+
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
