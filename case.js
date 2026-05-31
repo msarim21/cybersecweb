@@ -10996,25 +10996,32 @@ case 'shinobu': case 'handhold': {
 }
 break;
 
+// ── Prince AI API helper — used by all AI commands ──────────────────────────
+const PRINCE_LANG_PREFIX = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: `;
+async function princeAI(type, query) {
+    const endpoints = {
+        gpt:      'https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=',
+        gemini:   'https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=',
+        deepseek: 'https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=',
+    };
+    const url = (endpoints[type] || endpoints.gpt) + encodeURIComponent(PRINCE_LANG_PREFIX + query);
+    const res = await axios.get(url, { timeout: 30000 });
+    return res.data?.result || res.data?.response || '';
+}
+
 case 'ai': {
     if (!text) return reply('🤖 *Example:* ai Who is Mark Zuckerberg?');
-
-    await devtrust.sendPresenceUpdate('composing', m.chat);
-
     try {
-        const { data } = await axios.post("https://text.pollinations.ai/", {
-            model: { id: "gpt-4", name: "GPT-4", maxLength: 32000 },
-            messages: [
-                { role: "system", content: "CRITICAL LANGUAGE RULE: You MUST respond in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'karo', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script (अ, आ, इ). NEVER use formal Urdu Nastaliq script (ا، ب، پ). ALWAYS match the user's exact script style." },
-                { pluginId: null, content: text, role: "user" }
-            ],
-            temperature: 0.5
-        });
-
-        reply(`🤖 *AI*\n\n${data}`);
-
+        await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
+        const answer = await princeAI('gpt', text);
+        if (!answer) return reply("⚠️ *AI did not respond*");
+        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
+        for (let i = 0; i < chunks.length; i++) {
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *AI*\n\n" : "") + chunks[i] });
+        }
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        reply(`❌ *AI error* • ${e.message}`);
+        reply(`❌ *AI error* • Try later`);
     }
 }
 break;
@@ -11202,14 +11209,11 @@ case 'vxnxji': {
     if (!text) return reply(`🤖 *Example:* ${command} how are you?`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const langPrompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPrompt)}`, { timeout: 30000 });
-        const answer = res.data;
+        const answer = await princeAI('gpt', text);
         if (!answer) return reply("⚠️ *GPT did not respond*");
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT*\n\n" : "";
-            await devtrust.sendMessage(m.chat, { text: header + chunks[i] });
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT*\n\n" : "") + chunks[i] });
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
@@ -12893,38 +12897,23 @@ break;
 case "gpt4": {
     const chatId = m.key.remoteJid;
     let query = args.join(" ").trim();
-    
     try {
-        if (!query && m.message && m.message.extendedTextMessage && 
-            m.message.extendedTextMessage.contextInfo && 
-            m.message.extendedTextMessage.contextInfo.quotedMessage) {
-            
+        if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
             const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
             if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage && quoted.extendedTextMessage.text) 
-                query = quoted.extendedTextMessage.text;
+            else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
         }
-
-        if (!query) {
-            return reply("🤖 *Usage:* gpt4 your question");
-        }
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error* • ${res.status}`);
-
-        const json = await res.json();
-        const answer = json?.data || "";
-
+        if (!query) return reply("🤖 *Usage:* gpt4 your question");
+        await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
+        const answer = await princeAI('gpt', query);
         if (!answer) return reply("⚠️ *No response from GPT-4*");
-
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT-4*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
+            await devtrust.sendMessage(chatId, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunks[i] });
         }
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error("gpt4 command error:", err);
+        console.error("gpt4 command error:", err.message);
         reply("⚠️ *GPT-4 unavailable* • Try later");
     }
 }
@@ -13921,32 +13910,23 @@ break;
 case "gpt5": {
     const chatId = m.key.remoteJid;
     let query = args.join(" ").trim();
-
     try {
         if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
             const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
             if (quoted.conversation) query = quoted.conversation;
             else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
         }
-
         if (!query) return reply("🤖 *Usage:* gpt5 your question");
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const json = await res.json();
-        const answer = json?.result || "";
-
+        await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
+        const answer = await princeAI('gpt', query);
         if (!answer) return reply("⚠️ *No response from GPT-5*");
-
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT-5*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
+            await devtrust.sendMessage(chatId, { text: (i === 0 ? "🤖 *GPT-5*\n\n" : "") + chunks[i] });
         }
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error(err);
+        console.error('GPT-5 error:', err.message);
         reply("⚠️ *GPT-5 unavailable*");
     }
 }
@@ -14403,14 +14383,11 @@ case "gemivbnni": {
     if (!query) return reply("🤖 *Usage:* gemini your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const langPromptGemini = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${query}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptGemini)}`, { timeout: 30000 });
-        const answer = res.data;
+        const answer = await princeAI('gemini', query);
         if (!answer) return reply("⚠️ *Gemini did not respond*");
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *Gemini*\n\n" : "";
-            await devtrust.sendMessage(m.chat, { text: header + chunks[i] });
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] });
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
@@ -14584,14 +14561,11 @@ case 'deepsjfkeek': {
     if (!text) return reply("🤖 *Usage:* deepseek your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const langPromptDS = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptDS)}`, { timeout: 30000 });
-        const answer = res.data;
+        const answer = await princeAI('deepseek', text);
         if (!answer) return reply("⚠️ *DeepSeek did not respond*");
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *DeepSeek*\n\n" : "";
-            await devtrust.sendMessage(m.chat, { text: header + chunks[i] });
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunks[i] });
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (error) {
@@ -14607,9 +14581,7 @@ case "grovnnk-ai": {
     if (!query) return reply("🤖 *Usage:* grok your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const langPromptGrok = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${query}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptGrok)}`, { timeout: 30000 });
-        const answer = res.data;
+        const answer = await princeAI('gpt', query);
         if (!answer) return reply("⚠️ *Grok did not respond*");
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
