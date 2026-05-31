@@ -5564,10 +5564,7 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
             { quoted: m }
         );
     }
-    setTimeout(async () => {
-        try { await devtrust.sendMessage(from, { delete: m.key }); } catch(_) {}
-        try { if (_menuSent?.key) await devtrust.sendMessage(from, { delete: _menuSent.key }); } catch(_) {}
-    }, 2000);
+  
 }
 break;
 
