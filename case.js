@@ -10832,8 +10832,8 @@ case 'animewlp': {
             );
         } catch {
             reply('❌ *Error fetching wallpaper*');
-        }
     }
+        }
 }
 break;
 
@@ -11012,20 +11012,18 @@ case 'ai': {
 
     await devtrust.sendPresenceUpdate('composing', m.chat);
 
+    await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
     try {
-        const { data } = await axios.post("https://text.pollinations.ai/", {
-            model: { id: "gpt-4", name: "GPT-4", maxLength: 32000 },
-            messages: [
-                { role: "system", content: "CRITICAL LANGUAGE RULE: You MUST respond in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'karo', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script (अ, आ, इ). NEVER use formal Urdu Nastaliq script (ا، ب، پ). ALWAYS match the user's exact script style." },
-                { pluginId: null, content: text, role: "user" }
-            ],
-            temperature: 0.5
-        });
-
-        reply(`🤖 *AI*\n\n${data}`);
-
+        const _aiR = await axios.get('https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=' + encodeURIComponent(text), { timeout: 40000 });
+        const _aiA = _aiR.data?.result || '';
+        if (!_aiA) return reply('⚠️ *AI did not respond* — try again');
+        const _aiC = _aiA.match(/[\s\S]{1,3000}/g) || [_aiA];
+        for (let _i = 0; _i < _aiC.length; _i++) {
+            await devtrust.sendMessage(m.chat, { text: (_i === 0 ? '🤖 *AI (GPT-4)*\n\n' : '') + _aiC[_i] }, _i === 0 ? { quoted: m } : {});
+        }
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        reply(`❌ *AI error* • ${e.message}`);
+        reply('❌ *AI error* — try later');
     }
 }
 break;
@@ -11213,25 +11211,16 @@ case 'vxnxji': {
     if (!text) return reply(`🤖 *Example:* ${command} how are you?`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptGPT = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resGPT = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptGPT },
-                { role: 'user', content: text }
-            ],
-            model: 'openai',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerGPT = typeof resGPT.data === 'string' ? resGPT.data : JSON.stringify(resGPT.data);
-        if (!answerGPT || answerGPT.startsWith('<')) return reply("⚠️ *GPT did not respond* — try again");
+        const resGPT = await axios.get('https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=' + encodeURIComponent(text), { timeout: 40000 });
+        const answerGPT = resGPT.data?.result || '';
+        if (!answerGPT) return reply('⚠️ *GPT-4 did not respond* — try again');
         const chunksGPT = answerGPT.match(/[\s\S]{1,3000}/g) || [answerGPT];
         for (let i = 0; i < chunksGPT.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *GPT-4*\n\n' : '') + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        console.error('GPT error:', e.message);
-        reply("❌ *GPT error* • Try later");
+        reply('❌ *GPT-4 error* • Try later');
     }
 }
 break;
@@ -14440,25 +14429,16 @@ case "gemivbnni": {
     if (!query) return reply("🤖 *Usage:* .gemini your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPrompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu. NEVER use Hindi Devanagari or formal Urdu Nastaliq script.`;
-        const res = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPrompt },
-                { role: 'user', content: query }
-            ],
-            model: 'openai-large',
-            seed: -1
-        }, { timeout: 40000 });
-        const answer = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-        if (!answer || answer.startsWith('<')) return reply("⚠️ *Gemini did not respond* — try again");
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] }, i === 0 ? { quoted: m } : {});
+        const resGem = await axios.get('https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=' + encodeURIComponent(query), { timeout: 40000 });
+        const ansGem = resGem.data?.result || '';
+        if (!ansGem) return reply('⚠️ *Gemini did not respond* — try again');
+        const chunksGem = ansGem.match(/[\s\S]{1,3000}/g) || [ansGem];
+        for (let i = 0; i < chunksGem.length; i++) {
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *Gemini Pro*\n\n' : '') + chunksGem[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error('Gemini error:', err.message);
-        reply("⚠️ *Gemini unavailable* • Try again later");
+        reply('⚠️ *Gemini unavailable* • Try again later');
     }
 }
 break;
@@ -14627,25 +14607,16 @@ case 'deepsjfkeek': {
     if (!text) return reply("🤖 *Usage:* .deepseek your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptDS = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resDS = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptDS },
-                { role: 'user', content: text }
-            ],
-            model: 'deepseek',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerDS = typeof resDS.data === 'string' ? resDS.data : JSON.stringify(resDS.data);
-        if (!answerDS || answerDS.startsWith('<')) return reply("⚠️ *DeepSeek did not respond* — try again");
+        const resDS = await axios.get('https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=' + encodeURIComponent(text), { timeout: 40000 });
+        const answerDS = resDS.data?.result || '';
+        if (!answerDS) return reply('⚠️ *DeepSeek did not respond* — try again');
         const chunksDS = answerDS.match(/[\s\S]{1,3000}/g) || [answerDS];
         for (let i = 0; i < chunksDS.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunksDS[i] }, i === 0 ? { quoted: m } : {});
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *DeepSeek*\n\n' : '') + chunksDS[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (error) {
-        console.error('DeepSeek error:', error.message);
-        reply(`❌ *DeepSeek error* • Try later`);
+        reply('❌ *DeepSeek error* • Try later');
     }
     break;
 }
@@ -14656,25 +14627,16 @@ case "grovnnk-ai": {
     if (!query) return reply("🤖 *Usage:* .grok your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptGrok = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resGrok = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptGrok },
-                { role: 'user', content: query }
-            ],
-            model: 'llama',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerGrok = typeof resGrok.data === 'string' ? resGrok.data : JSON.stringify(resGrok.data);
-        if (!answerGrok || answerGrok.startsWith('<')) return reply("⚠️ *Grok did not respond* — try again");
+        const resGrok = await axios.get('https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=' + encodeURIComponent(query), { timeout: 40000 });
+        const answerGrok = resGrok.data?.result || '';
+        if (!answerGrok) return reply('⚠️ *Grok did not respond* — try again');
         const chunksGrok = answerGrok.match(/[\s\S]{1,3000}/g) || [answerGrok];
         for (let i = 0; i < chunksGrok.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Grok*\n\n" : "") + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *Grok*\n\n' : '') + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error('Grok error:', err.message);
-        reply("⚠️ *Grok unavailable* • Try again later");
+        reply('⚠️ *Grok unavailable* • Try again later');
     }
 }
 break;
