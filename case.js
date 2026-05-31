@@ -4659,16 +4659,7 @@ const matches = caseFileContent.match(/case '[^']+'(?!.*case '[^']+')/g) || [];
 const caseCount = matches.length;
 const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
 let totalCases = caseCount;
-let listCases = caseNames.join('\n⭔ '); 
-
-    const result = await devtrust.groupAcceptInvite(inviteCode);
-    console.log('✅ Joined group:', result);
-    return result;
-  } catch (error) {
-    console.error('❌ Failed to join group:', error.message);
-    return null;
-  }
-}
+let listCases = caseNames.join('\n⭔ ');
 
 function formatLagosTime() {
     const lagosTime = getLagosTime();
