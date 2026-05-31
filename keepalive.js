@@ -6,7 +6,6 @@ const http = require('http');
 let _timer = null;
 let _noopTimer = null;
 let _started = false;
-let _restartInProgress = false;
 
 function getAppUrl() {
     if (process.env.APP_URL)                       return process.env.APP_URL;
@@ -67,9 +66,6 @@ async function selfPing() {
 // ── Silent bot-session refresh ────────────────────────────────────────────────
 // Every 10 min: reconnect dead sessions AND trigger full autoload if nothing loaded.
 async function refreshBotSessions() {
-    // Skip during 60-min restart — it handles reconnect itself
-    if (_restartInProgress) return;
-
     try {
         const pairMod = require('./pair');
         const { getActiveLinkedNumbers } = require('./session-db');
@@ -127,89 +123,6 @@ function isBotProcess() {
     return typeof global.stoppedBots !== 'undefined';
 }
 
-// ── 60-min silent background bot restart ─────────────────────────────────────
-// Sirf WhatsApp connections restart hoti hain — web server nahi rukta.
-// Mode (self/public) automatically restore hota hai DB se har reconnect pe.
-// User ko kuch dikhta nahi — background mein silently hota hai.
-async function scheduledBotRestart() {
-    // Sirf bot process mein chale — web-only process mein skip
-    if (!isBotProcess()) return;
-
-    // Agar restart pehle se chal raha hai to skip karo
-    if (_restartInProgress) {
-        console.log('[KeepAlive] ⏭️  60-min restart: already in progress, skipping this cycle.');
-        return;
-    }
-
-    // Agar autoload chal raha hai to skip karo
-    try {
-        const { isRunning } = require('./autoload');
-        if (typeof isRunning === 'function' && isRunning()) {
-            console.log('[KeepAlive] ⏭️  60-min restart: autoload running, skipping this cycle.');
-            return;
-        }
-    } catch (_) {}
-
-    _restartInProgress = true;
-    console.log('[KeepAlive] 🔄 60-min background restart shuru — WhatsApp sessions reload ho rahe hain...');
-
-    try {
-        // Step 1: Saare active sessions gracefully band karo
-        const trackerMap = global._rentbotTracker;
-        if (trackerMap && trackerMap.size > 0) {
-            let pairMod = null;
-            try { pairMod = require('./pair'); } catch (_) {}
-
-            const jids = [...trackerMap.keys()];
-            console.log(`[KeepAlive] 🛑 ${jids.length} session(s) band ho rahe hain...`);
-
-            for (const jid of jids) {
-                try {
-                    if (pairMod && typeof pairMod.stopBot === 'function') {
-                        pairMod.stopBot(jid);
-                    }
-                } catch (_) {}
-            }
-
-            // Sessions ko close hone ka waqt do
-            await new Promise(r => setTimeout(r, 4000));
-
-            // pair.js module cache clear karo taakay fresh instances banein
-            try {
-                const pairPath = require.resolve('./pair');
-                delete require.cache[pairPath];
-            } catch (_) {}
-        }
-
-        // Step 2: Tracker map clear karo (fresh start)
-        if (trackerMap && typeof trackerMap.clear === 'function') {
-            trackerMap.clear();
-        }
-
-        // Step 3: Thodi aur wait karo DB mode restore ke liye
-        await new Promise(r => setTimeout(r, 2000));
-
-        // Step 4: autoLoadPairs se sab reconnect karo
-        // Har number ka mode AUTOMATIC DB se restore hoga (pair.js mein getBotMode() call hai)
-        console.log('[KeepAlive] 🔌 autoLoadPairs chal rahi hai — mode DB se restore hoga...');
-        const { autoLoadPairs } = require('./autoload');
-        const result = await autoLoadPairs({ batchSize: 5 });
-
-        console.log(`[KeepAlive] ✅ 60-min restart complete — ${result.successful || 0}/${result.total || 0} users reconnected`);
-
-    } catch (err) {
-        console.log(`[KeepAlive] ⚠️  60-min restart mein error: ${err.message}`);
-
-        // Error pe bhi reconnect try karo
-        try {
-            await new Promise(r => setTimeout(r, 3000));
-            const { autoLoadPairs } = require('./autoload');
-            autoLoadPairs({ batchSize: 3 }).catch(() => {});
-        } catch (_) {}
-    } finally {
-        _restartInProgress = false;
-    }
-}
 
 // ── Prince AI API warmup — prevent first-command cold-start delay ─────────────
 async function warmupPrinceAPIs() {
@@ -238,10 +151,6 @@ function startKeepAlive() {
     // Every 10 min: dead sessions silently reconnect karo
     setInterval(refreshBotSessions, 10 * 60 * 1000);
 
-    // Har 60 min: background mein WhatsApp connections silently restart
-    // Web server nahi rukta — sirf bot sessions reload hote hain
-    // Mode (self/public) DB se automatically restore hota hai
-    setInterval(scheduledBotRestart, 60 * 60 * 1000);
 
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
@@ -252,7 +161,7 @@ function startKeepAlive() {
 
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min | bot restart every 60 min`);
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min | dead session reconnect every 10 min`);
     } else {
         console.log('[KeepAlive] ⚠️  Started but NO APP_URL detected.');
         console.log('[KeepAlive] 👉 Config Vars mein APP_URL=https://your-app.com set karo');
