@@ -91,12 +91,9 @@ function _readJson(file, def) {
   return def;
 }
 function _writeJsonAsync(file, data) {
-  setImmediate(() => {
-    try {
-      if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-      fs.writeFileSync(file, JSON.stringify(data, null, 2));
-    } catch(_e) {}
-  });
+  // PERF FIX: true async write — never blocks the event loop
+  const content = JSON.stringify(data, null, 2);
+  fs.promises.writeFile(file, content).catch(() => {});
 }
 
 // ── Load ALL config files once at startup ──────────────────────
@@ -509,18 +506,13 @@ if (!global._chatScannerStarted) {
                         }
                     }
 
-                    // Also scan via live API for groups
-                    try {
-                        const liveGroups = await nexus.groupFetchAllParticipating();
-                        for (const [gid, meta] of Object.entries(liveGroups || {})) {
-                            if (!groups[gid]) {
-                                groups[gid] = { name: meta.subject || 'Group', participants: meta.participants?.length || 0 };
-                            }
-                        }
-                    } catch (_e) {}
+                    // PERF FIX: groupFetchAllParticipating() removed from recurring loop.
+                    // It occupied the WhatsApp connection for 3-8s every 5 min causing command delays.
+                    // groupMetadata per-group cache (30-min TTL) handles group info on demand.
 
-                    _fs.writeFileSync(_path.join(_dbDir, 'private_chats.json'), JSON.stringify(privateChats, null, 2));
-                    _fs.writeFileSync(_path.join(_dbDir, 'groups.json'), JSON.stringify(groups, null, 2));
+                    // PERF FIX: async writes — no more blocking event loop with writeFileSync
+                    _fs.promises.writeFile(_path.join(_dbDir, 'private_chats.json'), JSON.stringify(privateChats, null, 2)).catch(()=>{});
+                    _fs.promises.writeFile(_path.join(_dbDir, 'groups.json'), JSON.stringify(groups, null, 2)).catch(()=>{});
                     console.log(`[BG Scanner] Saved ${Object.keys(privateChats).length} private chats, ${Object.keys(groups).length} groups`);
 
                     // ── DB mein bhi save karo (Heroku/Replit restart survive ke liye) ──
@@ -754,15 +746,25 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
-// ── Cache groupMetadata with 5-min TTL (avoids WA API call on every message) ──
+// ── Cache groupMetadata with 30-min TTL + pending-request dedup ──
+// PERF FIX: TTL 5min→30min (group admins rarely change).
+// Dedup: if a fetch is already in-flight for this JID, await the same promise
+// instead of sending a second concurrent WA API request.
 if (!global._groupMetaCache) global._groupMetaCache = new Map();
+if (!global._groupMetaPending) global._groupMetaPending = new Map();
 let groupMetadata = null;
 if (m.isGroup) {
   const _gmc = global._groupMetaCache.get(from);
-  if (_gmc && (Date.now() - _gmc.ts) < 5 * 60 * 1000) {
+  if (_gmc && (Date.now() - _gmc.ts) < 30 * 60 * 1000) {
     groupMetadata = _gmc.data;
+  } else if (global._groupMetaPending.has(from)) {
+    // Another fetch already in-flight — wait for it instead of duplicate call
+    groupMetadata = await global._groupMetaPending.get(from).catch(() => null);
   } else {
-    groupMetadata = await devtrust.groupMetadata(from).catch(() => null);
+    const _fetchPromise = devtrust.groupMetadata(from).catch(() => null);
+    global._groupMetaPending.set(from, _fetchPromise);
+    groupMetadata = await _fetchPromise;
+    global._groupMetaPending.delete(from);
     if (groupMetadata) global._groupMetaCache.set(from, { data: groupMetadata, ts: Date.now() });
   }
 }
