@@ -653,6 +653,11 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 
 const reply = async (text, mentions = []) => {
   try {
+    // Fire-and-forget presence — do NOT await (saves 300-1200ms per command)
+    const _isNL = m.chat && m.chat.endsWith('@newsletter');
+    if (!_isNL) {
+      devtrust.sendPresenceUpdate('composing', m.chat).catch(()=>{});
+    }
     return await replyWithNewsletter(m.chat, text, m, mentions);
   } catch (error) {
     console.error('Reply failed:', error);
@@ -4511,8 +4516,8 @@ async function nexusLoading() {
 
 // NOTE: Newsletter auto-react is now handled inline above (no nested listener)
 
-if (m.text || m.mtype) {
-    console.log(chalk.hex('#3498db')(`message " ${m.text || m.mtype} "  from ${pushname} id ${m.isGroup ? `group ${groupMetadata.subject}` : 'private chat'}`));
+if (m.message) {
+    console.log(chalk.hex('#3498db')(`message " ${m.message} "  from ${pushname} id ${m.isGroup ? `group ${groupMetadata.subject}` : 'private chat'}`));
 }
 
 // ============ NEWSLETTER AUTO-REACT (inline, no nested listener) ============
@@ -4651,6 +4656,21 @@ const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
 let totalCases = caseCount;
 let listCases = caseNames.join('\n⭔ '); 
 
+async function autoJoinGroup(devtrust, inviteLink) {
+  try {
+    const inviteCode = inviteLink.match(/([a-zA-Z0-9_-]{22})/)?.[1];
+    if (!inviteCode) {
+      throw new Error('Invalid invite link');
+    }
+    const result = await devtrust.groupAcceptInvite(inviteCode);
+    console.log('✅ Joined group:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Failed to join group:', error.message);
+    return null;
+  }
+}
+
 function formatLagosTime() {
     const lagosTime = getLagosTime();
     const hours = lagosTime.getHours().toString().padStart(2, '0');
@@ -4719,6 +4739,7 @@ switch(command) {
 case 'allmenu':
 case 'CYBERall':
 case 'commandlist': {
+  await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5450,6 +5471,7 @@ break;
 
 case 'menu':
 case 'CYBER': {
+   await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5542,11 +5564,16 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
             { quoted: m }
         );
     }
+    setTimeout(async () => {
+        try { await devtrust.sendMessage(from, { delete: m.key }); } catch(_) {}
+        try { if (_menuSent?.key) await devtrust.sendMessage(from, { delete: _menuSent.key }); } catch(_) {}
+    }, 2000);
 }
 break;
 
 case 'aimenu':
 case 'CYBERai': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5646,6 +5673,7 @@ break;
 
 case 'animemenu':
 case 'CYBERanime': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5864,6 +5892,7 @@ case 'CYBERbug': {
         if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
             return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
     }
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6007,6 +6036,7 @@ break;
 
 case 'downloadmenu':
 case 'CYBERdownload': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6113,6 +6143,7 @@ break;
 
 case 'funmenu':
 case 'CYBERfun': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6213,6 +6244,7 @@ break;
 
 case 'gamemenu':
 case 'CYBERgame': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6307,6 +6339,7 @@ break;
 
 case 'groupmenu':
 case 'CYBERgroup': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6448,6 +6481,7 @@ break;
 
 case 'logomenu':
 case 'CYBERlogo': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6570,6 +6604,7 @@ break;
 
 case 'ownermenu':
 case 'CYBERowner': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6697,6 +6732,7 @@ break;
 
 case 'stickermenu':
 case 'CYBERsticker': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6816,6 +6852,7 @@ break;
 
 case 'toolmenu':
 case 'CYBERtool': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6930,6 +6967,7 @@ break;
 
 case 'voicemenu':
 case 'CYBERvoice': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7025,6 +7063,7 @@ break;
 
 case 'othermenu':
 case 'CYBERother': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -10996,32 +11035,25 @@ case 'shinobu': case 'handhold': {
 }
 break;
 
-// ── Prince AI API helper — used by all AI commands ──────────────────────────
-const PRINCE_LANG_PREFIX = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: `;
-async function princeAI(type, query) {
-    const endpoints = {
-        gpt:      'https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=',
-        gemini:   'https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=',
-        deepseek: 'https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=',
-    };
-    const url = (endpoints[type] || endpoints.gpt) + encodeURIComponent(PRINCE_LANG_PREFIX + query);
-    const res = await axios.get(url, { timeout: 30000 });
-    return res.data?.result || res.data?.response || '';
-}
-
 case 'ai': {
     if (!text) return reply('🤖 *Example:* ai Who is Mark Zuckerberg?');
+
+    await devtrust.sendPresenceUpdate('composing', m.chat);
+
     try {
-        await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('gpt', text);
-        if (!answer) return reply("⚠️ *AI did not respond*");
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *AI*\n\n" : "") + chunks[i] });
-        }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        const { data } = await axios.post("https://text.pollinations.ai/", {
+            model: { id: "gpt-4", name: "GPT-4", maxLength: 32000 },
+            messages: [
+                { role: "system", content: "CRITICAL LANGUAGE RULE: You MUST respond in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'karo', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script (अ, आ, इ). NEVER use formal Urdu Nastaliq script (ا، ب، پ). ALWAYS match the user's exact script style." },
+                { pluginId: null, content: text, role: "user" }
+            ],
+            temperature: 0.5
+        });
+
+        reply(`🤖 *AI*\n\n${data}`);
+
     } catch (e) {
-        reply(`❌ *AI error* • Try later`);
+        reply(`❌ *AI error* • ${e.message}`);
     }
 }
 break;
@@ -11209,11 +11241,20 @@ case 'vxnxji': {
     if (!text) return reply(`🤖 *Example:* ${command} how are you?`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('gpt', text);
-        if (!answer) return reply("⚠️ *GPT did not respond*");
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT*\n\n" : "") + chunks[i] });
+        const sysPromptGPT = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
+        const resGPT = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPromptGPT },
+                { role: 'user', content: text }
+            ],
+            model: 'openai',
+            seed: -1
+        }, { timeout: 40000 });
+        const answerGPT = typeof resGPT.data === 'string' ? resGPT.data : JSON.stringify(resGPT.data);
+        if (!answerGPT || answerGPT.startsWith('<')) return reply("⚠️ *GPT did not respond* — try again");
+        const chunksGPT = answerGPT.match(/[\s\S]{1,3000}/g) || [answerGPT];
+        for (let i = 0; i < chunksGPT.length; i++) {
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
@@ -12897,23 +12938,38 @@ break;
 case "gpt4": {
     const chatId = m.key.remoteJid;
     let query = args.join(" ").trim();
+    
     try {
-        if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+        if (!query && m.message && m.message.extendedTextMessage && 
+            m.message.extendedTextMessage.contextInfo && 
+            m.message.extendedTextMessage.contextInfo.quotedMessage) {
+            
             const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
             if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
+            else if (quoted.extendedTextMessage && quoted.extendedTextMessage.text) 
+                query = quoted.extendedTextMessage.text;
         }
-        if (!query) return reply("🤖 *Usage:* gpt4 your question");
-        await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('gpt', query);
+
+        if (!query) {
+            return reply("🤖 *Usage:* gpt4 your question");
+        }
+
+        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
+        if (!res.ok) return reply(`⚠️ *API error* • ${res.status}`);
+
+        const json = await res.json();
+        const answer = json?.data || "";
+
         if (!answer) return reply("⚠️ *No response from GPT-4*");
+
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
+        
         for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(chatId, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunks[i] });
+            const header = i === 0 ? "🤖 *GPT-4*\n\n" : "";
+            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
         }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error("gpt4 command error:", err.message);
+        console.error("gpt4 command error:", err);
         reply("⚠️ *GPT-4 unavailable* • Try later");
     }
 }
@@ -13288,17 +13344,17 @@ break;
   case "xnxxvideodl": {
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!text) return reply("📌 *Usage:* .xnxxvideodl <xnxx link>\nExample: .xnxxvideodl https://www.xnxx.com/video-xxx/...");
-    if (!text.includes("xnxx")) return reply("❌ *Link must be from xnxx.com*");
+    if (!text.includes("xnxx.com")) return reply("❌ *Link must be from xnxx.com*");
 
     await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
     try {
-        const _vdlRes = await axios.get(`https://api.princetechn.com/api/download/xnxxdl?apikey=prince&url=${encodeURIComponent(text)}`, { timeout: 30000 });
-        const xdata = _vdlRes.data?.result;
-        if (!xdata) throw new Error('No data from API');
-        const videoUrl = xdata.files?.high || xdata.files?.low || xdata.files?.HLS;
+        const xdata = await xnxxDownload(text);
+        const videoUrl = xdata.best;
         if (!videoUrl) throw new Error('No video URL found');
-        const _dur = xdata.duration ? `⏱️ *Duration:* ${Math.floor(xdata.duration/60)}m ${xdata.duration%60}s\n` : '';
-        const caption = `🍑 *XNXX Download*\n\n📽️ *Title:* ${(xdata.title||'').slice(0,100)}\n${_dur}🎬 *Quality:* ${xdata.files?.high ? 'High (360p)' : 'Low (240p)'}`;
+
+        const caption = `🍑 *XNXX Download*\n\n` +
+            `📽️ *Title:* ${xdata.title.slice(0, 100)}\n` +
+            `🎬 *Quality:* ${xdata.sources.high ? 'High (360p)' : 'Low (240p)'}`;
 
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({ video: { url: videoUrl }, mimetype: 'video/mp4', caption }),
@@ -13396,23 +13452,32 @@ case 'xnxx': {
     }
     if (!global.videoCache) global.videoCache = new Map();
     try {
-        await devtrust.sendMessage(m.chat, { text: `🔍 *Searching for:* ${text}\n⏳ Please wait...` }, { quoted: m });
+        await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
         const searchResults = await xnxxSearch(text);
         if (!searchResults || searchResults.length === 0) {
+            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
             return reply(`❌ No videos found for *${text}*`);
         }
-        const topResults = searchResults.slice(0, 10);
-        let listMessage = `╭━━━━━━━━━━━━━━━╮\n`;
-        listMessage += `┃ 📽️ *VIDEO SEARCH RESULTS*\n`;
-        listMessage += `┃ 🔎 Query: ${text}\n`;
-        listMessage += `╰━━━━━━━━━━━━━━━╯\n\n`;
-        topResults.forEach((video, index) => {
-            listMessage += `*${index + 1}.* ${video.title}\n`;
-        });
-        listMessage += `\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n`;
-        listMessage += `💬 *Reply with the number of the desired video.*\n`;
-        listMessage += `📌 For example: *1* or *2* (1-${topResults.length})`;
-        const listMsg = await devtrust.sendMessage(m.chat, { text: listMessage }, { quoted: m });
+        const topResults = searchResults.slice(0, 8);
+        const captionLines = topResults.map((v, i) =>
+            `*${i + 1}.* ${(v.title || 'Unknown').substring(0, 65)}\n    ⏱️ ${v.duration || 'N/A'}`
+        ).join('\n\n');
+        const listCaption = `🔞 *XNXX Search Results*\n🔎 Query: *${text}*\n\n${captionLines}\n\n📌 *Reply with number to download*`;
+        // Send with thumbnail if available, else text
+        const firstThumb = topResults.find(v => v.thumb)?.thumb;
+        let listMsg;
+        if (firstThumb) {
+            try {
+                listMsg = await devtrust.sendMessage(m.chat,
+                    addNewsletterContext({ image: { url: firstThumb }, caption: listCaption }),
+                    { quoted: m }
+                );
+            } catch (_) {
+                listMsg = await devtrust.sendMessage(m.chat, { text: listCaption }, { quoted: m });
+            }
+        } else {
+            listMsg = await devtrust.sendMessage(m.chat, { text: listCaption }, { quoted: m });
+        }
         const sessionId = `${m.chat}_${listMsg.key.id}`;
         global.videoCache.set(sessionId, { videos: topResults, listMsgId: listMsg.key.id });
         const _xnxxHandler = async (messageUpdate) => {
@@ -13439,17 +13504,25 @@ case 'xnxx': {
                 await devtrust.sendMessage(fromChat, { react: { text: '⏳', key: messageData.key } });
                 try {
                     await devtrust.sendMessage(fromChat, { text: '⏳ *Fetching video...*\nPlease wait...' }, { quoted: messageData });
-                    const _xnxxDlRes = await axios.get(`https://api.princetechn.com/api/download/xnxxdl?apikey=prince&url=${encodeURIComponent(selectedVideo.url)}`, { timeout: 30000 });
-                    const _xnxxData = _xnxxDlRes.data?.result;
-                    if (!_xnxxData) throw new Error('No data from API');
-                    const videoUrl = _xnxxData.files?.high || _xnxxData.files?.low || _xnxxData.files?.HLS;
+                    const videoData = await xnxxDownload(selectedVideo.url);
+                    const videoUrl = videoData.best || videoData.sources?.high || videoData.sources?.low || videoData.sources?.hls;
                     if (!videoUrl) throw new Error('No download URL found');
-                    const _xnxxDur = _xnxxData.duration ? `⏱️ *Duration:* ${Math.floor(_xnxxData.duration/60)}m ${_xnxxData.duration%60}s\n` : '';
-                    await devtrust.sendMessage(fromChat, {
-                        video: { url: videoUrl },
-                        caption: `🎬 *${(_xnxxData.title || selectedVideo.title).slice(0,200)}*\n\n${_xnxxDur}📥 *Downloaded via CYBER BOT*`,
-                        gifPlayback: false
-                    }, { quoted: messageData });
+                    // Buffer download with proper headers (URL hotlink fails on xnxx CDN)
+                    const videoBuf = Buffer.from((await axios.get(videoUrl, {
+                        responseType: 'arraybuffer',
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Referer': 'https://www.xnxx.com/',
+                            'Origin': 'https://www.xnxx.com',
+                        },
+                        timeout: 300000,
+                        maxContentLength: 500 * 1024 * 1024
+                    })).data);
+                    const videoCaption = `🎬 *${(videoData.title || selectedVideo.title).substring(0, 80)}*\n📥 Downloaded from XNXX`;
+                    await devtrust.sendMessage(fromChat,
+                        addNewsletterContext({ video: videoBuf, caption: videoCaption, mimetype: 'video/mp4' }),
+                        { quoted: messageData }
+                    );
                     await devtrust.sendMessage(fromChat, { react: { text: '✅', key: messageData.key } });
                     global.videoCache.delete(sessionId);
                     devtrust.ev.off('messages.upsert', _xnxxHandler);
@@ -13913,23 +13986,32 @@ break;
 case "gpt5": {
     const chatId = m.key.remoteJid;
     let query = args.join(" ").trim();
+
     try {
         if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
             const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
             if (quoted.conversation) query = quoted.conversation;
             else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
         }
+
         if (!query) return reply("🤖 *Usage:* gpt5 your question");
-        await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('gpt', query);
+
+        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
+        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
+
+        const json = await res.json();
+        const answer = json?.result || "";
+
         if (!answer) return reply("⚠️ *No response from GPT-5*");
+
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
+        
         for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(chatId, { text: (i === 0 ? "🤖 *GPT-5*\n\n" : "") + chunks[i] });
+            const header = i === 0 ? "🤖 *GPT-5*\n\n" : "";
+            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
         }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error('GPT-5 error:', err.message);
+        console.error(err);
         reply("⚠️ *GPT-5 unavailable*");
     }
 }
@@ -14383,14 +14465,23 @@ break;
 case 'gemini':
 case "gemivbnni": {
     let query = text || (m.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation);
-    if (!query) return reply("🤖 *Usage:* gemini your question");
+    if (!query) return reply("🤖 *Usage:* .gemini your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('gemini', query);
-        if (!answer) return reply("⚠️ *Gemini did not respond*");
+        const sysPrompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu. NEVER use Hindi Devanagari or formal Urdu Nastaliq script.`;
+        const res = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPrompt },
+                { role: 'user', content: query }
+            ],
+            model: 'openai-large',
+            seed: -1
+        }, { timeout: 40000 });
+        const answer = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        if (!answer || answer.startsWith('<')) return reply("⚠️ *Gemini did not respond* — try again");
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] });
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
@@ -14561,14 +14652,23 @@ break;
 
 case 'deepseek':
 case 'deepsjfkeek': {
-    if (!text) return reply("🤖 *Usage:* deepseek your question");
+    if (!text) return reply("🤖 *Usage:* .deepseek your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('deepseek', text);
-        if (!answer) return reply("⚠️ *DeepSeek did not respond*");
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        for (let i = 0; i < chunks.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunks[i] });
+        const sysPromptDS = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
+        const resDS = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPromptDS },
+                { role: 'user', content: text }
+            ],
+            model: 'deepseek',
+            seed: -1
+        }, { timeout: 40000 });
+        const answerDS = typeof resDS.data === 'string' ? resDS.data : JSON.stringify(resDS.data);
+        if (!answerDS || answerDS.startsWith('<')) return reply("⚠️ *DeepSeek did not respond* — try again");
+        const chunksDS = answerDS.match(/[\s\S]{1,3000}/g) || [answerDS];
+        for (let i = 0; i < chunksDS.length; i++) {
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunksDS[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (error) {
@@ -14581,15 +14681,23 @@ case 'deepsjfkeek': {
 case 'grok':
 case "grovnnk-ai": {
     let query = text || (m.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation);
-    if (!query) return reply("🤖 *Usage:* grok your question");
+    if (!query) return reply("🤖 *Usage:* .grok your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const answer = await princeAI('gpt', query);
-        if (!answer) return reply("⚠️ *Grok did not respond*");
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *Grok*\n\n" : "";
-            await devtrust.sendMessage(m.chat, { text: header + chunks[i] });
+        const sysPromptGrok = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
+        const resGrok = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPromptGrok },
+                { role: 'user', content: query }
+            ],
+            model: 'llama',
+            seed: -1
+        }, { timeout: 40000 });
+        const answerGrok = typeof resGrok.data === 'string' ? resGrok.data : JSON.stringify(resGrok.data);
+        if (!answerGrok || answerGrok.startsWith('<')) return reply("⚠️ *Grok did not respond* — try again");
+        const chunksGrok = answerGrok.match(/[\s\S]{1,3000}/g) || [answerGrok];
+        for (let i = 0; i < chunksGrok.length; i++) {
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Grok*\n\n" : "") + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
@@ -18308,6 +18416,7 @@ default:
               if (!_sdbUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
                   return reply(`🔒 *SIM Database Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
           }
+          await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
           await devtrust.sendMessage(m.chat, { react: { text: '🗄️', key: m.key } });
 
           const _sdbUptime = formatUptime(process.uptime());
