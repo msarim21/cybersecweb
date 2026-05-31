@@ -42,20 +42,40 @@ router.post('/request', protect, async (req, res) => {
   if (clean.length < 7 || clean.length > 15)
     return res.status(400).json({ error: 'Invalid phone number format.' });
 
-  // pair.js stores session files as "923xxxxxxx@s.whatsapp.net" — match exactly
-  const sessionPath = path.join(PAIRING_BASE, clean + '@s.whatsapp.net');
+  const jid = clean + '@s.whatsapp.net';
 
-  // Wipe stale filesystem session so pair.js always issues a fresh code
+  // pair.js stores session files as "923xxxxxxx@s.whatsapp.net" — match exactly
+  const sessionPath = path.join(PAIRING_BASE, jid);
+
+  // ── STEP 1: Stop any existing pairing/bot session for this number ─────────
+  // Prevents "already paired" cooldown from WhatsApp when retrying
+  try {
+    const pairMod = require(PAIR_MODULE);
+    if (pairMod && typeof pairMod.stopBot === 'function') {
+      pairMod.stopBot(jid);
+      pairMod.stopBot(clean);
+      console.log(`[Pairing] Stopped existing session for ${clean} before re-pairing`);
+    }
+  } catch (_) {}
+
+  // Wait 2s for the old socket to fully close before starting new one
+  await sleep(2000);
+
+  // ── STEP 2: Clear module cache so pair.js creates a fresh socket ──────────
+  try {
+    const resolvedPath = require.resolve(PAIR_MODULE);
+    delete require.cache[resolvedPath];
+  } catch (_) {}
+
+  // ── STEP 3: Wipe stale filesystem session ────────────────────────────────
   if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
   ensureDir(PAIRING_BASE);
   ensureDir(sessionPath);
 
   // NOTE: We do NOT delete connected.flag here — it's created by pair.js AFTER
   // successful WhatsApp connection. Deleting it breaks auto-save detection.
-  // The frontend polls /api/pairing/status/:number which checks this flag.
-  // If a stale flag exists from a previous session, pair.js overwrites it on connect.
 
-  // ── Wipe saved DB credentials so pair.js does NOT restore old creds ────────
+  // ── STEP 4: Wipe saved DB credentials so pair.js does NOT restore old creds
   try {
     const { deleteSessionCreds } = require(SESSION_DB);
     await deleteSessionCreds(clean);
@@ -67,8 +87,6 @@ router.post('/request', protect, async (req, res) => {
   try {
     const startpairing = require(PAIR_MODULE);
 
-    const jid = clean + '@s.whatsapp.net';
-
     startpairing(jid).catch(err => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
@@ -79,12 +97,10 @@ router.post('/request', protect, async (req, res) => {
     while (Date.now() < deadline) {
       await sleep(400);
       try {
-        // Try both the absolute path and cwd-relative path
         let raw;
         try {
           raw = await fs.readFile(PAIRING_JSON, 'utf-8');
         } catch (_) {
-          // Fallback: try __dirname-based path from pair.js perspective
           const altPath = require('path').join(__dirname, '../../nexstore/pairing/pairing.json');
           raw = await fs.readFile(altPath, 'utf-8');
         }
@@ -110,8 +126,6 @@ router.post('/request', protect, async (req, res) => {
 });
 
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
-// pair.js writes connected.flag to nexstore/pairing/<cleanNum>/ (digits only)
-// ALSO checks DB (bot_sessions) as fallback for cross-dyno support (Heroku web+worker)
 router.get('/status/:number', protect, async (req, res) => {
   const clean    = req.params.number.replace(/[^0-9]/g, '');
   const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
