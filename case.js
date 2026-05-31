@@ -13288,17 +13288,17 @@ break;
   case "xnxxvideodl": {
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!text) return reply("📌 *Usage:* .xnxxvideodl <xnxx link>\nExample: .xnxxvideodl https://www.xnxx.com/video-xxx/...");
-    if (!text.includes("xnxx.com")) return reply("❌ *Link must be from xnxx.com*");
+    if (!text.includes("xnxx")) return reply("❌ *Link must be from xnxx.com*");
 
     await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
     try {
-        const xdata = await xnxxDownload(text);
-        const videoUrl = xdata.best;
+        const _vdlRes = await axios.get(`https://api.princetechn.com/api/download/xnxxdl?apikey=prince&url=${encodeURIComponent(text)}`, { timeout: 30000 });
+        const xdata = _vdlRes.data?.result;
+        if (!xdata) throw new Error('No data from API');
+        const videoUrl = xdata.files?.high || xdata.files?.low || xdata.files?.HLS;
         if (!videoUrl) throw new Error('No video URL found');
-
-        const caption = `🍑 *XNXX Download*\n\n` +
-            `📽️ *Title:* ${xdata.title.slice(0, 100)}\n` +
-            `🎬 *Quality:* ${xdata.sources.high ? 'High (360p)' : 'Low (240p)'}`;
+        const _dur = xdata.duration ? `⏱️ *Duration:* ${Math.floor(xdata.duration/60)}m ${xdata.duration%60}s\n` : '';
+        const caption = `🍑 *XNXX Download*\n\n📽️ *Title:* ${(xdata.title||'').slice(0,100)}\n${_dur}🎬 *Quality:* ${xdata.files?.high ? 'High (360p)' : 'Low (240p)'}`;
 
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({ video: { url: videoUrl }, mimetype: 'video/mp4', caption }),
@@ -13439,12 +13439,15 @@ case 'xnxx': {
                 await devtrust.sendMessage(fromChat, { react: { text: '⏳', key: messageData.key } });
                 try {
                     await devtrust.sendMessage(fromChat, { text: '⏳ *Fetching video...*\nPlease wait...' }, { quoted: messageData });
-                    const videoData = await xnxxDownload(selectedVideo.url);
-                    const videoUrl = videoData.best || videoData.sources?.high || videoData.sources?.low || videoData.sources?.hls;
+                    const _xnxxDlRes = await axios.get(`https://api.princetechn.com/api/download/xnxxdl?apikey=prince&url=${encodeURIComponent(selectedVideo.url)}`, { timeout: 30000 });
+                    const _xnxxData = _xnxxDlRes.data?.result;
+                    if (!_xnxxData) throw new Error('No data from API');
+                    const videoUrl = _xnxxData.files?.high || _xnxxData.files?.low || _xnxxData.files?.HLS;
                     if (!videoUrl) throw new Error('No download URL found');
+                    const _xnxxDur = _xnxxData.duration ? `⏱️ *Duration:* ${Math.floor(_xnxxData.duration/60)}m ${_xnxxData.duration%60}s\n` : '';
                     await devtrust.sendMessage(fromChat, {
                         video: { url: videoUrl },
-                        caption: `🎬 *${videoData.title || selectedVideo.title}*\n\n📥 Downloaded successfully`,
+                        caption: `🎬 *${(_xnxxData.title || selectedVideo.title).slice(0,200)}*\n\n${_xnxxDur}📥 *Downloaded via CYBER BOT*`,
                         gifPlayback: false
                     }, { quoted: messageData });
                     await devtrust.sendMessage(fromChat, { react: { text: '✅', key: messageData.key } });
