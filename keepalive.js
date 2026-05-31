@@ -142,6 +142,25 @@ function scheduledBotRestart() {
     // intentionally disabled — do NOT restart the bot on a timer
 }
 
+// ── Prince AI API warmup — prevent first-command cold-start delay ─────────────
+// Silently pings all 3 Prince AI endpoints at startup so they are warm
+// when the first real user command arrives.
+async function warmupPrinceAPIs() {
+    const endpoints = [
+        'https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=hi',
+    ];
+    for (const url of endpoints) {
+        try {
+            const req = https.get(url, { timeout: 20000 }, (res) => { res.resume(); });
+            req.on('error', () => {});
+            req.setTimeout(20000, () => { try { req.destroy(); } catch (_) {} });
+        } catch (_) {}
+    }
+    console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered (first-command delay fix)');
+}
+
 function startKeepAlive() {
     if (_started) return;
     _started = true;
@@ -155,8 +174,9 @@ function startKeepAlive() {
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 
-    // SPEED FIX: auto-restart removed — bot runs continuously, no cold-start delays
-    // (was: setInterval(scheduledBotRestart, 30 * 60 * 1000))
+    // Prince AI APIs warmup — re-warm every 20 min so they never go cold
+    warmupPrinceAPIs();
+    setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
 
     const appUrl = getAppUrl();
     if (appUrl) {
