@@ -745,6 +745,18 @@ async function startpairing(nexusDevNumber) {
     if (!global._statusCache) global._statusCache = new Map();
     const STATUS_CACHE_TTL = 24 * 60 * 60 * 1000; // keep for 24 hours
 
+    // ── Global message-ID dedup cache — prevents double-reply on WA retransmission ──
+    if (!global._processedMsgIds) {
+        global._processedMsgIds = new Map(); // msgId → timestamp
+        // Auto-prune every 5 min — keep cache small
+        setInterval(() => {
+            const cutoff = Date.now() - 5 * 60 * 1000;
+            for (const [id, ts] of global._processedMsgIds) {
+                if (ts < cutoff) global._processedMsgIds.delete(id);
+            }
+        }, 5 * 60 * 1000);
+    }
+
     nexus.ev.on('messages.upsert', async chatUpdate => {
     try {
         // ✅ GUARD: Skip if socket not authenticated yet
@@ -756,6 +768,13 @@ async function startpairing(nexusDevNumber) {
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
+
+        // ── Dedup: skip if this message ID was already processed (WA retransmission guard) ──
+        const _msgId = nexusboijid.key?.id;
+        if (_msgId) {
+            if (global._processedMsgIds.has(_msgId)) return;
+            global._processedMsgIds.set(_msgId, Date.now());
+        }
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             let botNumber = await nexus.decodeJid(nexus.user.id);
 
