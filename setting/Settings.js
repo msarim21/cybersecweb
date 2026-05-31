@@ -14,9 +14,28 @@ try {
   settings = {};
 }
 
+// PERF FIX: Debounced async write — instead of blocking sync write on every
+// setSetting() call, we batch all changes and write once after 500ms idle.
+// Prevents event loop blocking when many settings change in quick succession.
+let _saveTimer = null;
 function saveSettings() {
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    fs.writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2), (err) => {
+      if (err) console.error('[Settings] Failed to save:', err.message);
+    });
+  }, 500);
 }
+
+// Force immediate flush (e.g. on process exit so no settings are lost)
+function flushSettings() {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2)); } catch (_) {}
+}
+process.once('exit',   flushSettings);
+process.once('SIGINT', flushSettings);
+process.once('SIGTERM', flushSettings);
 
 /**
  * Get a setting for a user, group, or bot.
@@ -41,5 +60,5 @@ function setSetting(jid, key, value) {
   saveSettings();
 }
 
-module.exports = { getSetting, setSetting };
+module.exports = { getSetting, setSetting, flushSettings };
 
