@@ -707,8 +707,11 @@ let body = (
 
 
 // ============ COMMAND DETECTION (PER-USER PREFIX) ============
-const owner = JSON.parse(fs.readFileSync('./allfunc/owner.json'))
-const Premium = JSON.parse(fs.readFileSync('./allfunc/premium.json'))
+// PERF FIX: cache owner/premium in memory — avoids 2x sync disk reads on every message
+if (!global._ownerCache) { try { global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json')); } catch(_e) { global._ownerCache = []; } }
+if (!global._premiumCache) { try { global._premiumCache = JSON.parse(fs.readFileSync('./allfunc/premium.json')); } catch(_e) { global._premiumCache = []; } }
+const owner = global._ownerCache;
+const Premium = global._premiumCache;
 const ownerNumber = owner[0] || "254700000000";
 
 // Get user-specific prefix from the new system
