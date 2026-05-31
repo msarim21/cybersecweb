@@ -1070,8 +1070,9 @@ async function startpairing(nexusDevNumber) {
                         if (!isGroup || (isGroup && isMentioned)) {
                             const _cbSender = nexusboijid.key.participant || nexusboijid.key.remoteJid;
                             try {
-                                const _cbRes = await fetch(`https://text.pollinations.ai/${encodeURIComponent(msgBody)}`, { timeout: 15000 });
-                                const _cbReply = await _cbRes.text();
+                                const _cbRes = await fetch(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(msgBody)}`, { timeout: 15000 });
+                                const _cbJson = await _cbRes.json();
+                                const _cbReply = _cbJson?.result || _cbJson?.response || '';
                                 if (_cbReply && _cbReply.length > 5) {
                                     await nexus.sendMessage(nexusboijid.key.remoteJid, {
                                         text: _cbReply.slice(0, 800) + (_cbReply.length > 800 ? '...' : ''),
