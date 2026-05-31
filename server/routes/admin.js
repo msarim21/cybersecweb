@@ -463,8 +463,101 @@ router.get('/expired-users', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// NOTE: Audio upload/serve/delete routes are handled in server/index.js
-// They bypass requireDb so audio works even when DB is not connected.
+// ── Audio Management — stored in DATABASE (not disk) ────────────────────────
+// Audio is gzip-compressed then base64-encoded before DB save.
+// SIMPLIFIED: Synchronous upload — gzip+DB write takes < 1s for typical files,
+// well within any proxy timeout. No background jobs, no polling needed.
+
+const zlib = require('zlib');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  fileFilter: (req, file, cb) => {
+    const audioExtensions = ['.mp3', '.ogg', '.wav', '.m4a', '.aac', '.flac', '.opus', '.webm', '.amr', '.3gp'];
+    const ext = require('path').extname(file.originalname || '').toLowerCase();
+    if (file.mimetype.startsWith('audio/')) return cb(null, true);
+    if (file.mimetype === 'video/webm') return cb(null, true);
+    if (file.mimetype === 'application/octet-stream' && audioExtensions.includes(ext)) return cb(null, true);
+    cb(new Error('Sirf audio files allowed hain. Supported: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
+  },
+});
+
+// POST /api/admin/audio — SYNC: compress + save to DB, then respond
+router.post('/audio', (req, res, next) => {
+  upload.single('audio')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'Audio file bari hai. Maximum allowed size: 20MB' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload failed' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
+
+  const fileBuffer   = req.file.buffer;
+  const mimetype     = req.file.mimetype || 'audio/mpeg';
+  const originalname = req.file.originalname;
+
+  try {
+    // Gzip compress → base64 (fast: < 500ms even for 20MB files)
+    const compressed = await new Promise((resolve, reject) =>
+      zlib.gzip(fileBuffer, { level: 6 }, (err, buf) => err ? reject(err) : resolve(buf))
+    );
+    const base64 = compressed.toString('base64');
+
+    await Promise.all([
+      setSiteSetting('site_audio_data',       base64),
+      setSiteSetting('site_audio_mimetype',   mimetype),
+      setSiteSetting('site_audio_original',   originalname),
+      setSiteSetting('site_audio_compressed', 'true'),
+    ]);
+
+    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${Math.round(base64.length/1024)}KB)`);
+    res.json({ status: 'done', original: originalname, filename: 'db' });
+  } catch (err) {
+    console.error(`[Audio Upload] ❌ ${err.message}`);
+    res.status(500).json({ error: 'Audio save failed: ' + err.message });
+  }
+});
+
+// DELETE /api/admin/audio — remove from DB
+router.delete('/audio', async (req, res) => {
+  try {
+    await Promise.all([
+      setSiteSetting('site_audio_data',       ''),
+      setSiteSetting('site_audio_mimetype',   ''),
+      setSiteSetting('site_audio_original',   ''),
+      setSiteSetting('site_audio_compressed', ''),
+    ]);
+    res.json({ message: 'Audio removed.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/admin/audio — return metadata only
+// Retries once after 1.5s if DB returns null (handles server wake-up / pool warm-up)
+router.get('/audio', async (req, res) => {
+  const readAudioMeta = async () => {
+    const [data, original] = await Promise.all([
+      getSiteSetting('site_audio_data'),
+      getSiteSetting('site_audio_original'),
+    ]);
+    return { filename: data ? 'db' : '', original: original || '' };
+  };
+  try {
+    let meta = await readAudioMeta();
+    // If DB returned empty, wait 1.5s and retry once (server may be waking up)
+    if (!meta.filename) {
+      await new Promise(r => setTimeout(r, 1500));
+      meta = await readAudioMeta();
+    }
+    res.json(meta);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Security Threats ────────────────────────────────────────────────────────
 // Returns the in-memory security threat log captured by server/index.js
