@@ -2,7 +2,13 @@
   "name": "CyberSecPro",
   "description": "WhatsApp Bot Management SaaS — link numbers via pairing codes, manage sessions from a cyberpunk dashboard.",
   "repository": "https://github.com/mrfr8nk/cybersec",
-  "keywords": ["node", "whatsapp", "saas", "bot", "baileys"],
+  "keywords": [
+    "node",
+    "whatsapp",
+    "saas",
+    "bot",
+    "baileys"
+  ],
   "env": {
     "MONGO_URL": {
       "description": "MongoDB connection string — REQUIRED. Get a FREE cluster at mongodb.com/atlas",
@@ -38,7 +44,9 @@
     }
   },
   "buildpacks": [
-    { "url": "heroku/nodejs" }
+    {
+      "url": "heroku/nodejs"
+    }
   ],
   "formation": {
     "web": {
@@ -48,5 +56,6 @@
   },
   "scripts": {
     "postdeploy": "echo 'CyberSecPro deployed successfully'"
-  }
+  },
+  "stack": "heroku-26"
 }
