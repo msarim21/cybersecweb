@@ -598,16 +598,41 @@ export default function Admin() {
   };
 
   const fetchAudio = async (silent = false) => {
+    const applyInfo = (data) => {
+      if (!data?.filename) return false;
+      setAudioInfo(data);
+      setAudioVersion(v => {
+        const next = data.original;
+        return next ? Date.now() : v;
+      });
+      return true;
+    };
     try {
       const res = await axios.get('/api/admin/audio');
-      const prev = audioInfo.original;
-      const next = res.data.original;
-      setAudioInfo(res.data);
-      // Naya audio hai → timestamp change karo → cache-bust karo
-      if (next && next !== prev) {
+      if (applyInfo(res.data)) return;
+      // Admin endpoint returned empty — server may be waking up, try public fallback
+      const pub = await axios.get('/api/site/audio').catch(() => null);
+      if (pub?.data?.filename) { applyInfo(pub.data); return; }
+      // Double-check: maybe audio file is actually there even if metadata says empty
+      const fileCheck = await axios.head('/api/site/audio/file').catch(() => null);
+      if (fileCheck?.status === 200) {
+        setAudioInfo({ filename: 'db', original: res.data?.original || 'audio file' });
         setAudioVersion(Date.now());
+      } else {
+        setAudioInfo({ filename: '', original: '' });
       }
-    } catch { if (!silent) { /* silently ignore on refresh */ } }
+    } catch {
+      // Auth/network error — try public endpoint as fallback
+      try {
+        const pub = await axios.get('/api/site/audio');
+        if (pub.data?.filename) { applyInfo(pub.data); return; }
+        const fileCheck = await axios.head('/api/site/audio/file').catch(() => null);
+        if (fileCheck?.status === 200) {
+          setAudioInfo({ filename: 'db', original: 'audio file' });
+          setAudioVersion(Date.now());
+        }
+      } catch { /* silently ignore */ }
+    }
   };
 
   const fetchAbuseThreshold = async () => {
