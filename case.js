@@ -12918,8 +12918,8 @@ case "gpt4": {
         const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
 
 
-        const json = await res.json();
-        const answer = json?.data || "";
+        const answer = res.data?.result || "";
+
 
         if (!answer) return reply("⚠️ *No response from GPT-4*");
 
@@ -13960,8 +13960,8 @@ case "gpt5": {
         const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
 
 
-        const json = await res.json();
-        const answer = json?.result || "";
+        const answer = res.data?.result || "";
+
 
         if (!answer) return reply("⚠️ *No response from GPT-5*");
 
@@ -14706,8 +14706,8 @@ case "metabcn-ai": {
         const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
 
 
-        const json = await res.json();
-        const answer = json?.data || "";
+        const answer = res.data?.result || "";
+
 
         if (!answer) return reply("⚠️ *No response from Meta AI*");
 
@@ -14741,8 +14741,8 @@ case "qwenxj": {
         const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
 
 
-        const json = await res.json();
-        const answer = json?.data || "";
+        const answer = res.data?.result || "";
+
 
         if (!answer) return reply("⚠️ *No response from Qwen*");
 
