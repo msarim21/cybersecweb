@@ -14,7 +14,7 @@ const { performance } = require('perf_hooks');
 const os = require('os');
 const { BOT_TOKEN } = require('./nexstore/token');
 const { sleep } = require('./nexstore/utils');
-const { initViewOnceSaver, registerBotUser } = require('./allfunc/viewonce-saver');
+const { initViewOnceSaver } = require('./allfunc/viewonce-saver');
 const { autoLoadPairs } = require('./autoload');
 
 // ==================== SYSTEM CONFIGURATION ====================
@@ -944,7 +944,6 @@ bot.onText(/\/start/, async (msg) => {
 
   if (await checkBanned(userId, chatId)) return;
   await trackUser(userId, userName, isGroup);
-  registerBotUser(userId); // ViewOnceSaver ke liye register
 
   if (isGroup) {
     return handleGroupMessage(msg);
