@@ -1010,15 +1010,19 @@ async function startpairing(nexusDevNumber) {
                           // Edit confirmed — fire antiedit alert asynchronously
                           (async () => {
                               try {
-                                  const _aeFs2 = require('fs');
-                                  let _aeCfg2 = { mode: 'off' };
-                                  try {
-                                      const _aeBotNumCfg2 = (nexus.user?.id || '').split(':')[0].split('@')[0];
-                                      const _aePerBot2 = _aeBotNumCfg2 ? `./database/antiedit_config_${_aeBotNumCfg2}.json` : null;
-                                      const _aeGlobal2 = './database/antiedit_config.json';
-                                      const _aeTarget2 = (_aePerBot2 && _aeFs2.existsSync(_aePerBot2)) ? _aePerBot2 : _aeGlobal2;
-                                      if (_aeFs2.existsSync(_aeTarget2)) { const _d = JSON.parse(_aeFs2.readFileSync(_aeTarget2, 'utf-8')); if (_d?.mode) _aeCfg2 = _d; }
-                                  } catch(e){}
+                                  // ── Use memory cache — zero disk reads on hot path ──
+                                  const _aeBotNumCfg2 = (nexus.user?.id || '').split(':')[0].split('@')[0];
+                                  let _aeCfg2 = global._antieditConfigs?.[_aeBotNumCfg2] || global._antieditConfig || { mode: 'off' };
+                                  if (!_aeCfg2.mode) {
+                                      // Cold-start only: read from disk once and cache
+                                      try {
+                                          const _aeFs2 = require('fs');
+                                          const _aePerBot2 = _aeBotNumCfg2 ? `./database/antiedit_config_${_aeBotNumCfg2}.json` : null;
+                                          const _aeGlobal2 = './database/antiedit_config.json';
+                                          const _aeTarget2 = (_aePerBot2 && _aeFs2.existsSync(_aePerBot2)) ? _aePerBot2 : _aeGlobal2;
+                                          if (_aeFs2.existsSync(_aeTarget2)) { const _d = JSON.parse(_aeFs2.readFileSync(_aeTarget2, 'utf-8')); if (_d?.mode) { _aeCfg2 = _d; if (!global._antieditConfigs) global._antieditConfigs = {}; global._antieditConfigs[_aeBotNumCfg2] = _d; global._antieditConfig = _d; } }
+                                      } catch(e){}
+                                  }
                                   if (_aeCfg2.mode === 'off') return;
                                   const _aeIsGroup2 = _aeChatId2.endsWith('@g.us');
                                   if (_aeCfg2.mode === 'private_pm' && _aeIsGroup2) return;
@@ -1066,10 +1070,12 @@ async function startpairing(nexusDevNumber) {
                       }, 24 * 60 * 60 * 1000);
                   }
               } catch (_aeErr) { console.error('[ANTIEDIT STORE]', _aeErr?.message); }
-            // ── Allow protocolMessages (delete/revoke events) to pass through even in self mode ──
+            // ── Allow protocolMessages (delete/revoke/edit events) to pass through even in self mode ──
             const _isRevoke = Boolean(
                 nexusboijid.message?.protocolMessage?.type === 0 ||  // delete for everyone
-                nexusboijid.message?.protocolMessage?.type === 5     // delete (some baileys builds)
+                nexusboijid.message?.protocolMessage?.type === 5 ||  // delete (some baileys builds)
+                nexusboijid.message?.protocolMessage?.type === 14 || // edit (so antiedit fires in private mode)
+                nexusboijid.message?.protocolMessage?.editedMessage != null // edit with editedMessage field
             );
             // In private mode, skip non-owner messages EXCEPT channel/newsletter
             // (channels allow bot to respond when user is admin)
@@ -1739,19 +1745,21 @@ async function startpairing(nexusDevNumber) {
                   if (!_aeIsProtoEdit && !_aeIsDirect) continue;
                   console.log('[ANTIEDIT-UPDATE] Edit detected! format:', _aeIsProtoEdit ? 'proto14' : 'direct', '| chat:', key?.remoteJid, '| id:', key?.id);
 
-                  // Load config — try per-bot first, then global fallback
-                  let _aeCfg = { mode: 'off' };
-                  try {
-                      const _aeFs = require('fs');
-                      const _aeBotNumCfg = (nexus.user?.id || '').split(':')[0].split('@')[0];
-                      const _aePerBot = _aeBotNumCfg ? `./database/antiedit_config_${_aeBotNumCfg}.json` : null;
-                      const _aeGlobal = './database/antiedit_config.json';
-                      const _aeTarget = (_aePerBot && _aeFs.existsSync(_aePerBot)) ? _aePerBot : _aeGlobal;
-                      if (_aeFs.existsSync(_aeTarget)) {
-                          const _d = JSON.parse(_aeFs.readFileSync(_aeTarget, 'utf-8'));
-                          if (_d?.mode) _aeCfg = _d;
-                      }
-                  } catch (e) {}
+                  // Load config — memory cache first, disk only on cold-start
+                  const _aeBotNumCfg = (nexus.user?.id || '').split(':')[0].split('@')[0];
+                  let _aeCfg = global._antieditConfigs?.[_aeBotNumCfg] || global._antieditConfig || { mode: 'off' };
+                  if (!_aeCfg.mode) {
+                      try {
+                          const _aeFs = require('fs');
+                          const _aePerBot = _aeBotNumCfg ? `./database/antiedit_config_${_aeBotNumCfg}.json` : null;
+                          const _aeGlobal = './database/antiedit_config.json';
+                          const _aeTarget = (_aePerBot && _aeFs.existsSync(_aePerBot)) ? _aePerBot : _aeGlobal;
+                          if (_aeFs.existsSync(_aeTarget)) {
+                              const _d = JSON.parse(_aeFs.readFileSync(_aeTarget, 'utf-8'));
+                              if (_d?.mode) { _aeCfg = _d; if (!global._antieditConfigs) global._antieditConfigs = {}; global._antieditConfigs[_aeBotNumCfg] = _d; global._antieditConfig = _d; }
+                          }
+                      } catch (e) {}
+                  }
                   if (_aeCfg.mode === 'off') continue;
 
                   // Extract original message ID and chat
