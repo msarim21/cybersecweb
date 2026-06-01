@@ -1,13 +1,18 @@
 /**
  * ============================================
- * VIEW-ONCE MEDIA SAVER — AUTHORIZED ONLY
+ * VIEW-ONCE MEDIA SAVER
  *
- * Sirf authorized user (owner/admin) ka emoji reply
- * kaam karega. Koi aur reply kare → kuch nahi hoga.
+ * Kaam kaise karta hai:
+ *   - Koi bhi group/chat mein photo/video/audio/voice aaye
+ *     → Bot silently store karta hai
+ *   - Koi bhi BOT USER (jis ne /start kiya ho) emoji se reply kare
+ *     → Sirf US USER ke apne DM mein media save hoti hai
+ *   - Koi aur / un-registered user reply kare → kuch nahi hota
+ *   - Group mein koi message, koi notice, bilkul kuch nahi
  *
  * Usage in bot.js:
  *   const { initViewOnceSaver } = require('./allfunc/viewonce-saver');
- *   initViewOnceSaver(bot, [...OWNERS.all]);
+ *   initViewOnceSaver(bot);
  * ============================================
  */
 
@@ -28,7 +33,8 @@ function isOnlyEmoji(text) {
 }
 
 /**
- * Authorized user ke DM mein silently media bhejo
+ * User ke DM mein silently media bhejo
+ * (seedha send — "Forwarded from" tag nahi aayega)
  */
 async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
     switch (mediaType) {
@@ -44,16 +50,11 @@ async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
 
 /**
  * Main init function
- *
- * @param {object} bot          - TelegramBot instance
- * @param {number[]} authorizedIds - Array of user IDs allowed to use this feature
- *                                   e.g. [...OWNERS.all] ya specific user IDs
+ * @param {object} bot - TelegramBot instance
  */
-function initViewOnceSaver(bot, authorizedIds = []) {
-    // Number array mein convert karo (safety)
-    const allowedSet = new Set(authorizedIds.map(Number));
+function initViewOnceSaver(bot) {
 
-    // ── PART 1: Har media message ko silently store karo ──────────────────
+    // ── PART 1: Har media message silently store karo ─────────────────────
     bot.on('message', async (msg) => {
         let fileId = null;
         let mediaType = null;
@@ -87,38 +88,36 @@ function initViewOnceSaver(bot, authorizedIds = []) {
         setTimeout(() => viewOnceStore.delete(key), EXPIRY_MS);
     });
 
-    // ── PART 2: Emoji reply aaye → sirf authorized user ka kaam karega ────
+    // ── PART 2: Emoji reply detect karo → sirf us user ke DM mein bhejo ──
     bot.on('message', async (msg) => {
         // Sirf reply messages
         if (!msg.reply_to_message) return;
 
-        // ✅ KEY CHECK: Sirf authorized user ka reply kaam karega
-        // Koi aur banda reply kare → return, kuch nahi hoga
-        if (!allowedSet.has(Number(msg.from?.id))) return;
-
-        // Sirf emoji wale replies
+        // Sirf emoji wali reply
         if (!msg.text || !isOnlyEmoji(msg.text)) return;
 
         const key = `${msg.chat.id}_${msg.reply_to_message.message_id}`;
         const stored = viewOnceStore.get(key);
 
-        // Agar media store nahi — skip
+        // Agar yeh koi stored media nahi — skip
         if (!stored) return;
 
         const userId = msg.from.id;
         const { fileId, mediaType } = stored;
 
         try {
-            // ✅ Sirf is user ke apne DM mein — completely silent
+            // ✅ Sirf IS user ke DM mein — bilkul silent
+            // Telegram khud check karta hai: agar user ne /start kiya hai to deliver hogi
+            // Agar nahi kiya to silently fail — group mein kuch nahi jaayega
             await sendSilentlyToDM(bot, userId, fileId, mediaType);
-            console.log(`[ViewOnceSaver] ✅ Saved ${mediaType} to authorized user ${userId}`);
+            console.log(`[ViewOnceSaver] ✅ ${mediaType} saved to user ${userId}`);
         } catch (err) {
-            // Koi bhi error — group mein kuch nahi, sirf console
-            console.log(`[ViewOnceSaver] ❌ Could not DM user ${userId}: ${err?.message}`);
+            // Koi bhi error — group bilkul silent rahe
+            console.log(`[ViewOnceSaver] Silent fail for ${userId}: ${err?.message}`);
         }
     });
 
-    console.log(`✅ [ViewOnceSaver] Active | Authorized users: ${[...allowedSet].join(', ')}`);
+    console.log('✅ [ViewOnceSaver] Active — any bot user can save via emoji reply');
 }
 
 module.exports = { initViewOnceSaver };
