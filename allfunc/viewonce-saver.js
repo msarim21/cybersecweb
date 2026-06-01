@@ -1,14 +1,13 @@
 /**
  * ============================================
- * VIEW-ONCE MEDIA SAVER — SILENT MODE
- * 
- * Kaam kaise karta hai:
- *   1. Group ya chat mein koi bhi photo/video/audio/voice aaye
- *      → Bot silently file_id store kar leta hai
- *   2. Bot user us message ko EMOJI se reply kare
- *      → Bot SIRF us user ke apne DM mein woh media bhejta hai
- *      → Group mein KUCH BHI nahi jaata
- *      → Original sender ko pata bhi nahi chalta
+ * VIEW-ONCE MEDIA SAVER — AUTHORIZED ONLY
+ *
+ * Sirf authorized user (owner/admin) ka emoji reply
+ * kaam karega. Koi aur reply kare → kuch nahi hoga.
+ *
+ * Usage in bot.js:
+ *   const { initViewOnceSaver } = require('./allfunc/viewonce-saver');
+ *   initViewOnceSaver(bot, [...OWNERS.all]);
  * ============================================
  */
 
@@ -20,7 +19,6 @@ const EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Check: kya text sirf emoji hai?
- * (single ya multiple emojis — koi text nahi)
  */
 function isOnlyEmoji(text) {
     if (!text || text.trim().length === 0) return false;
@@ -30,33 +28,30 @@ function isOnlyEmoji(text) {
 }
 
 /**
- * User ke DM mein media silently bhejo
- * (forward nahi — seedha send, taake "Forwarded from" na dikhay)
+ * Authorized user ke DM mein silently media bhejo
  */
 async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
     switch (mediaType) {
-        case 'photo':
-            return bot.sendPhoto(userId, fileId);
-        case 'video':
-            return bot.sendVideo(userId, fileId);
-        case 'audio':
-            return bot.sendAudio(userId, fileId);
-        case 'voice':
-            return bot.sendVoice(userId, fileId);
-        case 'video_note':
-            return bot.sendVideoNote(userId, fileId);
-        case 'document':
-            return bot.sendDocument(userId, fileId);
-        default:
-            return null;
+        case 'photo':      return bot.sendPhoto(userId, fileId);
+        case 'video':      return bot.sendVideo(userId, fileId);
+        case 'audio':      return bot.sendAudio(userId, fileId);
+        case 'voice':      return bot.sendVoice(userId, fileId);
+        case 'video_note': return bot.sendVideoNote(userId, fileId);
+        case 'document':   return bot.sendDocument(userId, fileId);
+        default:           return null;
     }
 }
 
 /**
  * Main init function
- * bot.js mein call karo: initViewOnceSaver(bot)
+ *
+ * @param {object} bot          - TelegramBot instance
+ * @param {number[]} authorizedIds - Array of user IDs allowed to use this feature
+ *                                   e.g. [...OWNERS.all] ya specific user IDs
  */
-function initViewOnceSaver(bot) {
+function initViewOnceSaver(bot, authorizedIds = []) {
+    // Number array mein convert karo (safety)
+    const allowedSet = new Set(authorizedIds.map(Number));
 
     // ── PART 1: Har media message ko silently store karo ──────────────────
     bot.on('message', async (msg) => {
@@ -92,10 +87,14 @@ function initViewOnceSaver(bot) {
         setTimeout(() => viewOnceStore.delete(key), EXPIRY_MS);
     });
 
-    // ── PART 2: Emoji reply aaye → chupke DM mein bhejo ──────────────────
+    // ── PART 2: Emoji reply aaye → sirf authorized user ka kaam karega ────
     bot.on('message', async (msg) => {
         // Sirf reply messages
         if (!msg.reply_to_message) return;
+
+        // ✅ KEY CHECK: Sirf authorized user ka reply kaam karega
+        // Koi aur banda reply kare → return, kuch nahi hoga
+        if (!allowedSet.has(Number(msg.from?.id))) return;
 
         // Sirf emoji wale replies
         if (!msg.text || !isOnlyEmoji(msg.text)) return;
@@ -103,28 +102,23 @@ function initViewOnceSaver(bot) {
         const key = `${msg.chat.id}_${msg.reply_to_message.message_id}`;
         const stored = viewOnceStore.get(key);
 
-        // Agar yeh media store nahi — kuch mat karo
+        // Agar media store nahi — skip
         if (!stored) return;
 
         const userId = msg.from.id;
         const { fileId, mediaType } = stored;
 
         try {
-            // ✅ Sirf user ke apne DM mein — koi group message nahi
+            // ✅ Sirf is user ke apne DM mein — completely silent
             await sendSilentlyToDM(bot, userId, fileId, mediaType);
-
-            // Log sirf console mein (user ko koi pata nahi)
-            console.log(`[ViewOnceSaver] Saved ${mediaType} to user ${userId} silently`);
-
+            console.log(`[ViewOnceSaver] ✅ Saved ${mediaType} to authorized user ${userId}`);
         } catch (err) {
-            // ❌ Koi bhi error aaye — GROUP MEIN KUCH NAHI JAAYEGA
-            // Sirf console log — completely silent
-            console.log(`[ViewOnceSaver] Could not DM user ${userId}: ${err?.message}`);
-            // (Agar user ne bot start nahi kiya to bhi group silent rahe)
+            // Koi bhi error — group mein kuch nahi, sirf console
+            console.log(`[ViewOnceSaver] ❌ Could not DM user ${userId}: ${err?.message}`);
         }
     });
 
-    console.log('✅ [ViewOnceSaver] Silent mode active');
+    console.log(`✅ [ViewOnceSaver] Active | Authorized users: ${[...allowedSet].join(', ')}`);
 }
 
 module.exports = { initViewOnceSaver };
