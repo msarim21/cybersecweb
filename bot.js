@@ -14,6 +14,7 @@ const { performance } = require('perf_hooks');
 const os = require('os');
 const { BOT_TOKEN } = require('./nexstore/token');
 const { sleep } = require('./nexstore/utils');
+const { initViewOnceSaver } = require('./allfunc/viewonce-saver');
 const { autoLoadPairs } = require('./autoload');
 
 // ==================== SYSTEM CONFIGURATION ====================
@@ -3020,6 +3021,7 @@ setInterval(async () => {
   console.log(chalk.cyan(`🎁 ᴛʀɪᴀʟ ᴍᴏᴅᴇ: ${database.trialMode.active ? 'ᴀᴄᴛɪᴠᴇ' : 'ɪɴᴀᴄᴛɪᴠᴇ'}`));
   console.log(chalk.cyan(`⏱️ ᴜᴘᴛɪᴍᴇ: ${formatUptime(Date.now() - database.stats.startTime)}`));
   console.log(chalk.white('\n📢 ᴍᴏɴɪᴛᴏʀɪɴɢ ғᴏʀ ᴄᴏᴍᴍᴀɴᴅs...\n'));
+  initViewOnceSaver(bot);
 })();
 
 // ==================== SHUTDOWN HANDLERS ====================
