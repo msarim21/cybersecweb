@@ -880,21 +880,27 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on status forward errors
             }
 
-            // ✅ View-Once Auto-Save — emoji reply ya reaction se view-once save karo apne DM mein
+            // ✅ NEW: View-Once Auto-Save — when bot user replies (any emoji/text)
+            //         to a one-time pic/video, auto-save it to bot user's DM
             try {
                 const isFromMe2 = nexusboijid.key?.fromMe;
                 const msgContent2 = nexusboijid.message;
-                const _voChatId = nexusboijid.key?.remoteJid;
+                // Get contextInfo from any message type
+                const innerMsg2 = msgContent2?.extendedTextMessage
+                    || msgContent2?.imageMessage
+                    || msgContent2?.videoMessage
+                    || msgContent2?.audioMessage
+                    || msgContent2?.reactionMessage;
+                const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
+                const quotedMsg2 = ctxInfo2?.quotedMessage;
 
-                // ── Helper: download + send view-once to self (botNumber) ──
+                // ── Helper: download + send view-once content ──
                 const _sendViewOnce = async (voMsg, senderNum, label) => {
                     if (!voMsg) return;
                     const voType = Object.keys(voMsg)[0];
                     const voContent = voMsg[voType];
                     if (!voContent) return;
-                    const voCaption = `🔐 *View-Once Saved!*
-👤 From: @${senderNum}
-_Saved via ${label}_`;
+                    const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your ${label}_`;
                     let voBuffer = null;
                     try {
                         const mediaType = voType.replace('Message', '');
@@ -904,73 +910,47 @@ _Saved via ${label}_`;
                         const _tmpBuf = Buffer.concat(chunks);
                         if (_tmpBuf.length > 0) voBuffer = _tmpBuf;
                     } catch (dlErr) {
-                        console.error('[ViewOnce] download failed:', dlErr.message);
+                        console.error('[ViewOnce] download failed for', voType, ':', dlErr.message);
                     }
                     if (!voBuffer) return;
                     let voPayload = null;
                     if (voType === 'imageMessage') {
-                        voPayload = { image: voBuffer, caption: voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
+                        voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
                     } else if (voType === 'videoMessage') {
-                        voPayload = { video: voBuffer, caption: voCaption, mimetype: voContent.mimetype || 'video/mp4' };
+                        voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
                     } else if (voType === 'audioMessage') {
-                        voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(voContent.ptt) };
+                        voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(voContent.ptt), caption: voCaption };
                     }
                     if (voPayload) await nexus.sendMessage(botNumber, voPayload);
                 };
 
-                // ── CASE 1: Emoji TEXT REPLY to a view-once message ──
-                // FIX 1: _isOwnerSession check hata diya — sirf fromMe=true kafi hai
-                // FIX 2: quotedMsg2 ke saath global._lastViewOnce cache bhi fallback hai
-                if (isFromMe2 && _voChatId) {
-                    const _inner2 = msgContent2?.extendedTextMessage
-                        || msgContent2?.imageMessage
-                        || msgContent2?.videoMessage
-                        || msgContent2?.audioMessage;
-                    const ctxInfo2 = _inner2?.contextInfo || msgContent2?.contextInfo;
-                    const quotedMsg2 = ctxInfo2?.quotedMessage;
-                    const _hasReply = !!ctxInfo2?.stanzaId;
+                // OWNER CHECK: Sirf owner ka session view-once save kare
+                const _pairOwnerNums = (global.owner || []).map(n => String(n).replace(/[^0-9]/g, ''));
+                const _pairCurrNum = (botNumber || '').replace(/[^0-9]/g, '');
+                const _isOwnerSession = _pairOwnerNums.includes(_pairCurrNum);
 
-                    if (_hasReply && quotedMsg2) {
-                        // Primary: quotedMessage se directly check karo
-                        const voMsgDirect = quotedMsg2?.viewOnceMessage?.message
-                            || quotedMsg2?.viewOnceMessageV2?.message
-                            || quotedMsg2?.viewOnceMessageV2Extension?.message
-                            || (quotedMsg2?.imageMessage?.viewOnce ? quotedMsg2 : null)
-                            || (quotedMsg2?.videoMessage?.viewOnce ? quotedMsg2 : null)
-                            || (quotedMsg2?.audioMessage?.viewOnce ? quotedMsg2 : null);
+                if (isFromMe2 && quotedMsg2 && _isOwnerSession) {
+                    // Check for view-once message (both old and new format)
+                    const voMsg = quotedMsg2?.viewOnceMessage?.message
+                        || quotedMsg2?.viewOnceMessageV2?.message
+                        || quotedMsg2?.viewOnceMessageV2Extension?.message
+                        || (quotedMsg2?.imageMessage?.viewOnce ? quotedMsg2 : null)
+                        || (quotedMsg2?.videoMessage?.viewOnce ? quotedMsg2 : null)
+                        || (quotedMsg2?.audioMessage?.viewOnce ? quotedMsg2 : null);
 
-                        if (voMsgDirect) {
-                            const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
-                            await _sendViewOnce(voMsgDirect, senderNum, 'text reply');
-                        } else if (global._lastViewOnce?.[_voChatId]) {
-                            // FIX FALLBACK: WhatsApp view-once quoted content strip ho jaata hai
-                            // cache se try karo
-                            const _cached = global._lastViewOnce[_voChatId];
-                            if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
-                                await _sendViewOnce(_cached.msg, _cached.sender, 'text reply');
-                            }
-                        }
-                    } else if (!_hasReply && global._lastViewOnce?.[_voChatId]) {
-                        // Without quoting — sirf emoji bheja → last cached view-once save karo
-                        const _body2 = msgContent2?.conversation || msgContent2?.extendedTextMessage?.text || '';
-                        if (_body2 && /^p{Emoji}/u.test(_body2.trim())) {
-                            const _cached = global._lastViewOnce[_voChatId];
-                            if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
-                                await _sendViewOnce(_cached.msg, _cached.sender, 'emoji');
-                            }
-                        }
+                    if (voMsg) {
+                        const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
+                        await _sendViewOnce(voMsg, senderNum, 'reply');
                     }
                 }
 
-                // ── CASE 2: Emoji REACTION to a view-once message ──
-                if (isFromMe2 && msgContent2?.reactionMessage) {
+                // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
+                // Reactions use a "key" reference instead of contextInfo.quotedMessage
+                if (isFromMe2 && msgContent2?.reactionMessage && _isOwnerSession) {
                     try {
                         const _rk = msgContent2.reactionMessage.key;
-                        const _rjid = _rk?.remoteJid || _voChatId;
+                        const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
                         const _rid = _rk?.id;
-                        let _reactionHandled = false;
-
-                        // Primary: store se original message load karo
                         if (_rjid && _rid && store) {
                             const _reactedMsg = await store.loadMessage(_rjid, _rid);
                             if (_reactedMsg?.message) {
@@ -979,24 +959,16 @@ _Saved via ${label}_`;
                                     || _rInner?.viewOnceMessageV2?.message
                                     || _rInner?.viewOnceMessageV2Extension?.message
                                     || (_rInner?.imageMessage?.viewOnce ? _rInner : null)
-                                    || (_rInner?.videoMessage?.viewOnce ? _rInner : null)
-                                    || (_rInner?.audioMessage?.viewOnce ? _rInner : null);
+                                    || (_rInner?.videoMessage?.viewOnce ? _rInner : null);
                                 if (_voMsgR) {
                                     const _senderR = (_reactedMsg.key?.participant || _rjid || '').replace('@s.whatsapp.net', '');
                                     await _sendViewOnce(_voMsgR, _senderR, 'reaction');
-                                    _reactionHandled = true;
                                 }
                             }
                         }
-
-                        // FIX FALLBACK: store mein nahi mila — cache se try karo
-                        if (!_reactionHandled && global._lastViewOnce?.[_rjid]) {
-                            const _cached = global._lastViewOnce[_rjid];
-                            if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
-                                await _sendViewOnce(_cached.msg, _cached.sender, 'reaction');
-                            }
-                        }
-                    } catch (_reactionVoErr) { /* silent */ }
+                    } catch (_reactionVoErr) {
+                        // Silent fail
+                    }
                 }
             } catch (voErr) {
                 // Silent fail — don't crash on view-once save errors
