@@ -569,7 +569,11 @@ async function startpairing(nexusDevNumber) {
     
     tracker.connection = nexus;
     
-    if (store) store.bind(nexus.ev);
+    if (store) {
+        store.bind(nexus.ev);
+        // Expose to global so case.js can use it as offline-message fallback for antidelete
+        global._baileysMsgStore = store;
+    }
 
     // ── Save ALL existing private chats + groups when bot first connects ──
     // chats.set fires once on connection with complete chat history
@@ -1007,10 +1011,14 @@ async function startpairing(nexusDevNumber) {
                           (async () => {
                               try {
                                   const _aeFs2 = require('fs');
-                                  let _aeCfg2 = { mode: 'private' };
-                                  if (_aeFs2.existsSync('./database/antiedit_config.json')) {
-                                      try { const _d = JSON.parse(_aeFs2.readFileSync('./database/antiedit_config.json', 'utf-8')); if (_d?.mode) _aeCfg2 = _d; } catch(e){}
-                                  }
+                                  let _aeCfg2 = { mode: 'off' };
+                                  try {
+                                      const _aeBotNumCfg2 = (nexus.user?.id || '').split(':')[0].split('@')[0];
+                                      const _aePerBot2 = _aeBotNumCfg2 ? `./database/antiedit_config_${_aeBotNumCfg2}.json` : null;
+                                      const _aeGlobal2 = './database/antiedit_config.json';
+                                      const _aeTarget2 = (_aePerBot2 && _aeFs2.existsSync(_aePerBot2)) ? _aePerBot2 : _aeGlobal2;
+                                      if (_aeFs2.existsSync(_aeTarget2)) { const _d = JSON.parse(_aeFs2.readFileSync(_aeTarget2, 'utf-8')); if (_d?.mode) _aeCfg2 = _d; }
+                                  } catch(e){}
                                   if (_aeCfg2.mode === 'off') return;
                                   const _aeIsGroup2 = _aeChatId2.endsWith('@g.us');
                                   if (_aeCfg2.mode === 'private_pm' && _aeIsGroup2) return;
@@ -1731,12 +1739,16 @@ async function startpairing(nexusDevNumber) {
                   if (!_aeIsProtoEdit && !_aeIsDirect) continue;
                   console.log('[ANTIEDIT-UPDATE] Edit detected! format:', _aeIsProtoEdit ? 'proto14' : 'direct', '| chat:', key?.remoteJid, '| id:', key?.id);
 
-                  // Load config — default is 'private' so it works without the config file
-                  let _aeCfg = { mode: 'private' };
+                  // Load config — try per-bot first, then global fallback
+                  let _aeCfg = { mode: 'off' };
                   try {
                       const _aeFs = require('fs');
-                      if (_aeFs.existsSync('./database/antiedit_config.json')) {
-                          const _d = JSON.parse(_aeFs.readFileSync('./database/antiedit_config.json', 'utf-8'));
+                      const _aeBotNumCfg = (nexus.user?.id || '').split(':')[0].split('@')[0];
+                      const _aePerBot = _aeBotNumCfg ? `./database/antiedit_config_${_aeBotNumCfg}.json` : null;
+                      const _aeGlobal = './database/antiedit_config.json';
+                      const _aeTarget = (_aePerBot && _aeFs.existsSync(_aePerBot)) ? _aePerBot : _aeGlobal;
+                      if (_aeFs.existsSync(_aeTarget)) {
+                          const _d = JSON.parse(_aeFs.readFileSync(_aeTarget, 'utf-8'));
                           if (_d?.mode) _aeCfg = _d;
                       }
                   } catch (e) {}
