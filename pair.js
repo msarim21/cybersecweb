@@ -924,7 +924,12 @@ async function startpairing(nexusDevNumber) {
                     if (voPayload) await nexus.sendMessage(botNumber, voPayload);
                 };
 
-                if (isFromMe2 && quotedMsg2) {
+                // OWNER CHECK: Sirf owner ka session view-once save kare
+                const _pairOwnerNums = (global.owner || []).map(n => String(n).replace(/[^0-9]/g, ''));
+                const _pairCurrNum = (botNumber || '').replace(/[^0-9]/g, '');
+                const _isOwnerSession = _pairOwnerNums.includes(_pairCurrNum);
+
+                if (isFromMe2 && quotedMsg2 && _isOwnerSession) {
                     // Check for view-once message (both old and new format)
                     const voMsg = quotedMsg2?.viewOnceMessage?.message
                         || quotedMsg2?.viewOnceMessageV2?.message
@@ -941,7 +946,7 @@ async function startpairing(nexusDevNumber) {
 
                 // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
                 // Reactions use a "key" reference instead of contextInfo.quotedMessage
-                if (isFromMe2 && msgContent2?.reactionMessage) {
+                if (isFromMe2 && msgContent2?.reactionMessage && _isOwnerSession) {
                     try {
                         const _rk = msgContent2.reactionMessage.key;
                         const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
