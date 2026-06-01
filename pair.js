@@ -747,7 +747,7 @@ async function startpairing(nexusDevNumber) {
     
     // ✅ Deleted-Status Cache — stores received statuses so they can be forwarded when deleted
     if (!global._statusCache) global._statusCache = new Map();
-    const STATUS_CACHE_TTL = 24 * 60 * 60 * 1000; // keep for 24 hours
+    const STATUS_CACHE_TTL = 2 * 60 * 60 * 1000; // PERF FIX: 24h→2h (old statuses waste memory)
 
     // ── Global message-ID dedup cache — prevents double-reply on WA retransmission ──
     if (!global._processedMsgIds) {
