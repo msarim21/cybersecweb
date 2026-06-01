@@ -11600,14 +11600,29 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
-    // OWNER CHECK: Sirf owner ka session trigger kare — koi aur bot user nahi
-    const _sessNum = devtrust.user.id.split(':')[0].replace(/[^0-9]/g, '');
-    const _ownNums = (global.owner || []).map(n => String(n).replace(/[^0-9]/g, ''));
-    if (!_ownNums.includes(_sessNum)) break;
+    // ALL USERS CAN USE THIS — no owner restriction removed intentionally
+    // Each user who reacts with an emoji gets the view-once saved to their OWN DM
 
-    // Destination: ALWAYS bot user's own self-chat (Message yourself)
-    const _botSelf = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
-    const _voDest = _botSelf;
+    // This bot session's own account number
+    const _sessNum = devtrust.user.id.split(':')[0].replace(/[^0-9]/g, '');
+
+    // ── MULTI-BOT ISOLATION FIX ──────────────────────────────────────────────
+    // PROBLEM: When User A and User B both have the bot, and User B sends an
+    // emoji reply to a view-once in their shared DM, WhatsApp delivers that
+    // message event to BOTH bot instances. Without this check, User A's bot
+    // also processes User B's emoji and incorrectly saves the media to User A's DM.
+    //
+    // FIX: Only process if the SENDER's number matches THIS bot session's own
+    // account number. This ensures each bot only handles actions taken by its
+    // own authenticated account. Other accounts' emoji reactions are ignored.
+    const _senderNum = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    if (_senderNum !== _sessNum) break;
+    // ── End isolation fix ────────────────────────────────────────────────────
+
+    // Destination: the user who reacted — their own self-chat (Message yourself)
+    // Since isolation above ensures _senderNum === _sessNum, this equals the
+    // bot's own DM, which is exactly the right place for every user's save.
+    const _voDest = m.sender;
 
     // ── Path 1: Quoted reply to a view-once ──
     if (m.quoted) {
