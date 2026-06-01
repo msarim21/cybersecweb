@@ -1056,11 +1056,9 @@ async function startpairing(nexusDevNumber) {
                           sender: String(_aeRaw.key?.participant || _aeRaw.key?.remoteJid || ''),
                           fromMe: false,
                           mtype: String(Object.keys(_aeMsg2)[0] || ''),
+                          _ts: Date.now(), // periodic sweep in case.js uses this — no individual setTimeout needed
                       });
-                      setTimeout(() => {
-                          const _ch2 = global._antieditStore.get(_aeChatId2);
-                          if (_ch2) { _ch2.delete(_aeMsgId2); if (_ch2.size === 0) global._antieditStore.delete(_aeChatId2); }
-                      }, 24 * 60 * 60 * 1000);
+                      // PERF FIX: removed 24h setTimeout — case.js periodic sweep handles cleanup every 30min
                   }
               } catch (_aeErr) { console.error('[ANTIEDIT STORE]', _aeErr?.message); }
             // ── Allow protocolMessages (delete/revoke/edit events) to pass through even in self mode ──
