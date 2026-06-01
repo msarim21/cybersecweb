@@ -205,6 +205,29 @@ global.banned = global.banned || {};  // For banned users
 // ============ ANTIEDIT / ANTIDELETE STORES ============
 if (!global._antieditStore) global._antieditStore = new Map();
 if (!global._antideleteStore) global._antideleteStore = new Map();
+
+// PERF FIX: One periodic sweep per store instead of thousands of individual 24h timers.
+// Individual timers (one per message) bloat the Node.js timer heap → GC pauses after 1-2h.
+// Periodic sweep runs every 30 min and removes entries older than 2h.
+if (!global._antieditSweepStarted) {
+    global._antieditSweepStarted = true;
+    setInterval(() => {
+        const _aecut = Date.now() - 2 * 60 * 60 * 1000;
+        for (const [_cid, _msgs] of global._antieditStore) {
+            for (const [_mid, _e] of _msgs) { if (!_e._ts || _e._ts < _aecut) _msgs.delete(_mid); }
+            if (_msgs.size === 0) global._antieditStore.delete(_cid);
+        }
+    }, 30 * 60 * 1000);
+}
+if (!global._antideleteSweepStarted) {
+    global._antideleteSweepStarted = true;
+    setInterval(() => {
+        const _adcut = Date.now() - 2 * 60 * 60 * 1000;
+        for (const [_k, _v] of global._antideleteStore) {
+            if (_v?._ts && _v._ts < _adcut) global._antideleteStore.delete(_k);
+        }
+    }, 30 * 60 * 1000);
+}
 if (!global._antieditConfig) global._antieditConfig = { mode: 'off' };
 if (!global._antideleteConfig) global._antideleteConfig = { mode: 'off' };
 
@@ -243,17 +266,23 @@ function antiStoreKey(chatId, msgId) {
 // ── Persistent antidelete disk store helpers ──
 const ANTIDELETE_MAX_ENTRIES = 2000;
 
+let _saveDiskDebounce = null;
 function _saveDiskStore() {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        const entries = [];
-        for (const [key, val] of global._antideleteStore.entries()) {
-            entries.push([key, val]);
-        }
-        // Keep only last ANTIDELETE_MAX_ENTRIES
-        const trimmed = entries.slice(-ANTIDELETE_MAX_ENTRIES);
-        fs.writeFileSync(ANTIDELETE_DISK_STORE, JSON.stringify(trimmed), 'utf-8');
-    } catch (e) {}
+    // PERF FIX: debounced async write — was fs.writeFileSync on EVERY message (50-200ms block!)
+    // Batches all saves within 2s into a single async write instead.
+    if (_saveDiskDebounce) return;
+    _saveDiskDebounce = setTimeout(() => {
+        _saveDiskDebounce = null;
+        try {
+            if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+            const entries = [];
+            for (const [key, val] of global._antideleteStore.entries()) {
+                entries.push([key, val]);
+            }
+            const trimmed = entries.slice(-ANTIDELETE_MAX_ENTRIES);
+            fs.promises.writeFile(ANTIDELETE_DISK_STORE, JSON.stringify(trimmed), 'utf-8').catch(() => {});
+        } catch (e) {}
+    }, 2000);
 }
 
 function _loadDiskStore() {
@@ -3632,11 +3661,9 @@ if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessag
             sender: String(m.key?.participant || m.key?.remoteJid || ''),
             fromMe: Boolean(m.key?.fromMe),
             mtype: String(m.mtype || ''),
+            _ts: Date.now(), // PERF FIX: used by periodic sweep (no individual setTimeout)
         });
-        setTimeout(() => {
-            const _ch = global._antieditStore.get(_chatId);
-            if (_ch) { _ch.delete(_msgId); if (_ch.size === 0) global._antieditStore.delete(_chatId); }
-        }, 24 * 60 * 60 * 1000);
+        // PERF FIX: removed 24h setTimeout — periodic sweep handles cleanup every 30min
     } catch (e) { console.error('[ANTIEDIT STORE]', e); }
 }
 
@@ -4083,16 +4110,12 @@ From: @${sender.split('@')[0]}
                 timestamp: new Date().toISOString(),
                 sessionJid: getBotJid(devtrust)
             };
+            // PERF FIX: add _ts so periodic sweep can expire this entry (no individual setTimeout)
+            _adMsgData2._ts = Date.now();
             global._antideleteStore.set(_adStoreKey2, _adMsgData2);
-            // Also store with shared key for backward compat
             global._antideleteStore.set(antiStoreKey(_adChatId2, _adMsgId2), _adMsgData2);
-            // Save to disk so messages survive bot restarts
-            _saveDiskStore();
-            setTimeout(() => {
-                global._antideleteStore.delete(_adStoreKey2);
-                global._antideleteStore.delete(antiStoreKey(_adChatId2, _adMsgId2));
-                _saveDiskStore();
-            }, 24 * 60 * 60 * 1000);
+            // PERF FIX: removed per-message 24h setTimeout — periodic sweep handles cleanup
+            _saveDiskStore(); // debounced async write
         }
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
