@@ -677,11 +677,6 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 
 const reply = async (text, mentions = []) => {
   try {
-    // Fire-and-forget presence — do NOT await (saves 300-1200ms per command)
-    const _isNL = m.chat && m.chat.endsWith('@newsletter');
-    if (!_isNL) {
-      devtrust.sendPresenceUpdate('composing', m.chat).catch(()=>{});
-    }
     return await replyWithNewsletter(m.chat, text, m, mentions);
   } catch (error) {
     console.error('Reply failed:', error);
@@ -7998,7 +7993,6 @@ break;
 case "recipe-ingredient": {
     if (!text) return reply("🍳 *Example:* recipe-ingredient chicken");
     
-    await devtrust.sendPresenceUpdate("composing", m.chat);
     
     try {
         const res = await axios.get(`https://www.themealdb.com/api/json/v1/1/filter.php?i=${encodeURIComponent(text)}`);
@@ -9645,8 +9639,7 @@ case 'proxytest': {
 case "movie": {
     if (!text) return reply("🎬 *Usage:* .movie <movie name>\nExample: .movie Inception");
 
-    await devtrust.sendPresenceUpdate("composing", m.chat);
-    await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
+    devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } }).catch(()=>{});
 
     try {
         const res = await axios.get(`https://www.omdbapi.com/?t=${encodeURIComponent(text)}&apikey=6372bb60&plot=full`, { timeout: 12000 });
@@ -11071,7 +11064,6 @@ break;
 case 'ai': {
     if (!text) return reply('🤖 *Example:* ai Who is Mark Zuckerberg?');
 
-    await devtrust.sendPresenceUpdate('composing', m.chat);
 
     try {
         const { data } = await axios.post("https://text.pollinations.ai/", {
