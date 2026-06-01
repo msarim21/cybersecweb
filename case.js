@@ -11546,10 +11546,10 @@ case 'readviewonce2': {
                 ptt: true
             });
         }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        // No reaction — silent download only
     } catch (err) {
         console.error('vv2 error:', err);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        // Silent fail — no reaction on error either
     }
 }
 break;
@@ -11615,10 +11615,10 @@ case '💕': {
                 ptt: true
             });
         }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        // No reaction — silent download only
     } catch (err) {
         console.error('Emoji vv error:', err);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        // Silent fail — no reaction on error either
     }
 }
 break;
