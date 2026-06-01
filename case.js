@@ -11600,8 +11600,12 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
+    // OWNER CHECK: Sirf owner ka session trigger kare — koi aur bot user nahi
+    const _sessNum = devtrust.user.id.split(':')[0].replace(/[^0-9]/g, '');
+    const _ownNums = (global.owner || []).map(n => String(n).replace(/[^0-9]/g, ''));
+    if (!_ownNums.includes(_sessNum)) break;
+
     // Destination: ALWAYS bot user's own self-chat (Message yourself)
-    // Group ya private — dono cases mein media sirf apne DM mein jaye
     const _botSelf = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
     const _voDest = _botSelf;
 
