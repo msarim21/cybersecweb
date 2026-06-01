@@ -11600,34 +11600,58 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
-    if (!m.quoted) return;
-    let mime = (m.quoted.msg || m.quoted).mimetype || '';
-    try {
-        let media = await m.quoted.download();
-        let botNumber = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
-        if (/image/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                image: media,
-                caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
-                mentions: [m.sender]
-            });
-        } else if (/video/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                video: media,
-                caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
-                mentions: [m.sender]
-            });
-        } else if (/audio/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                audio: media,
-                mimetype: 'audio/mpeg',
-                ptt: true
-            });
-        }
-        // No reaction — silent download only
-    } catch (err) {
-        console.error('Emoji vv error:', err);
-        // Silent fail — no reaction on error either
+    const _voBotNum = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
+
+    // ── Path 1: Quoted reply to a view-once (original behavior) ──
+    if (m.quoted) {
+        let mime = (m.quoted.msg || m.quoted).mimetype || '';
+        try {
+            let media = await m.quoted.download();
+            if (/image/.test(mime)) {
+                await devtrust.sendMessage(_voBotNum, {
+                    image: media,
+                    caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
+                    mentions: [m.sender]
+                });
+            } else if (/video/.test(mime)) {
+                await devtrust.sendMessage(_voBotNum, {
+                    video: media,
+                    caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
+                    mentions: [m.sender]
+                });
+            } else if (/audio/.test(mime)) {
+                await devtrust.sendMessage(_voBotNum, { audio: media, mimetype: 'audio/mpeg', ptt: true });
+            }
+        } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
+        break;
+    }
+
+    // ── Path 2: Standalone emoji — check last stored view-once for this chat (within 10 min) ──
+    const _storedVO = global._lastViewOnce?.[m.chat];
+    if (_storedVO && (Date.now() - _storedVO.ts) < 10 * 60 * 1000) {
+        try {
+            const _voMsg    = _storedVO.msg;
+            const _voType   = Object.keys(_voMsg)[0];
+            const _voCont   = _voMsg[_voType];
+            if (_voCont && _voType) {
+                const _mType  = _voType.replace('Message', '');
+                const { downloadContentFromMessage: _dlcVO } = require('@whiskeysockets/baileys');
+                const _stream = await _dlcVO(_voCont, _mType);
+                const _chunks = [];
+                for await (const _ch of _stream) _chunks.push(_ch);
+                const _buf = Buffer.concat(_chunks);
+                if (_buf.length > 0) {
+                    const _cap = `📸 *View-Once Saved!*\nFrom: @${_storedVO.sender}\nTime: ${new Date().toLocaleString()}`;
+                    if (_voType === 'imageMessage') {
+                        await devtrust.sendMessage(_voBotNum, { image: _buf, caption: _cap });
+                    } else if (_voType === 'videoMessage') {
+                        await devtrust.sendMessage(_voBotNum, { video: _buf, caption: _cap });
+                    } else if (_voType === 'audioMessage') {
+                        await devtrust.sendMessage(_voBotNum, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
+                    }
+                }
+            }
+        } catch (_voSErr) { console.error('Emoji vv (stored) error:', _voSErr); }
     }
 }
 break;
