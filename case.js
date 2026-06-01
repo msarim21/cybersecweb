@@ -214,7 +214,7 @@ if (!global._antieditSweepStarted) {
     setInterval(() => {
         const _aecut = Date.now() - 2 * 60 * 60 * 1000;
         for (const [_cid, _msgs] of global._antieditStore) {
-            for (const [_mid, _e] of _msgs) { if (!_e._ts || _e._ts < _aecut) _msgs.delete(_mid); }
+            for (const [_mid, _e] of _msgs) { if (_e._ts && _e._ts < _aecut) _msgs.delete(_mid); }
             if (_msgs.size === 0) global._antieditStore.delete(_cid);
         }
     }, 30 * 60 * 1000);
@@ -292,8 +292,11 @@ function _loadDiskStore() {
             if (Array.isArray(entries)) {
                 const now = Date.now();
                 for (const [key, val] of entries) {
-                    // Skip entries older than 24 hours
-                    if (val?.timestamp && (now - new Date(val.timestamp).getTime()) > 24 * 60 * 60 * 1000) continue;
+                    // Skip entries older than 2 hours (matches periodic sweep TTL)
+                    const _entryAge = val?.timestamp ? now - new Date(val.timestamp).getTime() : 0;
+                    if (_entryAge > 2 * 60 * 60 * 1000) continue;
+                    // Add _ts so periodic sweep can expire this entry correctly
+                    if (!val._ts) val._ts = val.timestamp ? new Date(val.timestamp).getTime() : now;
                     global._antideleteStore.set(key, val);
                 }
             }
