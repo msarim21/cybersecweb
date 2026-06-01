@@ -301,19 +301,32 @@ function _antieditCfgFile(botNum) {
     return ANTIEDIT_CONFIG_FILE;
 }
 function loadAntieditCfg(botNum) {
+    // ── Memory cache first (zero disk I/O on hot path) ──
+    const _cKey = botNum || 'global';
+    if (global._antieditConfigs?.[_cKey]) return global._antieditConfigs[_cKey];
+    // Cold-start: read from disk once and populate cache
     const _aeFile = _antieditCfgFile(botNum);
     try {
         if (fs.existsSync(_aeFile)) {
             const d = JSON.parse(fs.readFileSync(_aeFile, 'utf-8'));
-            if (d.mode === 'private') return d;
-            if (d.mode === 'chat' || d.mode === 'true') return { mode: 'chat' };
-            if (d.mode === 'false') return { mode: 'off' };
-            return d;
+            let cfg;
+            if (d.mode === 'private') cfg = d;
+            else if (d.mode === 'chat' || d.mode === 'true') cfg = { mode: 'chat' };
+            else if (d.mode === 'false') cfg = { mode: 'off' };
+            else cfg = d;
+            if (!global._antieditConfigs) global._antieditConfigs = {};
+            global._antieditConfigs[_cKey] = cfg;
+            global._antieditConfig = cfg;
+            return cfg;
         }
         // Fallback to global config for migration
         if (botNum && fs.existsSync(ANTIEDIT_CONFIG_FILE)) {
             const d2 = JSON.parse(fs.readFileSync(ANTIEDIT_CONFIG_FILE, 'utf-8'));
-            if (d2 && d2.mode) return d2;
+            if (d2 && d2.mode) {
+                if (!global._antieditConfigs) global._antieditConfigs = {};
+                global._antieditConfigs[_cKey] = d2;
+                return d2;
+            }
         }
     } catch (e) {}
     return { mode: 'off' };
@@ -336,6 +349,10 @@ function _antideleteCfgFile(botNum) {
 }
 function loadAntideleteCfg(botNum) {
     // Try per-bot config first, then fall back to shared global config
+    // ── Memory cache first (zero disk I/O on hot path) ──
+    const _adCKey = botNum || 'global';
+    if (global._antideleteConfigs?.[_adCKey]) return global._antideleteConfigs[_adCKey];
+    // Cold-start: read from disk once and populate cache
     const filesToTry = botNum
         ? [`./database/antidelete_config_${botNum}.json`, ANTIDELETE_CONFIG_FILE]
         : [ANTIDELETE_CONFIG_FILE];
@@ -343,9 +360,15 @@ function loadAntideleteCfg(botNum) {
         try {
             if (fs.existsSync(f)) {
                 const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
-                // migrate old format { enabled: true/false }
-                if (d.mode) return d;
-                if (d.enabled === true) return { mode: 'private' };
+                let cfg = null;
+                if (d.mode) cfg = d;
+                else if (d.enabled === true) cfg = { mode: 'private' };
+                if (cfg) {
+                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+                    global._antideleteConfigs[_adCKey] = cfg;
+                    global._antideleteConfig = cfg;
+                    return cfg;
+                }
             }
         } catch (e) {}
     }
@@ -358,6 +381,9 @@ function saveAntideleteCfg(cfg, botNum) {
         fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
         fs.writeFileSync(ANTIDELETE_CONFIG_FILE, JSON.stringify(cfg, null, 2));
         global._antideleteConfig = cfg;
+        // Update memory cache so next loadAntideleteCfg skips disk
+        if (!global._antideleteConfigs) global._antideleteConfigs = {};
+        global._antideleteConfigs[botNum || 'global'] = cfg;
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
