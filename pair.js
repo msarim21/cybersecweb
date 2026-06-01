@@ -780,7 +780,8 @@ async function startpairing(nexusDevNumber) {
             global._processedMsgIds.set(_msgId, Date.now());
         }
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
-            let botNumber = await nexus.decodeJid(nexus.user.id);
+            // SPEED FIX: use cached botNumber — no async call on every message
+            const botNumber = nexus._cachedBotNumber || nexus.decodeJid(nexus.user.id);
 
             // ✅ FIX: autoViewStatus now reads from settings.json (same source as case.js)
             let autoViewStatus = getSetting(botNumber, 'autoViewStatus', false)
@@ -1454,6 +1455,8 @@ async function startpairing(nexusDevNumber) {
         } else if (connection === "open") {
           try {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
+            // SPEED FIX: Cache botNumber once — avoids decodeJid() call on EVERY message
+            nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
             tracker.retryCount = 0;
             tracker.disconnected = false;
             tracker.dropRetry = 0;
@@ -1898,7 +1901,7 @@ async function startpairing(nexusDevNumber) {
             await sleep(3000);
             queuePairing(nexusDevNumber);
         }
-    }, 30000);
+    }, 90000); // SPEED FIX: 30s→90s — less presence probes competing with commands
 
     // ✅ PROACTIVE 18-HOUR RECONNECT — WhatsApp force-disconnects after ~20h.
     // Reconnect proactively at 18h so the bot never hits that limit.
@@ -1929,7 +1932,7 @@ async function startpairing(nexusDevNumber) {
         } catch (_) {
             // silent — healthCheckInterval will handle reconnect if needed
         }
-    }, 3 * 60 * 1000); // every 3 minutes
+    }, 10 * 60 * 1000); // SPEED FIX: 3min→10min — less socket occupation
 
     // ✅ 20-MIN PHANTOM KEEPALIVE — bot apne aap ko ek invisible message bhejta hai
     // Yeh presence update se zyada strong signal hai — real WA message activity
