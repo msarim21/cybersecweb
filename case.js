@@ -8914,9 +8914,6 @@ case "autorecordtype": {
 break;
 
 case "autoreact": {
-    if (m.isGroup && !isAdmins && !isCreator) 
-        return reply('🔒 *Admins/Owner only*');
-    
     if (!args[0]) return reply("⚙️ *Usage:* autoreact on/off");
 
     if (args[0].toLowerCase() === "on") {
