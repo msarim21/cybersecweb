@@ -3718,13 +3718,32 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                     (_aeIsGroup ? `*👥 Group:* ${_aeGroupName || _aeChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
                     `\n*📄 Old Message:*\n${_aeOldText || '_Not available_'}\n` +
                     `\n*📝 New (Edited) Message:*\n${_aeNewText || '_Empty_'}`;
-                if (_aeMode === 'chat' || _aeMode === 'chat_groups') {
-                    await devtrust.sendMessage(_aeChatId, { text: _aeReport, mentions: _aeMentions });
-                } else {
-                    // private / private_pm / private_groups → bot ke apne saved messages (DM)
-                    const _aeBotJid = getBotJid(devtrust) || _aeChatId;
-                    await devtrust.sendMessage(_aeBotJid, { text: _aeReport, mentions: _aeMentions });
+                // ── Update _antideleteStore with NEW edited content (fix: delete after edit shows new text) ──
+                if (_aeNewText && _aeOrigId && _aeChatId && global._antideleteStore) {
+                    const _aeBotNumForAd = jidToNum(getBotJid(devtrust));
+                    const _adK1 = `${_aeBotNumForAd}::${antiStoreKey(_aeChatId, _aeOrigId)}`;
+                    const _adK2 = antiStoreKey(_aeChatId, _aeOrigId);
+                    for (const _k of [_adK1, _adK2, _aeOrigId]) {
+                        if (global._antideleteStore.has(_k)) {
+                            const _adEx = global._antideleteStore.get(_k);
+                            _adEx.content = _aeNewText;
+                            global._antideleteStore.set(_k, _adEx);
+                        }
+                    }
                 }
+                // ── Also update _antieditStore entry so in-memory content is fresh ──
+                if (_aeNewText && _aeOrigId && _aeChatId) {
+                    const _aeChatMapAE = global._antieditStore?.get(_aeChatId);
+                    if (_aeChatMapAE?.has(_aeOrigId)) _aeChatMapAE.get(_aeOrigId).content = _aeNewText;
+                }
+                // ── Send alert: private mode in DM → same DM; private in group → saved messages ──
+                const _aeBotJid = getBotJid(devtrust) || _aeChatId;
+                const _aeSendTarget = (_aeMode === 'chat' || _aeMode === 'chat_groups' ||
+                    (_aeMode === 'private' && !_aeIsGroup) ||
+                    (_aeMode === 'private_pm' && !_aeIsGroup))
+                    ? _aeChatId
+                    : _aeBotJid;
+                await devtrust.sendMessage(_aeSendTarget, { text: _aeReport, mentions: _aeMentions });
             }
         } catch (e) { console.error('[ANTIEDIT]', e); }
     }
