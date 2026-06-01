@@ -11600,27 +11600,28 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
-    const _voBotNum = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
+    // Destination: user's private DM (group → sender's DM, private chat → same chat)
+    const _voDest = m.chat.endsWith('@g.us') ? m.sender : m.chat;
 
-    // ── Path 1: Quoted reply to a view-once (original behavior) ──
+    // ── Path 1: Quoted reply to a view-once ──
     if (m.quoted) {
         let mime = (m.quoted.msg || m.quoted).mimetype || '';
         try {
             let media = await m.quoted.download();
             if (/image/.test(mime)) {
-                await devtrust.sendMessage(_voBotNum, {
+                await devtrust.sendMessage(_voDest, {
                     image: media,
-                    caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
+                    caption: `📸 *View-Once Image Saved!*\nFrom: @${m.sender.split('@')[0]}\nTime: ${new Date().toLocaleString()}`,
                     mentions: [m.sender]
                 });
             } else if (/video/.test(mime)) {
-                await devtrust.sendMessage(_voBotNum, {
+                await devtrust.sendMessage(_voDest, {
                     video: media,
-                    caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
+                    caption: `🎥 *View-Once Video Saved!*\nFrom: @${m.sender.split('@')[0]}\nTime: ${new Date().toLocaleString()}`,
                     mentions: [m.sender]
                 });
             } else if (/audio/.test(mime)) {
-                await devtrust.sendMessage(_voBotNum, { audio: media, mimetype: 'audio/mpeg', ptt: true });
+                await devtrust.sendMessage(_voDest, { audio: media, mimetype: 'audio/mpeg', ptt: true });
             }
         } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
         break;
@@ -11643,11 +11644,11 @@ case '🦋': {
                 if (_buf.length > 0) {
                     const _cap = `📸 *View-Once Saved!*\nFrom: @${_storedVO.sender}\nTime: ${new Date().toLocaleString()}`;
                     if (_voType === 'imageMessage') {
-                        await devtrust.sendMessage(_voBotNum, { image: _buf, caption: _cap });
+                        await devtrust.sendMessage(_voDest, { image: _buf, caption: _cap });
                     } else if (_voType === 'videoMessage') {
-                        await devtrust.sendMessage(_voBotNum, { video: _buf, caption: _cap });
+                        await devtrust.sendMessage(_voDest, { video: _buf, caption: _cap });
                     } else if (_voType === 'audioMessage') {
-                        await devtrust.sendMessage(_voBotNum, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
+                        await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
                     }
                 }
             }
