@@ -1,22 +1,38 @@
 /**
  * ============================================
- * VIEW-ONCE MEDIA SAVER
+ * VIEW-ONCE MEDIA SAVER — FIXED VERSION
  *
  * Kaam kaise karta hai:
- *   - Koi bhi group/chat mein photo/video/audio/voice aaye
+ *   - Koi bhi group/chat mein view-once media aaye (photo/video/voice)
  *     → Bot silently store karta hai
- *   - Koi bhi BOT USER (jis ne /start kiya ho) emoji se reply kare
- *     → Sirf US USER ke apne DM mein media save hoti hai
- *   - Koi aur / un-registered user reply kare → kuch nahi hota
+ *   - Sirf REGISTERED bot user (jis ne /start kiya ho) emoji se reply kare
+ *     → SIRF US WALE USER ke apne DM mein media save hoti hai
+ *   - Koi aur user reply kare → bilkul kuch nahi hota
  *   - Group mein koi message, koi notice, bilkul kuch nahi
  *
  * Usage in bot.js:
- *   const { initViewOnceSaver } = require('./allfunc/viewonce-saver');
+ *   const { initViewOnceSaver, registerBotUser } = require('./allfunc/viewonce-saver');
+ *
+ *   // /start handler mein add karo:
+ *   registerBotUser(userId);
+ *
+ *   // Bot start hone par:
  *   initViewOnceSaver(bot);
  * ============================================
  */
 
-// Memory store: "chatId_messageId" → { fileId, mediaType }
+// ── Registered users store (jo /start kar chuke hain) ─────────────────────
+const registeredUsers = new Set();
+
+/**
+ * Ek user ko registered mark karo (call from /start handler)
+ * @param {number|string} userId
+ */
+function registerBotUser(userId) {
+    registeredUsers.add(String(userId));
+}
+
+// ── Memory store: "chatId_messageId" → { fileId, mediaType } ───────────────
 const viewOnceStore = new Map();
 
 // 24 ghante baad auto delete
@@ -34,7 +50,11 @@ function isOnlyEmoji(text) {
 
 /**
  * User ke DM mein silently media bhejo
- * (seedha send — "Forwarded from" tag nahi aayega)
+ * "Forwarded from" tag nahi aayega — seedha send hoga
+ * @param {object} bot
+ * @param {number|string} userId  ← sirf WAHI user jis ne emoji reply kiya
+ * @param {string} fileId
+ * @param {string} mediaType
  */
 async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
     switch (mediaType) {
@@ -54,11 +74,12 @@ async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
  */
 function initViewOnceSaver(bot) {
 
-    // ── PART 1: Har media message silently store karo ─────────────────────
+    // ── PART 1: View-once ya koi bhi media message silently store karo ────
     bot.on('message', async (msg) => {
         let fileId = null;
         let mediaType = null;
 
+        // View-once photo (Telegram ka native view-once)
         if (msg.photo && msg.photo.length > 0) {
             fileId = msg.photo[msg.photo.length - 1].file_id;
             mediaType = 'photo';
@@ -88,7 +109,7 @@ function initViewOnceSaver(bot) {
         setTimeout(() => viewOnceStore.delete(key), EXPIRY_MS);
     });
 
-    // ── PART 2: Emoji reply detect karo → sirf us user ke DM mein bhejo ──
+    // ── PART 2: Emoji reply detect karo ────────────────────────────────────
     bot.on('message', async (msg) => {
         // Sirf reply messages
         if (!msg.reply_to_message) return;
@@ -96,28 +117,33 @@ function initViewOnceSaver(bot) {
         // Sirf emoji wali reply
         if (!msg.text || !isOnlyEmoji(msg.text)) return;
 
+        // ✅ KEY FIX: Sirf registered bot users (jo /start kar chuke hain)
+        const replyingUserId = String(msg.from.id);
+        if (!registeredUsers.has(replyingUserId)) {
+            // Unregistered user — bilkul kuch nahi karo, group mein silent raho
+            return;
+        }
+
         const key = `${msg.chat.id}_${msg.reply_to_message.message_id}`;
         const stored = viewOnceStore.get(key);
 
         // Agar yeh koi stored media nahi — skip
         if (!stored) return;
 
-        const userId = msg.from.id;
+        // ✅ SIRF IS USER KA ID — jo reply kiya ussi ka, kisi aur ka nahi
         const { fileId, mediaType } = stored;
 
         try {
-            // ✅ Sirf IS user ke DM mein — bilkul silent
-            // Telegram khud check karta hai: agar user ne /start kiya hai to deliver hogi
-            // Agar nahi kiya to silently fail — group mein kuch nahi jaayega
-            await sendSilentlyToDM(bot, userId, fileId, mediaType);
-            console.log(`[ViewOnceSaver] ✅ ${mediaType} saved to user ${userId}`);
+            // Sirf IS ek user ke DM mein — Jo reply kiya usi ka
+            await sendSilentlyToDM(bot, msg.from.id, fileId, mediaType);
+            console.log(`[ViewOnceSaver] ✅ ${mediaType} → user ${msg.from.id} ke DM mein save`);
         } catch (err) {
             // Koi bhi error — group bilkul silent rahe
-            console.log(`[ViewOnceSaver] Silent fail for ${userId}: ${err?.message}`);
+            console.log(`[ViewOnceSaver] Silent fail for ${msg.from.id}: ${err?.message}`);
         }
     });
 
-    console.log('✅ [ViewOnceSaver] Active — any bot user can save via emoji reply');
+    console.log('✅ [ViewOnceSaver] Active — sirf registered users emoji reply se apne DM mein save kar sakte hain');
 }
 
-module.exports = { initViewOnceSaver };
+module.exports = { initViewOnceSaver, registerBotUser };
