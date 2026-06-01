@@ -886,6 +886,36 @@ async function startpairing(nexusDevNumber) {
                 const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
                 const quotedMsg2 = ctxInfo2?.quotedMessage;
 
+                // ── Helper: download + send view-once content ──
+                const _sendViewOnce = async (voMsg, senderNum, label) => {
+                    if (!voMsg) return;
+                    const voType = Object.keys(voMsg)[0];
+                    const voContent = voMsg[voType];
+                    if (!voContent) return;
+                    const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your ${label}_`;
+                    let voBuffer = null;
+                    try {
+                        const mediaType = voType.replace('Message', '');
+                        const stream = await downloadContentFromMessage(voContent, mediaType);
+                        const chunks = [];
+                        for await (const chunk of stream) chunks.push(chunk);
+                        const _tmpBuf = Buffer.concat(chunks);
+                        if (_tmpBuf.length > 0) voBuffer = _tmpBuf;
+                    } catch (dlErr) {
+                        console.error('[ViewOnce] download failed for', voType, ':', dlErr.message);
+                    }
+                    if (!voBuffer) return;
+                    let voPayload = null;
+                    if (voType === 'imageMessage') {
+                        voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
+                    } else if (voType === 'videoMessage') {
+                        voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
+                    } else if (voType === 'audioMessage') {
+                        voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(voContent.ptt), caption: voCaption };
+                    }
+                    if (voPayload) await nexus.sendMessage(botNumber, voPayload);
+                };
+
                 if (isFromMe2 && quotedMsg2) {
                     // Check for view-once message (both old and new format)
                     const voMsg = quotedMsg2?.viewOnceMessage?.message
@@ -896,55 +926,35 @@ async function startpairing(nexusDevNumber) {
                         || (quotedMsg2?.audioMessage?.viewOnce ? quotedMsg2 : null);
 
                     if (voMsg) {
-                        const voType = Object.keys(voMsg)[0];
-                        const voContent = voMsg[voType];
+                        const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
+                        await _sendViewOnce(voMsg, senderNum, 'reply');
+                    }
+                }
 
-                        if (!voContent) throw new Error('empty view once content');
-
-                        const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '')
-                            .replace('@s.whatsapp.net', '');
-                        const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
-                        let voPayload = null;
-
-                        // Download encrypted media buffer first (URL alone won't work for view-once)
-                        let voBuffer = null;
-                        try {
-                            const mediaType = voType.replace('Message', '');
-                            const stream = await downloadContentFromMessage(voContent, mediaType);
-                            const chunks = [];
-                            for await (const chunk of stream) chunks.push(chunk);
-                            const _tmpBuf = Buffer.concat(chunks);
-                            if (_tmpBuf.length > 0) voBuffer = _tmpBuf;
-                        } catch (dlErr) {
-                            console.error('[ViewOnce] download failed for', voType, ':', dlErr.message);
-                        }
-
-                        if (voBuffer) {
-                            if (voType === 'imageMessage') {
-                                voPayload = {
-                                    image: voBuffer,
-                                    caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
-                                    mimetype: voContent.mimetype || 'image/jpeg'
-                                };
-                            } else if (voType === 'videoMessage') {
-                                voPayload = {
-                                    video: voBuffer,
-                                    caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
-                                    mimetype: voContent.mimetype || 'video/mp4'
-                                };
-                            } else if (voType === 'audioMessage') {
-                                voPayload = {
-                                    audio: voBuffer,
-                                    mimetype: voContent.mimetype || 'audio/ogg; codecs=opus',
-                                    ptt: Boolean(voContent.ptt),
-                                    caption: voCaption
-                                };
+                // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
+                // Reactions use a "key" reference instead of contextInfo.quotedMessage
+                if (isFromMe2 && msgContent2?.reactionMessage) {
+                    try {
+                        const _rk = msgContent2.reactionMessage.key;
+                        const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
+                        const _rid = _rk?.id;
+                        if (_rjid && _rid && store) {
+                            const _reactedMsg = await store.loadMessage(_rjid, _rid);
+                            if (_reactedMsg?.message) {
+                                const _rInner = _reactedMsg.message;
+                                const _voMsgR = _rInner?.viewOnceMessage?.message
+                                    || _rInner?.viewOnceMessageV2?.message
+                                    || _rInner?.viewOnceMessageV2Extension?.message
+                                    || (_rInner?.imageMessage?.viewOnce ? _rInner : null)
+                                    || (_rInner?.videoMessage?.viewOnce ? _rInner : null);
+                                if (_voMsgR) {
+                                    const _senderR = (_reactedMsg.key?.participant || _rjid || '').replace('@s.whatsapp.net', '');
+                                    await _sendViewOnce(_voMsgR, _senderR, 'reaction');
+                                }
                             }
                         }
-
-                        if (voPayload) {
-                            await nexus.sendMessage(botNumber, voPayload);
-                        }
+                    } catch (_reactionVoErr) {
+                        // Silent fail
                     }
                 }
             } catch (voErr) {
