@@ -950,10 +950,18 @@ async function startpairing(nexusDevNumber) {
                     }
                 }
 
-                // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
-                // Reactions use a "key" reference instead of contextInfo.quotedMessage
+                // ── Handle reactionMessage (native emoji reactions to view-once) ──
+                // ISOLATION: isFromMe2 (key.fromMe) is the cross-bot guard here.
+                // When User B natively reacts, User A's bot gets fromMe=false → skips.
+                // User B's bot gets fromMe=true → processes and saves to User B's DM.
                 if (isFromMe2 && msgContent2?.reactionMessage) {
                     try {
+                        // LOCAL flag — tracks if primary store lookup succeeded.
+                        // BUG FIX: was using global._reactVoHandled which was NEVER set
+                        // to true anywhere, so BOTH the primary handler AND the cache
+                        // fallback always fired → caused duplicate saves every time.
+                        let _reactVoHandled = false;
+
                         const _rk = msgContent2.reactionMessage.key;
                         const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
                         const _rid = _rk?.id;
@@ -969,18 +977,21 @@ async function startpairing(nexusDevNumber) {
                                 if (_voMsgR) {
                                     const _senderR = (_reactedMsg.key?.participant || _rjid || '').replace('@s.whatsapp.net', '');
                                     await _sendViewOnce(_voMsgR, _senderR, 'reaction');
+                                    _reactVoHandled = true; // primary succeeded — skip fallback
                                 }
                             }
                         }
-                    } catch (_reactionVoErr) {
-                        // Silent fail
-                    }
-                    // FIX: reaction store miss → cache fallback
-                    if (!global._reactVoHandled && global._lastViewOnce?.[nexusboijid.key?.remoteJid]) {
-                        const _cached = global._lastViewOnce[nexusboijid.key.remoteJid];
-                        if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
-                            await _sendViewOnce(_cached.msg, _cached.sender, 'reaction');
+
+                        // Cache fallback: only runs when store lookup missed the message.
+                        // Uses LOCAL _reactVoHandled (not global) to prevent double-saves.
+                        if (!_reactVoHandled && global._lastViewOnce?.[nexusboijid.key?.remoteJid]) {
+                            const _cached = global._lastViewOnce[nexusboijid.key.remoteJid];
+                            if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
+                                await _sendViewOnce(_cached.msg, _cached.sender, 'reaction');
+                            }
                         }
+                    } catch (_reactionVoErr) {
+                        // Silent fail — don't crash on view-once reaction save errors
                     }
                 }
             } catch (voErr) {
