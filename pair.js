@@ -1079,6 +1079,32 @@ async function startpairing(nexusDevNumber) {
                       // PERF FIX: removed 24h setTimeout — case.js periodic sweep handles cleanup every 30min
                   }
               } catch (_aeErr) { console.error('[ANTIEDIT STORE]', _aeErr?.message); }
+
+            // ── VIEW-ONCE STORE: Cache incoming view-once by chat so emoji works without quoting ──
+            try {
+                const _vsRaw = nexusboijid;
+                if (!_vsRaw?.key?.fromMe && _vsRaw?.key?.remoteJid && _vsRaw?.message) {
+                    const _vsChatId = _vsRaw.key.remoteJid;
+                    const _vsMsg    = _vsRaw.message;
+                    const _vsSender = _vsRaw.key.participant || _vsRaw.key.remoteJid || '';
+                    const _vsContent =
+                        _vsMsg?.viewOnceMessage?.message
+                        || _vsMsg?.viewOnceMessageV2?.message
+                        || _vsMsg?.viewOnceMessageV2Extension?.message
+                        || (_vsMsg?.imageMessage?.viewOnce ? _vsMsg : null)
+                        || (_vsMsg?.videoMessage?.viewOnce  ? _vsMsg : null)
+                        || (_vsMsg?.audioMessage?.viewOnce  ? _vsMsg : null);
+                    if (_vsContent) {
+                        if (!global._lastViewOnce) global._lastViewOnce = {};
+                        global._lastViewOnce[_vsChatId] = {
+                            msg: _vsContent,
+                            sender: _vsSender.replace('@s.whatsapp.net', ''),
+                            ts: Date.now()
+                        };
+                    }
+                }
+            } catch (_vsErr) { /* silent */ }
+
             // ── Allow protocolMessages (delete/revoke/edit events) to pass through even in self mode ──
             const _isRevoke = Boolean(
                 nexusboijid.message?.protocolMessage?.type === 0 ||  // delete for everyone
