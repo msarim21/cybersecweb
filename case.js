@@ -3805,11 +3805,44 @@ _Auto-saved via status antidelete_`;
                     const _storeMsg = _storeChat?.get?.(_adMsgId) || (Array.isArray(_storeChat) ? _storeChat.find(x => x?.key?.id === _adMsgId) : null);
                     if (_storeMsg && !_storeMsg.message?.protocolMessage) {
                         const _sm = _storeMsg.message || {};
-                        const _stext = _sm.conversation || _sm.extendedTextMessage?.text || _sm.imageMessage?.caption || _sm.videoMessage?.caption || _sm.audioMessage?.caption || '';
+                        // Determine media type
+                        const _bsMediaType = _sm.imageMessage ? 'image'
+                            : _sm.videoMessage ? 'video'
+                            : _sm.audioMessage ? 'audio'
+                            : _sm.stickerMessage ? 'sticker'
+                            : _sm.documentMessage ? 'document' : '';
+                        const _bsMediaMsg = _sm.imageMessage || _sm.videoMessage || _sm.audioMessage || _sm.stickerMessage || _sm.documentMessage || null;
+                        const _stext = _sm.conversation || _sm.extendedTextMessage?.text
+                            || _bsMediaMsg?.caption
+                            || (_bsMediaType === 'audio' ? (Boolean(_bsMediaMsg?.ptt) ? '🎤 Voice Note' : '🎵 Audio') : '')
+                            || (_bsMediaType === 'sticker' ? '🎭 Sticker' : '')
+                            || (_bsMediaType === 'document' ? `📄 Document: ${_bsMediaMsg?.fileName || _bsMediaMsg?.title || 'File'}` : '')
+                            || '';
+                        // Serialize media metadata for re-download at alert time (same format as _adRedl expects)
+                        let _bsRawMedia = null;
+                        if (_bsMediaMsg && _bsMediaType) {
+                            try {
+                                _bsRawMedia = {
+                                    type: _bsMediaType,
+                                    url: _bsMediaMsg.url || null,
+                                    directPath: _bsMediaMsg.directPath || null,
+                                    mediaKey: _bsMediaMsg.mediaKey ? Buffer.from(_bsMediaMsg.mediaKey).toString('base64') : null,
+                                    fileEncSha256: _bsMediaMsg.fileEncSha256 ? Buffer.from(_bsMediaMsg.fileEncSha256).toString('base64') : null,
+                                    fileSha256: _bsMediaMsg.fileSha256 ? Buffer.from(_bsMediaMsg.fileSha256).toString('base64') : null,
+                                    mimetype: _bsMediaMsg.mimetype || (_bsMediaType === 'audio' ? 'audio/ogg; codecs=opus' : _bsMediaType === 'sticker' ? 'image/webp' : _bsMediaType === 'image' ? 'image/jpeg' : 'video/mp4'),
+                                    ptt: Boolean(_bsMediaMsg.ptt),
+                                    caption: _bsMediaMsg.caption || null,
+                                    isAnimated: Boolean(_bsMediaMsg.isAnimated),
+                                    fileName: _bsMediaMsg.fileName || _bsMediaMsg.title || null,
+                                };
+                            } catch (_bsRE) { _bsRawMedia = null; }
+                        }
                         _adOriginal = {
                             content: _stext,
-                            mediaType: _sm.imageMessage ? 'image' : _sm.videoMessage ? 'video' : _sm.audioMessage ? 'audio' : _sm.stickerMessage ? 'sticker' : '',
-                            mediaPath: '',
+                            mediaType: _bsMediaType,
+                            mediaPath: _bsMediaType && _bsMediaMsg ? '__redownload__' : '',
+                            isPtt: _bsMediaType === 'audio' && Boolean(_bsMediaMsg?.ptt),
+                            rawMediaMsg: _bsRawMedia,
                             fromMe: Boolean(_storeMsg.key?.fromMe),
                             sender: _storeMsg.key?.participant || _storeMsg.key?.remoteJid || _adDeletedBy,
                             group: _adIsGroup ? _adChatId : null,
