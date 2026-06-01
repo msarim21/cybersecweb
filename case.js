@@ -11600,8 +11600,10 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
-    // Destination: user's private DM (group → sender's DM, private chat → same chat)
-    const _voDest = m.chat.endsWith('@g.us') ? m.sender : m.chat;
+    // Destination: ALWAYS bot user's own self-chat (Message yourself)
+    // Group ya private — dono cases mein media sirf apne DM mein jaye
+    const _botSelf = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
+    const _voDest = _botSelf;
 
     // ── Path 1: Quoted reply to a view-once ──
     if (m.quoted) {
