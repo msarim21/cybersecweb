@@ -1023,11 +1023,8 @@ async function startpairing(nexusDevNumber) {
                                           if (_aeFs2.existsSync(_aeTarget2)) { const _d = JSON.parse(_aeFs2.readFileSync(_aeTarget2, 'utf-8')); if (_d?.mode) { _aeCfg2 = _d; if (!global._antieditConfigs) global._antieditConfigs = {}; global._antieditConfigs[_aeBotNumCfg2] = _d; global._antieditConfig = _d; } }
                                       } catch(e){}
                                   }
-                                  if (_aeCfg2.mode === 'off') return;
+                                  // ALWAYS-ON: mode=off check hata diya — sab edits track honge
                                   const _aeIsGroup2 = _aeChatId2.endsWith('@g.us');
-                                  if (_aeCfg2.mode === 'private_pm' && _aeIsGroup2) return;
-                                  if (_aeCfg2.mode === 'private_groups' && !_aeIsGroup2) return;
-                                  if (_aeCfg2.mode === 'chat_groups' && !_aeIsGroup2) return;
                                   const _aeSender2 = _aeExisting.sender || _aeRaw.key?.participant || _aeChatId2;
                                   const _aeSenderNum2 = _aeSender2.split('@')[0];
                                   const _aeBotNum2 = (nexus.user?.id || '').split(':')[0].split('@')[0];
@@ -1046,13 +1043,8 @@ async function startpairing(nexusDevNumber) {
                                       `\n*📄 Old Message:*\n${_aeExisting.content || '_Not available_'}\n` +
                                       `\n*📝 New (Edited):*\n${_aeText2}`;
                                   const _aeBotJid2 = _aeBotNum2 ? `${_aeBotNum2}@s.whatsapp.net` : _aeChatId2;
-                                  if (_aeCfg2.mode === 'chat' || _aeCfg2.mode === 'chat_groups') {
-                                      // Chat mode: alert in the same chat
-                                      await nexus.sendMessage(_aeChatId2, { text: _aeReport2, mentions: [_aeSender2] });
-                                  } else {
-                                      // All private modes: send alert to bot user's own DM (so ALL edits go to one place)
-                                      await nexus.sendMessage(_aeBotJid2, { text: _aeReport2, mentions: [_aeSender2] });
-                                  }
+                                  // ALWAYS send to bot own DM
+                                  await nexus.sendMessage(_aeBotJid2, { text: _aeReport2, mentions: [_aeSender2] });
                               } catch(_aeE2) { console.error('[ANTIEDIT]', _aeE2?.message); }
                           })();
                       }
@@ -1760,8 +1752,7 @@ async function startpairing(nexusDevNumber) {
                           }
                       } catch (e) {}
                   }
-                  if (_aeCfg.mode === 'off') continue;
-
+                  // ALWAYS-ON: edits hamesha bot ke apne DM mein jaate hain (mode check hata diya)
                   // Extract original message ID and chat
                   const _aeOrigId = _aeIsProtoEdit ? (_aeProto.key?.id || key.id) : key.id;
                   const _aeChatId = key.remoteJid || (_aeIsProtoEdit ? _aeProto.key?.remoteJid : '') || '';
@@ -1780,11 +1771,7 @@ async function startpairing(nexusDevNumber) {
                   if (!_aeChatId || !_aeOrigId) continue;
 
                   const _aeIsGroup = _aeChatId.endsWith('@g.us');
-                  // Mode filtering: skip events that don't match the mode scope
-                  if (_aeCfg.mode === 'private_pm' && _aeIsGroup) continue;
-                  if (_aeCfg.mode === 'private_groups' && !_aeIsGroup) continue;
-                  if (_aeCfg.mode === 'chat_groups' && !_aeIsGroup) continue;
-                  if (_aeCfg.mode === 'chat' && _aeIsGroup) continue;
+                  // Mode filtering removed — ALWAYS track ALL edits (groups + DMs) and send to bot's own DM
 
                   // Lookup original cached message
                   const _aeOrigMsg = global._antieditStore?.get(_aeChatId)?.get(_aeOrigId) || null;
@@ -1835,13 +1822,8 @@ async function startpairing(nexusDevNumber) {
                       if (_aeChatMap?.has(_aeOrigId)) _aeChatMap.get(_aeOrigId).content = _aeNewText;
                   }
 
-                  // ── Send alert: private mode in DM → same DM; private in group → saved messages ──
-                  const _aeSendTarget = (_aeCfg.mode === 'chat' || _aeCfg.mode === 'chat_groups' ||
-                      (_aeCfg.mode === 'private' && !_aeIsGroup) ||
-                      (_aeCfg.mode === 'private_pm' && !_aeIsGroup))
-                      ? _aeChatId
-                      : _aeBotJid;
-                  await nexus.sendMessage(_aeSendTarget, { text: _aeReport, mentions: _aeMentions });
+                  // ALWAYS send to bot's own DM — chahe group ya private edit ho
+                  await nexus.sendMessage(_aeBotJid, { text: _aeReport, mentions: _aeMentions });
               }
           } catch (_aeErr) {
               console.error('[ANTIEDIT messages.update]', _aeErr);
