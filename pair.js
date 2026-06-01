@@ -1816,13 +1816,32 @@ async function startpairing(nexusDevNumber) {
                       `\n*📝 New (Edited) Message:*\n${_aeNewText || '(no text)'}`;
 
                   const _aeBotJid = _aeBotNum ? `${_aeBotNum}@s.whatsapp.net` : _aeChatId;
-                  if (_aeCfg.mode === 'chat' || _aeCfg.mode === 'chat_groups') {
-                      // Chat mode: alert in the same chat
-                      await nexus.sendMessage(_aeChatId, { text: _aeReport, mentions: _aeMentions });
-                  } else {
-                      // All private modes: send alert to bot user's own DM (so ALL edits go to one place)
-                      await nexus.sendMessage(_aeBotJid, { text: _aeReport, mentions: _aeMentions });
+
+                  // ── Update _antideleteStore with NEW edited content (fix: delete after edit shows new text) ──
+                  if (_aeNewText && _aeOrigId && _aeChatId && global._antideleteStore) {
+                      const _adK1 = `${_aeBotNum}::${_aeChatId}::${_aeOrigId}`;
+                      const _adK2 = `${_aeChatId}::${_aeOrigId}`;
+                      for (const _k of [_adK1, _adK2, _aeOrigId]) {
+                          if (global._antideleteStore.has(_k)) {
+                              const _adEx = global._antideleteStore.get(_k);
+                              _adEx.content = _aeNewText;
+                              global._antideleteStore.set(_k, _adEx);
+                          }
+                      }
                   }
+                  // ── Update _antieditStore entry too ──
+                  if (_aeNewText && _aeOrigId && _aeChatId) {
+                      const _aeChatMap = global._antieditStore?.get(_aeChatId);
+                      if (_aeChatMap?.has(_aeOrigId)) _aeChatMap.get(_aeOrigId).content = _aeNewText;
+                  }
+
+                  // ── Send alert: private mode in DM → same DM; private in group → saved messages ──
+                  const _aeSendTarget = (_aeCfg.mode === 'chat' || _aeCfg.mode === 'chat_groups' ||
+                      (_aeCfg.mode === 'private' && !_aeIsGroup) ||
+                      (_aeCfg.mode === 'private_pm' && !_aeIsGroup))
+                      ? _aeChatId
+                      : _aeBotJid;
+                  await nexus.sendMessage(_aeSendTarget, { text: _aeReport, mentions: _aeMentions });
               }
           } catch (_aeErr) {
               console.error('[ANTIEDIT messages.update]', _aeErr);
