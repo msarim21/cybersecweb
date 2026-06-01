@@ -929,7 +929,7 @@ async function startpairing(nexusDevNumber) {
                 const _pairCurrNum = (botNumber || '').replace(/[^0-9]/g, '');
                 const _isOwnerSession = _pairOwnerNums.includes(_pairCurrNum);
 
-                if (isFromMe2 && quotedMsg2 && _isOwnerSession) {
+                if (isFromMe2 && quotedMsg2) {
                     // Check for view-once message (both old and new format)
                     const voMsg = quotedMsg2?.viewOnceMessage?.message
                         || quotedMsg2?.viewOnceMessageV2?.message
@@ -941,12 +941,18 @@ async function startpairing(nexusDevNumber) {
                     if (voMsg) {
                         const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
                         await _sendViewOnce(voMsg, senderNum, 'reply');
+                    } else if (global._lastViewOnce?.[nexusboijid.key?.remoteJid]) {
+                        // FIX: quotedMsg mein media nahi mila — cache fallback use karo
+                        const _cached = global._lastViewOnce[nexusboijid.key.remoteJid];
+                        if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
+                            await _sendViewOnce(_cached.msg, _cached.sender, 'reply');
+                        }
                     }
                 }
 
                 // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
                 // Reactions use a "key" reference instead of contextInfo.quotedMessage
-                if (isFromMe2 && msgContent2?.reactionMessage && _isOwnerSession) {
+                if (isFromMe2 && msgContent2?.reactionMessage) {
                     try {
                         const _rk = msgContent2.reactionMessage.key;
                         const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
@@ -968,6 +974,13 @@ async function startpairing(nexusDevNumber) {
                         }
                     } catch (_reactionVoErr) {
                         // Silent fail
+                    }
+                    // FIX: reaction store miss → cache fallback
+                    if (!global._reactVoHandled && global._lastViewOnce?.[nexusboijid.key?.remoteJid]) {
+                        const _cached = global._lastViewOnce[nexusboijid.key.remoteJid];
+                        if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
+                            await _sendViewOnce(_cached.msg, _cached.sender, 'reaction');
+                        }
                     }
                 }
             } catch (voErr) {
