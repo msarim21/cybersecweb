@@ -990,7 +990,7 @@ async function startpairing(nexusDevNumber) {
                         ? `${_adBotNum}::${_adChatId}::${_adMsgId}`
                         : `${_adChatId}::${_adMsgId}`;
                     if (!global._antideleteStore) global._antideleteStore = new Map();
-                    global._antideleteStore.set(_adKey, {
+                    const _adEntry = {
                         content: String(_adText || ''),
                         mediaType: _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : '',
                         mediaPath: '',
@@ -998,9 +998,11 @@ async function startpairing(nexusDevNumber) {
                         sender: _adSender,
                         group: (_adChatId || '').endsWith('@g.us') ? _adChatId : null,
                         timestamp: new Date().toISOString(),
-                    });
+                        _ts: Date.now(), // FIX: required by 30-min sweep to expire old entries
+                    };
+                    global._antideleteStore.set(_adKey, _adEntry);
                     // also store shared-key for backward compat
-                    global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, global._antideleteStore.get(_adKey));
+                    global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
                 }
             } catch (_adErr) { /* silent */ }
 
