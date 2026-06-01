@@ -323,6 +323,8 @@ function saveAntieditCfg(cfg, botNum) {
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync(_aeFile, JSON.stringify(cfg, null, 2));
+        // Also write to global file so pair.js messages.update handler can read it
+        fs.writeFileSync(ANTIEDIT_CONFIG_FILE, JSON.stringify(cfg, null, 2));
         if (!global._antieditConfigs) global._antieditConfigs = {};
         global._antieditConfigs[botNum || 'global'] = cfg;
         global._antieditConfig = cfg;
@@ -3795,6 +3797,27 @@ _Auto-saved via status antidelete_`;
                 || _getFromDiskStore(_adBotKey)
                 || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
                 || _getFromDiskStore(_adMsgId);
+
+            // Baileys store fallback — catches messages received while bot was briefly offline
+            if (!_adOriginal && global._baileysMsgStore) {
+                try {
+                    const _storeChat = global._baileysMsgStore.messages?.[_adChatId];
+                    const _storeMsg = _storeChat?.get?.(_adMsgId) || (Array.isArray(_storeChat) ? _storeChat.find(x => x?.key?.id === _adMsgId) : null);
+                    if (_storeMsg && !_storeMsg.message?.protocolMessage) {
+                        const _sm = _storeMsg.message || {};
+                        const _stext = _sm.conversation || _sm.extendedTextMessage?.text || _sm.imageMessage?.caption || _sm.videoMessage?.caption || _sm.audioMessage?.caption || '';
+                        _adOriginal = {
+                            content: _stext,
+                            mediaType: _sm.imageMessage ? 'image' : _sm.videoMessage ? 'video' : _sm.audioMessage ? 'audio' : _sm.stickerMessage ? 'sticker' : '',
+                            mediaPath: '',
+                            fromMe: Boolean(_storeMsg.key?.fromMe),
+                            sender: _storeMsg.key?.participant || _storeMsg.key?.remoteJid || _adDeletedBy,
+                            group: _adIsGroup ? _adChatId : null,
+                            timestamp: new Date().toISOString(),
+                        };
+                    }
+                } catch (_bsErr) { /* silent */ }
+            }
 
             if (!_adOriginal) {
                 const _aeMsg = global._antieditStore.get(_adChatId)?.get(_adMsgId);
