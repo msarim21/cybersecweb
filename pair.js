@@ -290,10 +290,18 @@ async function validateSession(nexusDevNumber) {
     
     try {
         const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-        if (!creds.me || !creds.me.id) {
-            console.log(chalk.yellow(`⚠️ Invalid session for ${nexusDevNumber}, cleaning up...`));
+        // FIX: Don't delete session when creds.me.id is missing — this is NORMAL
+        // for fresh pairings before WhatsApp completes the first handshake.
+        // Baileys will populate me.id automatically on the next connection attempt.
+        // Only delete if the JSON itself is structurally empty/broken.
+        if (!creds || typeof creds !== 'object') {
+            console.log(chalk.yellow(`⚠️ Invalid session structure for ${nexusDevNumber}, cleaning up...`));
             deleteFolderRecursive(sessionPath);
             return false;
+        }
+        if (!creds.me || !creds.me.id) {
+            console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] me.id not set yet (fresh pairing) — letting Baileys handle it`));
+            return true; // Valid session file — let connection proceed
         }
         return true;
     } catch (e) {
