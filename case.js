@@ -11545,7 +11545,36 @@ case '🔥':
 case '😋':
 case '😊':
 case '😘':
-case '😎': {
+case '😎':
+case '😅':
+case '✨':
+case '⭐':
+case '🫡':
+case '🥺':
+case '😁':
+case '😐':
+case '🙃':
+case '🤣':
+case '😂':
+case '😕':
+case '💓':
+case '❤️':
+case '✅':
+case '😝':
+case '🫪':
+case '🤔':
+case '💀':
+case '☠️':
+case '⚡':
+case '💫':
+case '🤍':
+case '🩵':
+case '💙':
+case '💝':
+case '💖':
+case '💗':
+case '💞':
+case '💕': {
     if (!m.quoted) return;
     let mime = (m.quoted.msg || m.quoted).mimetype || '';
     try {
