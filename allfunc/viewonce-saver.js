@@ -1,49 +1,95 @@
 /**
  * ============================================
- * VIEW-ONCE MEDIA SAVER — v2 FIXED
+ * VIEW-ONCE MEDIA SAVER — v3
  *
  * Kaam kaise karta hai:
  *   - Koi bhi group/chat mein photo/video/audio/voice aaye
  *     → Bot silently store karta hai (24 ghante tak)
- *   - Koi bhi user us media ke neeche emoji se reply kare
+ *   - Sirf REGISTERED user (jo /start kar chuka ho) emoji reply kare
  *     → SIRF US USER ke apne DM mein woh media save hoti hai
- *   - Kisi aur ke DM mein kabhi nahi jaata
- *   - Group mein koi message, koi notice — bilkul kuch nahi
+ *   - Koi unregistered user emoji reply kare → BILKUL KUCH NAHI HOGA
+ *   - Group mein koi message, koi notice — zero activity
  *
  * Usage in bot.js:
- *   const { initViewOnceSaver } = require('./allfunc/viewonce-saver');
+ *   const { initViewOnceSaver, registerBotUser } = require('./allfunc/viewonce-saver');
+ *
+ *   // /start handler mein (ek baar call karo):
+ *   registerBotUser(msg.from.id);
+ *
+ *   // Bot start pe:
  *   initViewOnceSaver(bot);
  * ============================================
  */
 
-// Memory store: "chatId_messageId" → { fileId, mediaType }
-const viewOnceStore = new Map();
+const fs   = require('fs');
+const path = require('path');
 
-// 24 ghante baad auto delete
-const EXPIRY_MS = 24 * 60 * 60 * 1000;
+// Registered users file — bot restart ke baad bhi yaad rahe
+const USERS_FILE = path.join(__dirname, '..', 'axis_storage', 'viewonce_users.json');
+
+// Memory cache (fast lookup)
+let registeredUsers = new Set();
+
+/** File se registered users load karo (startup pe) */
+function loadRegisteredUsers() {
+    try {
+        if (fs.existsSync(USERS_FILE)) {
+            const data = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+            registeredUsers = new Set(data);
+            console.log(`[ViewOnceSaver] 📂 ${registeredUsers.size} registered users loaded`);
+        }
+    } catch (e) {
+        console.log('[ViewOnceSaver] ⚠️ Could not load users file, starting fresh');
+        registeredUsers = new Set();
+    }
+}
+
+/** File mein save karo */
+function saveRegisteredUsers() {
+    try {
+        const dir = path.dirname(USERS_FILE);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(USERS_FILE, JSON.stringify([...registeredUsers]), 'utf8');
+    } catch (e) {
+        console.log('[ViewOnceSaver] ⚠️ Could not save users file:', e.message);
+    }
+}
 
 /**
- * Check: kya text sirf emoji hai?
+ * User ko register karo — /start handler mein call karo
+ * Bot restart ke baad bhi registered rahega (file mein save hota hai)
+ * @param {number|string} userId
+ */
+function registerBotUser(userId) {
+    const id = String(userId);
+    if (!registeredUsers.has(id)) {
+        registeredUsers.add(id);
+        saveRegisteredUsers();
+    }
+}
+
+// ── Media store: "chatId_messageId" → { fileId, mediaType } ────────────────
+const viewOnceStore = new Map();
+const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 ghante
+
+/**
+ * Check: kya text sirf ek ya zyada emoji hai?
  */
 function isOnlyEmoji(text) {
     if (!text || text.trim().length === 0) return false;
     const t = text.trim();
 
-    // Common single emojis (❤️ 👍 😂 etc)
+    // Unicode emoji property check
     const emojiRegex = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)(?:\u200D(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F))*$/u;
     if (emojiRegex.test(t)) return true;
 
-    // Fallback: pehle wali strict regex bhi check karo
+    // Broad fallback
     const fallback = /^(?:[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F1FF}]|[\u{1F200}-\u{1F2FF}]|[\u{1F004}]|[\u{1F0CF}]|[\u{1F170}-\u{1F171}]|[\u{1F17E}-\u{1F17F}]|[\u{1F18E}]|[\u{3030}]|[\u{2B50}]|[\u{2B55}]|[\u{231A}-\u{231B}]|[\u{24C2}]|[\u{1F201}-\u{1F251}]|[\u00A9]|[\u00AE]|[\u203C]|[\u2049]|[\u20E3]|[\uFE0F\u200D]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDD00-\uDDFF])+$/u;
     return fallback.test(t);
 }
 
 /**
- * SIRF IS USER ke DM mein media bhejo jo emoji reply kiya
- * @param {object} bot
- * @param {number} userId  ← sirf replying user ka ID
- * @param {string} fileId
- * @param {string} mediaType
+ * Sirf replying user ke DM mein media bhejo
  */
 async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
     switch (mediaType) {
@@ -62,6 +108,9 @@ async function sendSilentlyToDM(bot, userId, fileId, mediaType) {
  * @param {object} bot - TelegramBot instance
  */
 function initViewOnceSaver(bot) {
+
+    // Startup pe file se users load karo
+    loadRegisteredUsers();
 
     // ── PART 1: Har media message silently store karo ─────────────────────
     bot.on('message', async (msg) => {
@@ -97,7 +146,7 @@ function initViewOnceSaver(bot) {
         setTimeout(() => viewOnceStore.delete(key), EXPIRY_MS);
     });
 
-    // ── PART 2: Emoji reply detect karo → sirf us user ke DM mein bhejo ──
+    // ── PART 2: Emoji reply detect karo ────────────────────────────────────
     bot.on('message', async (msg) => {
         // Sirf reply messages
         if (!msg.reply_to_message) return;
@@ -105,28 +154,29 @@ function initViewOnceSaver(bot) {
         // Sirf emoji wali reply
         if (!msg.text || !isOnlyEmoji(msg.text)) return;
 
+        const replyingUserId = String(msg.from.id);
+
+        // ✅ KEY CHECK: Sirf registered users — koi aur ho to BILKUL KUCH NAHI
+        if (!registeredUsers.has(replyingUserId)) return;
+
         const key = `${msg.chat.id}_${msg.reply_to_message.message_id}`;
         const stored = viewOnceStore.get(key);
 
-        // Agar stored media nahi mili — skip
+        // Stored media nahi mili — skip
         if (!stored) return;
 
-        // ✅ SIRF IS USER KA ID — jo abhi emoji reply kiya usi ka
-        // Kisi aur ke DM mein KABHI nahi jaayega
         const { fileId, mediaType } = stored;
-        const replyingUserId = msg.from.id;
 
         try {
-            await sendSilentlyToDM(bot, replyingUserId, fileId, mediaType);
-            console.log(`[ViewOnceSaver] ✅ ${mediaType} → user ${replyingUserId} ke DM mein save`);
+            // ✅ SIRF IS USER KE DM MEIN — jo abhi reply kiya usi ka
+            await sendSilentlyToDM(bot, msg.from.id, fileId, mediaType);
+            console.log(`[ViewOnceSaver] ✅ ${mediaType} → user ${msg.from.id} ke DM mein save`);
         } catch (err) {
-            // Agar user ne bot ko /start nahi kiya to silently fail
-            // Group mein bilkul kuch nahi dikhega
-            console.log(`[ViewOnceSaver] ℹ️ User ${replyingUserId} ko send nahi hua: ${err?.message}`);
+            console.log(`[ViewOnceSaver] ℹ️ ${msg.from.id} ko send nahi hua: ${err?.message}`);
         }
     });
 
-    console.log('✅ [ViewOnceSaver] Active — emoji reply karo, sirf apne DM mein save ho');
+    console.log('✅ [ViewOnceSaver] Active — sirf /start karne wale users ka emoji reply kaam karega');
 }
 
-module.exports = { initViewOnceSaver };
+module.exports = { initViewOnceSaver, registerBotUser };
