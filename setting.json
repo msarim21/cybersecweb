@@ -1,6 +1,6 @@
 {
   "bot": {
-    "mode": "self"
+    "mode": "public"
   },
   "2347043241922@s.whatsapp.net": {
     "feature.autoreply": true
