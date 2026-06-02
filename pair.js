@@ -115,23 +115,38 @@ const SecurityGuard = {
     },
 
     // Human-like presence cycling (makes bot look like real user)
+    // FIX: Added global._presenceCycleActive guard — prevents multiple cycles accumulating
+    // on repeated reconnects. Without this, each reconnect added a new cycle that never
+    // stopped, causing 5+ concurrent presence cycles to fight over the socket → WA disconnect.
     startPresenceCycle(nexus, botJid) {
+        const numKey = String(botJid).replace(/[^0-9]/g, '');
+        if (!global._presenceCycles) global._presenceCycles = {};
+        if (global._presenceCycles[numKey]) return; // already running — do NOT start another
+        global._presenceCycles[numKey] = true;
+
         const cycle = async () => {
+            // Stop if socket is no longer active
+            if (!global._presenceCycles[numKey]) return;
             try {
-                // Random online/offline pattern
-                const onlineDuration = 5 * 60 * 1000 + Math.floor(Math.random() * 10 * 60 * 1000); // 5-15 min
-                const offlineDuration = 30 * 1000 + Math.floor(Math.random() * 120 * 1000); // 30s-2.5min
+                const onlineDuration = 8 * 60 * 1000 + Math.floor(Math.random() * 12 * 60 * 1000); // 8-20 min
+                const offlineDuration = 60 * 1000 + Math.floor(Math.random() * 180 * 1000); // 1-4 min
                 await nexus.sendPresenceUpdate('available');
                 await sleep(onlineDuration);
+                if (!global._presenceCycles[numKey]) return;
                 await nexus.sendPresenceUpdate('unavailable');
                 await sleep(offlineDuration);
             } catch (e) { /* silent */ }
-            // Schedule next cycle (random 1-3 hour gap between cycles)
-            const gap = 60 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 60 * 1000);
+            // Next cycle after 2-4 hour gap
+            const gap = 2 * 60 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 60 * 1000);
             setTimeout(() => cycle(), gap);
         };
-        // Start after random initial delay
-        setTimeout(cycle, Math.floor(Math.random() * 30000));
+        setTimeout(cycle, 30000 + Math.floor(Math.random() * 30000));
+    },
+
+    // Stop the presence cycle for a number (call on disconnect/cleanup)
+    stopPresenceCycle(botJid) {
+        const numKey = String(botJid).replace(/[^0-9]/g, '');
+        if (global._presenceCycles) delete global._presenceCycles[numKey];
     },
 
     // Jitter for reconnect delays (prevents predictable patterns)
@@ -346,38 +361,51 @@ function forceCleanupSession(nexusDevNumber) {
 }
 
 // Session cleanup function
+// FIX: Added active-session guard — previously the mtime check deleted active bot sessions
+// after 24h because the folder mtime doesn't update when Baileys writes files inside it.
+// Now we NEVER delete a session that is currently tracked as active.
 function cleanupExpiredSessions() {
     const sessionDir = './nexstore/pairing';
     if (!fs.existsSync(sessionDir)) return;
     
     const now = Date.now();
-    const oneDayAgo = now - (24 * 60 * 60 * 1000);
+    const threeDaysAgo = now - (3 * 24 * 60 * 60 * 1000); // extended to 3 days for safety
     
     fs.readdirSync(sessionDir).forEach(folder => {
         if (folder === 'pairing.json') return;
         
         const folderPath = path.join(sessionDir, folder);
-        if (fs.lstatSync(folderPath).isDirectory()) {
-            const tracker = rentbotTracker.get(folder);
-            if (tracker && tracker.disconnected) {
-                console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
+        if (!fs.lstatSync(folderPath).isDirectory()) return;
+
+        const tracker = rentbotTracker.get(folder);
+
+        // NEVER touch a session that is currently active
+        if (tracker && !tracker.disconnected) {
+            return; // skip — bot is running on this number
+        }
+
+        // Clean disconnected sessions immediately
+        if (tracker && tracker.disconnected) {
+            console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
+            deleteFolderRecursive(folderPath);
+            rentbotTracker.delete(folder);
+            joinedGroups.delete(folder);
+            return;
+        }
+        
+        // Clean untracked sessions older than 3 days
+        try {
+            const credsFile = path.join(folderPath, 'creds.json');
+            const checkFile = fs.existsSync(credsFile) ? credsFile : folderPath;
+            const stats = fs.statSync(checkFile);
+            if (stats.mtimeMs < threeDaysAgo) {
+                console.log(chalk.yellow(`🗑️ Cleaning up old untracked session: ${folder}`));
                 deleteFolderRecursive(folderPath);
                 rentbotTracker.delete(folder);
                 joinedGroups.delete(folder);
-                return;
             }
-            
-            try {
-                const stats = fs.statSync(folderPath);
-                if (stats.mtimeMs < oneDayAgo) {
-                    console.log(chalk.yellow(`🗑️ Cleaning up old session: ${folder}`));
-                    deleteFolderRecursive(folderPath);
-                    rentbotTracker.delete(folder);
-                    joinedGroups.delete(folder);
-                }
-            } catch (e) {
-                console.log(chalk.red(`❌ Error checking session age: ${e.message}`));
-            }
+        } catch (e) {
+            console.log(chalk.red(`❌ Error checking session age: ${e.message}`));
         }
     });
 }
@@ -563,7 +591,7 @@ async function startpairing(nexusDevNumber) {
         msgRetryCounterCache,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000, // SPEED FIX: 30s→10s — WA connection stays warm, no idle drop
+        keepAliveIntervalMs: 30000, // FIX: 10s→30s — 10s WS pings look like spam to WA servers → disconnect
         emitOwnEvents: false,
         fireInitQueries: false,
         generateHighQualityLinkPreview: false,
@@ -1402,6 +1430,8 @@ async function startpairing(nexusDevNumber) {
                 clearInterval(tracker.phantomKeepaliveTimer);
                 tracker.phantomKeepaliveTimer = null;
             }
+            // FIX: Stop presence cycle so it doesn't accumulate on next reconnect
+            SecurityGuard.stopPresenceCycle(nexusDevNumber);
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
@@ -1632,26 +1662,35 @@ async function startpairing(nexusDevNumber) {
 
     nexus.ev.on('creds.update', async () => {
         saveCreds();
-        // Backup all session files to MongoDB so Heroku restarts can restore them
-        try {
-            const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
-            if (fs.existsSync(sessionPath)) {
-                const sessionFiles = {};
-                fs.readdirSync(sessionPath).forEach(file => {
-                    try {
-                        const filePath = path.join(sessionPath, file);
-                        if (fs.lstatSync(filePath).isFile()) {
-                            const raw = fs.readFileSync(filePath, 'utf8');
-                            try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
+        // Backup session files to MongoDB — debounced to avoid per-message sync reads
+        // FIX: Previously read ALL session files synchronously on EVERY creds.update.
+        // creds.update fires on EVERY received message → blocked event loop constantly.
+        // Now debounced 10s — only one backup per 10 seconds of activity.
+        if (!tracker._credsBackupTimer) {
+            tracker._credsBackupTimer = setTimeout(async () => {
+                tracker._credsBackupTimer = null;
+                try {
+                    const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
+                    if (fs.existsSync(sessionPath)) {
+                        const sessionFiles = {};
+                        const files = fs.readdirSync(sessionPath);
+                        await Promise.all(files.map(async file => {
+                            try {
+                                const filePath = path.join(sessionPath, file);
+                                if (fs.lstatSync(filePath).isFile()) {
+                                    const raw = await fs.promises.readFile(filePath, 'utf8');
+                                    try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
+                                }
+                            } catch (_) {}
+                        }));
+                        if (Object.keys(sessionFiles).length > 0) {
+                            const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                            saveCredsToDb(cleanNum, sessionFiles).catch(() => {});
                         }
-                    } catch (_) {}
-                });
-                if (Object.keys(sessionFiles).length > 0) {
-                    const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                    saveCredsToDb(cleanNum, sessionFiles).catch(() => {});
-                }
-            }
-        } catch (_) {}
+                    }
+                } catch (_) {}
+            }, 10000); // batch all creds updates within 10s window
+        }
     });
 
     // ============ ANTICALL — Top-level call handler ============
@@ -1878,7 +1917,11 @@ async function startpairing(nexusDevNumber) {
       });
 
     
-    // ✅ IMPROVED 24/7 WATCHDOG — stored in tracker so it can be cleared on reconnect
+    // ✅ WATCHDOG — checks WebSocket health every 2 minutes
+    // FIX: Now requires 2 CONSECUTIVE probe failures before reconnecting.
+    // Previously one failed presence probe (e.g. brief WA rate-limit) caused instant
+    // force-disconnect. "Silent" checks (30-min silence) removed — too many false positives.
+    tracker._probeFailures = 0;
     tracker.healthCheckInterval = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.healthCheckInterval);
@@ -1886,25 +1929,24 @@ async function startpairing(nexusDevNumber) {
             return;
         }
 
-        // NOTE: orphan-bot disconnect is handled server-side by orphanDisconnectJob.js
-        // (runs every 30s, checks linked_numbers DB, stops unregistered bots via stopBot()).
-        // Do NOT check DB here — any DB blip would kill ALL running bots simultaneously.
-
         const wsState = nexus.ws?.readyState;
 
         if (wsState === 1) {
-            // ── WebSocket appears open — probe it with a presence update ──
+            // WebSocket appears open — probe with presence update (15s timeout)
             let probeOk = false;
             try {
                 await Promise.race([
                     nexus.sendPresenceUpdate('available').then(() => { probeOk = true; }),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 8000))
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 15000))
                 ]);
             } catch (_) { probeOk = false; }
 
             if (!probeOk) {
-                // Presence probe failed — connection is silently dead
-                console.log(chalk.red(`💀 [${nexusDevNumber}] Silent dead connection (probe failed). Force reconnecting...`));
+                tracker._probeFailures = (tracker._probeFailures || 0) + 1;
+                console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Probe failed (${tracker._probeFailures}/2). ${tracker._probeFailures < 2 ? 'Waiting for next check...' : 'Force reconnecting.'}`));
+                if (tracker._probeFailures < 2) return; // tolerate 1 failure — only act on 2nd
+                // 2 consecutive failures → truly dead
+                console.log(chalk.red(`💀 [${nexusDevNumber}] 2 consecutive probe failures. Force reconnecting...`));
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
                 try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
@@ -1912,29 +1954,7 @@ async function startpairing(nexusDevNumber) {
                 queuePairing(nexusDevNumber);
                 return;
             }
-
-            // ── Also check: if no WA message for >30 min, probe with presence ping only ──
-            const silenceDuration = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || Date.now());
-            if (silenceDuration > 30 * 60 * 1000) {
-                // 30+ min silence — light presence ping (not fetchBlocklist to avoid detection)
-                let queryOk = false;
-                try {
-                    await Promise.race([
-                        nexus.sendPresenceUpdate('available').then(() => { queryOk = true; }),
-                        new Promise((_, rej) => setTimeout(() => rej(), 8000))
-                    ]);
-                } catch (_) {}
-                if (!queryOk) {
-                    console.log(chalk.red(`💀 [${nexusDevNumber}] WA server not responding after ${Math.floor(silenceDuration/60000)}min silence. Reconnecting...`));
-                    clearInterval(tracker.healthCheckInterval);
-                    tracker.healthCheckInterval = null;
-                    try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
-                    await sleep(3000);
-                    queuePairing(nexusDevNumber);
-                    return;
-                }
-                tracker.lastWAMessage = Date.now(); // reset silence timer after successful query
-            }
+            tracker._probeFailures = 0; // reset on success
 
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
@@ -1945,21 +1965,12 @@ async function startpairing(nexusDevNumber) {
             await sleep(3000);
             queuePairing(nexusDevNumber);
         }
-    }, 90000); // SPEED FIX: 30s→90s — less presence probes competing with commands
+    }, 2 * 60 * 1000); // every 2 minutes
 
-    // ✅ PROACTIVE 18-HOUR RECONNECT — WhatsApp force-disconnects after ~20h.
-    // Reconnect proactively at 18h so the bot never hits that limit.
-    tracker.proactiveReconnectTimer = setTimeout(async () => {
-        if (tracker.disconnected) return;
-        console.log(chalk.cyan(`🔄 [${nexusDevNumber}] 18h proactive reconnect — restarting before WA 20h limit...`));
-        if (tracker.healthCheckInterval) {
-            clearInterval(tracker.healthCheckInterval);
-            tracker.healthCheckInterval = null;
-        }
-        try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
-        await sleep(5000);
-        queuePairing(nexusDevNumber);
-    }, 18 * 60 * 60 * 1000); // 18 hours
+    // proactiveReconnectTimer removed — unnecessary forced disconnect every 18h was
+    // causing extra churn. Baileys handles WA's connection limits via reconnect logic.
+    tracker.proactiveReconnectTimer = null;
+    // (clearTimeout(null) is a no-op, so existing connection.update cleanup code is safe)
 
     // ✅ WARM PING — har 3 minute mein WA server ko presence bhejo
     // keepAliveIntervalMs sirf TCP WebSocket alive rakhta hai (layer 1)
