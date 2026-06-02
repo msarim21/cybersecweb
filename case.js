@@ -4737,13 +4737,7 @@ function getBotVersion() {
 }
 
 function getBotMode() {
-    try {
-        const modeFile = './database/bot_mode.json';
-        if (fs.existsSync(modeFile)) {
-            const cfg = JSON.parse(fs.readFileSync(modeFile, 'utf-8'));
-            return cfg.mode === 'self' ? 'PRIVATE' : 'PUBLIC';
-        }
-    } catch (e) {}
+    // Per-session check — devtrust.public is isolated per connected WhatsApp number
     return devtrust.public ? "PUBLIC" : "PRIVATE";
 }
 
@@ -13144,17 +13138,13 @@ case 'checkapis': {
 break;
 
 case 'public': {
-    setSetting("bot", "mode", "public");
+    // Per-session only — only this connected number switches to public
     devtrust.public = true;
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'public' }, null, 2));
-    } catch (e) {}
-    // Save to DB so mode survives Heroku restarts
+    // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
-        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
-        setBotMode(_modeNum, 'public').catch(() => {});
+        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
+        if (_modeNum) setBotMode(_modeNum, 'public').catch(() => {});
     } catch (_) {}
     reply("🌍 *Public mode activated*\nEveryone can use the bot");
 }
@@ -13162,17 +13152,13 @@ break;
 
 case 'private':
 case 'self': {
-    setSetting("bot", "mode", "self");
+    // Per-session only — only this connected number switches to private/self
     devtrust.public = false;
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'self' }, null, 2));
-    } catch (e) {}
-    // Save to DB so mode survives Heroku restarts
+    // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
-        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
-        setBotMode(_modeNum, 'self').catch(() => {});
+        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
+        if (_modeNum) setBotMode(_modeNum, 'self').catch(() => {});
     } catch (_) {}
     reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
 }
