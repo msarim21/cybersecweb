@@ -780,9 +780,6 @@ async function startpairing(nexusDevNumber) {
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
-        // ⚡ SPEED FIX: Skip history/sync dumps — only process real-time messages
-        // When new number connects, WA sends hundreds of old msgs — all skipped here
-        if (chatUpdate.type !== "notify") return;
 
         // ── Dedup: skip if this message ID was already processed (WA retransmission guard) ──
         const _msgId = nexusboijid.key?.id;
@@ -849,7 +846,7 @@ async function startpairing(nexusDevNumber) {
                     const _srCaption  = `📥 *Status Saved!*\n👤 Poster: @${_srPoster}\n_Auto-saved from your status reply_`;
 
                     // Download media buffer for reliable playback (avoids "video not available" error)
-                    // (downloadContentFromMessage already imported at top of file)
+                    const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
                     const _srDl = async (mediaData, mediaType) => {
                         try {
                             const _s = await downloadContentFromMessage(mediaData, mediaType);
@@ -883,9 +880,9 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on status forward errors
             }
 
-            // ✅ PERF FIX: View-Once runs in background — case.js runs FIRST
+            // ✅ NEW: View-Once Auto-Save — when bot user replies (any emoji/text)
             //         to a one-time pic/video, auto-save it to bot user's DM
-            setImmediate(async () => { try {
+            try {
                 const isFromMe2 = nexusboijid.key?.fromMe;
                 const msgContent2 = nexusboijid.message;
                 // Get contextInfo from any message type
@@ -927,11 +924,6 @@ async function startpairing(nexusDevNumber) {
                     if (voPayload) await nexus.sendMessage(botNumber, voPayload);
                 };
 
-                // OWNER CHECK: Sirf owner ka session view-once save kare
-                const _pairOwnerNums = (global.owner || []).map(n => String(n).replace(/[^0-9]/g, ''));
-                const _pairCurrNum = (botNumber || '').replace(/[^0-9]/g, '');
-                const _isOwnerSession = _pairOwnerNums.includes(_pairCurrNum);
-
                 if (isFromMe2 && quotedMsg2) {
                     // Check for view-once message (both old and new format)
                     const voMsg = quotedMsg2?.viewOnceMessage?.message
@@ -944,27 +936,13 @@ async function startpairing(nexusDevNumber) {
                     if (voMsg) {
                         const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
                         await _sendViewOnce(voMsg, senderNum, 'reply');
-                    } else if (global._lastViewOnce?.[nexusboijid.key?.remoteJid]) {
-                        // FIX: quotedMsg mein media nahi mila — cache fallback use karo
-                        const _cached = global._lastViewOnce[nexusboijid.key.remoteJid];
-                        if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
-                            await _sendViewOnce(_cached.msg, _cached.sender, 'reply');
-                        }
                     }
                 }
 
-                // ── Handle reactionMessage (native emoji reactions to view-once) ──
-                // ISOLATION: isFromMe2 (key.fromMe) is the cross-bot guard here.
-                // When User B natively reacts, User A's bot gets fromMe=false → skips.
-                // User B's bot gets fromMe=true → processes and saves to User B's DM.
+                // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
+                // Reactions use a "key" reference instead of contextInfo.quotedMessage
                 if (isFromMe2 && msgContent2?.reactionMessage) {
                     try {
-                        // LOCAL flag — tracks if primary store lookup succeeded.
-                        // BUG FIX: was using global._reactVoHandled which was NEVER set
-                        // to true anywhere, so BOTH the primary handler AND the cache
-                        // fallback always fired → caused duplicate saves every time.
-                        let _reactVoHandled = false;
-
                         const _rk = msgContent2.reactionMessage.key;
                         const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
                         const _rid = _rk?.id;
@@ -980,26 +958,16 @@ async function startpairing(nexusDevNumber) {
                                 if (_voMsgR) {
                                     const _senderR = (_reactedMsg.key?.participant || _rjid || '').replace('@s.whatsapp.net', '');
                                     await _sendViewOnce(_voMsgR, _senderR, 'reaction');
-                                    _reactVoHandled = true; // primary succeeded — skip fallback
                                 }
                             }
                         }
-
-                        // Cache fallback: only runs when store lookup missed the message.
-                        // Uses LOCAL _reactVoHandled (not global) to prevent double-saves.
-                        if (!_reactVoHandled && global._lastViewOnce?.[nexusboijid.key?.remoteJid]) {
-                            const _cached = global._lastViewOnce[nexusboijid.key.remoteJid];
-                            if ((Date.now() - _cached.ts) < 24 * 60 * 60 * 1000) {
-                                await _sendViewOnce(_cached.msg, _cached.sender, 'reaction');
-                            }
-                        }
                     } catch (_reactionVoErr) {
-                        // Silent fail — don't crash on view-once reaction save errors
+                        // Silent fail
                     }
                 }
             } catch (voErr) {
                 // Silent fail — don't crash on view-once save errors
-            } }); // end setImmediate — non-blocking
+            }
 
             // ── Antidelete: store ALL incoming non-protocol messages before the public-mode guard ──
             // This ensures messages are cached for antidelete even when bot is in self/private mode
@@ -1146,7 +1114,10 @@ async function startpairing(nexusDevNumber) {
                 nexusboijid.message?.protocolMessage?.type === 14 || // edit (so antiedit fires in private mode)
                 nexusboijid.message?.protocolMessage?.editedMessage != null // edit with editedMessage field
             );
-            // Private mode restriction removed — all users can use bot regardless of mode
+            // In private mode, skip non-owner messages EXCEPT channel/newsletter
+            // (channels allow bot to respond when user is admin)
+            const _isNewsletterMsg = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
+            if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -2007,10 +1978,10 @@ async function startpairing(nexusDevNumber) {
         }
     }, 10 * 60 * 1000); // SPEED FIX: 3min→10min — less socket occupation
 
-    // ✅ 20-MIN PHANTOM KEEPALIVE — bot apne aap ko ek invisible message bhejta hai
-    // Yeh presence update se zyada strong signal hai — real WA message activity
-    // Self-message hone ki wajah se koi user nahi dekh sakta
-    // Bot message send karta hai → turant delete karta hai → WA session truly alive rehti hai
+    // ✅ 25-MIN KEEPALIVE — presence update signal (no real message = no messages.upsert spam)
+    // FIX: Previously sent a real "." message every 20min which triggered the full case.js
+    // message processing pipeline on every keepalive → added latency to ALL commands.
+    // Now uses sendPresenceUpdate which doesn't generate messages.upsert events.
     tracker.phantomKeepaliveTimer = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.phantomKeepaliveTimer);
@@ -2018,22 +1989,11 @@ async function startpairing(nexusDevNumber) {
             return;
         }
         try {
-            const selfJid = nexusDevNumber.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-            const sent = await nexus.sendMessage(selfJid, { text: '.' });
-            if (sent?.key) {
-                // 3 second baad delete karo — "Saved Messages" mein nazar nahi aayega
-                setTimeout(async () => {
-                    try {
-                        await nexus.sendMessage(selfJid, {
-                            delete: sent.key
-                        });
-                    } catch (_) {}
-                }, 3000);
-            }
+            await nexus.sendPresenceUpdate('available');
         } catch (_) {
             // silent — failure is ok, just a keepalive attempt
         }
-    }, 20 * 60 * 1000); // every 20 minutes
+    }, 25 * 60 * 1000); // every 25 minutes
 
     return nexus;
 }
