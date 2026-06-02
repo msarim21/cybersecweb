@@ -780,6 +780,9 @@ async function startpairing(nexusDevNumber) {
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
+        // ⚡ SPEED FIX: Skip history/sync dumps — only process real-time messages
+        // When new number connects, WA sends hundreds of old msgs — all skipped here
+        if (chatUpdate.type !== "notify") return;
 
         // ── Dedup: skip if this message ID was already processed (WA retransmission guard) ──
         const _msgId = nexusboijid.key?.id;
@@ -846,7 +849,7 @@ async function startpairing(nexusDevNumber) {
                     const _srCaption  = `📥 *Status Saved!*\n👤 Poster: @${_srPoster}\n_Auto-saved from your status reply_`;
 
                     // Download media buffer for reliable playback (avoids "video not available" error)
-                    const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+                    // (downloadContentFromMessage already imported at top of file)
                     const _srDl = async (mediaData, mediaType) => {
                         try {
                             const _s = await downloadContentFromMessage(mediaData, mediaType);
