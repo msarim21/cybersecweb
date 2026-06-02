@@ -4155,14 +4155,7 @@ From: @${sender.split('@')[0]}
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
 
-if (!devtrust.public) {
-    // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
-    const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
-    // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
-    const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
-    const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!isCreator && !_isCreatorFromChannel) return
-}
+// Mode display only — no command access restriction
 
 const example = (teks) => {
     return `Usage : *${prefix+command}* ${teks}`
