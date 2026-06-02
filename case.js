@@ -13144,7 +13144,6 @@ case 'checkapis': {
 break;
 
 case 'public': {
-    setSetting("bot", "selfUser", ""); // clear solo lock
     setSetting("bot", "mode", "public");
     devtrust.public = true;
     try {
@@ -13162,8 +13161,6 @@ break;
 
 case 'private':
 case 'self': {
-    // Save exact user who activated solo mode — only they can use commands
-    setSetting("bot", "selfUser", _senderJid);
     setSetting("bot", "mode", "self");
     devtrust.public = false;
     try {
@@ -13175,7 +13172,7 @@ case 'self': {
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
         setBotMode(_modeNum, 'self').catch(() => {});
     } catch (_) {}
-    reply(`🔒 *Solo mode on!*\n\nAb sirf tum (${_senderNum}) hi is bot ki commands chala sakty ho.\nKoi aur DM ya group mein command lagaye — bot bilkul chup rahega.\n\nWapas sab ko allow karo: *.public*`);
+    reply(`🔒 *Private mode on!*\n\nAb bot sirf owner ke liye hai.\n\nWapas enable karo: *.public*`);
 }
 break;
 
