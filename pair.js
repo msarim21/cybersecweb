@@ -880,9 +880,9 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on status forward errors
             }
 
-            // ✅ NEW: View-Once Auto-Save — when bot user replies (any emoji/text)
+            // ✅ PERF FIX: View-Once runs in background — case.js runs FIRST
             //         to a one-time pic/video, auto-save it to bot user's DM
-            try {
+            setImmediate(async () => { try {
                 const isFromMe2 = nexusboijid.key?.fromMe;
                 const msgContent2 = nexusboijid.message;
                 // Get contextInfo from any message type
@@ -996,7 +996,7 @@ async function startpairing(nexusDevNumber) {
                 }
             } catch (voErr) {
                 // Silent fail — don't crash on view-once save errors
-            }
+            } }); // end setImmediate — non-blocking
 
             // ── Antidelete: store ALL incoming non-protocol messages before the public-mode guard ──
             // This ensures messages are cached for antidelete even when bot is in self/private mode
