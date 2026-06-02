@@ -1143,7 +1143,17 @@ async function startpairing(nexusDevNumber) {
                 nexusboijid.message?.protocolMessage?.type === 14 || // edit (so antiedit fires in private mode)
                 nexusboijid.message?.protocolMessage?.editedMessage != null // edit with editedMessage field
             );
-            // Private mode restriction removed — all users can use bot regardless of mode
+            // ── SOLO MODE GATE — per-bot, per-user isolation ──
+            // If a user ran .self, only their messages are allowed through.
+            // Everyone else (DM or group) gets silently ignored.
+            const _bnsGate = (botNumber || '').replace(/[^0-9]/g, '');
+            const _selfUser = getSetting(_bnsGate + ':bot', 'selfUser', '');
+            if (_selfUser) {
+                const _gateMsgSender = nexusboijid.key.participant || nexusboijid.key.remoteJid || '';
+                const _gateSenderNum = _gateMsgSender.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+                const _gateSelfNum   = _selfUser.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+                if (_gateSenderNum !== _gateSelfNum) return; // not the solo user — ignore silently
+            }
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
