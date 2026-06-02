@@ -850,11 +850,14 @@ const _cleanBotNum = botNumber.replace(/[^0-9]/g, '');
 const _botDisabled = global._flagCache.botDisabled.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBotNum || String(id) === botNumber);
 if (_botDisabled) return;
 
-const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
+// Strip WhatsApp multi-device :N device suffix before owner checks
+const _senderNum = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+const _senderJid  = _senderNum + '@s.whatsapp.net';
+const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(_senderJid);
 const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
-const isOwner = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
-const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
-const isSudo = loadSudoList().includes(m.sender);
+const isOwner = isCreator; // same check, reuse
+const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(_senderJid);
+const isSudo = loadSudoList().some(j => (j || '').split(':')[0].split('@')[0].replace(/[^0-9]/g,'') === _senderNum);
 // 18+ unlock status for this sender (cached)
 const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
@@ -4787,7 +4790,6 @@ switch(command) {
 case 'allmenu':
 case 'CYBERall':
 case 'commandlist': {
-  autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5519,7 +5521,6 @@ break;
 
 case 'menu':
 case 'CYBER': {
-   autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5618,7 +5619,6 @@ break;
 
 case 'aimenu':
 case 'CYBERai': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5718,7 +5718,6 @@ break;
 
 case 'animemenu':
 case 'CYBERanime': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5937,7 +5936,6 @@ case 'CYBERbug': {
         if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
             return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
     }
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6081,7 +6079,6 @@ break;
 
 case 'downloadmenu':
 case 'CYBERdownload': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6188,7 +6185,6 @@ break;
 
 case 'funmenu':
 case 'CYBERfun': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6289,7 +6285,6 @@ break;
 
 case 'gamemenu':
 case 'CYBERgame': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6384,7 +6379,6 @@ break;
 
 case 'groupmenu':
 case 'CYBERgroup': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6526,7 +6520,6 @@ break;
 
 case 'logomenu':
 case 'CYBERlogo': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6649,7 +6642,6 @@ break;
 
 case 'ownermenu':
 case 'CYBERowner': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6777,7 +6769,6 @@ break;
 
 case 'stickermenu':
 case 'CYBERsticker': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6897,7 +6888,6 @@ break;
 
 case 'toolmenu':
 case 'CYBERtool': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7012,7 +7002,6 @@ break;
 
 case 'voicemenu':
 case 'CYBERvoice': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7108,7 +7097,6 @@ break;
 
 case 'othermenu':
 case 'CYBERother': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -18547,7 +18535,6 @@ default:
               if (!_sdbUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
                   return reply(`🔒 *SIM Database Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
           }
-          autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
           await devtrust.sendMessage(m.chat, { react: { text: '🗄️', key: m.key } });
 
           const _sdbUptime = formatUptime(process.uptime());
