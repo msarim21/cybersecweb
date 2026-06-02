@@ -1231,21 +1231,16 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode — DB first (survives Heroku restarts), file fallback
+    // Restore public/private mode — DB only (per-number, session-isolated)
+    // NO shared file fallback — each session is fully independent
     try {
         const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
         const dbMode = await getBotMode(cleanNum).catch(() => null);
         if (dbMode) {
             nexus.public = dbMode !== 'self';
         } else {
-            // File fallback for numbers not yet in DB
-            const _modeFile = './database/bot_mode.json';
-            if (require('fs').existsSync(_modeFile)) {
-                const _savedMode = JSON.parse(require('fs').readFileSync(_modeFile, 'utf-8'));
-                nexus.public = _savedMode.mode !== 'self';
-            } else {
-                nexus.public = true;
-            }
+            // No DB record yet → default to public for this session only
+            nexus.public = true;
         }
         console.log(chalk.cyan(`[pair] 📋 Mode restored for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE'}`));
     } catch (e) {
