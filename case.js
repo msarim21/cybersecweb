@@ -425,7 +425,7 @@ const hangmanVisual = [
     "😃🪓______", "😃🪓__|____", "😃🪓__|/___",
     "😃🪓__|/__", "😃🪓__|/\\_", "😃🪓__|/\\_", "💀 Game Over!"
 ];
-const { getSetting, setSetting } = require("./setting/Settings.js");
+const { getSetting: _rawGetSetting, setSetting: _rawSetSetting } = require("./setting/Settings.js");
 const groupCache = new Map();
 
 // ============ ANTI-LINK SETTINGS (memory) ============
@@ -789,6 +789,23 @@ if (!devtrust._cachedBotNumber) {
   devtrust._cachedBotNumber = await devtrust.decodeJid(devtrust.user.id);
 }
 const botNumber = devtrust._cachedBotNumber;
+const _bns = botNumber.replace(/[^0-9]/g, ''); // per-bot isolation namespace
+// ── Per-bot settings: each bot's settings are 100% isolated ──
+const getSetting = (jid, key, def) => _rawGetSetting(_bns + ':' + jid, key, def);
+const setSetting = (jid, key, val) => _rawSetSetting(_bns + ':' + jid, key, val);
+// ── Per-bot warns store (in-memory, resets on restart per-bot) ──
+if (!global._botWarns) global._botWarns = {};
+if (!global._botWarns[_bns]) global._botWarns[_bns] = {};
+// ── Per-bot banned store (persisted per-bot file) ──
+if (!global._botBanned) global._botBanned = {};
+if (!global._botBanned[_bns]) {
+    try {
+        const _banFile = './database/banned_' + _bns + '.json';
+        global._botBanned[_bns] = require('fs').existsSync(_banFile)
+            ? JSON.parse(require('fs').readFileSync(_banFile, 'utf8'))
+            : {};
+    } catch(_e) { global._botBanned[_bns] = {}; }
+}
 
 // ── Cache groupMetadata with 30-min TTL + pending-request dedup ──
 // PERF FIX: TTL 5min→30min (group admins rarely change).
@@ -4274,12 +4291,12 @@ if (m.isGroup && body && !isAdmins && !isCreator) {
             await devtrust.sendMessage(m.chat, { delete: m.key });
             if (warnMode) {
                 const wLimit = getWarnLimit(m.chat);
-                if (!global.warns[m.chat]) global.warns[m.chat] = {};
-                if (!global.warns[m.chat][m.sender]) global.warns[m.chat][m.sender] = 0;
-                global.warns[m.chat][m.sender]++;
-                const wCount = global.warns[m.chat][m.sender];
+                if (!global._botWarns[_bns][m.chat]) global._botWarns[_bns][m.chat] = {};
+                if (!global._botWarns[_bns][m.chat][m.sender]) global._botWarns[_bns][m.chat][m.sender] = 0;
+                global._botWarns[_bns][m.chat][m.sender]++;
+                const wCount = global._botWarns[_bns][m.chat][m.sender];
                 if (wCount >= wLimit) {
-                    delete global.warns[m.chat][m.sender];
+                    delete global._botWarns[_bns][m.chat][m.sender];
                     try { await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch (e) {}
                     await reply(`👢 @${m.sender.split('@')[0]} kicked for posting links (${wLimit} warnings reached)`, [m.sender]);
                 } else {
@@ -4306,12 +4323,12 @@ if (m.isGroup && m.mentionedJid && m.mentionedJid.length > 0 && !isAdmins && !is
             await devtrust.sendMessage(m.chat, { delete: m.key });
             if (config.action === 'warn') {
                 const wLimit = getWarnLimit(m.chat);
-                if (!global.warns[m.chat]) global.warns[m.chat] = {};
-                if (!global.warns[m.chat][m.sender]) global.warns[m.chat][m.sender] = 0;
-                global.warns[m.chat][m.sender]++;
-                const wCount = global.warns[m.chat][m.sender];
+                if (!global._botWarns[_bns][m.chat]) global._botWarns[_bns][m.chat] = {};
+                if (!global._botWarns[_bns][m.chat][m.sender]) global._botWarns[_bns][m.chat][m.sender] = 0;
+                global._botWarns[_bns][m.chat][m.sender]++;
+                const wCount = global._botWarns[_bns][m.chat][m.sender];
                 if (wCount >= wLimit) {
-                    delete global.warns[m.chat][m.sender];
+                    delete global._botWarns[_bns][m.chat][m.sender];
                     try { await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch (e) {}
                     await reply(`👢 @${m.sender.split('@')[0]} kicked for tagging (${wLimit} warnings reached)`, [m.sender]);
                 } else {
@@ -4342,12 +4359,12 @@ if (m.isGroup && !isAdmins && !isCreator) {
                 await reply(`👢 @${m.sender.split('@')[0]} was kicked for using group mention`, [m.sender]);
             } else if (_agmSettings.action === 'warn') {
                 const wLimit = getWarnLimit(m.chat);
-                if (!global.warns[m.chat]) global.warns[m.chat] = {};
-                if (!global.warns[m.chat][m.sender]) global.warns[m.chat][m.sender] = 0;
-                global.warns[m.chat][m.sender]++;
-                const wCount = global.warns[m.chat][m.sender];
+                if (!global._botWarns[_bns][m.chat]) global._botWarns[_bns][m.chat] = {};
+                if (!global._botWarns[_bns][m.chat][m.sender]) global._botWarns[_bns][m.chat][m.sender] = 0;
+                global._botWarns[_bns][m.chat][m.sender]++;
+                const wCount = global._botWarns[_bns][m.chat][m.sender];
                 if (wCount >= wLimit) {
-                    delete global.warns[m.chat][m.sender];
+                    delete global._botWarns[_bns][m.chat][m.sender];
                     try { await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch (e) {}
                     await reply(`👢 @${m.sender.split('@')[0]} kicked for group mentions (${wLimit} warnings)`, [m.sender]);
                 } else {
@@ -4577,8 +4594,8 @@ if (newsletterJids.includes(from)) {
 
 // ======================[ ⚠️ WARN SYSTEM HELPER ]======================
 async function handleWarn(chatId, userId, reason, mode) {
-    if (!global.warns[chatId]) global.warns[chatId] = {};
-    if (!global.warns[chatId][userId]) global.warns[chatId][userId] = 0;
+    if (!global._botWarns[_bns][chatId]) global._botWarns[_bns][chatId] = {};
+    if (!global._botWarns[_bns][chatId][userId]) global._botWarns[_bns][chatId][userId] = 0;
     
     // MODE 1: DELETE ONLY - no warnings
     if (mode === 'delete') {
@@ -4587,12 +4604,12 @@ async function handleWarn(chatId, userId, reason, mode) {
     
     // MODE 2: WARN - add warning
     if (mode === 'warn') {
-        global.warns[chatId][userId] += 1;
-        const warnCount = global.warns[chatId][userId];
+        global._botWarns[_bns][chatId][userId] += 1;
+        const warnCount = global._botWarns[_bns][chatId][userId];
         const warnLimit = getWarnLimit(chatId);
         
         if (warnCount >= warnLimit) {
-            delete global.warns[chatId][userId];
+            delete global._botWarns[_bns][chatId][userId];
             return { action: 'kick', kicked: true, warnCount, warnLimit };
         }
         
@@ -7701,7 +7718,7 @@ case 'checkwarns': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     
     const user = m.mentionedJid[0] || m.quoted?.sender || m.sender;
-    const warnCount = global.warns?.[m.chat]?.[user] || 0;
+    const warnCount = global._botWarns[_bns]?.[m.chat]?.[user] || 0;
     
     reply(`⚠️ *@${user.split('@')[0]} has ${warnCount}/3 warnings*`, [user]);
 }
@@ -7714,8 +7731,8 @@ case 'resetwarns': {
     const user = m.mentionedJid[0] || m.quoted?.sender;
     if (!user) return reply("👤 *Mention user to reset warnings*");
     
-    if (global.warns?.[m.chat]?.[user]) {
-        delete global.warns[m.chat][user];
+    if (global._botWarns[_bns]?.[m.chat]?.[user]) {
+        delete global._botWarns[_bns][m.chat][user];
         reply(`✅ *Warnings reset for @${user.split('@')[0]}*`, [user]);
     } else {
         reply(`⚠️ *@${user.split('@')[0]} has no warnings*`, [user]);
@@ -13203,13 +13220,13 @@ case "banuser": {
                     text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : 
                     m.quoted ? m.quoted.sender : '';
         
-        if (global.banned[orang]) return reply(`⚠️ *User already banned*`);
+        if (global._botBanned[_bns][orang]) return reply(`⚠️ *User already banned*`);
         
-        global.banned[orang] = true;
+        global._botBanned[_bns][orang] = true;
         
         // Save to file
         try {
-            fs.writeFileSync("./database/banned.json", JSON.stringify(global.banned));
+            fs.writeFileSync("./database/banned_" + _bns + ".json", JSON.stringify(global._botBanned[_bns]));
         } catch (e) {
             console.log("Error saving banned.json:", e);
         }
@@ -13230,13 +13247,13 @@ case "unbanuser": {
                     text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : 
                     m.quoted ? m.quoted.sender : '';
         
-        if (!global.banned[orang]) return reply(`⚠️ *User not in ban list*`);
+        if (!global._botBanned[_bns][orang]) return reply(`⚠️ *User not in ban list*`);
         
-        delete global.banned[orang];
+        delete global._botBanned[_bns][orang];
         
         // Save to file
         try {
-            fs.writeFileSync("./database/banned.json", JSON.stringify(global.banned));
+            fs.writeFileSync("./database/banned_" + _bns + ".json", JSON.stringify(global._botBanned[_bns]));
         } catch (e) {
             console.log("Error saving banned.json:", e);
         }
@@ -13253,7 +13270,7 @@ case "listbanuser": {
     if (!isCreator) return reply("🔒 *Owner only*");
     
     // Get all users where banned is true
-    const bannedUsers = Object.keys(global.banned).filter(jid => global.banned[jid] === true);
+    const bannedUsers = Object.keys(global._botBanned[_bns] || {}).filter(jid => global._botBanned[_bns][jid] === true);
     
     if (bannedUsers.length < 1) return reply("📭 *No banned users*");
     
@@ -13377,6 +13394,8 @@ break;
                 const videoCaption = `🎬 *${r.title || chosen.title}*\n👁️ ${r.views || 'N/A'} | 👍 ${r.likes || 'N/A'} | 👎 ${r.dislikes || 'N/A'}\n📦 Size: ${r.size || 'N/A'}`;
 
                 // Download buffer then send as actual file
+                // ISOLATION: yield event loop so other bots aren't blocked
+                await new Promise(r => setImmediate(r));
                 const videoBuf = Buffer.from((await axios.get(r.download_url, {
                     responseType: 'arraybuffer',
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
