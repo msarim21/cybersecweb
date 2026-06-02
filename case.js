@@ -13144,37 +13144,38 @@ case 'checkapis': {
 break;
 
 case 'public': {
+    setSetting("bot", "selfUser", ""); // clear solo lock
     setSetting("bot", "mode", "public");
     devtrust.public = true;
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'public' }, null, 2));
     } catch (e) {}
-    // Save to DB so mode survives Heroku restarts
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
         setBotMode(_modeNum, 'public').catch(() => {});
     } catch (_) {}
-    reply("🌍 *Public mode activated*\nEveryone can use the bot");
+    reply("🌍 *Public mode activated!*\nAb sab log bot use kar sakty hain.");
 }
 break;
 
 case 'private':
 case 'self': {
+    // Save exact user who activated solo mode — only they can use commands
+    setSetting("bot", "selfUser", _senderJid);
     setSetting("bot", "mode", "self");
     devtrust.public = false;
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'self' }, null, 2));
     } catch (e) {}
-    // Save to DB so mode survives Heroku restarts
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
         setBotMode(_modeNum, 'self').catch(() => {});
     } catch (_) {}
-    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
+    reply(`🔒 *Solo mode on!*\n\nAb sirf tum (${_senderNum}) hi is bot ki commands chala sakty ho.\nKoi aur DM ya group mein command lagaye — bot bilkul chup rahega.\n\nWapas sab ko allow karo: *.public*`);
 }
 break;
 
