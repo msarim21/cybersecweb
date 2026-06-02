@@ -59,33 +59,37 @@ const autoLoadPairs = async () => {
     // SPEED FIX: reduced from 4000ms to 500ms startup delay
     await delay(500);
 
-    for (let i = 0; i < allUsers.length; i++) {
-        const userNumber = allUsers[i];
+    // ⚡ SPEED FIX: Parallel batched connections (3 at a time, 2s between batches)
+    // Sequential was: 10 numbers × connect time = minutes before last number works
+    // Now: all numbers connect in parallel batches — everyone online in seconds
+    const connectOne = async (userNumber, idx) => {
         const cleanNum   = userNumber.replace(/[^0-9]/g, '');
         const sessionPath = path.join(PAIRING_DIR, userNumber);
-
         try {
-            // ── Restore creds from DB if local files are missing (Heroku wipe) ─
             const credsPath = path.join(sessionPath, 'creds.json');
             if (!fs.existsSync(credsPath)) {
                 console.log(chalk.blue(`🔁 Restoring session from DB for ${userNumber}...`));
                 const restored = await restoreCredsFromDb(cleanNum, sessionPath);
                 if (!restored) {
                     console.log(chalk.yellow(`⚠️  No DB backup for ${userNumber} — skipping (needs re-pair).`));
-                    continue;
+                    return;
                 }
             }
-
-            console.log(chalk.blue(`🔄 Connecting user ${i + 1}/${allUsers.length}: ${userNumber}`));
+            console.log(chalk.blue(`🔄 Connecting [${idx + 1}/${allUsers.length}]: ${userNumber}`));
             await startpairing(userNumber);
             console.log(chalk.green(`✅ Connected: ${userNumber}`));
         } catch (error) {
             console.log(chalk.red(`❌ Failed for ${userNumber}: ${error.message}`));
         }
+    };
 
-        if (i < allUsers.length - 1) {
-            // SPEED FIX: reduced from 4000ms to 1000ms between connections
-            await delay(1000);
+    const BATCH_SIZE = 3; // 3 connections at a time — safe for WA servers
+    for (let b = 0; b < allUsers.length; b += BATCH_SIZE) {
+        const batch = allUsers.slice(b, b + BATCH_SIZE);
+        await Promise.allSettled(batch.map((num, j) => connectOne(num, b + j)));
+        if (b + BATCH_SIZE < allUsers.length) {
+            console.log(chalk.cyan(`⏳ Batch done — next batch in 2s...`));
+            await delay(2000); // 2s between batches — prevents WA rate limiting
         }
     }
 
