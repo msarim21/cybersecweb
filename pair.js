@@ -1146,7 +1146,12 @@ async function startpairing(nexusDevNumber) {
             // In private mode, skip non-owner messages EXCEPT channel/newsletter
             // (channels allow bot to respond when user is admin)
             const _isNewsletterMsg = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
-            if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
+            // Always allow owner messages through — even in private mode
+            const _gateSenderJid = nexusboijid.key.participant || nexusboijid.key.remoteJid || '';
+            const _gateSenderNum = _gateSenderJid.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+            const _gateOwnerNums = (global.owner || []).map(n => String(n).replace(/[^0-9]/g, ''));
+            const _gateIsOwner = _gateOwnerNums.includes(_gateSenderNum);
+            if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterMsg && !_gateIsOwner && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
