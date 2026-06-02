@@ -11,7 +11,7 @@
     "autoread": true
   },
   "bot": {
-    "mode": "self"
+    "mode": "public"
   },
   "120363402235338233@g.us": {
     "welcome": true
