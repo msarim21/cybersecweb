@@ -425,7 +425,7 @@ const hangmanVisual = [
     "😃🪓______", "😃🪓__|____", "😃🪓__|/___",
     "😃🪓__|/__", "😃🪓__|/\\_", "😃🪓__|/\\_", "💀 Game Over!"
 ];
-const { getSetting: _rawGetSetting, setSetting: _rawSetSetting } = require("./setting/Settings.js");
+const { getSetting, setSetting } = require("./setting/Settings.js");
 const groupCache = new Map();
 
 // ============ ANTI-LINK SETTINGS (memory) ============
@@ -789,23 +789,6 @@ if (!devtrust._cachedBotNumber) {
   devtrust._cachedBotNumber = await devtrust.decodeJid(devtrust.user.id);
 }
 const botNumber = devtrust._cachedBotNumber;
-const _bns = botNumber.replace(/[^0-9]/g, ''); // per-bot isolation namespace
-// ── Per-bot settings: each bot's settings are 100% isolated ──
-const getSetting = (jid, key, def) => _rawGetSetting(_bns + ':' + jid, key, def);
-const setSetting = (jid, key, val) => _rawSetSetting(_bns + ':' + jid, key, val);
-// ── Per-bot warns store (in-memory, resets on restart per-bot) ──
-if (!global._botWarns) global._botWarns = {};
-if (!global._botWarns[_bns]) global._botWarns[_bns] = {};
-// ── Per-bot banned store (persisted per-bot file) ──
-if (!global._botBanned) global._botBanned = {};
-if (!global._botBanned[_bns]) {
-    try {
-        const _banFile = './database/banned_' + _bns + '.json';
-        global._botBanned[_bns] = require('fs').existsSync(_banFile)
-            ? JSON.parse(require('fs').readFileSync(_banFile, 'utf8'))
-            : {};
-    } catch(_e) { global._botBanned[_bns] = {}; }
-}
 
 // ── Cache groupMetadata with 30-min TTL + pending-request dedup ──
 // PERF FIX: TTL 5min→30min (group admins rarely change).
@@ -832,16 +815,33 @@ if (m.isGroup) {
 const participants = m.isGroup ? groupMetadata?.participants || [] : [];
 const groupAdmins = m.isGroup ? await getGroupAdmins(participants) : (m.isNewsletter ? [botNumber, m.sender] : []);
 
-// ── Per-message flag cache (30s TTL) — avoids fs.readFileSync on every message ──
-if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [], bug: [] };
+// ── Per-message flag cache (5min TTL) — all DB list reads cached here ──
+// FIX: Added bugBanned, bugUnlocked, adultBanned, adultUnlocked, akBanned, akUnlocked, akSecret
+// Previously these were read from disk on EVERY command call (18+ times for bug, 10+ for adult)
+if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [], bug: [],
+    bugBanned: [], bugUnlocked: [], adultBanned: [], adultUnlocked: [],
+    akBanned: [], akUnlocked: [], akSecret: '' };
 const _flagNow = Date.now();
-if (_flagNow - global._flagCache.ts > 5 * 60 * 1000) { // SPEED FIX: 30s→5min TTL
+if (_flagNow - global._flagCache.ts > 5 * 60 * 1000) {
+    const _p = require('path');
     try { const _bdf = './database/bot_disabled.json';
         global._flagCache.botDisabled = fs.existsSync(_bdf) ? JSON.parse(fs.readFileSync(_bdf, 'utf8')) : []; } catch(e) { global._flagCache.botDisabled = []; }
-    try { const _auf = require('path').join(__dirname, 'database', 'adult_unlocked.json');
-        global._flagCache.adult = fs.existsSync(_auf) ? JSON.parse(fs.readFileSync(_auf, 'utf-8')) : []; } catch(e) { global._flagCache.adult = []; }
-    try { const _buf = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-        global._flagCache.bug = fs.existsSync(_buf) ? JSON.parse(fs.readFileSync(_buf, 'utf-8')) : []; } catch(e) { global._flagCache.bug = []; }
+    try { const _auf = _p.join(__dirname, 'database', 'adult_unlocked.json');
+        global._flagCache.adult = fs.existsSync(_auf) ? JSON.parse(fs.readFileSync(_auf, 'utf-8')) : [];
+        global._flagCache.adultUnlocked = global._flagCache.adult; } catch(e) { global._flagCache.adult = []; global._flagCache.adultUnlocked = []; }
+    try { const _abf = './database/adult_banned.json';
+        global._flagCache.adultBanned = fs.existsSync(_abf) ? JSON.parse(fs.readFileSync(_abf, 'utf-8')) : []; } catch(e) { global._flagCache.adultBanned = []; }
+    try { const _buf = _p.join(__dirname, 'database', 'bug_unlocked.json');
+        global._flagCache.bug = fs.existsSync(_buf) ? JSON.parse(fs.readFileSync(_buf, 'utf-8')) : [];
+        global._flagCache.bugUnlocked = global._flagCache.bug; } catch(e) { global._flagCache.bug = []; global._flagCache.bugUnlocked = []; }
+    try { const _bbf = './database/bug_banned.json';
+        global._flagCache.bugBanned = fs.existsSync(_bbf) ? JSON.parse(fs.readFileSync(_bbf, 'utf-8')) : []; } catch(e) { global._flagCache.bugBanned = []; }
+    try { const _akbf = _p.join(__dirname, 'database', 'ak_banned.json');
+        global._flagCache.akBanned = fs.existsSync(_akbf) ? JSON.parse(fs.readFileSync(_akbf, 'utf-8')) : []; } catch(e) { global._flagCache.akBanned = []; }
+    try { const _akuf = _p.join(__dirname, 'database', 'ak_unlocked.json');
+        global._flagCache.akUnlocked = fs.existsSync(_akuf) ? JSON.parse(fs.readFileSync(_akuf, 'utf-8')) : []; } catch(e) { global._flagCache.akUnlocked = []; }
+    try { const _aksf = _p.join(__dirname, 'database', 'ak_secret.json');
+        global._flagCache.akSecret = fs.existsSync(_aksf) ? (JSON.parse(fs.readFileSync(_aksf, 'utf-8')).code || '') : ''; } catch(e) { global._flagCache.akSecret = ''; }
     global._flagCache.ts = _flagNow;
 }
 
@@ -850,14 +850,11 @@ const _cleanBotNum = botNumber.replace(/[^0-9]/g, '');
 const _botDisabled = global._flagCache.botDisabled.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBotNum || String(id) === botNumber);
 if (_botDisabled) return;
 
-// Strip WhatsApp multi-device :N device suffix before owner checks
-const _senderNum = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
-const _senderJid  = _senderNum + '@s.whatsapp.net';
-const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(_senderJid);
+const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
 const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
-const isOwner = isCreator; // same check, reuse
-const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(_senderJid);
-const isSudo = loadSudoList().some(j => (j || '').split(':')[0].split('@')[0].replace(/[^0-9]/g,'') === _senderNum);
+const isOwner = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
+const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
+const isSudo = loadSudoList().includes(m.sender);
 // 18+ unlock status for this sender (cached)
 const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
@@ -4155,7 +4152,14 @@ From: @${sender.split('@')[0]}
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
 
-// Mode display only — no command access restriction
+if (!devtrust.public) {
+    // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
+    const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
+    // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
+    const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
+    if (!isCreator && !_isCreatorFromChannel) return
+}
 
 const example = (teks) => {
     return `Usage : *${prefix+command}* ${teks}`
@@ -4170,7 +4174,7 @@ if (isCmd) {
     console.log(chalk.black(chalk.bgWhite('[ CYBER ]')), chalk.black(chalk.bgGreen(new Date)), chalk.black(chalk.bgBlue(body || m.mtype)) + '\n' + chalk.magenta('=> From'), chalk.green(pushname), chalk.yellow(m.sender) + '\n' + chalk.blueBright('=>In'), chalk.green(m.isGroup ? pushname : 'Private Chat', m.chat))
 }
 
-if (getSetting(m.chat, "autoReact", false) && !m.key.fromMe) {
+if (getSetting(m.chat, "autoReact", false)) {
     const emojis = [
         "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
         "😍", "😘", "😎", "🤩", "🤔", "😏", "😣", "😥", "😮", "🤐",
@@ -4287,12 +4291,12 @@ if (m.isGroup && body && !isAdmins && !isCreator) {
             await devtrust.sendMessage(m.chat, { delete: m.key });
             if (warnMode) {
                 const wLimit = getWarnLimit(m.chat);
-                if (!global._botWarns[_bns][m.chat]) global._botWarns[_bns][m.chat] = {};
-                if (!global._botWarns[_bns][m.chat][m.sender]) global._botWarns[_bns][m.chat][m.sender] = 0;
-                global._botWarns[_bns][m.chat][m.sender]++;
-                const wCount = global._botWarns[_bns][m.chat][m.sender];
+                if (!global.warns[m.chat]) global.warns[m.chat] = {};
+                if (!global.warns[m.chat][m.sender]) global.warns[m.chat][m.sender] = 0;
+                global.warns[m.chat][m.sender]++;
+                const wCount = global.warns[m.chat][m.sender];
                 if (wCount >= wLimit) {
-                    delete global._botWarns[_bns][m.chat][m.sender];
+                    delete global.warns[m.chat][m.sender];
                     try { await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch (e) {}
                     await reply(`👢 @${m.sender.split('@')[0]} kicked for posting links (${wLimit} warnings reached)`, [m.sender]);
                 } else {
@@ -4319,12 +4323,12 @@ if (m.isGroup && m.mentionedJid && m.mentionedJid.length > 0 && !isAdmins && !is
             await devtrust.sendMessage(m.chat, { delete: m.key });
             if (config.action === 'warn') {
                 const wLimit = getWarnLimit(m.chat);
-                if (!global._botWarns[_bns][m.chat]) global._botWarns[_bns][m.chat] = {};
-                if (!global._botWarns[_bns][m.chat][m.sender]) global._botWarns[_bns][m.chat][m.sender] = 0;
-                global._botWarns[_bns][m.chat][m.sender]++;
-                const wCount = global._botWarns[_bns][m.chat][m.sender];
+                if (!global.warns[m.chat]) global.warns[m.chat] = {};
+                if (!global.warns[m.chat][m.sender]) global.warns[m.chat][m.sender] = 0;
+                global.warns[m.chat][m.sender]++;
+                const wCount = global.warns[m.chat][m.sender];
                 if (wCount >= wLimit) {
-                    delete global._botWarns[_bns][m.chat][m.sender];
+                    delete global.warns[m.chat][m.sender];
                     try { await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch (e) {}
                     await reply(`👢 @${m.sender.split('@')[0]} kicked for tagging (${wLimit} warnings reached)`, [m.sender]);
                 } else {
@@ -4355,12 +4359,12 @@ if (m.isGroup && !isAdmins && !isCreator) {
                 await reply(`👢 @${m.sender.split('@')[0]} was kicked for using group mention`, [m.sender]);
             } else if (_agmSettings.action === 'warn') {
                 const wLimit = getWarnLimit(m.chat);
-                if (!global._botWarns[_bns][m.chat]) global._botWarns[_bns][m.chat] = {};
-                if (!global._botWarns[_bns][m.chat][m.sender]) global._botWarns[_bns][m.chat][m.sender] = 0;
-                global._botWarns[_bns][m.chat][m.sender]++;
-                const wCount = global._botWarns[_bns][m.chat][m.sender];
+                if (!global.warns[m.chat]) global.warns[m.chat] = {};
+                if (!global.warns[m.chat][m.sender]) global.warns[m.chat][m.sender] = 0;
+                global.warns[m.chat][m.sender]++;
+                const wCount = global.warns[m.chat][m.sender];
                 if (wCount >= wLimit) {
-                    delete global._botWarns[_bns][m.chat][m.sender];
+                    delete global.warns[m.chat][m.sender];
                     try { await devtrust.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch (e) {}
                     await reply(`👢 @${m.sender.split('@')[0]} kicked for group mentions (${wLimit} warnings)`, [m.sender]);
                 } else {
@@ -4590,8 +4594,8 @@ if (newsletterJids.includes(from)) {
 
 // ======================[ ⚠️ WARN SYSTEM HELPER ]======================
 async function handleWarn(chatId, userId, reason, mode) {
-    if (!global._botWarns[_bns][chatId]) global._botWarns[_bns][chatId] = {};
-    if (!global._botWarns[_bns][chatId][userId]) global._botWarns[_bns][chatId][userId] = 0;
+    if (!global.warns[chatId]) global.warns[chatId] = {};
+    if (!global.warns[chatId][userId]) global.warns[chatId][userId] = 0;
     
     // MODE 1: DELETE ONLY - no warnings
     if (mode === 'delete') {
@@ -4600,12 +4604,12 @@ async function handleWarn(chatId, userId, reason, mode) {
     
     // MODE 2: WARN - add warning
     if (mode === 'warn') {
-        global._botWarns[_bns][chatId][userId] += 1;
-        const warnCount = global._botWarns[_bns][chatId][userId];
+        global.warns[chatId][userId] += 1;
+        const warnCount = global.warns[chatId][userId];
         const warnLimit = getWarnLimit(chatId);
         
         if (warnCount >= warnLimit) {
-            delete global._botWarns[_bns][chatId][userId];
+            delete global.warns[chatId][userId];
             return { action: 'kick', kicked: true, warnCount, warnLimit };
         }
         
@@ -4783,6 +4787,7 @@ switch(command) {
 case 'allmenu':
 case 'CYBERall':
 case 'commandlist': {
+  autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5514,6 +5519,7 @@ break;
 
 case 'menu':
 case 'CYBER': {
+   autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5612,6 +5618,7 @@ break;
 
 case 'aimenu':
 case 'CYBERai': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5711,6 +5718,7 @@ break;
 
 case 'animemenu':
 case 'CYBERanime': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5929,6 +5937,7 @@ case 'CYBERbug': {
         if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
             return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
     }
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6072,6 +6081,7 @@ break;
 
 case 'downloadmenu':
 case 'CYBERdownload': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6178,6 +6188,7 @@ break;
 
 case 'funmenu':
 case 'CYBERfun': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6278,6 +6289,7 @@ break;
 
 case 'gamemenu':
 case 'CYBERgame': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6372,6 +6384,7 @@ break;
 
 case 'groupmenu':
 case 'CYBERgroup': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6513,6 +6526,7 @@ break;
 
 case 'logomenu':
 case 'CYBERlogo': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6635,6 +6649,7 @@ break;
 
 case 'ownermenu':
 case 'CYBERowner': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6762,6 +6777,7 @@ break;
 
 case 'stickermenu':
 case 'CYBERsticker': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6881,6 +6897,7 @@ break;
 
 case 'toolmenu':
 case 'CYBERtool': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -6995,6 +7012,7 @@ break;
 
 case 'voicemenu':
 case 'CYBERvoice': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7090,6 +7108,7 @@ break;
 
 case 'othermenu':
 case 'CYBERother': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -7699,7 +7718,7 @@ case 'checkwarns': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     
     const user = m.mentionedJid[0] || m.quoted?.sender || m.sender;
-    const warnCount = global._botWarns[_bns]?.[m.chat]?.[user] || 0;
+    const warnCount = global.warns?.[m.chat]?.[user] || 0;
     
     reply(`⚠️ *@${user.split('@')[0]} has ${warnCount}/3 warnings*`, [user]);
 }
@@ -7712,8 +7731,8 @@ case 'resetwarns': {
     const user = m.mentionedJid[0] || m.quoted?.sender;
     if (!user) return reply("👤 *Mention user to reset warnings*");
     
-    if (global._botWarns[_bns]?.[m.chat]?.[user]) {
-        delete global._botWarns[_bns][m.chat][user];
+    if (global.warns?.[m.chat]?.[user]) {
+        delete global.warns[m.chat][user];
         reply(`✅ *Warnings reset for @${user.split('@')[0]}*`, [user]);
     } else {
         reply(`⚠️ *@${user.split('@')[0]} has no warnings*`, [user]);
@@ -8912,7 +8931,11 @@ case "autorecordtype": {
 break;
 
 case "autoreact": {
+    if (!isAdmins && !isCreator) 
+        return reply('🔒 *Admins/Owner only*');
+    
     if (!args[0]) return reply("⚙️ *Usage:* autoreact on/off");
+    if (!m.isGroup) return reply("👥 *Groups only*");
 
     if (args[0].toLowerCase() === "on") {
         setSetting(m.chat, "autoReact", true);
@@ -11594,29 +11617,8 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
-    // ALL USERS CAN USE THIS — no owner restriction removed intentionally
-    // Each user who reacts with an emoji gets the view-once saved to their OWN DM
-
-    // This bot session's own account number
-    const _sessNum = devtrust.user.id.split(':')[0].replace(/[^0-9]/g, '');
-
-    // ── MULTI-BOT ISOLATION FIX ──────────────────────────────────────────────
-    // PROBLEM: When User A and User B both have the bot, and User B sends an
-    // emoji reply to a view-once in their shared DM, WhatsApp delivers that
-    // message event to BOTH bot instances. Without this check, User A's bot
-    // also processes User B's emoji and incorrectly saves the media to User A's DM.
-    //
-    // FIX: Only process if the SENDER's number matches THIS bot session's own
-    // account number. This ensures each bot only handles actions taken by its
-    // own authenticated account. Other accounts' emoji reactions are ignored.
-    const _senderNum = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
-    if (_senderNum !== _sessNum) break;
-    // ── End isolation fix ────────────────────────────────────────────────────
-
-    // Destination: the user who reacted — their own self-chat (Message yourself)
-    // Since isolation above ensures _senderNum === _sessNum, this equals the
-    // bot's own DM, which is exactly the right place for every user's save.
-    const _voDest = m.sender;
+    // Destination: user's private DM (group → sender's DM, private chat → same chat)
+    const _voDest = m.chat.endsWith('@g.us') ? m.sender : m.chat;
 
     // ── Path 1: Quoted reply to a view-once ──
     if (m.quoted) {
@@ -12013,9 +12015,9 @@ case 'spam': {
     {
         const _bgNf = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgBf = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgBf = (global._flagCache?.bugBanned || []);
             if (_bgBf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgUf = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgUf = (global._flagCache?.bugUnlocked || []);
                 if (!_bgUf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -12835,21 +12837,19 @@ case 'addkey': {
 
     const _akSenderNum = (m.sender || '').split('@')[0].split(':')[0];
 
-    // Load banned list
-    let _akBanned = [];
-    try { if (fs.existsSync(_akBannedFile)) _akBanned = JSON.parse(fs.readFileSync(_akBannedFile, 'utf-8')); } catch(e) {}
+    // Load banned list — use 5-min cache instead of reading disk on every call
+    const _akBanned = (global._flagCache?.akBanned || []);
     const _akIsBanned = _akBanned.some(id => String(id).replace(/[^0-9]/g,'') === _akSenderNum);
     if (_akIsBanned) return reply(`🚫 *Access Denied*\nYou have been permanently banned from 18+ content.`);
 
     if (!text) return reply(`🔑 *Usage:* ${prefix}addkey <code>\n\nEnter the access code provided by admin.`);
 
-    // Load secret code
-    let _akSecret = 'cybersecpro7898';
-    try { if (fs.existsSync(_akSecretFile)) _akSecret = JSON.parse(fs.readFileSync(_akSecretFile, 'utf-8')).code || _akSecret; } catch(e) {}
+    // Load secret code from cache
+    const _akSecret = global._flagCache?.akSecret || 'cybersecpro7898';
 
     if (text.trim() !== _akSecret) return reply(`❌ *Wrong code!*\nContact admin for the correct access code.`);
 
-    // Load and update unlocked list
+    // Load and update unlocked list — read fresh from disk here since we are modifying it
     let _akUnlocked = [];
     try { if (fs.existsSync(_akUnlockedFile)) _akUnlocked = JSON.parse(fs.readFileSync(_akUnlockedFile, 'utf-8')); } catch(e) {}
 
@@ -13150,12 +13150,13 @@ case 'public': {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'public' }, null, 2));
     } catch (e) {}
+    // Save to DB so mode survives Heroku restarts
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
         setBotMode(_modeNum, 'public').catch(() => {});
     } catch (_) {}
-    reply("🌍 *Public mode activated!*\nAb sab log bot use kar sakty hain.");
+    reply("🌍 *Public mode activated*\nEveryone can use the bot");
 }
 break;
 
@@ -13167,12 +13168,13 @@ case 'self': {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync('./database/bot_mode.json', JSON.stringify({ mode: 'self' }, null, 2));
     } catch (e) {}
+    // Save to DB so mode survives Heroku restarts
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : 'global';
         setBotMode(_modeNum, 'self').catch(() => {});
     } catch (_) {}
-    reply(`🔒 *Private mode on!*\n\nAb bot sirf owner ke liye hai.\n\nWapas enable karo: *.public*`);
+    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
 }
 break;
 
@@ -13199,13 +13201,13 @@ case "banuser": {
                     text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : 
                     m.quoted ? m.quoted.sender : '';
         
-        if (global._botBanned[_bns][orang]) return reply(`⚠️ *User already banned*`);
+        if (global.banned[orang]) return reply(`⚠️ *User already banned*`);
         
-        global._botBanned[_bns][orang] = true;
+        global.banned[orang] = true;
         
         // Save to file
         try {
-            fs.writeFileSync("./database/banned_" + _bns + ".json", JSON.stringify(global._botBanned[_bns]));
+            fs.writeFileSync("./database/banned.json", JSON.stringify(global.banned));
         } catch (e) {
             console.log("Error saving banned.json:", e);
         }
@@ -13226,13 +13228,13 @@ case "unbanuser": {
                     text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : 
                     m.quoted ? m.quoted.sender : '';
         
-        if (!global._botBanned[_bns][orang]) return reply(`⚠️ *User not in ban list*`);
+        if (!global.banned[orang]) return reply(`⚠️ *User not in ban list*`);
         
-        delete global._botBanned[_bns][orang];
+        delete global.banned[orang];
         
         // Save to file
         try {
-            fs.writeFileSync("./database/banned_" + _bns + ".json", JSON.stringify(global._botBanned[_bns]));
+            fs.writeFileSync("./database/banned.json", JSON.stringify(global.banned));
         } catch (e) {
             console.log("Error saving banned.json:", e);
         }
@@ -13249,7 +13251,7 @@ case "listbanuser": {
     if (!isCreator) return reply("🔒 *Owner only*");
     
     // Get all users where banned is true
-    const bannedUsers = Object.keys(global._botBanned[_bns] || {}).filter(jid => global._botBanned[_bns][jid] === true);
+    const bannedUsers = Object.keys(global.banned).filter(jid => global.banned[jid] === true);
     
     if (bannedUsers.length < 1) return reply("📭 *No banned users*");
     
@@ -13315,8 +13317,8 @@ break;
   case 'xvideos': {
     // 18+ unlock check
     const _xvid_num = (m.sender || '').split('@')[0].split(':')[0];
-    const _xvid_unlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
-    const _xvid_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num); } catch(e) { return false; } })();
+    const _xvid_unlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num);
+    const _xvid_banned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvid_num);
     if (_xvid_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvid_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) return reply(`🔞 *XVideos Search & Download*\n\nUsage: ${prefix}xvideos [search query]\nExample: ${prefix}xvideos step mom`);
@@ -13373,8 +13375,6 @@ break;
                 const videoCaption = `🎬 *${r.title || chosen.title}*\n👁️ ${r.views || 'N/A'} | 👍 ${r.likes || 'N/A'} | 👎 ${r.dislikes || 'N/A'}\n📦 Size: ${r.size || 'N/A'}`;
 
                 // Download buffer then send as actual file
-                // ISOLATION: yield event loop so other bots aren't blocked
-                await new Promise(r => setImmediate(r));
                 const videoBuf = Buffer.from((await axios.get(r.download_url, {
                     responseType: 'arraybuffer',
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
@@ -13481,8 +13481,8 @@ break;
 case 'xvideosearch':{
     // 18+ unlock check
     const _xvsrch_num = (m.sender || '').split('@')[0].split(':')[0];
-    const _xvsrch_unlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
-    const _xvsrch_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num); } catch(e) { return false; } })();
+    const _xvsrch_unlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
+    const _xvsrch_banned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
     if (_xvsrch_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvsrch_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
   if (!text) return m.reply(example(`Milf`))
@@ -13523,8 +13523,8 @@ break;
 case 'xnxxsearch': {
     // 18+ unlock check
     const _xnxxs_num = (m.sender || '').split('@')[0].split(':')[0];
-    const _xnxxs_unlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
-    const _xnxxs_banned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num); } catch(e) { return false; } })();
+    const _xnxxs_unlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num);
+    const _xnxxs_banned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xnxxs_num);
     if (_xnxxs_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xnxxs_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) return reply(`🔍 *Usage:* ${prefix}xnxxsearch <query>\nExample: ${prefix}xnxxsearch mia`);
@@ -13553,8 +13553,8 @@ case 'xnxxsearch': {
 case 'xnxx': {
     // Adult unlock check
     const _xnxxSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-    const _xnxxUnlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
-    const _xnxxBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum); } catch(e) { return false; } })();
+    const _xnxxUnlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum);
+    const _xnxxBanned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xnxxSenderNum);
     if (_xnxxBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xnxxUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     if (!text) {
@@ -14346,8 +14346,8 @@ break;
 case "nsfw": {
     // Adult unlock check
     const _nsfwSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-    const _nsfwUnlocked = (() => { try { const u = fs.existsSync(require('path').join(__dirname, 'database', 'adult_unlocked.json')) ? JSON.parse(fs.readFileSync(require('path').join(__dirname, 'database', 'adult_unlocked.json'),'utf-8')) : []; return u.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
-    const _nsfwBanned = (() => { try { const b = fs.existsSync('./database/adult_banned.json') ? JSON.parse(fs.readFileSync('./database/adult_banned.json','utf-8')) : []; return b.some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum); } catch(e) { return false; } })();
+    const _nsfwUnlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum);
+    const _nsfwBanned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _nsfwSenderNum);
     if (_nsfwBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_nsfwUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     try {
@@ -15325,9 +15325,9 @@ case 'cyber-destroy': {
     {
         const _bgN3 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB3 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB3 = (global._flagCache?.bugBanned || []);
             if (_bgB3.some(id => String(id).replace(/[^0-9]/g,'') === _bgN3)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU3 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU3 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU3.some(id => String(id).replace(/[^0-9]/g,'') === _bgN3)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15378,9 +15378,9 @@ case "cyberinvis": {
     {
         const _bgN0 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB0 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB0 = (global._flagCache?.bugBanned || []);
             if (_bgB0.some(id => String(id).replace(/[^0-9]/g,'') === _bgN0)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU0 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU0 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU0.some(id => String(id).replace(/[^0-9]/g,'') === _bgN0)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15433,9 +15433,9 @@ case "delayhard": {
     {
         const _bgN1 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB1 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB1 = (global._flagCache?.bugBanned || []);
             if (_bgB1.some(id => String(id).replace(/[^0-9]/g,'') === _bgN1)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU1 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU1 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU1.some(id => String(id).replace(/[^0-9]/g,'') === _bgN1)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15490,9 +15490,9 @@ case 'invisphone': {
     {
         const _bgN7 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB7 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB7 = (global._flagCache?.bugBanned || []);
             if (_bgB7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU7 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU7 = (global._flagCache?.bugUnlocked || []);
             if (!_bgU7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
     }
@@ -15531,9 +15531,9 @@ case "cyberclose": {
     {
         const _bgN2 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB2 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB2 = (global._flagCache?.bugBanned || []);
             if (_bgB2.some(id => String(id).replace(/[^0-9]/g,'') === _bgN2)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU2 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU2 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU2.some(id => String(id).replace(/[^0-9]/g,'') === _bgN2)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15635,9 +15635,9 @@ case 'ultrabug': {
     {
         const _bgN5 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB5 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB5 = (global._flagCache?.bugBanned || []);
             if (_bgB5.some(id => String(id).replace(/[^0-9]/g,'') === _bgN5)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU5 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU5 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU5.some(id => String(id).replace(/[^0-9]/g,'') === _bgN5)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15682,9 +15682,9 @@ case 'megabug': {
     {
         const _bgN6 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB6 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB6 = (global._flagCache?.bugBanned || []);
             if (_bgB6.some(id => String(id).replace(/[^0-9]/g,'') === _bgN6)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU6 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU6 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU6.some(id => String(id).replace(/[^0-9]/g,'') === _bgN6)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15725,10 +15725,10 @@ case 'invisios': {
     {
         const _bgNi = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgBi = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgBi = (global._flagCache?.bugBanned || []);
             if (_bgBi.some(id => String(id).replace(/[^0-9]/g,'') === _bgNi)) return reply('\ud83d\udeab *Access Denied*\
 Aap Bug section se permanently ban hain.');
-            const _bgUi = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgUi = (global._flagCache?.bugUnlocked || []);
             if (!_bgUi.some(id => String(id).replace(/[^0-9]/g,'') === _bgNi)) return reply('\ud83d\udd12 *Bug & SIM Section Locked*\
 \
 Type *' + prefix + 'addkey1 <code>* to unlock.');
@@ -15771,9 +15771,9 @@ case 'ghostcrash': {
     {
         const _bgN7 = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgB7 = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgB7 = (global._flagCache?.bugBanned || []);
             if (_bgB7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU7 = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgU7 = (global._flagCache?.bugUnlocked || []);
                 if (!_bgU7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15817,9 +15817,9 @@ case 'godmode': {
     {
         const _bgNc = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgBc = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgBc = (global._flagCache?.bugBanned || []);
             if (_bgBc.some(id => String(id).replace(/[^0-9]/g,'') === _bgNc)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgUc = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgUc = (global._flagCache?.bugUnlocked || []);
                 if (!_bgUc.some(id => String(id).replace(/[^0-9]/g,'') === _bgNc)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -15867,9 +15867,9 @@ case 'killswitch': {
     {
         const _bgNd = (m.sender||'').split('@')[0].split(':')[0];
         try {
-            const _bgBd = fs.existsSync('./database/bug_banned.json') ? JSON.parse(fs.readFileSync('./database/bug_banned.json','utf-8')) : [];
+            const _bgBd = (global._flagCache?.bugBanned || []);
             if (_bgBd.some(id => String(id).replace(/[^0-9]/g,'') === _bgNd)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgUd = fs.existsSync('./database/bug_unlocked.json') ? JSON.parse(fs.readFileSync('./database/bug_unlocked.json','utf-8')) : [];
+            const _bgUd = (global._flagCache?.bugUnlocked || []);
                 if (!_bgUd.some(id => String(id).replace(/[^0-9]/g,'') === _bgNd)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
 
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
@@ -18526,6 +18526,7 @@ default:
               if (!_sdbUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
                   return reply(`🔒 *SIM Database Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
           }
+          autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
           await devtrust.sendMessage(m.chat, { react: { text: '🗄️', key: m.key } });
 
           const _sdbUptime = formatUptime(process.uptime());
