@@ -4135,7 +4135,7 @@ From: @${sender.split('@')[0]}
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
 
-if (!devtrust.public) {
+if (!devtrust.public || getSetting("bot", "mode", null) === "self") {
     // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
     const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
     // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
@@ -4157,7 +4157,7 @@ if (isCmd) {
     console.log(chalk.black(chalk.bgWhite('[ CYBER ]')), chalk.black(chalk.bgGreen(new Date)), chalk.black(chalk.bgBlue(body || m.mtype)) + '\n' + chalk.magenta('=> From'), chalk.green(pushname), chalk.yellow(m.sender) + '\n' + chalk.blueBright('=>In'), chalk.green(m.isGroup ? pushname : 'Private Chat', m.chat))
 }
 
-if (getSetting(m.chat, "autoReact", false)) {
+if (getSetting(m.chat, "autoReact", false) && !m.key.fromMe) {
     const emojis = [
         "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
         "😍", "😘", "😎", "🤩", "🤔", "😏", "😣", "😥", "😮", "🤐",
