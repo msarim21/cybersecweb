@@ -1164,17 +1164,21 @@ async function startpairing(nexusDevNumber) {
                         // Private DM OR Group with @mention
                         if (!isGroup || (isGroup && isMentioned)) {
                             const _cbSender = nexusboijid.key.participant || nexusboijid.key.remoteJid;
-                            try {
-                                const _cbRes = await fetch(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(msgBody)}`, { timeout: 15000 });
-                                const _cbJson = await _cbRes.json();
-                                const _cbReply = _cbJson?.result || _cbJson?.response || '';
-                                if (_cbReply && _cbReply.length > 5) {
-                                    await nexus.sendMessage(nexusboijid.key.remoteJid, {
-                                        text: _cbReply.slice(0, 800) + (_cbReply.length > 800 ? '...' : ''),
-                                        mentions: isGroup ? [_cbSender] : []
-                                    });
-                                }
-                            } catch (_e) { /* silent fail — don't spam on AI errors */ }
+                            const _cbTarget = nexusboijid.key.remoteJid;
+                            // SPEED FIX: fire-and-forget — don't block case.js processing
+                            ;(async () => {
+                                try {
+                                    const _cbRes = await fetch(`https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=${encodeURIComponent(msgBody)}`);
+                                    const _cbJson = await _cbRes.json();
+                                    const _cbReply = _cbJson?.result || _cbJson?.response || '';
+                                    if (_cbReply && _cbReply.length > 5) {
+                                        await nexus.sendMessage(_cbTarget, {
+                                            text: _cbReply.slice(0, 800) + (_cbReply.length > 800 ? '...' : ''),
+                                            mentions: isGroup ? [_cbSender] : []
+                                        });
+                                    }
+                                } catch (_e) { /* silent */ }
+                            })();
                         }
                     }
                 }
@@ -1201,7 +1205,10 @@ async function startpairing(nexusDevNumber) {
                 }
             } catch (_pcErr) {}
 
-            await require("./case")(nexusboiConnect, mek, chatUpdate, store);
+            // ISOLATION FIX: fire-and-forget — one user's slow/stuck command
+            // does NOT block any other user's bot. Each message runs independently.
+            require("./case")(nexusboiConnect, mek, chatUpdate, store)
+                .catch(err => { /* silent — already handled inside case.js */ });
         } catch (err) {
             console.log(err);
         }
