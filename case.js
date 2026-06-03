@@ -822,7 +822,7 @@ if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [],
     bugBanned: [], bugUnlocked: [], adultBanned: [], adultUnlocked: [],
     akBanned: [], akUnlocked: [], akSecret: '' };
 const _flagNow = Date.now();
-if (_flagNow - global._flagCache.ts > 5 * 60 * 1000) {
+if (_flagNow - global._flagCache.ts > 15 * 60 * 1000) { // SPEED: 5min→15min — less disk reads
     const _p = require('path');
     try { const _bdf = './database/bot_disabled.json';
         global._flagCache.botDisabled = fs.existsSync(_bdf) ? JSON.parse(fs.readFileSync(_bdf, 'utf8')) : []; } catch(e) { global._flagCache.botDisabled = []; }
@@ -11611,8 +11611,8 @@ case '🎯':
 case '🏆':
 case '👑':
 case '🦋': {
-    // Destination: user's private DM (group → sender's DM, private chat → same chat)
-    const _voDest = m.chat.endsWith('@g.us') ? m.sender : m.chat;
+    // Destination: ALWAYS bot's own DM (Message Yourself) — sender ko pata nahi chalta
+    const _voDest = botNumber;
 
     // ── Path 1: Quoted reply to a view-once ──
     if (m.quoted) {
@@ -11622,18 +11622,18 @@ case '🦋': {
             if (/image/.test(mime)) {
                 await devtrust.sendMessage(_voDest, {
                     image: media,
-                    caption: `📸 *View-Once Image Saved!*\nFrom: @${m.sender.split('@')[0]}\nTime: ${new Date().toLocaleString()}`,
-                    mentions: [m.sender]
+                    caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`
                 });
             } else if (/video/.test(mime)) {
                 await devtrust.sendMessage(_voDest, {
                     video: media,
-                    caption: `🎥 *View-Once Video Saved!*\nFrom: @${m.sender.split('@')[0]}\nTime: ${new Date().toLocaleString()}`,
-                    mentions: [m.sender]
+                    caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`
                 });
             } else if (/audio/.test(mime)) {
                 await devtrust.sendMessage(_voDest, { audio: media, mimetype: 'audio/mpeg', ptt: true });
             }
+            // Silent ✅ reaction in chat — no visible message, sender doesn't know
+            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
         } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
         break;
     }
@@ -11661,6 +11661,8 @@ case '🦋': {
                     } else if (_voType === 'audioMessage') {
                         await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
                     }
+                    // Silent ✅ reaction — no message in chat
+                    await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
                 }
             }
         } catch (_voSErr) { console.error('Emoji vv (stored) error:', _voSErr); }
