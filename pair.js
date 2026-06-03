@@ -584,13 +584,10 @@ async function startpairing(nexusDevNumber) {
             const msg = await store.loadMessage(jid, key.id);
             return msg?.message || '';
         },
-        shouldSyncHistoryMessage: msg => {
-            console.log(`\x1b[32mLoading Chat [${msg.progress}%]\x1b[39m`);
-            return !!msg.syncType;
-        },
+        shouldSyncHistoryMessage: msg => !!msg.syncType, // SPEED: removed noisy log
         msgRetryCounterCache,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
+        connectTimeoutMs: 30000,        // SPEED: 60s→30s — faster fail on bad connection
+        defaultQueryTimeoutMs: 30000,   // SPEED: 60s→30s
         keepAliveIntervalMs: 30000, // FIX: 10s→30s — 10s WS pings look like spam to WA servers → disconnect
         emitOwnEvents: false,
         fireInitQueries: false,
@@ -1495,11 +1492,32 @@ async function startpairing(nexusDevNumber) {
                     await sleep(20000);
                     queuePairing(nexusDevNumber);
                 } else {
-                    console.log(chalk.bgRed(`❌ ${nexusDevNumber} truly logged out — cleaning session`));
-                    updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                    removeLinkedNumber(nexusDevNumber).catch(() => {});
-                    forceCleanupSession(nexusDevNumber);
-                    tracker.disconnected = true;
+                    // ── WEBSITE PROTECTION: Only remove if NOT registered on website ──
+                    // Numbers registered on the website must NEVER be auto-deleted
+                    const _cleanLogoutNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                    let _isWebsiteRegistered = false;
+                    try {
+                        const { getActiveLinkedNumbers } = require('./session-db');
+                        const _activeNums = await getActiveLinkedNumbers().catch(() => []);
+                        _isWebsiteRegistered = (_activeNums || []).some(n =>
+                            String(n).replace(/[^0-9]/g, '') === _cleanLogoutNum
+                        );
+                    } catch (_) {}
+
+                    if (_isWebsiteRegistered) {
+                        // Website-registered → never delete, keep retrying (infinite reconnect)
+                        console.warn(chalk.yellow(`🌐 ${nexusDevNumber} is website-registered — NOT removing. Retrying in 60s...`));
+                        tracker.logoutRetry = 0; // reset counter so it can retry again
+                        await sleep(60000);
+                        queuePairing(nexusDevNumber);
+                    } else {
+                        // Not website-registered → safe to clean up
+                        console.log(chalk.bgRed(`❌ ${nexusDevNumber} truly logged out — cleaning session`));
+                        updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                        removeLinkedNumber(nexusDevNumber).catch(() => {});
+                        forceCleanupSession(nexusDevNumber);
+                        tracker.disconnected = true;
+                    }
                 }
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
