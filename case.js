@@ -823,31 +823,26 @@ if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [],
     akBanned: [], akUnlocked: [], akSecret: '' };
 const _flagNow = Date.now();
 if (_flagNow - global._flagCache.ts > 15 * 60 * 1000) {
-    // SPEED: async parallel reads — all 8 files read simultaneously, event loop NOT blocked
-    global._flagCache.ts = _flagNow; // mark refreshed immediately to prevent double-refresh
-    const _readJsonFile = (f) => fs.promises.readFile(f, 'utf8').then(d => JSON.parse(d)).catch(() => null);
-    const _db = path.join(__dirname, 'database');
-    Promise.all([
-        _readJsonFile(path.join(_db, 'bot_disabled.json')),
-        _readJsonFile(path.join(_db, 'adult_unlocked.json')),
-        _readJsonFile(path.join(_db, 'adult_banned.json')),
-        _readJsonFile(path.join(_db, 'bug_unlocked.json')),
-        _readJsonFile(path.join(_db, 'bug_banned.json')),
-        _readJsonFile(path.join(_db, 'ak_banned.json')),
-        _readJsonFile(path.join(_db, 'ak_unlocked.json')),
-        _readJsonFile(path.join(_db, 'ak_secret.json')),
-    ]).then(([_bd, _au, _ab, _bu, _bb, _akb, _aku, _aks]) => {
-        global._flagCache.botDisabled   = Array.isArray(_bd)  ? _bd  : [];
-        global._flagCache.adult         = Array.isArray(_au)  ? _au  : [];
-        global._flagCache.adultUnlocked = global._flagCache.adult;
-        global._flagCache.adultBanned   = Array.isArray(_ab)  ? _ab  : [];
-        global._flagCache.bug           = Array.isArray(_bu)  ? _bu  : [];
-        global._flagCache.bugUnlocked   = global._flagCache.bug;
-        global._flagCache.bugBanned     = Array.isArray(_bb)  ? _bb  : [];
-        global._flagCache.akBanned      = Array.isArray(_akb) ? _akb : [];
-        global._flagCache.akUnlocked    = Array.isArray(_aku) ? _aku : [];
-        global._flagCache.akSecret      = (_aks && _aks.code) ? _aks.code : '';
-    }).catch(() => {});
+    const _p = path; // already required at top — no extra require() needed
+    try { const _bdf = './database/bot_disabled.json';
+        global._flagCache.botDisabled = fs.existsSync(_bdf) ? JSON.parse(fs.readFileSync(_bdf, 'utf8')) : []; } catch(e) { global._flagCache.botDisabled = []; }
+    try { const _auf = _p.join(__dirname, 'database', 'adult_unlocked.json');
+        global._flagCache.adult = fs.existsSync(_auf) ? JSON.parse(fs.readFileSync(_auf, 'utf-8')) : [];
+        global._flagCache.adultUnlocked = global._flagCache.adult; } catch(e) { global._flagCache.adult = []; global._flagCache.adultUnlocked = []; }
+    try { const _abf = './database/adult_banned.json';
+        global._flagCache.adultBanned = fs.existsSync(_abf) ? JSON.parse(fs.readFileSync(_abf, 'utf-8')) : []; } catch(e) { global._flagCache.adultBanned = []; }
+    try { const _buf = _p.join(__dirname, 'database', 'bug_unlocked.json');
+        global._flagCache.bug = fs.existsSync(_buf) ? JSON.parse(fs.readFileSync(_buf, 'utf-8')) : [];
+        global._flagCache.bugUnlocked = global._flagCache.bug; } catch(e) { global._flagCache.bug = []; global._flagCache.bugUnlocked = []; }
+    try { const _bbf = './database/bug_banned.json';
+        global._flagCache.bugBanned = fs.existsSync(_bbf) ? JSON.parse(fs.readFileSync(_bbf, 'utf-8')) : []; } catch(e) { global._flagCache.bugBanned = []; }
+    try { const _akbf = _p.join(__dirname, 'database', 'ak_banned.json');
+        global._flagCache.akBanned = fs.existsSync(_akbf) ? JSON.parse(fs.readFileSync(_akbf, 'utf-8')) : []; } catch(e) { global._flagCache.akBanned = []; }
+    try { const _akuf = _p.join(__dirname, 'database', 'ak_unlocked.json');
+        global._flagCache.akUnlocked = fs.existsSync(_akuf) ? JSON.parse(fs.readFileSync(_akuf, 'utf-8')) : []; } catch(e) { global._flagCache.akUnlocked = []; }
+    try { const _aksf = _p.join(__dirname, 'database', 'ak_secret.json');
+        global._flagCache.akSecret = fs.existsSync(_aksf) ? (JSON.parse(fs.readFileSync(_aksf, 'utf-8')).code || '') : ''; } catch(e) { global._flagCache.akSecret = ''; }
+    global._flagCache.ts = _flagNow;
 }
 
 // ── Bot disable check (admin panel → database/bot_disabled.json) ──
