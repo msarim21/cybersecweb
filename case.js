@@ -11616,9 +11616,33 @@ case '🦋': {
 
     // ── Path 1: Quoted reply to a view-once ──
     if (m.quoted) {
+        // ── Robust mime detection for view-once quoted messages ──
+        // smsg unwraps viewOnceMessage → m.quoted becomes { imageMessage: {...} } or { videoMessage: {...} }
+        // So direct .mimetype is often empty — check nested structure too
         let mime = (m.quoted.msg || m.quoted).mimetype || '';
+        if (!mime) {
+            mime = m.quoted.imageMessage?.mimetype
+                || m.quoted.videoMessage?.mimetype
+                || m.quoted.audioMessage?.mimetype
+                || '';
+        }
+        if (!mime) {
+            // mtype fallback (e.g. mtype = "imageMessage")
+            const _qt = (m.quoted.mtype || '').toLowerCase();
+            if (_qt.includes('image'))      mime = 'image/jpeg';
+            else if (_qt.includes('video')) mime = 'video/mp4';
+            else if (_qt.includes('audio')) mime = 'audio/mpeg';
+        }
         try {
             let media = await m.quoted.download();
+            // If still no mime but we got a buffer, detect by magic bytes
+            if (!mime && Buffer.isBuffer(media) && media.length > 3) {
+                if (media[0] === 0xFF && media[1] === 0xD8) mime = 'image/jpeg';
+                else if (media[0] === 0x89 && media[1] === 0x50) mime = 'image/png';
+                else if (media[0] === 0x47 && media[1] === 0x49) mime = 'image/gif';
+                else if (media[4] === 0x66 && media[5] === 0x74) mime = 'video/mp4';
+                else mime = 'image/jpeg'; // safest default for view-once
+            }
             if (/image/.test(mime)) {
                 await devtrust.sendMessage(_voDest, {
                     image: media,
@@ -11632,7 +11656,7 @@ case '🦋': {
             } else if (/audio/.test(mime)) {
                 await devtrust.sendMessage(_voDest, { audio: media, mimetype: 'audio/mpeg', ptt: true });
             }
-            // Silent ✅ reaction in chat — no visible message, sender doesn't know
+            // Silent ✅ reaction — no visible message, sender doesn't know
             await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
         } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
         break;
