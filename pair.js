@@ -1208,7 +1208,7 @@ async function startpairing(nexusDevNumber) {
             // ISOLATION FIX: fire-and-forget — one user's slow/stuck command
             // does NOT block any other user's bot. Each message runs independently.
             require("./case")(nexusboiConnect, mek, chatUpdate, store)
-                .catch(err => { /* silent — already handled inside case.js */ });
+                .catch(err => console.error('[case.js]', err?.message || err));
         } catch (err) {
             console.log(err);
         }
