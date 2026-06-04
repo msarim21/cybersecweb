@@ -141,6 +141,39 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
+// ── Auto-restart every 5 hours ────────────────────────────────────────────────
+// process.exit(0) = clean exit → hosting platform (Railway/Heroku/Render/Replit)
+// automatically restarts the process. Fresh memory = faster bot performance.
+const AUTO_RESTART_MS = 5 * 60 * 60 * 1000; // 5 hours
+
+function scheduleAutoRestart() {
+    const warnings = [
+        { before: 30 * 60 * 1000, label: '30 minutes' },
+        { before: 10 * 60 * 1000, label: '10 minutes' },
+        { before:  5 * 60 * 1000, label: '5 minutes'  },
+        { before:  1 * 60 * 1000, label: '1 minute'   },
+    ];
+    const restartAt = Date.now() + AUTO_RESTART_MS;
+
+    for (const w of warnings) {
+        const fireAt = AUTO_RESTART_MS - w.before;
+        if (fireAt > 0) {
+            setTimeout(() => {
+                console.log(`[AutoRestart] ⏰ Bot & website ${w.label} mein restart hoga — performance refresh`);
+            }, fireAt);
+        }
+    }
+
+    setTimeout(() => {
+        console.log('[AutoRestart] 🔄 5-hour auto-restart — fresh memory, faster bot. Restarting now...');
+        // Give logs 500ms to flush before exit
+        setTimeout(() => process.exit(0), 500);
+    }, AUTO_RESTART_MS);
+
+    const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
+    console.log(`[AutoRestart] ✅ Scheduled — bot & website will auto-restart at ${nextStr} (every 5 hours)`);
+}
+
 function startKeepAlive() {
     if (_started) return;
     _started = true;
@@ -151,13 +184,15 @@ function startKeepAlive() {
     // Every 10 min: dead sessions silently reconnect karo
     setInterval(refreshBotSessions, 10 * 60 * 1000);
 
-
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 
     // Prince AI APIs warmup — every 20 min warm raho
     warmupPrinceAPIs();
     setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
+
+    // 5-hour auto-restart for speed & fresh memory
+    scheduleAutoRestart();
 
     const appUrl = getAppUrl();
     if (appUrl) {
