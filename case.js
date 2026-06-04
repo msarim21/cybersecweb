@@ -12895,6 +12895,21 @@ case 'addkey': {
         fs.writeFileSync(_akUnlockedFile, JSON.stringify(_akUnlocked, null, 2));
     } catch(e) {}
 
+    // FIX: Immediately update in-memory cache so commands work right away
+    // (cache has 15-min TTL — without this, user must wait up to 15 min after unlock)
+    try {
+        if (!global._flagCache) global._flagCache = {};
+        if (!Array.isArray(global._flagCache.adult)) global._flagCache.adult = [];
+        if (!Array.isArray(global._flagCache.adultUnlocked)) global._flagCache.adultUnlocked = [];
+        if (!global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g,'') === _akSenderNum)) {
+            global._flagCache.adult.push(_akSenderNum);
+        }
+        if (!global._flagCache.adultUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _akSenderNum)) {
+            global._flagCache.adultUnlocked.push(_akSenderNum);
+        }
+        global._flagCache.ts = 0; // force full re-read on next command
+    } catch(_cacheErr) {}
+
     return reply(`✅ *18+ Access Unlocked!*\nYou can now use adult content commands.\nType *${prefix}removekey* to remove your access anytime.`);
 }
 break;
