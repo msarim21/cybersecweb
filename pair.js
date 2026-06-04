@@ -181,35 +181,10 @@ const PK_PROXY_LIST = [
 let _pkProxyAgent = null;
 
 async function initPakistaniProxy() {
-    try {
-        const { SocksProxyAgent } = require('socks-proxy-agent');
-        const https = require('https');
-
-        for (const proxyUrl of PK_PROXY_LIST) {
-            try {
-                const agent = new SocksProxyAgent(proxyUrl, { timeout: 6000 });
-                // Quick test — check if proxy responds
-                await new Promise((resolve, reject) => {
-                    const req = https.get({
-                        hostname: 'web.whatsapp.com',
-                        path: '/',
-                        agent,
-                        timeout: 6000,
-                    }, resolve);
-                    req.on('error', reject);
-                    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-                });
-                _pkProxyAgent = agent;
-                console.log(chalk.bgGreen.black(`[PROXY] 🇵🇰 Pakistani proxy connected: ${proxyUrl}`));
-                return;
-            } catch (_) {
-                console.log(chalk.yellow(`[PROXY] ❌ Failed: ${proxyUrl}`));
-            }
-        }
-        console.log(chalk.yellow('[PROXY] ⚠️  Koi bhi Pakistani proxy kaam nahi kiya — direct connect ho raha hai'));
-    } catch (e) {
-        console.log(chalk.yellow('[PROXY] socks-proxy-agent available nahi — direct connect'));
-    }
+    // SPEED FIX: Proxy disabled — free SOCKS5 proxies add 6s timeout per attempt (42s total)
+    // and slow down EVERY network call. Direct connection is fastest on Heroku.
+    _pkProxyAgent = null;
+    return;
 }
 // ==============================================================================
 
@@ -222,7 +197,8 @@ if (!global.pairEmitter) {
 
 // Fix for makeInMemoryStore
 const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
-let msgRetryCounterCache = new NodeCache();
+// SPEED: TTL added — prevents unlimited memory growth (was leaking forever)
+let msgRetryCounterCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
 
 // UPDATED: Newsletter channels to auto-follow
 const NEWSLETTER_CHANNELS = [
@@ -782,6 +758,16 @@ async function startpairing(nexusDevNumber) {
     if (!global._statusCache) global._statusCache = new Map();
     const STATUS_CACHE_TTL = 2 * 60 * 60 * 1000; // PERF FIX: 24h→2h (old statuses waste memory)
 
+    // SPEED FIX: Status cache pruning on a timer — NOT inside messages.upsert (was O(n) per msg)
+    if (!global._statusCachePruneTimer) {
+        global._statusCachePruneTimer = setInterval(() => {
+            const cutoff = Date.now() - (2 * 60 * 60 * 1000);
+            for (const [k, v] of global._statusCache) {
+                if (v.ts < cutoff) global._statusCache.delete(k);
+            }
+        }, 10 * 60 * 1000); // every 10 minutes
+    }
+
     // ── Global message-ID dedup cache — prevents double-reply on WA retransmission ──
     if (!global._processedMsgIds) {
         global._processedMsgIds = new Map(); // msgId → timestamp
@@ -840,10 +826,7 @@ async function startpairing(nexusDevNumber) {
                         sender: _cacheSender,
                         ts: Date.now()
                     });
-                    // Prune old entries (> 24h)
-                    for (const [k, v] of global._statusCache) {
-                        if (Date.now() - v.ts > STATUS_CACHE_TTL) global._statusCache.delete(k);
-                    }
+                    // Pruning moved to timer below — do NOT prune on every message (was O(n) per msg)
                 } catch (_ce) {}
             }
 
