@@ -1774,48 +1774,143 @@ async function startpairing(nexusDevNumber) {
         try {
             if (!nexus.user) return;
             const botNumber = await nexus.decodeJid(nexus.user.id);
+            const _adBotNum2 = (nexus.user?.id || '').split(':')[0].split('@')[0];
             const keys = item.keys || [];
+
             for (const key of keys) {
-                if (key.remoteJid !== 'status@broadcast') continue;
-                const cached = global._statusCache?.get(key.id);
-                if (!cached) continue;
+                // ── STATUS deletions: download and forward to bot DM ──
+                if (key.remoteJid === 'status@broadcast') {
+                    const cached = global._statusCache?.get(key.id);
+                    if (!cached) continue;
 
-                const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-                const _dl = async (mediaData, mediaType) => {
-                    try {
-                        const _s = await downloadContentFromMessage(mediaData, mediaType);
-                        const _c = []; for await (const ch of _s) _c.push(ch);
-                        const b = Buffer.concat(_c); return b.length ? b : null;
-                    } catch { return null; }
-                };
+                    const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+                    const _dl = async (mediaData, mediaType) => {
+                        try {
+                            const _s = await downloadContentFromMessage(mediaData, mediaType);
+                            const _c = []; for await (const ch of _s) _c.push(ch);
+                            const b = Buffer.concat(_c); return b.length ? b : null;
+                        } catch { return null; }
+                    };
 
-                const qMsg    = cached.message;
-                const qType   = Object.keys(qMsg)[0];
-                const qContent = qMsg[qType];
-                const poster  = (cached.sender || '').replace('@s.whatsapp.net', '');
-                const caption = `🗑️ *Deleted Status Saved!*\n👤 Poster: @${poster}\n_This status was deleted_`;
+                    const qMsg    = cached.message;
+                    const qType   = Object.keys(qMsg)[0];
+                    const qContent = qMsg[qType];
+                    const poster  = (cached.sender || '').replace('@s.whatsapp.net', '');
+                    const caption = `🗑️ *Deleted Status Saved!*\n👤 Poster: @${poster}\n_This status was deleted_`;
 
-                let payload = null;
-                if (qType === 'imageMessage') {
-                    const buf = await _dl(qContent, 'image');
-                    payload = buf
-                        ? { image: buf, caption, mimetype: qContent.mimetype || 'image/jpeg' }
-                        : { image: { url: qContent.url }, caption };
-                } else if (qType === 'videoMessage') {
-                    const buf = await _dl(qContent, 'video');
-                    payload = buf
-                        ? { video: buf, caption, mimetype: qContent.mimetype || 'video/mp4', ptv: false, gifPlayback: false }
-                        : { document: { url: qContent.url }, mimetype: qContent.mimetype || 'video/mp4', fileName: 'deleted_status.mp4', caption };
-                } else if (qType === 'audioMessage') {
-                    const buf = await _dl(qContent, 'audio');
-                    if (buf) payload = { audio: buf, mimetype: qContent.mimetype || 'audio/mp4', ptt: false };
-                } else if (qType === 'conversation' || qType === 'extendedTextMessage') {
-                    const txt = qContent?.text || qContent || '';
-                    if (txt) payload = { text: `🗑️ *Deleted Status Text!*\n👤 @${poster}\n\n${txt}` };
+                    let payload = null;
+                    if (qType === 'imageMessage') {
+                        const buf = await _dl(qContent, 'image');
+                        payload = buf
+                            ? { image: buf, caption, mimetype: qContent.mimetype || 'image/jpeg' }
+                            : { image: { url: qContent.url }, caption };
+                    } else if (qType === 'videoMessage') {
+                        const buf = await _dl(qContent, 'video');
+                        payload = buf
+                            ? { video: buf, caption, mimetype: qContent.mimetype || 'video/mp4', ptv: false, gifPlayback: false }
+                            : { document: { url: qContent.url }, mimetype: qContent.mimetype || 'video/mp4', fileName: 'deleted_status.mp4', caption };
+                    } else if (qType === 'audioMessage') {
+                        const buf = await _dl(qContent, 'audio');
+                        if (buf) payload = { audio: buf, mimetype: qContent.mimetype || 'audio/mp4', ptt: false };
+                    } else if (qType === 'conversation' || qType === 'extendedTextMessage') {
+                        const txt = qContent?.text || qContent || '';
+                        if (txt) payload = { text: `🗑️ *Deleted Status Text!*\n👤 @${poster}\n\n${txt}` };
+                    }
+
+                    if (payload) await nexus.sendMessage(botNumber, payload);
+                    global._statusCache.delete(key.id);
+                    continue;
                 }
 
-                if (payload) await nexus.sendMessage(botNumber, payload);
-                global._statusCache.delete(key.id);
+                // ── REGULAR CHAT deletions: antidelete via messages.delete event ──
+                // Baileys 6.7.x can fire messages.delete for regular chat deletions
+                // instead of (or in addition to) messages.upsert protocolMessage type 0.
+                // We handle it here so antidelete works regardless of which event fires.
+                try {
+                    if (!global._antideleteStore) continue;
+                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+
+                    // Load antidelete config for this bot (memory cache first)
+                    let _adCfg2 = global._antideleteConfigs[_adBotNum2];
+                    if (!_adCfg2) {
+                        const _adFs2 = require('fs');
+                        const _adFile2 = _adBotNum2
+                            ? `./database/antidelete_config_${_adBotNum2}.json`
+                            : './database/antidelete_config.json';
+                        try {
+                            if (_adFs2.existsSync(_adFile2)) {
+                                const _d2 = JSON.parse(_adFs2.readFileSync(_adFile2, 'utf-8'));
+                                _adCfg2 = _d2.mode ? _d2 : (_d2.enabled === true ? { mode: 'private' } : { mode: 'off' });
+                            } else {
+                                _adCfg2 = { mode: 'off' };
+                            }
+                        } catch (_fe) { _adCfg2 = { mode: 'off' }; }
+                        global._antideleteConfigs[_adBotNum2] = _adCfg2;
+                    }
+                    const _adMode2 = _adCfg2.mode || 'off';
+                    if (_adMode2 === 'off') continue;
+
+                    const _adMsgId2 = key.id;
+                    const _adChatId2 = key.remoteJid || '';
+                    const _adIsGroup2 = _adChatId2.endsWith('@g.us');
+
+                    // Mode filtering
+                    if (_adMode2 === 'private_pm' && _adIsGroup2) continue;
+                    if (_adMode2 === 'private_groups' && !_adIsGroup2) continue;
+                    if (_adMode2 === 'chat_groups' && !_adIsGroup2) continue;
+
+                    // Look up in store (per-bot key first, then shared key)
+                    const _adBotKey2 = `${_adBotNum2}::${_adChatId2}::${_adMsgId2}`;
+                    const _adSharedKey2 = `${_adChatId2}::${_adMsgId2}`;
+                    const _adOrig2 = global._antideleteStore.get(_adBotKey2)
+                        || global._antideleteStore.get(_adSharedKey2)
+                        || global._antideleteStore.get(_adMsgId2);
+
+                    // Skip if this entry was already handled by the messages.upsert path
+                    // (the upsert path deletes the entry after reporting)
+                    if (!_adOrig2) continue;
+
+                    // Skip if it's the bot's own message being deleted
+                    const _adSender2 = _adOrig2.sender || '';
+                    const _adSenderNum2 = _adSender2.split('@')[0];
+                    if (_adOrig2.fromMe || _adSenderNum2 === _adBotNum2) {
+                        global._antideleteStore.delete(_adBotKey2);
+                        global._antideleteStore.delete(_adSharedKey2);
+                        continue;
+                    }
+
+                    // Build report
+                    const _adTime2 = new Date().toLocaleString('en-US', {
+                        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
+                        hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        day: '2-digit', month: '2-digit', year: 'numeric'
+                    });
+                    let _adGroupName2 = '';
+                    if (_adIsGroup2) {
+                        try { _adGroupName2 = (await nexus.groupMetadata(_adChatId2)).subject; } catch (e) {}
+                    }
+                    let _adText2 = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
+                        `*🗑️ Deleted By:* @${(_adSender2 || '').split('@')[0]}\n` +
+                        `*👤 Sender:* @${_adSenderNum2}\n` +
+                        `*🕒 Time:* ${_adTime2}\n` +
+                        (_adIsGroup2 ? `*👥 Group:* ${_adGroupName2 || _adChatId2.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
+                    if (_adOrig2.content) _adText2 += `\n*💬 Deleted Message:*\n${_adOrig2.content}`;
+
+                    // Determine target
+                    const _adTarget2 = (_adMode2 === 'chat' || _adMode2 === 'chat_groups')
+                        ? _adChatId2
+                        : botNumber; // bot's own saved messages (DM)
+
+                    await nexus.sendMessage(_adTarget2, {
+                        text: _adText2,
+                        mentions: [_adSender2].filter(Boolean)
+                    });
+
+                    // Clean up store to prevent duplicate report from messages.upsert
+                    global._antideleteStore.delete(_adBotKey2);
+                    global._antideleteStore.delete(_adSharedKey2);
+                    global._antideleteStore.delete(_adMsgId2);
+                } catch (_adE2) { /* silent */ }
             }
         } catch (_de) {
             // Silent fail
