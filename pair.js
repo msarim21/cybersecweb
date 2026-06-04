@@ -1588,6 +1588,29 @@ async function startpairing(nexusDevNumber) {
                 fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
             } catch (_) {}
 
+            // AUTO-ENABLE ANTIDELETE PRIVATE on every connect
+            // Users don't need to run .antidelete private manually — it's automatic
+            try {
+                const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const _adCfgFile = path.join(__dirname, 'database', `antidelete_config_${_adCleanNum}.json`);
+                const _adFallback = path.join(__dirname, 'database', 'antidelete_config.json');
+                const _dbDir = path.join(__dirname, 'database');
+                if (!fs.existsSync(_dbDir)) fs.mkdirSync(_dbDir, { recursive: true });
+                // Write per-number config
+                const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+                fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
+                // Also update shared fallback config
+                if (!fs.existsSync(_adFallback)) {
+                    fs.writeFileSync(_adFallback, JSON.stringify(_adCfgData, null, 2));
+                }
+                // Update in-memory cache so it takes effect immediately
+                if (!global._antideleteConfigs) global._antideleteConfigs = {};
+                global._antideleteConfigs[_adCleanNum] = _adCfgData;
+                console.log(chalk.green(`🛡️ [${_adCleanNum}] Auto-enabled antidelete private`));
+            } catch (_adErr) {
+                console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
+            }
+
             
 
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
