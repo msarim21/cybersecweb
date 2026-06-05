@@ -12964,6 +12964,20 @@ case 'addkey1': {
         fs.writeFileSync(_bkUnlockedFile, JSON.stringify(_bkUnlocked, null, 2));
     } catch(e) {}
 
+    // FIX: Immediately update in-memory cache so bugmenu/simdatabase show up right away
+    // Without this, user must wait up to 30min for cache to expire before menu updates
+    try {
+        if (!global._flagCache) global._flagCache = {};
+        if (!Array.isArray(global._flagCache.bug)) global._flagCache.bug = [];
+        if (!Array.isArray(global._flagCache.bugUnlocked)) global._flagCache.bugUnlocked = [];
+        if (!global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g,'') === _bkSenderNum)) {
+            global._flagCache.bug.push(_bkSenderNum);
+        }
+        if (!global._flagCache.bugUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bkSenderNum)) {
+            global._flagCache.bugUnlocked.push(_bkSenderNum);
+        }
+    } catch(_ce) {}
+
     return reply(`✅ *Bug & SIM Database Access Unlocked!* 🐛🗄️\nAb aap ${prefix}bugmenu aur ${prefix}simdatabase commands use kar sakte hain.\nType *${prefix}removekey1* to remove access anytime.`);
 }
 break;
@@ -12981,6 +12995,15 @@ case 'removekey1': {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         fs.writeFileSync(_rk1UnlockedFile, JSON.stringify(_rk1Unlocked, null, 2));
     } catch(e) {}
+    // FIX: Immediately remove from in-memory cache so lock takes effect right away
+    try {
+        if (global._flagCache) {
+            if (Array.isArray(global._flagCache.bug))
+                global._flagCache.bug = global._flagCache.bug.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk1SenderNum);
+            if (Array.isArray(global._flagCache.bugUnlocked))
+                global._flagCache.bugUnlocked = global._flagCache.bugUnlocked.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk1SenderNum);
+        }
+    } catch(_ce) {}
     return reply(`✅ *Bug & SIM Database Access Removed!*\n🔒 Commands ab lock ho gaye.\nType *${prefix}addkey1 <code>* to unlock again.`);
 }
 break;
