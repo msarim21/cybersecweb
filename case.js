@@ -835,7 +835,7 @@ if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [],
     bugBanned: [], bugUnlocked: [], adultBanned: [], adultUnlocked: [],
     akBanned: [], akUnlocked: [], akSecret: '' };
 const _flagNow = Date.now();
-if (_flagNow - global._flagCache.ts > 15 * 60 * 1000) {
+if (_flagNow - global._flagCache.ts > 30 * 60 * 1000) { // SPEED: 15min→30min (halves disk read frequency)
     const _p = path; // already required at top — no extra require() needed
     try { const _bdf = './database/bot_disabled.json';
         global._flagCache.botDisabled = fs.existsSync(_bdf) ? JSON.parse(fs.readFileSync(_bdf, 'utf8')) : []; } catch(e) { global._flagCache.botDisabled = []; }
@@ -4229,7 +4229,8 @@ if (m.key.remoteJid === "status@broadcast") {
                 await devtrust.readMessages([_statusKey]);
             } catch (err) {}
         };
-        if (_viewDelay > 0) { setTimeout(_doView, _viewDelay); } else { await _doView(); }
+        // SPEED FIX: always fire-and-forget — await here blocked the entire message handler
+        setTimeout(_doView, _viewDelay || 0);
     }
     if (getSetting(botNumber, "autoStatusReact", false)) {
         const _reactDelay = getSetting(botNumber, 'autoReactStatusDelay', 0) * 1000;
@@ -4246,15 +4247,15 @@ if (m.key.remoteJid === "status@broadcast") {
                 }, { statusJidList: [_reactTarget] });
             } catch (err) {}
         };
-        if (_reactDelay > 0) { setTimeout(_doReact, _reactDelay); } else { await _doReact(); }
+        // SPEED FIX: always fire-and-forget — await here blocked message processing
+        setTimeout(_doReact, _reactDelay || 0);
     }
     if (getSetting(botNumber, "autoStatusReply", false)) {
         const _statusReplyMsg = getSetting(botNumber, "autoStatusReplyMsg", null);
         if (_statusReplyMsg && m.key.participant) {
-            try {
-                const _senderJid = m.key.participant;
-                await devtrust.sendMessage(_senderJid, { text: _statusReplyMsg });
-            } catch (err) {}
+            // SPEED FIX: fire-and-forget — was blocking message handler with await
+            const _senderJid = m.key.participant;
+            devtrust.sendMessage(_senderJid, { text: _statusReplyMsg }).catch(() => {});
         }
     }
 }
