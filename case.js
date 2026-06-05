@@ -386,9 +386,12 @@ function loadAntideleteCfg(botNum) {
             }
         } catch (e) {}
     }
-    const _off = { mode: 'off' };
-    if (botNum) global._antideleteConfigs[botNum] = _off;
-    return _off;
+    // AUTO-ENABLE: default to 'private' instead of 'off' so antidelete works out-of-the-box.
+    // If user explicitly runs ".antidelete off", saveAntideleteCfg writes 'off' to disk+cache
+    // and that cached value is returned above — this default only fires when NO config exists at all.
+    const _default = { mode: 'private' };
+    if (botNum) global._antideleteConfigs[botNum] = _default;
+    return _default;
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);
@@ -3976,7 +3979,8 @@ From: @${sender.split('@')[0]}
                         `*👤 Sender:* @${_adSenderNum}\n` +
                         `*🕒 Time:* ${_adTime}\n` +
                         (_adIsGroup ? `*👥 Group:* ${_adGroupName || _adChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
-                    if (_adOriginal.content) _adText += `\n*💬 Deleted Message:*\n${_adOriginal.content}`;
+                    // Always show content section — even empty string was silently skipping text messages
+                    _adText += `\n*💬 Deleted Message:*\n${_adOriginal.content || '_[media / no text]_'}`;
                     // Decide where to send the report
                     if (_adMode === 'chat' || _adMode === 'chat_groups') {
                         await _adSendReport(_adChatId, _adText, _adOriginal, _adSender);
