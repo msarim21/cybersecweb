@@ -222,7 +222,7 @@ if (!global._antieditSweepStarted) {
 if (!global._antideleteSweepStarted) {
     global._antideleteSweepStarted = true;
     setInterval(() => {
-        const _adcut = Date.now() - 2 * 60 * 60 * 1000;
+        const _adcut = Date.now() - 24 * 60 * 60 * 1000; // FIX: 24h instead of 2h
         for (const [_k, _v] of global._antideleteStore) {
             if (_v?._ts && _v._ts < _adcut) global._antideleteStore.delete(_k);
         }
@@ -284,6 +284,7 @@ function _saveDiskStore() {
         } catch (e) {}
     }, 2000);
 }
+global._antideleteDiskSave = _saveDiskStore; // FIX: expose globally so pair.js can persist to disk even in private mode
 
 function _loadDiskStore() {
     try {
@@ -292,9 +293,9 @@ function _loadDiskStore() {
             if (Array.isArray(entries)) {
                 const now = Date.now();
                 for (const [key, val] of entries) {
-                    // Skip entries older than 2 hours (matches periodic sweep TTL)
+                    // Skip entries older than 24 hours
                     const _entryAge = val?.timestamp ? now - new Date(val.timestamp).getTime() : 0;
-                    if (_entryAge > 2 * 60 * 60 * 1000) continue;
+                    if (_entryAge > 24 * 60 * 60 * 1000) continue; // FIX: 24h instead of 2h
                     // Add _ts so periodic sweep can expire this entry correctly
                     if (!val._ts) val._ts = val.timestamp ? new Date(val.timestamp).getTime() : now;
                     global._antideleteStore.set(key, val);
