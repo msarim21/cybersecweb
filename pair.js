@@ -1012,8 +1012,6 @@ async function startpairing(nexusDevNumber) {
                     global._antideleteStore.set(_adKey, _adEntry);
                     // also store shared-key for backward compat
                     global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
-                    // DEBUG: log what was cached
-                    console.log('[AD-CACHE] Stored msgId=' + _adMsgId + ' chatId=' + _adChatId + ' botNum=' + _adBotNum + ' key=' + _adKey + ' storeSize=' + global._antideleteStore.size);
                     // FIX: persist to disk so bot restart doesn't lose cached messages
                     if (typeof global._antideleteDiskSave === 'function') {
                         global._antideleteDiskSave();
