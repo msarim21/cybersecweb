@@ -3865,6 +3865,12 @@ _Auto-saved via status antidelete_`;
 
             // Look up cached message — check per-bot key first, then shared key for backward compat
             const _adBotKey = `${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`;
+            // DEBUG: log lookup attempt
+            console.log('[AD-LOOKUP] storeSize=' + global._antideleteStore.size + ' botNum=' + _adBotNum + ' chatId=' + _adChatId + ' msgId=' + _adMsgId + ' botKey=' + _adBotKey + ' sharedKey=' + antiStoreKey(_adChatId, _adMsgId));
+            console.log('[AD-LOOKUP] botKeyFound=' + !!global._antideleteStore.get(_adBotKey) + ' sharedKeyFound=' + !!global._antideleteStore.get(antiStoreKey(_adChatId, _adMsgId)));
+            // Print first 5 keys in store for comparison
+            const _dbgKeys = [...global._antideleteStore.keys()].slice(0,5);
+            console.log('[AD-STORE KEYS]', JSON.stringify(_dbgKeys));
             let _adOriginal = global._antideleteStore.get(_adBotKey)
                 || global._antideleteStore.get(antiStoreKey(_adChatId, _adMsgId))
                 || global._antideleteStore.get(_adMsgId)
