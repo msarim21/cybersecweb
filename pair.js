@@ -1000,13 +1000,14 @@ async function startpairing(nexusDevNumber) {
                     if (!global._antideleteStore) global._antideleteStore = new Map();
                     const _adEntry = {
                         content: String(_adText || ''),
-                        mediaType: _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : '',
+                        rawMsg: _adMsg,  // FIX: store full message so media can be forwarded on delete
+                        mediaType: _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : _adMsg.documentMessage ? 'document' : '',
                         mediaPath: '',
                         fromMe: false,
                         sender: _adSender,
                         group: (_adChatId || '').endsWith('@g.us') ? _adChatId : null,
                         timestamp: new Date().toISOString(),
-                        _ts: Date.now(), // FIX: required by 30-min sweep to expire old entries
+                        _ts: Date.now(),
                     };
                     global._antideleteStore.set(_adKey, _adEntry);
                     // also store shared-key for backward compat
@@ -1907,10 +1908,59 @@ async function startpairing(nexusDevNumber) {
                         ? _adChatId2
                         : botNumber; // bot's own saved messages (DM)
 
+                    // Send text report first
                     await nexus.sendMessage(_adTarget2, {
                         text: _adText2,
                         mentions: [_adSender2].filter(Boolean)
                     });
+
+                    // FIX: Forward actual media if message had image/video/audio/sticker/document
+                    if (_adOrig2.rawMsg) {
+                        const _rawM = _adOrig2.rawMsg;
+                        try {
+                            const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+                            const _dlMedia = async (msgData, mtype) => {
+                                try {
+                                    const _stream = await downloadContentFromMessage(msgData, mtype);
+                                    const _chunks = [];
+                                    for await (const _ch of _stream) _chunks.push(_ch);
+                                    const _buf = Buffer.concat(_chunks);
+                                    return _buf.length > 0 ? _buf : null;
+                                } catch (_) { return null; }
+                            };
+
+                            if (_rawM.imageMessage) {
+                                const _buf = await _dlMedia(_rawM.imageMessage, 'image');
+                                if (_buf) {
+                                    await nexus.sendMessage(_adTarget2, { image: _buf, caption: '📸 *Deleted Image*', mimetype: _rawM.imageMessage.mimetype || 'image/jpeg' });
+                                } else if (_rawM.imageMessage.url) {
+                                    await nexus.sendMessage(_adTarget2, { image: { url: _rawM.imageMessage.url }, caption: '📸 *Deleted Image*' });
+                                }
+                            } else if (_rawM.videoMessage) {
+                                const _buf = await _dlMedia(_rawM.videoMessage, 'video');
+                                if (_buf) {
+                                    await nexus.sendMessage(_adTarget2, { video: _buf, caption: '🎥 *Deleted Video*', mimetype: _rawM.videoMessage.mimetype || 'video/mp4' });
+                                } else if (_rawM.videoMessage.url) {
+                                    await nexus.sendMessage(_adTarget2, { video: { url: _rawM.videoMessage.url }, caption: '🎥 *Deleted Video*' });
+                                }
+                            } else if (_rawM.audioMessage) {
+                                const _buf = await _dlMedia(_rawM.audioMessage, 'audio');
+                                if (_buf) {
+                                    await nexus.sendMessage(_adTarget2, { audio: _buf, mimetype: _rawM.audioMessage.mimetype || 'audio/ogg; codecs=opus', ptt: _rawM.audioMessage.ptt || false });
+                                }
+                            } else if (_rawM.stickerMessage) {
+                                const _buf = await _dlMedia(_rawM.stickerMessage, 'sticker');
+                                if (_buf) {
+                                    await nexus.sendMessage(_adTarget2, { sticker: _buf });
+                                }
+                            } else if (_rawM.documentMessage) {
+                                const _buf = await _dlMedia(_rawM.documentMessage, 'document');
+                                if (_buf) {
+                                    await nexus.sendMessage(_adTarget2, { document: _buf, mimetype: _rawM.documentMessage.mimetype || 'application/octet-stream', fileName: _rawM.documentMessage.fileName || 'deleted_file' });
+                                }
+                            }
+                        } catch (_mediaFwdErr) { /* silent — media may have expired */ }
+                    }
 
                     // Clean up store to prevent duplicate report from messages.upsert
                     global._antideleteStore.delete(_adBotKey2);
