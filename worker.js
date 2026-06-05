@@ -12,6 +12,7 @@ require('./setting/config');
 
 const chalk = require('chalk');
 const { autoLoadPairs } = require('./autoload');
+const { startKeepAlive } = require('./keepalive');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -70,8 +71,9 @@ async function startWorker() {
     console.log(chalk.red('[Worker] Auto-load error:', e.message));
   }
 
-  // Keep Node.js event loop alive forever
-  // pair.js already has its own 30-second health-check watchdog per session.
+  // Keep Node.js event loop alive + self-ping web dyno every 14 min
+  // (prevents web dyno sleep, reconnects dead sessions, warms up AI APIs)
+  startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — bot will stay alive 24/7'));
 
   // ──────────────────────────────────────────────────────────────────────────
