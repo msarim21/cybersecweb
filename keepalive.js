@@ -141,14 +141,13 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-// ── Auto-restart every 5 hours ────────────────────────────────────────────────
-// process.exit(0) = clean exit → hosting platform (Railway/Heroku/Render/Replit)
-// automatically restarts the process. Fresh memory = faster bot performance.
-const AUTO_RESTART_MS = 5 * 60 * 60 * 1000; // 5 hours
+// ── Auto-restart every 90 minutes ─────────────────────────────────────────────
+// process.exit(0) = clean exit → Heroku automatically restarts the dyno.
+// 90 min = fresh memory, faster bot, prevents WhatsApp connection drift.
+const AUTO_RESTART_MS = 90 * 60 * 1000; // 90 minutes
 
 function scheduleAutoRestart() {
     const warnings = [
-        { before: 30 * 60 * 1000, label: '30 minutes' },
         { before: 10 * 60 * 1000, label: '10 minutes' },
         { before:  5 * 60 * 1000, label: '5 minutes'  },
         { before:  1 * 60 * 1000, label: '1 minute'   },
@@ -159,19 +158,18 @@ function scheduleAutoRestart() {
         const fireAt = AUTO_RESTART_MS - w.before;
         if (fireAt > 0) {
             setTimeout(() => {
-                console.log(`[AutoRestart] ⏰ Bot & website ${w.label} mein restart hoga — performance refresh`);
+                console.log(`[AutoRestart] ⏰ Bot & website ${w.label} mein restart hoga`);
             }, fireAt);
         }
     }
 
     setTimeout(() => {
-        console.log('[AutoRestart] 🔄 5-hour auto-restart — fresh memory, faster bot. Restarting now...');
-        // Give logs 500ms to flush before exit
+        console.log('[AutoRestart] 🔄 90-min auto-restart — fresh memory, faster bot. Restarting now...');
         setTimeout(() => process.exit(0), 500);
     }, AUTO_RESTART_MS);
 
     const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
-    console.log(`[AutoRestart] ✅ Scheduled — bot & website will auto-restart at ${nextStr} (every 5 hours)`);
+    console.log(`[AutoRestart] ✅ Scheduled — bot & website restart at ${nextStr} (every 90 min)`);
 }
 
 function startKeepAlive() {
