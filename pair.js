@@ -1012,6 +1012,21 @@ async function startpairing(nexusDevNumber) {
                     global._antideleteStore.set(_adKey, _adEntry);
                     // also store shared-key for backward compat
                     global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
+                    // FIX: persist to disk so bot restart doesn't lose cached messages
+                    if (typeof global._antideleteDiskSave === 'function') {
+                        global._antideleteDiskSave();
+                    } else if (!global._pairAdSaveTimer) {
+                        global._pairAdSaveTimer = setTimeout(() => {
+                            global._pairAdSaveTimer = null;
+                            try {
+                                const _pFs = require('fs');
+                                if (!_pFs.existsSync('./database')) _pFs.mkdirSync('./database', { recursive: true });
+                                const _pEntries = [];
+                                for (const [k, v] of (global._antideleteStore || new Map()).entries()) _pEntries.push([k, v]);
+                                _pFs.promises.writeFile('./database/antidelete_store.json', JSON.stringify(_pEntries.slice(-2000)), 'utf-8').catch(() => {});
+                            } catch(_pe) {}
+                        }, 3000);
+                    }
                 }
             } catch (_adErr) { /* silent */ }
 
