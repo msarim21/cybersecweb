@@ -57,7 +57,7 @@ async function _adMongoGet(key) {
 }
 
 function _adMongoSave(key, botNum, chatId, msgId, entry) {
-    setImmediate(async () => {
+    (async () => {
         try {
             const { isMongoMode, initDb } = require('../server/db');
             if (!isMongoMode()) return;
@@ -76,7 +76,7 @@ function _adMongoSave(key, botNum, chatId, msgId, entry) {
                 { upsert: true }
             );
         } catch (_) {}
-    });
+    })();
 }
 
 function _adMongoDelete(keys) {
@@ -149,6 +149,7 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             content = content || (unwrapped.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
             mediaType = 'audio';
             mediaPath = mediaPath || '__redownload__';
+            _adPrefetchMedia(msgId, unwrapped.audioMessage, 'audio', storeKeys);
         } else if (unwrapped.videoMessage) {
             mediaType = 'video';
             mediaPath = mediaPath || '__redownload__';
@@ -188,7 +189,11 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             _adMongoSave(k, botNum, chatId, msgId, entry);
         }
 
-        if (typeof global._antideleteDiskSave === 'function') {
+        // Text: instant disk flush (~1s ready). Media: short debounce (metadata already in RAM/Mongo).
+        const _isTextOnly = !mediaType && Boolean(content);
+        if (_isTextOnly && typeof global._antideleteDiskSaveNow === 'function') {
+            global._antideleteDiskSaveNow();
+        } else if (typeof global._antideleteDiskSave === 'function') {
             global._antideleteDiskSave();
         }
     } catch (e) {

@@ -290,7 +290,7 @@ function _saveDiskStore() {
             const trimmed = entries.slice(-ANTIDELETE_MAX_ENTRIES);
             fs.promises.writeFile(ANTIDELETE_DISK_STORE, JSON.stringify(trimmed), 'utf-8').catch(() => {});
         } catch (e) {}
-    }, 500);
+    }, 150);
 }
 global._antideleteDiskSave = _saveDiskStore; // FIX: expose globally so pair.js can persist to disk even in private mode
 
@@ -4013,7 +4013,7 @@ _Auto-saved via status antidelete_`;
                 || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
                 || _getFromDiskStore(_adMsgId);
             if (!_adOriginal) {
-                await new Promise((r) => setTimeout(r, 400));
+                await new Promise((r) => setTimeout(r, 150));
                 _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId);
             }
 
