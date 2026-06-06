@@ -15,6 +15,7 @@ const {
   clearLoginAttempts,
   sanitizeBody,
   validateEmail,
+  validatePassword,
   logSuspiciousActivity,
 } = require('../middleware/security');
 
@@ -36,9 +37,11 @@ router.post('/signup', sanitizeBody, async (req, res) => {
     if (!/^[a-zA-Z0-9_]+$/.test(username))
       return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores.' });
 
-    // Minimum password length
-    if (password.length < 6)
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    // Strong password validation
+    const pwErrors = validatePassword(password);
+    if (pwErrors.length) {
+      return res.status(400).json({ error: `Password must contain: ${pwErrors.join(', ')}.` });
+    }
 
     const existing = await findUserByEmailOrUsername(email, username);
     if (existing) return res.status(409).json({ error: 'Username or email already taken.' });

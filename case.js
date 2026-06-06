@@ -770,8 +770,8 @@ if (isCmd) {
 }
 
 // VIEW-ONCE EMOJI TRIGGER: Allow emoji replies/reactions WITHOUT prefix
-// These emojis trigger view-once pic/video download when replied to a view-once message
-if (!command && body && m.quoted) {
+// Works with quoted reply OR standalone emoji (uses cached last view-once per chat)
+if (!command && body) {
     // SPEED: module-level constant — created ONCE, not on every message
     if (!global._voEmojisSet) global._voEmojisSet = new Set([
         '😭','🌚','🤭','🔥','😋','😊','😘','😎','😅','✨','⭐',
@@ -877,6 +877,19 @@ const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 // Bug & SIM Database unlock status for this sender (cached)
 const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+
+// Shared bug-section access guard — used by all bug attack commands
+const _requireBugAccess = () => {
+    if (global._flagCache.bugBanned.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum)) {
+        reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
+        return false;
+    }
+    if (!global._flagCache.bugUnlocked.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum)) {
+        reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        return false;
+    }
+    return true;
+};
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
 const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : (m.isNewsletter ? true : false);
 const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
@@ -5937,19 +5950,7 @@ break;
 
 case 'bugmenu':
 case 'CYBERbug': {
-    {
-        const _bmSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-        const _bmBannedFile = './database/bug_banned.json';
-        const _bmUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-        let _bmBanned = [];
-        try { if (fs.existsSync(_bmBannedFile)) _bmBanned = JSON.parse(fs.readFileSync(_bmBannedFile, 'utf-8')); } catch(e) {}
-        if (_bmBanned.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
-            return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-        let _bmUnlocked = [];
-        try { if (fs.existsSync(_bmUnlockedFile)) _bmUnlocked = JSON.parse(fs.readFileSync(_bmUnlockedFile, 'utf-8')); } catch(e) {}
-        if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
-            return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-    }
+    if (!_requireBugAccess()) break;
     autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
@@ -6909,6 +6910,7 @@ case 'CYBERsticker': {
 break;
 
 case 'toolmenu':
+case 'toolsmenu':
 case 'CYBERtool': {
     autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
@@ -8719,7 +8721,8 @@ case 'mlstalk': {
     break;
 }
 
-case "calculator": {
+case "calculator":
+case "calculate": {
     if (!text) return reply(`🧮 *CYBER Calculator*\n\nUsage: ${prefix}calculator [expression]\nExample: ${prefix}calculator 25*4+100\n\nOperators: + - * / × ÷ ( ) π e`);
     try {
         const val = text
@@ -9255,29 +9258,29 @@ case "removebg": {
         // Download the image
         let media = await quotedMsg.download();
         
-        // Upload to temporary hosting
-        let uploadedUrl = await uploadToCatbox(media);
-        
-        if (!uploadedUrl) {
-            throw new Error('Upload failed');
-        }
-        
-        // Call removebg API
-        let response = await fetch(`https://image.pollinations.ai/prompt/Remove%20background%20from%20image%20${encodeURIComponent(uploadedUrl)}?width=1024&height=1024&nologo=true`);
-        let data = await response.json();
+        // Remove background via multipart upload (pollinations JSON endpoint was broken)
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('file', media, { filename: 'image.jpg', contentType: mime || 'image/jpeg' });
+        const bgRes = await axios.post('https://api.kaiz.me/removebg', form, {
+            headers: form.getHeaders(),
+            responseType: 'arraybuffer',
+            timeout: 120000,
+            maxContentLength: 50 * 1024 * 1024,
+        });
 
-        if (data.status && data.data) {
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: data.data },
-                    caption: "✨ *Background Removed*"
-                }),
-                { quoted: m }
-            );
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        } else {
-            throw new Error('API returned error');
+        if (!bgRes.data || bgRes.data.byteLength < 200) {
+            throw new Error('Empty response from remove-bg service');
         }
+
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: Buffer.from(bgRes.data),
+                caption: "✨ *Background Removed*"
+            }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
         console.error('RemoveBG error:', e);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
@@ -9893,10 +9896,15 @@ case "readqr": {
     const buffer = await m.quoted.download();
     
     try {
-        const res = await axios.post("https://api.qrserver.com/v1/read-qr-code/", buffer, {
-            headers: { "Content-Type": "multipart/form-data" }
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('file', buffer, { filename: 'qr.png', contentType: 'image/png' });
+        const res = await axios.post('https://api.qrserver.com/v1/read-qr-code/', form, {
+            headers: form.getHeaders(),
+            timeout: 30000,
         });
-        const qrText = res.data[0].symbol[0].data;
+        const qrText = res.data?.[0]?.symbol?.[0]?.data;
+        if (!qrText) return reply('❌ *No QR code found in image*');
         reply(`📱 *QR Code Content*\n\n${qrText}`);
     } catch (e) {
         reply("❌ *Failed to read QR code*");
@@ -9934,18 +9942,6 @@ case 'weatherinfo': {
         console.error('Weather Error:', error.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         reply(`⚠️ *CYBER Weather*\n\nWeather service is offline. Try again later.`);
-    }
-}
-break;
-
-case "calculate": {
-    if (!text) return reply("🧮 *Example:* calculate 12+25*3");
-    
-    try {
-        const result = eval(text);
-        reply(`🧮 *Result*\n\n${text} = ${result}`);
-    } catch {
-        reply("❌ *Invalid expression*");
     }
 }
 break;
@@ -11535,10 +11531,9 @@ case 'vvgh': {
                 ptt: true
             });
         }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        // Silent save — no reaction left in chat
     } catch (error) {
         console.error('vv error:', error);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
     }
 }
 break;
@@ -11675,8 +11670,7 @@ case '🦋': {
             } else if (/audio/.test(mime)) {
                 await devtrust.sendMessage(_voDest, { audio: media, mimetype: 'audio/mpeg', ptt: true });
             }
-            // Silent ✅ reaction — no visible message, sender doesn't know
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+            // Silent save — no reaction in chat
         } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
         break;
     }
@@ -11704,8 +11698,7 @@ case '🦋': {
                     } else if (_voType === 'audioMessage') {
                         await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
                     }
-                    // Silent ✅ reaction — no message in chat
-                    await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+                    // Silent save — no reaction in chat
                 }
             }
         } catch (_voSErr) { console.error('Emoji vv (stored) error:', _voSErr); }
@@ -15391,16 +15384,7 @@ break;
 //==============================
 
 case 'cyber-destroy': {
-    {
-        const _bgN3 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB3 = (global._flagCache?.bugBanned || []);
-            if (_bgB3.some(id => String(id).replace(/[^0-9]/g,'') === _bgN3)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU3 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU3.some(id => String(id).replace(/[^0-9]/g,'') === _bgN3)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    } 
+    if (!_requireBugAccess()) break;
     if (!q) return reply("📌 *Usage:* cyber-destroy 923xx");
 
     let targetNumber = q.replace(/[^0-9]/g, '');
@@ -15444,16 +15428,7 @@ case "delay":
 case "crash":
 case "blank":
 case "cyberinvis": {
-    {
-        const _bgN0 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB0 = (global._flagCache?.bugBanned || []);
-            if (_bgB0.some(id => String(id).replace(/[^0-9]/g,'') === _bgN0)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU0 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU0.some(id => String(id).replace(/[^0-9]/g,'') === _bgN0)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${command} 923xx`);
 
     let pepec = args[0].replace(/[^0-9]/g, "");
@@ -15499,16 +15474,7 @@ case "cyberinvis": {
 break;
 
 case "delayhard": {
-    {
-        const _bgN1 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB1 = (global._flagCache?.bugBanned || []);
-            if (_bgB1.some(id => String(id).replace(/[^0-9]/g,'') === _bgN1)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU1 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU1.some(id => String(id).replace(/[^0-9]/g,'') === _bgN1)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${command} 923xx`);
 
     let pepec = args[0].replace(/[^0-9]/g, "");
@@ -15701,16 +15667,7 @@ break;
 //====================[ NEW POWERFUL BUG COMMANDS 2026 ]===========================//
 
 case 'ultrabug': {
-    {
-        const _bgN5 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB5 = (global._flagCache?.bugBanned || []);
-            if (_bgB5.some(id => String(id).replace(/[^0-9]/g,'') === _bgN5)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU5 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU5.some(id => String(id).replace(/[^0-9]/g,'') === _bgN5)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}ultrabug 923xx`);
 
     let pepec = args[0].replace(/[^0-9]/g, '');

@@ -124,13 +124,15 @@ const isProduction = process.env.NODE_ENV === 'production';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : isProduction
-    ? ['*']
+    ? [] // production: same-origin only unless explicitly configured
     : ['http://localhost:3000', 'http://localhost:5173'];
 
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin)) {
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // Allow same-host requests in production when ALLOWED_ORIGINS not set
+    if (isProduction && ALLOWED_ORIGINS.length === 0) {
       return callback(null, true);
     }
     console.warn(`[SECURITY] CORS blocked request from origin: ${origin}`);
@@ -212,13 +214,44 @@ const adminLimiter = rateLimit({
   message: { error: 'Too many admin requests.' },
 });
 
+// ── Pairing rate limiter — prevents abuse of WA pairing API ────────────────
+const pairingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logThreat({ type: 'PAIRING_ABUSE', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Pairing rate limit exceeded' });
+    res.status(429).json({ error: 'Too many pairing attempts. Please wait 15 minutes.' });
+  },
+});
+
 app.use('/api/',       globalLimiter);
 app.use('/api/auth/',  authLimiter);
 app.use('/api/admin/', adminLimiter);
+app.use('/api/pairing/', pairingLimiter);
 
 // ── Security: Remove X-Powered-By header ──────────────────────────────────
 app.disable('x-powered-by');
-app.use((req, res, next) => { res.setHeader('Connection', 'keep-alive'); next(); });
+app.use((req, res, next) => {
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+// Block common exploit/scanner paths
+app.use((req, res, next) => {
+  const p = (req.path || '').toLowerCase();
+  const blocked = ['/.env', '/wp-admin', '/wp-login', '/phpmyadmin', '/.git', '/config.php', '/admin.php', '/shell'];
+  if (blocked.some(b => p.includes(b))) {
+    logThreat({ type: 'SCANNER_BLOCK', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Blocked scanner path' });
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  next();
+});
 
 // ── Uploads directory ────────────────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, '../uploads');

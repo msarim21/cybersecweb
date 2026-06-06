@@ -2,6 +2,11 @@ const jwt = require('jsonwebtoken');
 const { findUserById, updateUserLastActive, isPlanExpired } = require('../db-service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'cybersecpro_default_secret_change_in_production';
+const DEFAULT_JWT = 'cybersecpro_default_secret_change_in_production';
+
+if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_JWT) {
+  console.error('[SECURITY] CRITICAL: JWT_SECRET is not set in production! Set it in environment variables.');
+}
 
 const protect = async (req, res, next) => {
   try {

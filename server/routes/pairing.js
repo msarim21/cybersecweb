@@ -91,9 +91,9 @@ router.post('/request', protect, async (req, res) => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
 
-    // Wait for pair.js to write pairing.json (up to 40s)
+    // Wait for pair.js to write pairing.json (up to 60s — WA server can be slow)
     let code = null;
-    const deadline = Date.now() + 40_000;
+    const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       await sleep(400);
       try {
