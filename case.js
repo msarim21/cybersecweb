@@ -264,6 +264,8 @@ function antiStoreKey(chatId, msgId) {
     return `${chatId || 'unknown'}::${msgId}`;
 }
 
+const { _serializeRawMedia, _adForwardDeletedMedia } = require('./allfunc/antidelete-helpers');
+
 // ── Persistent antidelete disk store helpers ──
 const ANTIDELETE_MAX_ENTRIES = 2000;
 
@@ -3931,73 +3933,7 @@ _Auto-saved via status antidelete_`;
 
             const _adSendReport = async (targetJid, text, mediaOriginal, sender) => {
                 await devtrust.sendMessage(targetJid, { text, mentions: [_adDeletedBy, sender].filter(Boolean) });
-
-                // Helper: re-download from WhatsApp using stored metadata (no filesystem needed)
-                const _adRedl = async (raw, mtype) => {
-                    if (!raw?.mediaKey) return null;
-                    try {
-                        const { downloadContentFromMessage: _dlcR } = require('@whiskeysockets/baileys');
-                        const _rc = {
-                            url: raw.url,
-                            directPath: raw.directPath,
-                            mediaKey: Buffer.from(raw.mediaKey, 'base64'),
-                            fileEncSha256: raw.fileEncSha256 ? Buffer.from(raw.fileEncSha256, 'base64') : null,
-                            fileSha256: raw.fileSha256 ? Buffer.from(raw.fileSha256, 'base64') : null,
-                            mimetype: raw.mimetype,
-                        };
-                        const _st = await _dlcR(_rc, mtype);
-                        const _chs = [];
-                        for await (const _ch of _st) _chs.push(_ch);
-                        const _b = Buffer.concat(_chs);
-                        return _b.length > 0 ? _b : null;
-                    } catch (_de) { console.error('[ANTIDELETE] re-dl error:', _de.message); return null; }
-                };
-
-                const _hasRaw = mediaOriginal?.rawMediaMsg?.mediaKey;
-                const _hasFile = mediaOriginal?.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
-                const _adMO = { caption: `*Deleted ${mediaOriginal.mediaType}*\nFrom: @${sender.split('@')[0]}`, mentions: [sender] };
-
-                if (_hasRaw || _hasFile) {
-                    try {
-                        if (mediaOriginal.mediaType === 'audio') {
-                            const _buf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'audio') : (_hasFile ? fs.readFileSync(mediaOriginal.mediaPath) : null);
-                            if (_buf && _buf.length > 0) {
-                                const _mime = mediaOriginal.rawMediaMsg?.mimetype || 'audio/ogg; codecs=opus';
-                                await devtrust.sendMessage(targetJid, { audio: _buf, mimetype: _mime, ptt: Boolean(mediaOriginal.isPtt) });
-                            }
-                        } else if (mediaOriginal.mediaType === 'video') {
-                            const _buf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'video') : null;
-                            if (_buf && _buf.length > 0) await devtrust.sendMessage(targetJid, { video: _buf, caption: mediaOriginal.rawMediaMsg?.caption || _adMO.caption, mentions: _adMO.mentions });
-                            else if (_hasFile) await devtrust.sendMessage(targetJid, { video: { url: mediaOriginal.mediaPath }, ..._adMO });
-                        } else if (mediaOriginal.mediaType === 'image') {
-                            const _imgBuf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'image') : null;
-                            if (_imgBuf && _imgBuf.length > 0) {
-                                const _imgCap = mediaOriginal.rawMediaMsg?.caption || null;
-                                await devtrust.sendMessage(targetJid, _imgCap ? { image: _imgBuf, caption: _imgCap, mentions: _adMO.mentions } : { image: _imgBuf, ..._adMO });
-                            } else if (_hasFile) await devtrust.sendMessage(targetJid, { image: { url: mediaOriginal.mediaPath }, ..._adMO });
-                        } else if (mediaOriginal.mediaType === 'sticker') {
-                            const _stkBuf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'sticker') : null;
-                            if (_stkBuf && _stkBuf.length > 0) await devtrust.sendMessage(targetJid, { sticker: _stkBuf });
-                            else if (_hasFile) await devtrust.sendMessage(targetJid, { sticker: { url: mediaOriginal.mediaPath } });
-                        } else if (mediaOriginal.mediaType === 'document') {
-                            const _docBuf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'document') : null;
-                            if (_docBuf && _docBuf.length > 0) {
-                                const _docName = mediaOriginal.rawMediaMsg?.fileName || 'deleted_file';
-                                const _docMime = mediaOriginal.rawMediaMsg?.mimetype || 'application/octet-stream';
-                                await devtrust.sendMessage(targetJid, {
-                                    document: _docBuf,
-                                    mimetype: _docMime,
-                                    fileName: _docName,
-                                    caption: `*Deleted Document*
-From: @${sender.split('@')[0]}
-📄 ${_docName}`,
-                                    mentions: [sender]
-                                });
-                            }
-                        }
-                    } catch (e) { console.error('[ANTIDELETE] media send error:', e.message); }
-                    if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (e) {} }
-                }
+                await _adForwardDeletedMedia(devtrust, targetJid, mediaOriginal, sender);
             };
 
             if (_adOriginal) {
@@ -4056,6 +3992,10 @@ From: @${sender.split('@')[0]}
             let _adMediaPath = '';
             const _adSender2 = m.key.participant || m.key.remoteJid;
             const msg = m.message || {};
+            const _adBotNum2 = jidToNum(getBotJid(devtrust));
+            const _adStoreKey2 = _adBotNum2
+                ? `${_adBotNum2}::${antiStoreKey(_adChatId2, _adMsgId2)}`
+                : antiStoreKey(_adChatId2, _adMsgId2);
 
             // ── Text messages ──
             if (msg.conversation) {
@@ -4063,18 +4003,30 @@ From: @${sender.split('@')[0]}
             } else if (msg.extendedTextMessage?.text) {
                 _adContent = msg.extendedTextMessage.text;
             }
-            // ── Image ──
+            // ── Image (metadata first — background cache for speed) ──
             else if (msg.imageMessage) {
                 _adMediaType = 'image';
                 _adContent = msg.imageMessage.caption || '';
-                try {
-                    const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(msg.imageMessage, 'image');
-                    let _buf = Buffer.from([]);
-                    for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
-                    _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.jpg`;
-                    fs.writeFileSync(_adMediaPath, _buf);
-                } catch (e) {}
+                _adMediaPath = '__redownload__';
+                const _imgPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.jpg`;
+                setImmediate(async () => {
+                    try {
+                        const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
+                        const _stream = await _dlc(msg.imageMessage, 'image');
+                        let _buf = Buffer.from([]);
+                        for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
+                        if (!_buf.length) return;
+                        await fs.promises.writeFile(_imgPath, _buf);
+                        for (const _k of [_adStoreKey2, antiStoreKey(_adChatId2, _adMsgId2)]) {
+                            const _ex = global._antideleteStore.get(_k);
+                            if (_ex) {
+                                _ex.mediaPath = _imgPath;
+                                global._antideleteStore.set(_k, _ex);
+                            }
+                        }
+                        _saveDiskStore();
+                    } catch (_) {}
+                });
             }
             // ── Video ──
             else if (msg.videoMessage) {
@@ -4090,18 +4042,30 @@ From: @${sender.split('@')[0]}
                 // Store metadata for re-download at delete time — no filesystem dependency
                 _adMediaPath = '__redownload__';
             }
-            // ── Sticker ──
+            // ── Sticker (metadata first — background cache for speed) ──
             else if (msg.stickerMessage) {
                 _adMediaType = 'sticker';
                 _adContent = '🎭 Sticker';
-                try {
-                    const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(msg.stickerMessage, 'sticker');
-                    let _buf = Buffer.from([]);
-                    for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
-                    _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.webp`;
-                    fs.writeFileSync(_adMediaPath, _buf);
-                } catch (e) {}
+                _adMediaPath = '__redownload__';
+                const _stkPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.webp`;
+                setImmediate(async () => {
+                    try {
+                        const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
+                        const _stream = await _dlc(msg.stickerMessage, 'sticker');
+                        let _buf = Buffer.from([]);
+                        for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
+                        if (!_buf.length) return;
+                        await fs.promises.writeFile(_stkPath, _buf);
+                        for (const _k of [_adStoreKey2, antiStoreKey(_adChatId2, _adMsgId2)]) {
+                            const _ex = global._antideleteStore.get(_k);
+                            if (_ex) {
+                                _ex.mediaPath = _stkPath;
+                                global._antideleteStore.set(_k, _ex);
+                            }
+                        }
+                        _saveDiskStore();
+                    } catch (_) {}
+                });
             }
             // ── Document ──
             else if (msg.documentMessage) {
@@ -4150,43 +4114,16 @@ From: @${sender.split('@')[0]}
                 if (knownType) _adContent = `[${knownType.replace('Message', '')} message]`;
             }
 
-            // Store with per-bot key so each bot user's messages are tracked separately
-            const _adBotNum2 = jidToNum(getBotJid(devtrust));
-            const _adStoreKey2 = _adBotNum2
-                ? `${_adBotNum2}::${antiStoreKey(_adChatId2, _adMsgId2)}`
-                : antiStoreKey(_adChatId2, _adMsgId2);
-            // Serialize audio/video message fields for re-download at delete time
-            const _adRawMedia = (() => {
-                const _am = msg?.audioMessage || null;
-                const _vm = msg?.videoMessage || null;
-                const _im = msg?.imageMessage || null;
-                const _sm = msg?.stickerMessage || null;
-                const _dm = msg?.documentMessage || null;
-                const _mm = _am || _vm || _im || _sm || _dm;
-                const _mtype = _am ? 'audio' : _vm ? 'video' : _im ? 'image' : _sm ? 'sticker' : _dm ? 'document' : null;
-                if (!_mm || !_mtype) return null;
-                try {
-                    return {
-                        type: _mtype,
-                        url: _mm.url || null,
-                        directPath: _mm.directPath || null,
-                        mediaKey: _mm.mediaKey ? Buffer.from(_mm.mediaKey).toString('base64') : null,
-                        fileEncSha256: _mm.fileEncSha256 ? Buffer.from(_mm.fileEncSha256).toString('base64') : null,
-                        fileSha256: _mm.fileSha256 ? Buffer.from(_mm.fileSha256).toString('base64') : null,
-                        mimetype: _mm.mimetype || (_mtype === 'audio' ? 'audio/ogg; codecs=opus' : _mtype === 'sticker' ? 'image/webp' : _mtype === 'image' ? 'image/jpeg' : 'video/mp4'),
-                        ptt: Boolean(_mm.ptt),
-                        caption: _mm.caption || null,
-                        isAnimated: Boolean(_mm.isAnimated),
-                        fileName: _mm.fileName || _mm.title || null,
-                    };
-                } catch (_rme) { return null; }
-            })();
+            const _adRawMedia = _serializeRawMedia(msg);
+            const _hasMediaMsg = Boolean(msg.imageMessage || msg.videoMessage || msg.audioMessage || msg.stickerMessage || msg.documentMessage);
+            const _existingAd = global._antideleteStore.get(_adStoreKey2) || global._antideleteStore.get(antiStoreKey(_adChatId2, _adMsgId2));
             const _adMsgData2 = {
-                content: _adContent,
-                mediaType: _adMediaType,
-                mediaPath: _adMediaPath,
-                isPtt: _adMediaType === 'audio' && Boolean(msg?.audioMessage?.ptt),
-                rawMediaMsg: _adRawMedia,
+                content: _adContent || _existingAd?.content || '',
+                mediaType: _adMediaType || _existingAd?.mediaType || '',
+                mediaPath: _adMediaPath || _existingAd?.mediaPath || '',
+                isPtt: _adMediaType === 'audio' ? Boolean(msg?.audioMessage?.ptt) : Boolean(_existingAd?.isPtt),
+                rawMediaMsg: _adRawMedia || _existingAd?.rawMediaMsg || null,
+                rawMsg: _hasMediaMsg ? msg : (_existingAd?.rawMsg || null),
                 fromMe: Boolean(m.key.fromMe),
                 sender: _adSender2,
                 group: (_adChatId2 || '').endsWith('@g.us') ? _adChatId2 : null,

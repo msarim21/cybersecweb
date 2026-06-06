@@ -18,6 +18,7 @@ const {
 const { updateSession, removeLinkedNumber, saveCredsToDb, restoreCredsFromDb } = require('./session-db');
 const { addNumber, getBotMode, setBotMode } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
+require('./allfunc/antidelete-helpers');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -77,9 +78,9 @@ const SecurityGuard = {
     _processing: new Set(),
 
     // Rate limits: max messages per window per chat
-    MAX_BURST: 8,       // allow quick burst of replies
+    MAX_BURST: 25,      // allow larger burst — bot commands need fast replies
     WINDOW_MS: 60000,   // 1 minute window
-    REFILL_RATE: 8000,  // 1 msg per 8 seconds refill
+    REFILL_RATE: 3000,  // 1 msg per 3 seconds refill
 
     // Check if sending is allowed (fast path — no delay for commands)
     canSend(chatId) {
@@ -100,8 +101,8 @@ const SecurityGuard = {
             bucket.tokens--;
             return { allowed: true, delay: 0 };
         }
-        // Over limit: tiny jitter delay (invisible to user, but spaces out WA traffic)
-        const jitter = 300 + Math.floor(Math.random() * 700);
+        // Over limit: minimal jitter — was 300-1000ms and made bot feel very slow
+        const jitter = 50 + Math.floor(Math.random() * 100);
         return { allowed: true, delay: jitter };
     },
 
@@ -128,19 +129,14 @@ const SecurityGuard = {
             // Stop if socket is no longer active
             if (!global._presenceCycles[numKey]) return;
             try {
-                const onlineDuration = 8 * 60 * 1000 + Math.floor(Math.random() * 12 * 60 * 1000); // 8-20 min
-                const offlineDuration = 60 * 1000 + Math.floor(Math.random() * 180 * 1000); // 1-4 min
+                // FIX: stay available — going 'unavailable' 1-4 min blocked message delivery + caused disconnects
                 await nexus.sendPresenceUpdate('available');
-                await sleep(onlineDuration);
-                if (!global._presenceCycles[numKey]) return;
-                await nexus.sendPresenceUpdate('unavailable');
-                await sleep(offlineDuration);
             } catch (e) { /* silent */ }
-            // Next cycle after 2-4 hour gap
-            const gap = 2 * 60 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 60 * 1000);
+            // Re-ping presence every 15-20 min to keep session warm
+            const gap = 15 * 60 * 1000 + Math.floor(Math.random() * 5 * 60 * 1000);
             setTimeout(() => cycle(), gap);
         };
-        setTimeout(cycle, 30000 + Math.floor(Math.random() * 30000));
+        setTimeout(cycle, 10000 + Math.floor(Math.random() * 10000));
     },
 
     // Stop the presence cycle for a number (call on disconnect/cleanup)
@@ -582,8 +578,12 @@ async function startpairing(nexusDevNumber) {
     const _origSendMessage = nexus.sendMessage.bind(nexus);
     nexus.sendMessage = async (jid, content, options) => {
         const chatId = typeof jid === 'string' ? jid : (jid?.remoteJid || String(jid));
-        const { delay } = SecurityGuard.canSend(chatId);
-        if (delay > 0) await sleep(delay);
+        const _selfJid = nexus._cachedBotNumber || (nexus.user ? nexus.decodeJid(nexus.user.id) : '');
+        const _isSelfDm = _selfJid && chatId === _selfJid;
+        if (!_isSelfDm) {
+            const { delay } = SecurityGuard.canSend(chatId);
+            if (delay > 0) await sleep(delay);
+        }
         return _origSendMessage(jid, content, options);
     };
     
@@ -1011,11 +1011,17 @@ async function startpairing(nexusDevNumber) {
                         ? `${_adBotNum}::${_adChatId}::${_adMsgId}`
                         : `${_adChatId}::${_adMsgId}`;
                     if (!global._antideleteStore) global._antideleteStore = new Map();
+                    const _adSharedKey = `${_adChatId}::${_adMsgId}`;
+                    const _adExisting = global._antideleteStore.get(_adKey) || global._antideleteStore.get(_adSharedKey);
+                    const _adMediaType = _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : _adMsg.documentMessage ? 'document' : '';
+                    const _adRawMedia = typeof global._serializeRawMedia === 'function' ? global._serializeRawMedia(_adMsg) : null;
                     const _adEntry = {
-                        content: String(_adText || ''),
-                        rawMsg: _adMsg,  // FIX: store full message so media can be forwarded on delete
-                        mediaType: _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : _adMsg.documentMessage ? 'document' : '',
-                        mediaPath: '',
+                        content: String(_adText || _adExisting?.content || ''),
+                        rawMsg: _adMsg,
+                        rawMediaMsg: _adRawMedia || _adExisting?.rawMediaMsg || null,
+                        mediaType: _adMediaType || _adExisting?.mediaType || '',
+                        mediaPath: _adExisting?.mediaPath || '',
+                        isPtt: Boolean(_adMsg.audioMessage?.ptt || _adExisting?.isPtt),
                         fromMe: false,
                         sender: _adSender,
                         group: (_adChatId || '').endsWith('@g.us') ? _adChatId : null,
@@ -1023,8 +1029,7 @@ async function startpairing(nexusDevNumber) {
                         _ts: Date.now(),
                     };
                     global._antideleteStore.set(_adKey, _adEntry);
-                    // also store shared-key for backward compat
-                    global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
+                    global._antideleteStore.set(_adSharedKey, _adEntry);
                     // FIX: persist to disk so bot restart doesn't lose cached messages
                     if (typeof global._antideleteDiskSave === 'function') {
                         global._antideleteDiskSave();
@@ -1473,7 +1478,7 @@ async function startpairing(nexusDevNumber) {
             if (isNetworkError) {
                 console.log(chalk.yellow(`📶 [${nexusDevNumber}] Network error detected. Infinite retry active...`));
                 tracker.networkRetry = (tracker.networkRetry || 0) + 1;
-                safeReconnect(Math.min(tracker.networkRetry, 8));
+                safeReconnect(tracker.networkRetry);
                 return;
             }
 
@@ -1611,25 +1616,32 @@ async function startpairing(nexusDevNumber) {
                 fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
             } catch (_) {}
 
-            // AUTO-ENABLE ANTIDELETE PRIVATE on every connect
-            // Users don't need to run .antidelete private manually — it's automatic
+            // AUTO-ENABLE ANTIDELETE PRIVATE on first connect only — respect user's .antidelete off
             try {
                 const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 const _adCfgFile = path.join(__dirname, 'database', `antidelete_config_${_adCleanNum}.json`);
                 const _adFallback = path.join(__dirname, 'database', 'antidelete_config.json');
                 const _dbDir = path.join(__dirname, 'database');
                 if (!fs.existsSync(_dbDir)) fs.mkdirSync(_dbDir, { recursive: true });
-                // Write per-number config
-                const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
-                fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
-                // Also update shared fallback config
-                if (!fs.existsSync(_adFallback)) {
-                    fs.writeFileSync(_adFallback, JSON.stringify(_adCfgData, null, 2));
-                }
-                // Update in-memory cache so it takes effect immediately
                 if (!global._antideleteConfigs) global._antideleteConfigs = {};
+                let _adCfgData;
+                if (fs.existsSync(_adCfgFile)) {
+                    try {
+                        _adCfgData = JSON.parse(fs.readFileSync(_adCfgFile, 'utf-8'));
+                        if (!_adCfgData.mode) _adCfgData.mode = _adCfgData.enabled === false ? 'off' : 'private';
+                    } catch (_) {
+                        _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+                        fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
+                    }
+                } else {
+                    _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+                    fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
+                    if (!fs.existsSync(_adFallback)) {
+                        fs.writeFileSync(_adFallback, JSON.stringify(_adCfgData, null, 2));
+                    }
+                }
                 global._antideleteConfigs[_adCleanNum] = _adCfgData;
-                console.log(chalk.green(`🛡️ [${_adCleanNum}] Auto-enabled antidelete private`));
+                console.log(chalk.green(`🛡️ [${_adCleanNum}] Antidelete mode: ${_adCfgData.mode || 'private'}`));
             } catch (_adErr) {
                 console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
             }
@@ -1953,7 +1965,7 @@ async function startpairing(nexusDevNumber) {
                         `*👤 Sender:* @${_adSenderNum2}\n` +
                         `*🕒 Time:* ${_adTime2}\n` +
                         (_adIsGroup2 ? `*👥 Group:* ${_adGroupName2 || _adChatId2.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
-                    if (_adOrig2.content) _adText2 += `\n*💬 Deleted Message:*\n${_adOrig2.content}`;
+                    _adText2 += `\n*💬 Deleted Message:*\n${_adOrig2.content || '_[media / no text]_'}`;
 
                     // Determine target
                     const _adTarget2 = (_adMode2 === 'chat' || _adMode2 === 'chat_groups')
@@ -1966,52 +1978,9 @@ async function startpairing(nexusDevNumber) {
                         mentions: [_adSender2].filter(Boolean)
                     });
 
-                    // FIX: Forward actual media if message had image/video/audio/sticker/document
-                    if (_adOrig2.rawMsg) {
-                        const _rawM = _adOrig2.rawMsg;
-                        try {
-                            const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-                            const _dlMedia = async (msgData, mtype) => {
-                                try {
-                                    const _stream = await downloadContentFromMessage(msgData, mtype);
-                                    const _chunks = [];
-                                    for await (const _ch of _stream) _chunks.push(_ch);
-                                    const _buf = Buffer.concat(_chunks);
-                                    return _buf.length > 0 ? _buf : null;
-                                } catch (_) { return null; }
-                            };
-
-                            if (_rawM.imageMessage) {
-                                const _buf = await _dlMedia(_rawM.imageMessage, 'image');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { image: _buf, caption: '📸 *Deleted Image*', mimetype: _rawM.imageMessage.mimetype || 'image/jpeg' });
-                                } else if (_rawM.imageMessage.url) {
-                                    await nexus.sendMessage(_adTarget2, { image: { url: _rawM.imageMessage.url }, caption: '📸 *Deleted Image*' });
-                                }
-                            } else if (_rawM.videoMessage) {
-                                const _buf = await _dlMedia(_rawM.videoMessage, 'video');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { video: _buf, caption: '🎥 *Deleted Video*', mimetype: _rawM.videoMessage.mimetype || 'video/mp4' });
-                                } else if (_rawM.videoMessage.url) {
-                                    await nexus.sendMessage(_adTarget2, { video: { url: _rawM.videoMessage.url }, caption: '🎥 *Deleted Video*' });
-                                }
-                            } else if (_rawM.audioMessage) {
-                                const _buf = await _dlMedia(_rawM.audioMessage, 'audio');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { audio: _buf, mimetype: _rawM.audioMessage.mimetype || 'audio/ogg; codecs=opus', ptt: _rawM.audioMessage.ptt || false });
-                                }
-                            } else if (_rawM.stickerMessage) {
-                                const _buf = await _dlMedia(_rawM.stickerMessage, 'sticker');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { sticker: _buf });
-                                }
-                            } else if (_rawM.documentMessage) {
-                                const _buf = await _dlMedia(_rawM.documentMessage, 'document');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { document: _buf, mimetype: _rawM.documentMessage.mimetype || 'application/octet-stream', fileName: _rawM.documentMessage.fileName || 'deleted_file' });
-                                }
-                            }
-                        } catch (_mediaFwdErr) { /* silent — media may have expired */ }
+                    // Forward deleted media (image/video/audio/sticker/document) to bot DM
+                    if (typeof global._adForwardDeletedMedia === 'function') {
+                        await global._adForwardDeletedMedia(nexus, _adTarget2, _adOrig2, _adSender2);
                     }
 
                     // Clean up store to prevent duplicate report from messages.upsert

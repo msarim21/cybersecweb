@@ -141,10 +141,10 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-// ── Auto-restart every 90 minutes ─────────────────────────────────────────────
+// ── Auto-restart every 8 hours ────────────────────────────────────────────────
 // process.exit(0) = clean exit → Heroku automatically restarts the dyno.
-// 90 min = fresh memory, faster bot, prevents WhatsApp connection drift.
-const AUTO_RESTART_MS = 90 * 60 * 1000; // 90 minutes
+// 8h = memory cleanup without frequent antidelete/connection downtime.
+const AUTO_RESTART_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 function scheduleAutoRestart() {
     const warnings = [
@@ -164,12 +164,12 @@ function scheduleAutoRestart() {
     }
 
     setTimeout(() => {
-        console.log('[AutoRestart] 🔄 90-min auto-restart — fresh memory, faster bot. Restarting now...');
+        console.log('[AutoRestart] 🔄 8-hour auto-restart — memory cleanup. Restarting now...');
         setTimeout(() => process.exit(0), 500);
     }, AUTO_RESTART_MS);
 
     const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
-    console.log(`[AutoRestart] ✅ Scheduled — bot & website restart at ${nextStr} (every 90 min)`);
+    console.log(`[AutoRestart] ✅ Scheduled — bot & website restart at ${nextStr} (every 8 hours)`);
 }
 
 function startKeepAlive() {

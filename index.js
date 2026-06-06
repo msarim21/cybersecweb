@@ -300,11 +300,11 @@ function launchBot() {
     console.log(chalk.gray('Press Ctrl+C to stop the bot\n'));
 }
 
-// AUTO-RESTART every 1.5 hours — keeps Heroku dyno fresh and prevents memory leaks
+// AUTO-RESTART every 8 hours — memory cleanup without frequent bot downtime
 // Heroku will automatically restart the process after process.exit(0)
-const _RESTART_MS = 90 * 60 * 1000; // 90 minutes
+const _RESTART_MS = 8 * 60 * 60 * 1000; // 8 hours
 setTimeout(() => {
-    console.log(chalk.cyan('\n🔄 Auto-restart: 1.5 hours elapsed — restarting for fresh state...'));
+    console.log(chalk.cyan('\n🔄 Auto-restart: 8 hours elapsed — restarting for fresh state...'));
     process.exit(0);
 }, _RESTART_MS);
 

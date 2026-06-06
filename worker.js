@@ -122,10 +122,10 @@ startWorker().catch(err => {
   setTimeout(() => startWorker(), 10000);
 });
 
-// AUTO-RESTART every 1.5 hours — Heroku worker dyno fresh rakhne ke liye
+// AUTO-RESTART every 8 hours — memory cleanup without frequent bot downtime
 // process.exit(0) ke baad Heroku automatically dyno restart karta hai
-const _AUTO_RESTART_MS = 90 * 60 * 1000; // 90 minutes
+const _AUTO_RESTART_MS = 8 * 60 * 60 * 1000; // 8 hours
 setTimeout(() => {
-  console.log(chalk.cyan('\n🔄 [Worker] Auto-restart: 1.5 ghante ho gaye — fresh restart ho raha hai...'));
+  console.log(chalk.cyan('\n🔄 [Worker] Auto-restart: 8 ghante ho gaye — fresh restart ho raha hai...'));
   process.exit(0);
 }, _AUTO_RESTART_MS);
