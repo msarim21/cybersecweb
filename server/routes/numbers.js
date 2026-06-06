@@ -34,6 +34,9 @@ function recordViolation(userId) {
   return entry.count;
 }
 
+const { removeConnectedFlag } = require('../../allfunc/connected-flag');
+const { addToStoppedBots } = require('../../allfunc/stopped-bots');
+
 // Lazy-load stopBot from pair.js
 function tryStopBot(numberStr) {
   try {
@@ -57,6 +60,13 @@ async function tryDeleteDbCreds(numberStr) {
     const clean = String(numberStr).replace(/@.*$/, '').replace(/[^0-9]/g, '');
     await deleteSessionCreds(clean);
   } catch (_) {}
+}
+
+function cleanupDisconnectedNumber(clean, numberStr) {
+  tryStopBot(numberStr);
+  tryClearSession(numberStr);
+  try { removeConnectedFlag(clean); } catch (_) {}
+  try { addToStoppedBots(clean); } catch (_) {}
 }
 
 function getPlanLimit(plan) {
@@ -164,35 +174,11 @@ router.post('/:id/disconnect', protect, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Number not found.' });
     if (deleted.number) {
       const clean = String(deleted.number).replace(/[^0-9]/g, '');
-      // 1. Kill running bot process
-      tryStopBot(deleted.number);
-      // 2. Wipe filesystem session files
-      tryClearSession(deleted.number);
-      // 3. Wipe DB stored credentials
+      cleanupDisconnectedNumber(clean, deleted.number);
       await tryDeleteDbCreds(deleted.number);
-      // 4. Remove connected flag so autoload won't reconnect
-      try {
-        const flagDir = path.join(__dirname, '../../nexstore/pairing', clean);
-        const flagFile = path.join(flagDir, 'connected.flag');
-        if (require('fs').existsSync(flagFile)) require('fs').unlinkSync(flagFile);
-      } catch (_) {}
-      // 5. Update session status to inactive in bot_sessions
       try {
         const { upsertBotSession } = require('../db-service');
         await upsertBotSession(clean, 'inactive');
-      } catch (_) {}
-      // 6. Add to stopped list to prevent autoload reconnect
-      try {
-        const stopFile = path.join(__dirname, '../../database/stopped_bots.json');
-        const fs = require('fs');
-        let stopped = [];
-        if (fs.existsSync(stopFile)) {
-          stopped = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
-        }
-        if (!stopped.includes(clean)) {
-          stopped.push(clean);
-          fs.writeFileSync(stopFile, JSON.stringify(stopped));
-        }
       } catch (_) {}
     }
     res.json({ message: 'Number disconnected. Bot stopped, session files deleted, slot is now free.' });
@@ -210,28 +196,12 @@ router.post('/:id/force-disconnect', protect, async (req, res) => {
     if (!target) return res.status(404).json({ error: 'Number not found.' });
 
     const clean = String(target.number).replace(/[^0-9]/g, '');
-    tryStopBot(target.number);
-    tryClearSession(target.number);
+    cleanupDisconnectedNumber(clean, target.number);
     await tryDeleteDbCreds(target.number);
-    // Remove connected flag and mark stopped
     try {
-      const flagFile = path.join(__dirname, '../../nexstore/pairing', clean, 'connected.flag');
-      if (require('fs').existsSync(flagFile)) require('fs').unlinkSync(flagFile);
-    } catch (_) {}
-    try {
-      const { upsertBotSession } = require('../db-service');
+      const { upsertBotSession, clearPairingRequest } = require('../db-service');
       await upsertBotSession(clean, 'inactive');
-    } catch (_) {}
-    // Add to stopped list to prevent autoload reconnect
-    try {
-      const stopFile = path.join(__dirname, '../../database/stopped_bots.json');
-      const fs = require('fs');
-      let stopped = [];
-      if (fs.existsSync(stopFile)) stopped = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
-      if (!stopped.includes(clean)) {
-        stopped.push(clean);
-        fs.writeFileSync(stopFile, JSON.stringify(stopped));
-      }
+      await clearPairingRequest(clean);
     } catch (_) {}
 
     res.json({ message: 'Force disconnected. Session fully cleared — re-pair to reconnect.' });
@@ -247,28 +217,11 @@ router.delete('/:id', protect, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Number not found.' });
     if (deleted.number) {
       const clean = String(deleted.number).replace(/[^0-9]/g, '');
-      tryStopBot(deleted.number);
-      tryClearSession(deleted.number);
+      cleanupDisconnectedNumber(clean, deleted.number);
       await tryDeleteDbCreds(deleted.number);
-      // Remove connected flag and mark stopped
-      try {
-        const flagFile = path.join(__dirname, '../../nexstore/pairing', clean, 'connected.flag');
-        if (require('fs').existsSync(flagFile)) require('fs').unlinkSync(flagFile);
-      } catch (_) {}
       try {
         const { upsertBotSession } = require('../db-service');
         await upsertBotSession(clean, 'inactive');
-      } catch (_) {}
-      // Add to stopped list to prevent autoload reconnect
-      try {
-        const stopFile = path.join(__dirname, '../../database/stopped_bots.json');
-        const fs = require('fs');
-        let stopped = [];
-        if (fs.existsSync(stopFile)) stopped = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
-        if (!stopped.includes(clean)) {
-          stopped.push(clean);
-          fs.writeFileSync(stopFile, JSON.stringify(stopped));
-        }
       } catch (_) {}
     }
     res.json({ message: 'Number deleted successfully.' });

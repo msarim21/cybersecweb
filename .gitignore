@@ -47,3 +47,15 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Secrets & WhatsApp session data (never commit)
+.env
+.env.*
+!.env.example
+auth.json
+nexstore/pairing/**/*
+!nexstore/pairing/.gitkeep
+database/antidelete_store.json
+database/antidelete_pending.json
+database/stopped_bots.json
+uploads/

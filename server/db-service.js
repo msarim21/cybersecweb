@@ -225,23 +225,13 @@ function isTrialExpired(user) {
 }
 
 async function getExpiredUsers() {
-  const now = new Date();
   if (isMongoMode()) {
     const { User } = M();
-    return (await User.find({
-      $or: [
-        { planExpiresAt: { $lt: now, $ne: null } },
-        { trialExpiresAt: { $lt: now, $ne: null } }
-      ]
-    })).map(normUser);
+    const all = await User.find({});
+    return all.map(normUser).filter(isPlanExpired);
   }
-  const { rows } = await pg().query(
-    `SELECT * FROM users
-     WHERE (plan_expires_at IS NOT NULL AND plan_expires_at < $1)
-        OR (trial_expires_at IS NOT NULL AND trial_expires_at < $1)`,
-    [now]
-  );
-  return rows;
+  const { rows } = await pg().query('SELECT * FROM users');
+  return rows.map(normUser).filter(isPlanExpired);
 }
 
 async function disconnectAllUserDevices(userId) {
@@ -721,6 +711,14 @@ async function getAllActiveLinkedNumbers() {
 // SESSION CREDS BACKUP (for Heroku / ephemeral filesystem platforms)
 // ════════════════════════════════════════════════════════════════════════════
 
+async function ensurePgBotSessionColumns() {
+  if (isMongoMode()) return;
+  await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS session_data JSONB`).catch(() => {});
+  await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_code VARCHAR(32)`).catch(() => {});
+  await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_status VARCHAR(20)`).catch(() => {});
+  await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_owner_id VARCHAR(50)`).catch(() => {});
+}
+
 async function saveSessionCreds(number, sessionFiles) {
   const clean = number.replace(/[^0-9]/g, '');
   if (!clean || !sessionFiles) return;
@@ -733,13 +731,20 @@ async function saveSessionCreds(number, sessionFiles) {
     );
     return;
   }
-  // PostgreSQL fallback — store as JSON text in bot_sessions if column exists
   try {
+    await ensurePgBotSessionColumns();
     await pg().query(
-      `UPDATE bot_sessions SET last_active = NOW() WHERE number = $1`,
-      [clean]
+      `INSERT INTO bot_sessions (number, session_data, last_active, status)
+       VALUES ($1, $2::jsonb, NOW(), 'active')
+       ON CONFLICT (number) DO UPDATE
+         SET session_data = EXCLUDED.session_data,
+             last_active = NOW(),
+             status = 'active'`,
+      [clean, JSON.stringify(sessionFiles)]
     );
-  } catch (_) {}
+  } catch (e) {
+    console.error('[db] saveSessionCreds pg error:', e.message);
+  }
 }
 
 
@@ -764,7 +769,169 @@ async function getSessionCreds(number) {
     const doc = await BotSession.findOne({ number: clean });
     return doc?.sessionData || null;
   }
-  return null;
+  try {
+    await ensurePgBotSessionColumns();
+    const { rows } = await pg().query(
+      'SELECT session_data FROM bot_sessions WHERE number = $1',
+      [clean]
+    );
+    return rows[0]?.session_data || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ── Pairing queue (web dyno → worker dyno) ───────────────────────────────────
+async function requestPairing(number, ownerId = null) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  const owner = ownerId != null ? String(ownerId) : null;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      {
+        pairingStatus: 'requested',
+        pairingCode: null,
+        pairingOwnerId: owner,
+        status: 'pending',
+        lastActive: new Date(),
+      },
+      { upsert: true }
+    );
+    return;
+  }
+  await ensurePgBotSessionColumns();
+  await pg().query(
+    `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, pairing_owner_id, last_active)
+     VALUES ($1, 'pending', 'requested', NULL, $2, NOW())
+     ON CONFLICT (number) DO UPDATE SET
+       status = 'pending',
+       pairing_status = 'requested',
+       pairing_code = NULL,
+       pairing_owner_id = $2,
+       last_active = NOW()`,
+    [clean, owner]
+  );
+}
+
+async function setPairingCode(number, code) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || !code) return;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      { pairingCode: code, pairingStatus: 'code_ready', lastActive: new Date() },
+      { upsert: true }
+    );
+    return;
+  }
+  await ensurePgBotSessionColumns();
+  await pg().query(
+    `UPDATE bot_sessions SET pairing_code = $2, pairing_status = 'code_ready', last_active = NOW()
+     WHERE number = $1`,
+    [clean, code]
+  );
+}
+
+async function getPairingState(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const doc = await BotSession.findOne({ number: clean }).lean();
+    if (!doc) return null;
+    return {
+      code: doc.pairingCode || null,
+      pairingStatus: doc.pairingStatus || null,
+      status: doc.status || null,
+      pairingOwnerId: doc.pairingOwnerId || null,
+    };
+  }
+  await ensurePgBotSessionColumns();
+  const { rows } = await pg().query(
+    `SELECT pairing_code, pairing_status, status, pairing_owner_id
+     FROM bot_sessions WHERE number = $1`,
+    [clean]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    code: r.pairing_code,
+    pairingStatus: r.pairing_status,
+    status: r.status,
+    pairingOwnerId: r.pairing_owner_id,
+  };
+}
+
+async function getPendingPairingRequests() {
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const docs = await BotSession.find({ pairingStatus: 'requested' }).lean();
+    return docs.map((d) => d.number).filter(Boolean);
+  }
+  await ensurePgBotSessionColumns();
+  const { rows } = await pg().query(
+    `SELECT number FROM bot_sessions WHERE pairing_status = 'requested' ORDER BY last_active ASC`
+  );
+  return rows.map((r) => r.number);
+}
+
+async function markPairingInProgress(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return false;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const res = await BotSession.findOneAndUpdate(
+      { number: clean, pairingStatus: 'requested' },
+      { pairingStatus: 'pairing', lastActive: new Date() }
+    );
+    return Boolean(res);
+  }
+  await ensurePgBotSessionColumns();
+  const { rowCount } = await pg().query(
+    `UPDATE bot_sessions SET pairing_status = 'pairing', last_active = NOW()
+     WHERE number = $1 AND pairing_status = 'requested'`,
+    [clean]
+  );
+  return rowCount > 0;
+}
+
+async function resetPairingRequest(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      { pairingStatus: 'requested', pairingCode: null }
+    );
+    return;
+  }
+  await ensurePgBotSessionColumns();
+  await pg().query(
+    `UPDATE bot_sessions SET pairing_status = 'requested', pairing_code = NULL WHERE number = $1`,
+    [clean]
+  );
+}
+
+async function clearPairingRequest(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      { pairingStatus: null, pairingCode: null }
+    );
+    return;
+  }
+  await ensurePgBotSessionColumns();
+  await pg().query(
+    `UPDATE bot_sessions SET pairing_status = NULL, pairing_code = NULL WHERE number = $1`,
+    [clean]
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────────────────
@@ -880,7 +1047,10 @@ module.exports = {
   upsertBotSession, getActiveBotSessions,
   setBotMode, getBotMode,
   getAllActiveLinkedNumbers,
+  getActiveLinkedNumbers: getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds, deleteSessionCreds,
+  requestPairing, setPairingCode, getPairingState, getPendingPairingRequests,
+  markPairingInProgress, resetPairingRequest, clearPairingRequest,
   getSiteSetting, setSiteSetting,
   countAdmins,
   sendChatMessage, getChatMessages, markChatMessagesRead, getChatUnreadCounts, getActiveChatUsers,

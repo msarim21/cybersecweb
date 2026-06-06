@@ -4,8 +4,8 @@ const { getExpiredUsers, disconnectAllUserDevices, getNumbersByOwner } = require
 const path = require('path');
 const fsSync = require('fs');
 
-const PAIRING_BASE = path.join(__dirname, '../../database/pairing');
-const SESSIONS_BASE = path.join(__dirname, '../../database/sessions');
+const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
+const SESSIONS_BASE = path.join(__dirname, '../../nexstore/pairing');
 
 function deleteFolderRecursive(p) {
   if (!fsSync.existsSync(p)) return;
@@ -54,9 +54,15 @@ async function runPlanExpiryCheck() {
             path.join(PAIRING_BASE, cleanNum),
             path.join(SESSIONS_BASE, jid),
             path.join(SESSIONS_BASE, cleanNum),
-            path.join(__dirname, '../../database/sessions.json'),
-            path.join(__dirname, '../../database', cleanNum),
           ];
+          try {
+            const { removeConnectedFlag } = require('../../allfunc/connected-flag');
+            removeConnectedFlag(cleanNum);
+          } catch (_) {}
+          try {
+            const { addToStoppedBots } = require('../../allfunc/stopped-bots');
+            addToStoppedBots(cleanNum);
+          } catch (_) {}
 
           for (const p of pathsToWipe) {
             try {

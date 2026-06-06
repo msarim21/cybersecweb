@@ -73,12 +73,10 @@ async function processUser(user, index, total) {
   try {
     const startpairing = require('./pair');
     await startpairing(user);
-    delete require.cache[require.resolve('./pair')];
     console.log(chalk.green(`✅ Connected: ${user}`));
     return user;
   } catch (error) {
     console.log(chalk.red(`❌ Failed for ${user}: ${error.message}`));
-    delete require.cache[require.resolve('./pair')];
     throw error;
   }
 }
@@ -99,12 +97,16 @@ async function processBatch(users, batchSize = 10) {
 
     console.log(chalk.cyan(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} users)`));
 
-    const batchPromises = batch.map((user, index) =>
-      processUser(user, i + index, users.length).catch(error => ({ user, error: error.message, success: false }))
-    );
-
-    const batchResults = await Promise.allSettled(batchPromises);
-    results.push(...batchResults);
+    // Serialize within batch — parallel connects caused error 440 and ghost sockets
+    for (let j = 0; j < batch.length; j++) {
+      const user = batch[j];
+      try {
+        const value = await processUser(user, i + j, users.length);
+        results.push({ status: 'fulfilled', value });
+      } catch (error) {
+        results.push({ status: 'fulfilled', value: { user, error: error.message, success: false } });
+      }
+    }
 
     if (i + batchSize < users.length && !isShuttingDown) {
       console.log(chalk.gray(`⏳ Waiting 2 seconds before next batch...`));

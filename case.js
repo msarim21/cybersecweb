@@ -4003,6 +4003,7 @@ _Auto-saved via status antidelete_`;
             // Mode filtering
             if (_adMode === 'private_pm' && _adIsGroup) { return; }
             if (_adMode === 'private_groups' && !_adIsGroup) { return; }
+            if (_adMode === 'chat' && _adIsGroup) { return; }
             if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
 
             // Look up cached message — memory, disk, Baileys store (works when bot user phone is offline)

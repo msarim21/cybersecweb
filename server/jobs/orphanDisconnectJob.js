@@ -4,73 +4,69 @@ const path = require('path');
 const fs = require('fs');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
-const STOPPED_FILE = path.join(__dirname, '../../database/stopped_bots.json');
+const PAIRING_GRACE_MS = 3 * 60 * 1000;
 
 let _running = false;
 
-function getStoppedNumbers() {
-  try {
-    if (fs.existsSync(STOPPED_FILE)) {
-      return new Set(JSON.parse(fs.readFileSync(STOPPED_FILE, 'utf-8')).map(n => String(n).replace(/[^0-9]/g, '')));
-    }
-  } catch (_) {}
-  return new Set();
+function isWorkerProcess() {
+  return process.env.WHATSAPP_WORKER === '1' || process.env.DYNO?.startsWith('worker');
 }
 
 async function runOrphanDisconnectCheck() {
+  if (!isWorkerProcess()) return;
   if (_running) return;
   _running = true;
   try {
-    if (!fs.existsSync(PAIRING_BASE)) { _running = false; return; }
+    if (!fs.existsSync(PAIRING_BASE)) return;
 
-    const stoppedNums = getStoppedNumbers();
+    const { readStopped } = require('../../allfunc/stopped-bots');
+    const stoppedNums = new Set(readStopped());
+
     const dirs = fs.readdirSync(PAIRING_BASE, { withFileTypes: true })
       .filter(d => d.isDirectory() && d.name.endsWith('@s.whatsapp.net'))
       .map(d => d.name);
 
-    if (!dirs.length) { _running = false; return; }
+    if (!dirs.length) return;
 
-    const { getActiveLinkedNumbers } = require('../db-service');
+    const { getAllActiveLinkedNumbers, upsertBotSession } = require('../db-service');
     let dbNumbers = [];
     try {
-      const raw = await getActiveLinkedNumbers();
+      const raw = await getAllActiveLinkedNumbers();
       dbNumbers = (raw || []).map(n => String(n).replace(/[^0-9]/g, ''));
     } catch (_) {}
 
     const dbSet = new Set(dbNumbers);
-
-    const { isConnected: isBotConnected } = require('../../allfunc/connected-flag');
+    const { isConnected: isBotConnected, readConnectedFlag, removeConnectedFlag } = require('../../allfunc/connected-flag');
 
     for (const dir of dirs) {
       const cleanNum = dir.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-
       const isConnected = isBotConnected(cleanNum);
       const inDb = dbSet.has(cleanNum);
       const isStopped = stoppedNums.has(cleanNum);
 
-      if (isConnected && !inDb && !isStopped) {
-        console.log(`[OrphanDisconnect] Orphan bot found: ${cleanNum} — active but not in DB. Disconnecting...`);
-        try {
-          const pairMod = require('../../pair');
-          if (typeof pairMod.stopBot === 'function') pairMod.stopBot(cleanNum + '@s.whatsapp.net');
-        } catch (_) {}
-        try {
-          const { removeConnectedFlag } = require('../../allfunc/connected-flag');
-          removeConnectedFlag(cleanNum);
-        } catch (_) {}
-        try {
-          const { deleteSessionCreds, upsertBotSession } = require('../../session-db');
-          await deleteSessionCreds(cleanNum);
-          await upsertBotSession(cleanNum, 'inactive');
-        } catch (_) {}
-        try {
-          const stopped = getStoppedNumbers();
-          const arr = [...stopped, cleanNum];
-          fs.mkdirSync(path.dirname(STOPPED_FILE), { recursive: true });
-          fs.writeFileSync(STOPPED_FILE, JSON.stringify([...new Set(arr)]));
-        } catch (_) {}
-        console.log(`[OrphanDisconnect] ${cleanNum} disconnected and marked stopped.`);
-      }
+      if (!isConnected || inDb || isStopped) continue;
+
+      try {
+        const flag = readConnectedFlag(cleanNum);
+        if (flag?.ts && (Date.now() - flag.ts) < PAIRING_GRACE_MS) continue;
+      } catch (_) {}
+
+      console.log(`[OrphanDisconnect] Orphan bot found: ${cleanNum} — active but not in DB. Disconnecting...`);
+      try {
+        const pairMod = require('../../pair');
+        if (typeof pairMod.stopBot === 'function') pairMod.stopBot(cleanNum + '@s.whatsapp.net');
+      } catch (_) {}
+      try { removeConnectedFlag(cleanNum); } catch (_) {}
+      try {
+        const { deleteSessionCreds } = require('../../session-db');
+        await deleteSessionCreds(cleanNum);
+        await upsertBotSession(cleanNum, 'inactive');
+      } catch (_) {}
+      try {
+        const { addToStoppedBots } = require('../../allfunc/stopped-bots');
+        addToStoppedBots(cleanNum);
+      } catch (_) {}
+      console.log(`[OrphanDisconnect] ${cleanNum} disconnected and marked stopped.`);
     }
   } catch (err) {
     console.error('[OrphanDisconnect] Check failed:', err.message);
@@ -80,11 +76,15 @@ async function runOrphanDisconnectCheck() {
 }
 
 function startOrphanDisconnectJob(intervalMs = 30_000) {
+  if (!isWorkerProcess()) {
+    console.log('[OrphanDisconnect] Skipped on web dyno — worker handles orphan cleanup');
+    return null;
+  }
   setTimeout(() => runOrphanDisconnectCheck().catch(() => {}), 60_000);
   const interval = setInterval(() => {
     runOrphanDisconnectCheck().catch(() => {});
   }, intervalMs);
-  console.log(`[OrphanDisconnect] Auto-disconnect job started (${intervalMs / 1000}s interval)`);
+  console.log(`[OrphanDisconnect] Auto-disconnect job started on worker (${intervalMs / 1000}s interval)`);
   return interval;
 }
 

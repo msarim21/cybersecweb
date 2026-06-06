@@ -430,27 +430,16 @@ router.post('/users/:id/disconnect-all', async (req, res) => {
   try {
     const user = await findUserById(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
+    const { getNumbersByOwner } = require('../db-service');
+    const nums = await getNumbersByOwner(user.id, null);
+    const { removeConnectedFlag } = require('../../allfunc/connected-flag');
+    const { addToStoppedBots } = require('../../allfunc/stopped-bots');
     const result = await disconnectAllUserDevices(user.id);
-    // Extra: kill bot process, clear sessions, remove connected flags, mark stopped
-    try {
-      const { getNumbersByOwner } = require('../db-service');
-      const nums = await getNumbersByOwner(user.id, null);
-      const pairMod = require('../../pair');
-      const fs = require('fs');
-      const path = require('path');
-      const stopFile = path.join(__dirname, '../../database/stopped_bots.json');
-      let stopped = [];
-      if (fs.existsSync(stopFile)) stopped = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
-      for (const n of nums) {
-        const clean = String(n.number).replace(/[^0-9]/g, '');
-        if (typeof pairMod.stopBot === 'function') pairMod.stopBot(n.number);
-        if (typeof pairMod.clearSession === 'function') pairMod.clearSession(n.number);
-        const flagFile = path.join(__dirname, '../../nexstore/pairing', clean, 'connected.flag');
-        if (fs.existsSync(flagFile)) fs.unlinkSync(flagFile);
-        if (!stopped.includes(clean)) stopped.push(clean);
-      }
-      fs.writeFileSync(stopFile, JSON.stringify(stopped));
-    } catch (_) {}
+    for (const n of nums) {
+      const clean = String(n.number).replace(/[^0-9]/g, '');
+      try { removeConnectedFlag(clean); } catch (_) {}
+      try { addToStoppedBots(clean); } catch (_) {}
+    }
     res.json({ message: `Disconnected ${result.disconnected} device(s).`, ...result });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -720,28 +709,6 @@ router.put('/settings/abuse-threshold', async (req, res) => {
       return res.status(400).json({ error: 'Threshold must be between 1 and 100.' });
     await setSiteSetting('abuse_threshold', String(n));
     res.json({ message: `Auto-ban threshold set to ${n} attempt(s).`, threshold: n });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── Force Disconnect All — kill all bots + free all slots for a user ─────────
-router.post('/users/:id/disconnect-all', async (req, res) => {
-  try {
-    const { getNumbersByOwner, deleteNumber } = require('../db-service');
-    const numbers = await getNumbersByOwner(req.params.id, null);
-    if (!numbers.length) return res.json({ message: 'No numbers to disconnect.', disconnected: 0 });
-
-    let pairMod = null;
-    try { pairMod = require('../../pair'); } catch (_) {}
-
-    for (const n of numbers) {
-      if (pairMod) {
-        try { if (typeof pairMod.stopBot === 'function') pairMod.stopBot(n.number); } catch (_) {}
-        try { if (typeof pairMod.clearSession === 'function') pairMod.clearSession(n.number); } catch (_) {}
-      }
-      try { await deleteNumber(n._id, req.params.id); } catch (_) {}
-    }
-
-    res.json({ message: `${numbers.length} number(s) force-disconnected. All slots freed.`, disconnected: numbers.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -598,6 +598,7 @@ export default function Dashboard() {
     if (!confirm(`Force disconnect ${number}?\n\nThis will kill the bot process AND wipe all saved session data (filesystem + database). Use when the number is stuck or not responding.\n\nYou will need to re-pair to reconnect.`)) return;
     try {
       await axios.post(`/api/numbers/${id}/force-disconnect`);
+      setNumbers(p => p.map(n => n._id === id ? { ...n, status: 'inactive' } : n));
       toast.success('Force disconnected! Session fully cleared.');
     } catch (err) { toast.error(err.response?.data?.error || 'Force disconnect failed'); }
   };

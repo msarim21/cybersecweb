@@ -109,7 +109,7 @@ const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
-const { startOrphanDisconnectJob } = require('./jobs/orphanDisconnectJob');
+const { protect: protectAuth, adminOnly } = require('./middleware/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -359,8 +359,8 @@ app.get('/api/site/audio/file', (req, res) => {
   }
 });
 
-// ── Admin: upload audio (JWT-only auth — NO requireDb, no 503) ───────────────
-app.post('/api/admin/audio', protectJwt, (req, res, next) => {
+// ── Admin: upload audio (admin only) ─────────────────────────────────────────
+app.post('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res, next) => {
   audioUploadMw.single('audio')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Max 20MB allowed.' });
@@ -375,14 +375,14 @@ app.post('/api/admin/audio', protectJwt, (req, res, next) => {
   res.json({ status: 'done', original: req.file.originalname, filename: req.file.filename });
 });
 
-// ── Admin: get audio info (JWT-only, no DB) ──────────────────────────────────
-app.get('/api/admin/audio', protectJwt, (req, res) => {
+// ── Admin: get audio info ────────────────────────────────────────────────────
+app.get('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res) => {
   const m = readAudioMeta();
   res.json({ filename: m?.filename || '', original: m?.original || '' });
 });
 
-// ── Admin: delete audio (JWT-only, no DB) ───────────────────────────────────
-app.delete('/api/admin/audio', protectJwt, (req, res) => {
+// ── Admin: delete audio ──────────────────────────────────────────────────────
+app.delete('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res) => {
   clearAudioMeta();
   res.json({ message: 'Audio removed.' });
 });
@@ -619,8 +619,7 @@ initDb()
 
     // Start plan expiry auto-disconnect cron (every 60 seconds)
     startPlanExpiryJob(60_000);
-    // Start orphan bot auto-disconnect cron (every 30 seconds)
-    startOrphanDisconnectJob(30_000);
+    // Orphan disconnect runs on worker dyno only (worker.js)
   })
   .catch(err => {
     console.error('❌ Database connection failed:', err.message);

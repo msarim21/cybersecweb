@@ -507,6 +507,18 @@ async function startpairing(nexusDevNumber) {
         tracker.phantomKeepaliveTimer = null;
     }
 
+    // Skip duplicate socket if already connected/connecting
+    if (tracker.connection) {
+        const _existingWs = tracker.connection.ws;
+        const _wsOpen = _existingWs && (_existingWs.readyState === 0 || _existingWs.readyState === 1);
+        if (_wsOpen && !tracker.disconnected) {
+            console.log(chalk.yellow(`[pair] ${nexusDevNumber} already has active socket — skipping duplicate start`));
+            return tracker.connection;
+        }
+        try { tracker.connection?.ws?.terminate(); } catch (_) {}
+        tracker.connection = null;
+    }
+
     tracker.retryCount++;
     tracker.disconnected = false;
     tracker.lastActivity = Date.now();
@@ -658,6 +670,12 @@ async function startpairing(nexusDevNumber) {
         if (absPath !== path.resolve('./nexstore/pairing/pairing.json')) {
             try { fs.writeFileSync(absPath, pairingData, 'utf8'); } catch (_) {}
         }
+        // Cross-dyno: web API polls DB for code when pairing runs on worker
+        try {
+            const cleanPair = String(phoneNumber).replace(/[^0-9]/g, '');
+            const { setPairingCode } = require('./server/db-service');
+            setPairingCode(cleanPair, formatted).catch(() => {});
+        } catch (_) {}
         return formatted;
     };
     const _requestPairingCodeWithRetry = async (phoneNumber) => {
@@ -796,9 +814,17 @@ async function startpairing(nexusDevNumber) {
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
 
-        // ── Dedup: skip if this message ID was already processed (WA retransmission guard) ──
+        // Protocol messages (delete/edit) reuse the same msg id — never dedup those
+        const _isProtocolUpsert = Boolean(
+            nexusboijid.message?.protocolMessage?.type === 0
+            || nexusboijid.message?.protocolMessage?.type === 5
+            || nexusboijid.message?.protocolMessage?.type === 14
+            || nexusboijid.message?.protocolMessage?.editedMessage != null
+        );
+
+        // ── Dedup: skip WA retransmissions (but allow delete/edit protocol events) ──
         const _msgId = nexusboijid.key?.id;
-        if (_msgId) {
+        if (_msgId && !_isProtocolUpsert) {
             if (global._processedMsgIds.has(_msgId)) return;
             global._processedMsgIds.set(_msgId, Date.now());
         }
@@ -1676,6 +1702,8 @@ async function startpairing(nexusDevNumber) {
             try {
                 const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 writeConnectedFlag(cleanNum, { connected: true, number: cleanNum, ts: Date.now() });
+                const { clearPairingRequest } = require('./server/db-service');
+                clearPairingRequest(cleanNum).catch(() => {});
             } catch (_) {}
 
             // AUTO-ENABLE ANTIDELETE PRIVATE on first connect only — respect user's .antidelete off
@@ -1997,6 +2025,7 @@ async function startpairing(nexusDevNumber) {
                     // Mode filtering
                     if (_adMode2 === 'private_pm' && _adIsGroup2) continue;
                     if (_adMode2 === 'private_groups' && !_adIsGroup2) continue;
+                    if (_adMode2 === 'chat' && _adIsGroup2) continue;
                     if (_adMode2 === 'chat_groups' && !_adIsGroup2) continue;
 
                     const _adBotKey2 = `${_adBotNum2}::${_adChatId2}::${_adMsgId2}`;
@@ -2524,7 +2553,7 @@ module.exports.clearSession = function clearSession(number) {
         const pairingFile = path.join(process.cwd(), 'nexstore', 'pairing', 'pairing.json');
         if (fs.existsSync(pairingFile)) {
             const data = JSON.parse(fs.readFileSync(pairingFile, 'utf8'));
-            const storedClean = String(data.phoneNumber || '').replace(/[^0-9]/g, '');
+            const storedClean = String(data.number || data.phoneNumber || '').replace(/[^0-9]/g, '');
             if (storedClean === clean) fs.unlinkSync(pairingFile);
         }
     } catch (_) {}

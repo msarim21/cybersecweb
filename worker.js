@@ -80,6 +80,12 @@ async function startWorker() {
   startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — bot will stay alive 24/7'));
 
+  const { startPairingProcessor } = require('./worker/pairing-processor');
+  startPairingProcessor(3000);
+
+  const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
+  startOrphanDisconnectJob(30_000);
+
   // ──────────────────────────────────────────────────────────────────────────
   // AUTO-DISCONNECT: Every 30s — koi bhi bot jo web pe save nahi, disconnect
   // ──────────────────────────────────────────────────────────────────────────
