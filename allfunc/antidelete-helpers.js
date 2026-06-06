@@ -1,4 +1,181 @@
 const fs = require('fs');
+const path = require('path');
+
+const ANTIDELETE_DISK_STORE = './database/antidelete_store.json';
+const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
+const ANTIDELETE_PENDING_MAX = 500;
+
+function _adEnsureDbDir() {
+    if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+}
+
+function _adExtractText(msg) {
+    if (!msg) return '';
+    return msg.conversation
+        || msg.extendedTextMessage?.text
+        || msg.imageMessage?.caption
+        || msg.videoMessage?.caption
+        || msg.documentMessage?.caption
+        || msg.audioMessage?.caption
+        || '';
+}
+
+function _adMediaTypeFromMsg(msg) {
+    if (!msg) return '';
+    if (msg.imageMessage) return 'image';
+    if (msg.videoMessage) return 'video';
+    if (msg.audioMessage) return 'audio';
+    if (msg.stickerMessage) return 'sticker';
+    if (msg.documentMessage) return 'document';
+    return '';
+}
+
+function _readDiskEntry(key) {
+    try {
+        if (!fs.existsSync(ANTIDELETE_DISK_STORE)) return null;
+        const entries = JSON.parse(fs.readFileSync(ANTIDELETE_DISK_STORE, 'utf-8'));
+        if (!Array.isArray(entries)) return null;
+        const found = entries.find(([k]) => k === key);
+        return found ? found[1] : null;
+    } catch (_) { return null; }
+}
+
+function _adStoreKeys(botNum, chatId, msgId) {
+    const shared = `${chatId}::${msgId}`;
+    const botKey = botNum ? `${botNum}::${shared}` : shared;
+    return [botKey, shared, msgId];
+}
+
+function _adEntryFromLoadedMessage(loaded, chatId) {
+    const msg = loaded?.message || {};
+    return {
+        content: _adExtractText(msg),
+        rawMsg: msg,
+        rawMediaMsg: _serializeRawMedia(msg),
+        mediaType: _adMediaTypeFromMsg(msg),
+        mediaPath: '',
+        fromMe: Boolean(loaded?.key?.fromMe),
+        sender: loaded?.key?.participant || chatId,
+        timestamp: new Date().toISOString(),
+        _ts: Date.now(),
+    };
+}
+
+// Lookup cached message: memory → disk → Baileys store (works when bot user phone is offline)
+async function _adLookupCachedMessage(sock, botNum, chatId, msgId) {
+    for (const k of _adStoreKeys(botNum, chatId, msgId)) {
+        const mem = global._antideleteStore?.get(k);
+        if (mem) return mem;
+    }
+    for (const k of _adStoreKeys(botNum, chatId, msgId)) {
+        const disk = _readDiskEntry(k);
+        if (disk) return disk;
+    }
+    const store = global._baileysMsgStore;
+    if (store?.loadMessage && chatId && msgId) {
+        try {
+            const loaded = await store.loadMessage(chatId, msgId);
+            if (loaded?.message) return _adEntryFromLoadedMessage(loaded, chatId);
+        } catch (_) {}
+    }
+    if (sock?.loadMessage) {
+        try {
+            const loaded = await sock.loadMessage(chatId, msgId);
+            if (loaded?.message) return _adEntryFromLoadedMessage(loaded, chatId);
+        } catch (_) {}
+    }
+    return null;
+}
+
+function _adSerializeForPending(mediaOriginal) {
+    if (!mediaOriginal) return null;
+    return {
+        content: mediaOriginal.content,
+        mediaType: mediaOriginal.mediaType,
+        mediaPath: mediaOriginal.mediaPath,
+        isPtt: mediaOriginal.isPtt,
+        rawMediaMsg: mediaOriginal.rawMediaMsg,
+        sender: mediaOriginal.sender,
+    };
+}
+
+function _adQueuePendingReport(botNum, report) {
+    try {
+        _adEnsureDbDir();
+        let pending = [];
+        if (fs.existsSync(ANTIDELETE_PENDING_FILE)) {
+            try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { pending = []; }
+        }
+        if (!Array.isArray(pending)) pending = [];
+        pending.push({
+            id: `${botNum}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            botNum: String(botNum || ''),
+            targetJid: report.targetJid,
+            text: report.text,
+            sender: report.sender || '',
+            deletedBy: report.deletedBy || '',
+            mediaOriginal: _adSerializeForPending(report.mediaOriginal),
+            ts: Date.now(),
+            attempts: 0,
+        });
+        if (pending.length > ANTIDELETE_PENDING_MAX) pending = pending.slice(-ANTIDELETE_PENDING_MAX);
+        fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(pending, null, 2));
+        console.log(`[ANTIDELETE] Queued offline report for bot ${botNum} (user phone may be offline)`);
+    } catch (e) {
+        console.error('[ANTIDELETE] pending queue error:', e.message);
+    }
+}
+
+async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal, sender, deletedBy, botNum }) {
+    if (!sock || !targetJid || !text) return false;
+    const mentions = [deletedBy, sender].filter(Boolean);
+    try {
+        await sock.sendMessage(targetJid, { text, mentions });
+        if (mediaOriginal) await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender);
+        return true;
+    } catch (e) {
+        console.error('[ANTIDELETE] deliver failed, queuing for later:', e.message);
+        if (botNum) {
+            _adQueuePendingReport(botNum, { targetJid, text, mediaOriginal, sender, deletedBy });
+        }
+        return false;
+    }
+}
+
+// Flush pending reports when bot reconnects — delivers to saved messages even if user was offline
+async function _adFlushPendingReports(sock, botNum, botJid) {
+    if (!sock || !botNum || !fs.existsSync(ANTIDELETE_PENDING_FILE)) return;
+    let pending = [];
+    try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { return; }
+    if (!Array.isArray(pending) || !pending.length) return;
+
+    const clean = String(botNum).replace(/[^0-9]/g, '');
+    const mine = pending.filter(p => String(p.botNum).replace(/[^0-9]/g, '') === clean);
+    if (!mine.length) return;
+
+    const remaining = pending.filter(p => String(p.botNum).replace(/[^0-9]/g, '') !== clean);
+    let flushed = 0;
+
+    for (const item of mine) {
+        const target = item.targetJid || botJid;
+        if (!target) continue;
+        try {
+            const mentions = [item.deletedBy, item.sender].filter(Boolean);
+            await sock.sendMessage(target, { text: item.text, mentions });
+            if (item.mediaOriginal) await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender);
+            flushed++;
+        } catch (e) {
+            item.attempts = (item.attempts || 0) + 1;
+            if (item.attempts < 15) remaining.push(item);
+        }
+    }
+
+    try {
+        _adEnsureDbDir();
+        fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(remaining.slice(-ANTIDELETE_PENDING_MAX), null, 2));
+        if (flushed > 0) console.log(`[ANTIDELETE] Flushed ${flushed} pending report(s) to ${clean} saved messages`);
+    } catch (_) {}
+}
 
 function _serializeRawMedia(msg) {
     const _am = msg?.audioMessage || null;
@@ -171,9 +348,17 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender) {
 global._serializeRawMedia = _serializeRawMedia;
 global._adResolveMediaInfo = _adResolveMediaInfo;
 global._adForwardDeletedMedia = _adForwardDeletedMedia;
+global._adLookupCachedMessage = _adLookupCachedMessage;
+global._adDeliverAntideleteReport = _adDeliverAntideleteReport;
+global._adFlushPendingReports = _adFlushPendingReports;
+global._adQueuePendingReport = _adQueuePendingReport;
 
 module.exports = {
     _serializeRawMedia,
     _adResolveMediaInfo,
     _adForwardDeletedMedia,
+    _adLookupCachedMessage,
+    _adDeliverAntideleteReport,
+    _adFlushPendingReports,
+    _adQueuePendingReport,
 };

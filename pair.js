@@ -1030,8 +1030,10 @@ async function startpairing(nexusDevNumber) {
                     };
                     global._antideleteStore.set(_adKey, _adEntry);
                     global._antideleteStore.set(_adSharedKey, _adEntry);
-                    // FIX: persist to disk so bot restart doesn't lose cached messages
-                    if (typeof global._antideleteDiskSave === 'function') {
+                    // Immediate disk persist — message survives user phone offline / bot restart
+                    if (typeof global._antideleteDiskSaveNow === 'function') {
+                        global._antideleteDiskSaveNow();
+                    } else if (typeof global._antideleteDiskSave === 'function') {
                         global._antideleteDiskSave();
                     } else if (!global._pairAdSaveTimer) {
                         global._pairAdSaveTimer = setTimeout(() => {
@@ -1646,7 +1648,14 @@ async function startpairing(nexusDevNumber) {
                 console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
             }
 
-            
+            // Deliver any antidelete reports queued while user phone was offline
+            try {
+                const _flushNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const _flushJid = nexus._cachedBotNumber || userJid;
+                if (typeof global._adFlushPendingReports === 'function') {
+                    global._adFlushPendingReports(nexus, _flushNum, _flushJid).catch(() => {});
+                }
+            } catch (_) {}
 
             // 🔐 Self mode on every connect/restart (linked user only — .public to open)
             try {
@@ -1913,9 +1922,9 @@ async function startpairing(nexusDevNumber) {
                                 const _d2 = JSON.parse(_adFs2.readFileSync(_adFile2, 'utf-8'));
                                 _adCfg2 = _d2.mode ? _d2 : (_d2.enabled === true ? { mode: 'private' } : { mode: 'off' });
                             } else {
-                                _adCfg2 = { mode: 'off' };
+                                _adCfg2 = { mode: 'private', enabled: true };
                             }
-                        } catch (_fe) { _adCfg2 = { mode: 'off' }; }
+                        } catch (_fe) { _adCfg2 = { mode: 'private', enabled: true }; }
                         global._antideleteConfigs[_adBotNum2] = _adCfg2;
                     }
                     const _adMode2 = _adCfg2.mode || 'off';
@@ -1930,15 +1939,19 @@ async function startpairing(nexusDevNumber) {
                     if (_adMode2 === 'private_groups' && !_adIsGroup2) continue;
                     if (_adMode2 === 'chat_groups' && !_adIsGroup2) continue;
 
-                    // Look up in store (per-bot key first, then shared key)
                     const _adBotKey2 = `${_adBotNum2}::${_adChatId2}::${_adMsgId2}`;
                     const _adSharedKey2 = `${_adChatId2}::${_adMsgId2}`;
-                    const _adOrig2 = global._antideleteStore.get(_adBotKey2)
-                        || global._antideleteStore.get(_adSharedKey2)
-                        || global._antideleteStore.get(_adMsgId2);
 
-                    // Skip if this entry was already handled by the messages.upsert path
-                    // (the upsert path deletes the entry after reporting)
+                    // Lookup: memory → disk → Baileys store (user phone can be offline)
+                    let _adOrig2 = null;
+                    if (typeof global._adLookupCachedMessage === 'function') {
+                        _adOrig2 = await global._adLookupCachedMessage(nexus, _adBotNum2, _adChatId2, _adMsgId2);
+                    }
+                    if (!_adOrig2) {
+                        _adOrig2 = global._antideleteStore?.get(_adBotKey2)
+                            || global._antideleteStore?.get(_adSharedKey2)
+                            || global._antideleteStore?.get(_adMsgId2);
+                    }
                     if (!_adOrig2) continue;
 
                     // Skip if it's the bot's own message being deleted
@@ -1972,15 +1985,21 @@ async function startpairing(nexusDevNumber) {
                         ? _adChatId2
                         : botNumber; // bot's own saved messages (DM)
 
-                    // Send text report first
-                    await nexus.sendMessage(_adTarget2, {
-                        text: _adText2,
-                        mentions: [_adSender2].filter(Boolean)
-                    });
-
-                    // Forward deleted media (image/video/audio/sticker/document) to bot DM
-                    if (typeof global._adForwardDeletedMedia === 'function') {
-                        await global._adForwardDeletedMedia(nexus, _adTarget2, _adOrig2, _adSender2);
+                    // Deliver report + media to saved messages (queued if send fails / user offline)
+                    if (typeof global._adDeliverAntideleteReport === 'function') {
+                        await global._adDeliverAntideleteReport(nexus, {
+                            targetJid: _adTarget2,
+                            text: _adText2,
+                            mediaOriginal: _adOrig2,
+                            sender: _adSender2,
+                            deletedBy: _adSender2,
+                            botNum: _adBotNum2,
+                        });
+                    } else {
+                        await nexus.sendMessage(_adTarget2, { text: _adText2, mentions: [_adSender2].filter(Boolean) });
+                        if (typeof global._adForwardDeletedMedia === 'function') {
+                            await global._adForwardDeletedMedia(nexus, _adTarget2, _adOrig2, _adSender2);
+                        }
                     }
 
                     // Clean up store to prevent duplicate report from messages.upsert
