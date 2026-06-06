@@ -19,7 +19,7 @@ function deleteFolderRecursive(p) {
  * stop socket → wipe FS session → delete DB creds → pair().
  */
 async function processPairingQueue() {
-    if (process.env.WHATSAPP_WORKER !== '1') return;
+    if (process.env.WHATSAPP_WORKER !== '1') return false;
 
     try {
         const {
@@ -30,7 +30,7 @@ async function processPairingQueue() {
         } = require('../server/db-service');
 
         const pending = await getPendingPairingRequests();
-        if (!pending.length) return;
+        if (!pending.length) return false;
 
         if (!global._pairingInFlight) global._pairingInFlight = new Set();
 
@@ -72,17 +72,15 @@ async function processPairingQueue() {
                         if (fs.existsSync(pairingJson)) fs.unlinkSync(pairingJson);
                     } catch (_) {}
 
-                    await new Promise((r) => setTimeout(r, 1500));
-
                     pairMod(jid).catch((err) => {
                         console.error(`[PairingQueue] pair() error for ${clean}:`, err.message);
                     });
 
-                    const deadline = Date.now() + 120_000;
+                    const deadline = Date.now() + 90_000;
                     while (Date.now() < deadline) {
                         const st = await getPairingState(clean).catch(() => null);
                         if (st?.code) break;
-                        await new Promise((r) => setTimeout(r, 1000));
+                        await new Promise((r) => setTimeout(r, 400));
                     }
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
@@ -94,16 +92,26 @@ async function processPairingQueue() {
                 }
             })();
         }
+        return true;
     } catch (err) {
         console.error('[PairingQueue] Error:', err.message);
+        return false;
     }
 }
 
-function startPairingProcessor(intervalMs = 2000) {
+function startPairingProcessor(intervalMs = 400) {
     if (process.env.WHATSAPP_WORKER !== '1') return null;
-    setTimeout(() => processPairingQueue().catch(() => {}), 500);
-    const timer = setInterval(() => processPairingQueue().catch(() => {}), intervalMs);
-    console.log(`[PairingQueue] Worker pairing processor started (${intervalMs / 1000}s poll)`);
+
+    const tick = async () => {
+        const hadWork = await processPairingQueue().catch(() => false);
+        if (hadWork) {
+            setTimeout(tick, 200);
+        }
+    };
+
+    processPairingQueue().catch(() => {});
+    const timer = setInterval(() => tick().catch(() => {}), intervalMs);
+    console.log(`[PairingQueue] Worker pairing processor started (${intervalMs}ms fast poll)`);
     return timer;
 }
 

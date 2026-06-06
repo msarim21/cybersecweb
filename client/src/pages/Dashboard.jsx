@@ -315,7 +315,7 @@ const LinkModal = ({ onClose, onAdd }) => {
     try {
       await axios.post('/api/pairing/request', { phoneNumber: form.number });
 
-      const deadline = Date.now() + 120_000;
+      const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
         const { data } = await axios.get(`/api/pairing/code/${clean}`);
         if (data.code) {
@@ -324,7 +324,7 @@ const LinkModal = ({ onClose, onAdd }) => {
           setStep(3);
           return;
         }
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 600));
       }
       throw new Error('Pairing code timeout — worker dyno check karein aur dubara try karein.');
     } catch (err) {
@@ -401,7 +401,7 @@ const LinkModal = ({ onClose, onAdd }) => {
                 <div className="text-center">
                   <div className="font-display text-sm text-[#00f5ff] tracking-widest mb-1">CONNECTING TO WHATSAPP</div>
                   <div className="font-mono text-[10px] text-gray-500">Requesting pairing code for {form.number}…</div>
-                  <div className="font-mono text-[10px] text-gray-600 mt-1">Usually 10–30 seconds — please wait</div>
+                  <div className="font-mono text-[10px] text-gray-600 mt-1">Usually 5–10 seconds — please wait</div>
                 </div>
               </motion.div>
             )}

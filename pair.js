@@ -702,10 +702,10 @@ async function startpairing(nexusDevNumber) {
         if (!phoneNumber) throw new Error('Invalid phone number');
 
         const MAX_ATTEMPTS = 8;
-        const RETRY_DELAY = 4000;
+        const RETRY_DELAY = 2000;
         for (let _attempt = 1; _attempt <= MAX_ATTEMPTS; _attempt++) {
             try {
-                await sleep(_attempt === 1 ? 2000 : RETRY_DELAY);
+                await sleep(_attempt === 1 ? 400 : RETRY_DELAY);
                 let code = await nexus.requestPairingCode(phoneNumber);
                 if (!code) throw new Error('Empty pairing code returned');
                 const formatted = await _writePairingJson(phoneNumber, code);
@@ -721,6 +721,16 @@ async function startpairing(nexusDevNumber) {
             }
         }
     };
+
+    // Request code immediately after socket is ready (faster than waiting for connection.update)
+    if (pairingCode && !state.creds.registered) {
+        const _earlyPhone = String(nexusDevNumber).replace(/[^0-9]/g, '');
+        setTimeout(() => {
+            _requestPairingCodeWithRetry(_earlyPhone).catch((err) => {
+                console.log(chalk.red(`[Pairing] Early code request failed for ${_earlyPhone}: ${err.message}`));
+            });
+        }, 200);
+    }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
         const { type: rawType = 'INFO', name, description = '', picture = null, react, id, newsletter_id = key, ...media } = content;

@@ -133,7 +133,7 @@ async function startWorker() {
   console.log(chalk.green('\n🟢 Worker is running — bot will stay alive 24/7'));
 
   const { startPairingProcessor } = require('./worker/pairing-processor');
-  startPairingProcessor(2000);
+  startPairingProcessor(400);
 
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);
