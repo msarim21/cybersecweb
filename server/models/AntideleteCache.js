@@ -10,6 +10,7 @@ const antideleteCacheSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 antideleteCacheSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+antideleteCacheSchema.index({ botNum: 1, chatId: 1, msgId: 1 }, { unique: true });
 
 module.exports = mongoose.models.AntideleteCache
   || mongoose.model('AntideleteCache', antideleteCacheSchema);

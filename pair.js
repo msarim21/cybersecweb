@@ -18,6 +18,7 @@ const {
 const { updateSession, removeLinkedNumber, saveCredsToDb, restoreCredsFromDb } = require('./session-db');
 const { addNumber, getBotMode, setBotMode } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
+require('./allfunc/antidelete-session');
 require('./allfunc/antidelete-helpers');
 const { writeConnectedFlag, removeConnectedFlag } = require('./allfunc/connected-flag');
 const NodeCache = require("node-cache");
@@ -617,8 +618,8 @@ async function startpairing(nexusDevNumber) {
     
     if (store) {
         store.bind(nexus.ev);
-        // Expose to global so case.js can use it as offline-message fallback for antidelete
-        global._baileysMsgStore = store;
+        // Per-session Baileys store — NEVER assign to global (multi-bot collision)
+        nexus._baileysMsgStore = store;
     }
 
     // ── Save ALL existing private chats + groups when bot first connects ──
@@ -1944,7 +1945,6 @@ async function startpairing(nexusDevNumber) {
                 // instead of (or in addition to) messages.upsert protocolMessage type 0.
                 // We handle it here so antidelete works regardless of which event fires.
                 try {
-                    if (!global._antideleteStore) continue;
                     if (!global._antideleteConfigs) global._antideleteConfigs = {};
 
                     // Load antidelete config for this bot (memory cache first)
@@ -1977,27 +1977,19 @@ async function startpairing(nexusDevNumber) {
                     if (_adMode2 === 'chat' && _adIsGroup2) continue;
                     if (_adMode2 === 'chat_groups' && !_adIsGroup2) continue;
 
-                    const _adBotKey2 = `${_adBotNum2}::${_adChatId2}::${_adMsgId2}`;
-                    const _adSharedKey2 = `${_adChatId2}::${_adMsgId2}`;
-
-                    // Lookup: memory → disk → Baileys store (user phone can be offline)
+                    // Session-scoped lookup only — no global/shared cache keys
                     let _adOrig2 = null;
                     if (typeof global._adLookupCachedMessage === 'function') {
                         _adOrig2 = await global._adLookupCachedMessage(nexus, _adBotNum2, _adChatId2, _adMsgId2);
                     }
-                    if (!_adOrig2) {
-                        _adOrig2 = global._antideleteStore?.get(_adBotKey2)
-                            || global._antideleteStore?.get(_adSharedKey2)
-                            || global._antideleteStore?.get(_adMsgId2);
-                    }
                     if (!_adOrig2) continue;
 
-                    // Skip if it's the bot's own message being deleted
                     const _adSender2 = _adOrig2.sender || '';
                     const _adSenderNum2 = _adSender2.split('@')[0];
                     if (_adOrig2.fromMe || _adSenderNum2 === _adBotNum2) {
-                        global._antideleteStore.delete(_adBotKey2);
-                        global._antideleteStore.delete(_adSharedKey2);
+                        if (typeof global._adRemoveCachedMessage === 'function') {
+                            global._adRemoveCachedMessage(_adBotNum2, _adChatId2, _adMsgId2);
+                        }
                         continue;
                     }
 
@@ -2041,12 +2033,8 @@ async function startpairing(nexusDevNumber) {
                         }
                     }
 
-                    // Clean up store to prevent duplicate report from messages.upsert
-                    global._antideleteStore.delete(_adBotKey2);
-                    global._antideleteStore.delete(_adSharedKey2);
-                    global._antideleteStore.delete(_adMsgId2);
-                    if (typeof global._adMongoDelete === 'function') {
-                        global._adMongoDelete([_adBotKey2, _adSharedKey2, _adMsgId2]);
+                    if (typeof global._adRemoveCachedMessage === 'function') {
+                        global._adRemoveCachedMessage(_adBotNum2, _adChatId2, _adMsgId2);
                     }
                 } catch (_adE2) { /* silent */ }
             }
@@ -2144,15 +2132,12 @@ async function startpairing(nexusDevNumber) {
                   const _aeBotJid = _aeBotNum ? `${_aeBotNum}@s.whatsapp.net` : _aeChatId;
 
                   // ── Update _antideleteStore with NEW edited content (fix: delete after edit shows new text) ──
-                  if (_aeNewText && _aeOrigId && _aeChatId && global._antideleteStore) {
-                      const _adK1 = `${_aeBotNum}::${_aeChatId}::${_aeOrigId}`;
-                      const _adK2 = `${_aeChatId}::${_aeOrigId}`;
-                      for (const _k of [_adK1, _adK2, _aeOrigId]) {
-                          if (global._antideleteStore.has(_k)) {
-                              const _adEx = global._antideleteStore.get(_k);
-                              _adEx.content = _aeNewText;
-                              global._antideleteStore.set(_k, _adEx);
-                          }
+                  if (_aeNewText && _aeOrigId && _aeChatId && typeof global.getAntideleteSession === 'function') {
+                      const _adSess = global.getAntideleteSession(_aeBotNum);
+                      const _adEx = _adSess?.get(_aeChatId, _aeOrigId);
+                      if (_adEx) {
+                          _adEx.content = _aeNewText;
+                          _adSess.set(_aeChatId, _aeOrigId, _adEx);
                       }
                   }
                   // ── Update _antieditStore entry too ──

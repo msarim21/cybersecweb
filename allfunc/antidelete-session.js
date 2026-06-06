@@ -1,0 +1,204 @@
+'use strict';
+
+/**
+ * Anti-Delete session isolation layer
+ * ───────────────────────────────────
+ * Each connected WhatsApp bot number gets its OWN:
+ *   • in-memory message cache (Map)
+ *   • disk persistence file (database/antidelete_store_<botNum>.json)
+ *   • media prefetch directory (tmp/antidelete_media/<botNum>/)
+ *   • debounced disk-save timer
+ *
+ * NEVER use a global shared Map or bare msgId keys — that caused cross-session
+ * overwrites when multiple bots run on the same worker dyno.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const ANTIDELETE_MAX_ENTRIES = 2000;
+const LEGACY_DISK_STORE = './database/antidelete_store.json';
+const DISK_DEBOUNCE_MS = 550;
+
+function cleanBotNum(value) {
+    return String(value || '').replace(/[^0-9]/g, '');
+}
+
+class AntideleteSessionStore {
+    constructor(botNum) {
+        this.botNum = cleanBotNum(botNum);
+        if (!this.botNum) throw new Error('AntideleteSessionStore requires botNum');
+        /** @type {Map<string, object>} chatId::msgId → entry */
+        this.memory = new Map();
+        this.diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
+        this.mediaDir = path.join('tmp', 'antidelete_media', this.botNum);
+        this._diskTimer = null;
+        this._loaded = false;
+    }
+
+    /** Session-local key — unique within this bot only */
+    cacheKey(chatId, msgId) {
+        return `${chatId}::${msgId}`;
+    }
+
+    /** Mongo / cross-process key — globally unique */
+    mongoKey(chatId, msgId) {
+        return `${this.botNum}::${this.cacheKey(chatId, msgId)}`;
+    }
+
+    ensureDirs() {
+        if (!fs.existsSync('database')) fs.mkdirSync('database', { recursive: true });
+        if (!fs.existsSync(this.mediaDir)) fs.mkdirSync(this.mediaDir, { recursive: true });
+    }
+
+    loadFromDisk() {
+        if (this._loaded) return;
+        this._loaded = true;
+        this.ensureDirs();
+        try {
+            if (!fs.existsSync(this.diskPath)) return;
+            const entries = JSON.parse(fs.readFileSync(this.diskPath, 'utf-8'));
+            if (!Array.isArray(entries)) return;
+            const now = Date.now();
+            for (const [key, val] of entries) {
+                const age = val?.timestamp ? now - new Date(val.timestamp).getTime() : 0;
+                if (age > 24 * 60 * 60 * 1000) continue;
+                if (!val._ts) val._ts = val.timestamp ? new Date(val.timestamp).getTime() : now;
+                this.memory.set(key, val);
+            }
+        } catch (_) {}
+    }
+
+    get(chatId, msgId) {
+        this.loadFromDisk();
+        return this.memory.get(this.cacheKey(chatId, msgId)) || null;
+    }
+
+    set(chatId, msgId, entry) {
+        this.loadFromDisk();
+        this.memory.set(this.cacheKey(chatId, msgId), entry);
+    }
+
+    delete(chatId, msgId) {
+        this.memory.delete(this.cacheKey(chatId, msgId));
+    }
+
+    readDiskEntry(chatId, msgId) {
+        try {
+            if (!fs.existsSync(this.diskPath)) return null;
+            const key = this.cacheKey(chatId, msgId);
+            const entries = JSON.parse(fs.readFileSync(this.diskPath, 'utf-8'));
+            if (!Array.isArray(entries)) return null;
+            const found = entries.find(([k]) => k === key);
+            return found ? found[1] : null;
+        } catch (_) { return null; }
+    }
+
+    scheduleDiskSave() {
+        if (this._diskTimer) return;
+        this._diskTimer = setTimeout(() => {
+            this._diskTimer = null;
+            this.saveDiskNow();
+        }, DISK_DEBOUNCE_MS);
+    }
+
+    saveDiskNow() {
+        if (this._diskTimer) {
+            clearTimeout(this._diskTimer);
+            this._diskTimer = null;
+        }
+        try {
+            this.ensureDirs();
+            const entries = [];
+            for (const [key, val] of this.memory.entries()) {
+                entries.push([key, val]);
+            }
+            fs.writeFileSync(this.diskPath, JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES)), 'utf-8');
+        } catch (_) {}
+    }
+
+    mediaFilePath(msgId, ext) {
+        this.ensureDirs();
+        return path.join(this.mediaDir, `${msgId}.${ext}`);
+    }
+
+    sweep(cutoffTs) {
+        for (const [k, v] of this.memory) {
+            if (v?._ts && v._ts < cutoffTs) this.memory.delete(k);
+        }
+    }
+}
+
+/** botNum → AntideleteSessionStore */
+function getAntideleteSession(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return null;
+    if (!global._antideleteSessions) global._antideleteSessions = new Map();
+    if (!global._antideleteSessions.has(clean)) {
+        global._antideleteSessions.set(clean, new AntideleteSessionStore(clean));
+    }
+    return global._antideleteSessions.get(clean);
+}
+
+/** One-time migration from legacy monolithic antidelete_store.json */
+function migrateLegacyAntideleteStore() {
+    if (global._antideleteLegacyMigrated) return;
+    global._antideleteLegacyMigrated = true;
+    try {
+        if (!fs.existsSync(LEGACY_DISK_STORE)) return;
+        const entries = JSON.parse(fs.readFileSync(LEGACY_DISK_STORE, 'utf-8'));
+        if (!Array.isArray(entries)) return;
+        let moved = 0;
+        for (const [key, val] of entries) {
+            // Legacy keys: botNum::chatId::msgId OR chatId::msgId OR bare msgId
+            const parts = String(key).split('::');
+            let botNum = '';
+            let chatId = '';
+            let msgId = '';
+            if (parts.length >= 3 && /^\d+$/.test(parts[0])) {
+                botNum = parts[0];
+                chatId = parts[1];
+                msgId = parts.slice(2).join('::');
+            } else if (parts.length === 2) {
+                chatId = parts[0];
+                msgId = parts[1];
+            } else {
+                continue; // bare msgId — cannot attribute safely, skip
+            }
+            if (!chatId || !msgId) continue;
+            const session = botNum ? getAntideleteSession(botNum) : null;
+            if (!session) continue;
+            if (!session.memory.has(session.cacheKey(chatId, msgId))) {
+                session.set(chatId, msgId, val);
+                moved++;
+            }
+        }
+        if (moved > 0) {
+            for (const s of global._antideleteSessions.values()) s.saveDiskNow();
+            console.log(`[ANTIDELETE] Migrated ${moved} legacy cache entries into per-session stores`);
+        }
+    } catch (e) {
+        console.error('[ANTIDELETE] Legacy migration error:', e.message);
+    }
+}
+
+// Per-session sweep (replaces global _antideleteStore sweep)
+if (!global._antideleteSessionSweepStarted) {
+    global._antideleteSessionSweepStarted = true;
+    setInterval(() => {
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        for (const session of (global._antideleteSessions?.values() || [])) {
+            session.sweep(cutoff);
+        }
+    }, 30 * 60 * 1000);
+}
+
+migrateLegacyAntideleteStore();
+
+module.exports = {
+    AntideleteSessionStore,
+    getAntideleteSession,
+    cleanBotNum,
+    migrateLegacyAntideleteStore,
+    DISK_DEBOUNCE_MS,
+};

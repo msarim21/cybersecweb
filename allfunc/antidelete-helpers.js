@@ -1,10 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const { getAntideleteSession, cleanBotNum } = require('./antidelete-session');
 
-const ANTIDELETE_DISK_STORE = './database/antidelete_store.json';
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
-const ANTIDELETE_TEMP_DIR = './tmp/antidelete_media';
 const ANTIDELETE_MONGO_TTL_MS = 48 * 60 * 60 * 1000;
 
 function _adEnsureDbDir() {
@@ -45,29 +44,34 @@ function _adMediaTypeFromMsg(msg) {
     return '';
 }
 
-async function _adMongoGet(key) {
+async function _adMongoGet(botNum, chatId, msgId) {
     try {
         const { isMongoMode, initDb } = require('../server/db');
         if (!isMongoMode()) return null;
         await initDb();
         const AntideleteCache = require('../server/models/AntideleteCache');
-        const doc = await AntideleteCache.findOne({ key }).lean();
+        const clean = cleanBotNum(botNum);
+        const doc = await AntideleteCache.findOne({ botNum: clean, chatId, msgId }).lean();
         return doc?.data || null;
     } catch (_) { return null; }
 }
 
-function _adMongoSave(key, botNum, chatId, msgId, entry) {
+function _adMongoSave(botNum, chatId, msgId, entry) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return;
     (async () => {
         try {
             const { isMongoMode, initDb } = require('../server/db');
             if (!isMongoMode()) return;
             await initDb();
             const AntideleteCache = require('../server/models/AntideleteCache');
+            const session = getAntideleteSession(clean);
+            const key = session ? session.mongoKey(chatId, msgId) : `${clean}::${chatId}::${msgId}`;
             await AntideleteCache.findOneAndUpdate(
-                { key },
+                { botNum: clean, chatId, msgId },
                 {
                     key,
-                    botNum: String(botNum || ''),
+                    botNum: clean,
                     chatId: String(chatId || ''),
                     msgId: String(msgId || ''),
                     data: entry,
@@ -79,25 +83,24 @@ function _adMongoSave(key, botNum, chatId, msgId, entry) {
     })();
 }
 
-function _adMongoDelete(keys) {
+function _adMongoDelete(botNum, chatId, msgId) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return;
     setImmediate(async () => {
         try {
             const { isMongoMode, initDb } = require('../server/db');
             if (!isMongoMode()) return;
             await initDb();
             const AntideleteCache = require('../server/models/AntideleteCache');
-            await AntideleteCache.deleteMany({ key: { $in: keys.filter(Boolean) } });
+            await AntideleteCache.deleteOne({ botNum: clean, chatId, msgId });
         } catch (_) {}
     });
 }
 
-function _adPrefetchMedia(msgId, mediaContent, mtype, storeKeys) {
-    if (!mediaContent || !mtype || !msgId) return;
-    if (!fs.existsSync(ANTIDELETE_TEMP_DIR)) {
-        try { fs.mkdirSync(ANTIDELETE_TEMP_DIR, { recursive: true }); } catch (_) {}
-    }
+function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
+    if (!mediaContent || !mtype || !msgId || !session || !chatId) return;
     const ext = mtype === 'video' ? 'mp4' : mtype === 'audio' ? 'ogg' : mtype === 'sticker' ? 'webp' : 'jpg';
-    const filePath = path.join(ANTIDELETE_TEMP_DIR, `${msgId}.${ext}`);
+    const filePath = session.mediaFilePath(msgId, ext);
     setImmediate(async () => {
         try {
             const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
@@ -107,19 +110,21 @@ function _adPrefetchMedia(msgId, mediaContent, mtype, storeKeys) {
             const buf = Buffer.concat(chunks);
             if (!buf.length) return;
             await fs.promises.writeFile(filePath, buf);
-            for (const k of storeKeys) {
-                const ex = global._antideleteStore?.get(k);
-                if (ex) {
-                    ex.mediaPath = filePath;
-                    global._antideleteStore.set(k, ex);
-                }
+            const ex = session.get(chatId, msgId);
+            if (ex) {
+                ex.mediaPath = filePath;
+                session.set(chatId, msgId, ex);
+                _adMongoSave(botNum, chatId, msgId, ex);
             }
-            if (typeof global._antideleteDiskSave === 'function') global._antideleteDiskSave();
+            session.scheduleDiskSave();
         } catch (_) {}
     });
 }
 
-/** Cache any message (including fromMe / self-chat) for antidelete recovery */
+/**
+ * Cache a message inside THIS bot session only.
+ * Never writes to a global shared Map.
+ */
 function cacheMessageForAntidelete(rawMsg, sock) {
     try {
         if (!rawMsg?.key?.id || !rawMsg?.key?.remoteJid) return;
@@ -127,18 +132,15 @@ function cacheMessageForAntidelete(rawMsg, sock) {
 
         const chatId = rawMsg.key.remoteJid;
         const msgId = rawMsg.key.id;
-        const botNum = String(sock?.user?.id || sock?._cachedBotNumber || '').split(':')[0].split('@')[0];
+        const botNum = cleanBotNum(sock?.user?.id || sock?._cachedBotNumber || '');
+        if (!botNum) return;
+
+        const session = getAntideleteSession(botNum);
+        if (!session) return;
+
         const unwrapped = unwrapWaMessage(rawMsg.message || {});
         const sender = rawMsg.key.participant || rawMsg.key.remoteJid;
-        const sharedKey = `${chatId}::${msgId}`;
-        const botKey = botNum ? `${botNum}::${sharedKey}` : sharedKey;
-        const storeKeys = [botKey, sharedKey, msgId];
-
-        if (!global._antideleteStore) global._antideleteStore = new Map();
-
-        const existing = global._antideleteStore.get(botKey)
-            || global._antideleteStore.get(sharedKey)
-            || global._antideleteStore.get(msgId);
+        const existing = session.get(chatId, msgId);
 
         let content = _adExtractText(unwrapped) || existing?.content || '';
         let mediaType = _adMediaTypeFromMsg(unwrapped) || existing?.mediaType || '';
@@ -149,20 +151,20 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             content = content || (unwrapped.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
             mediaType = 'audio';
             mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(msgId, unwrapped.audioMessage, 'audio', storeKeys);
+            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.audioMessage, 'audio', session);
         } else if (unwrapped.videoMessage) {
             mediaType = 'video';
             mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(msgId, unwrapped.videoMessage, 'video', storeKeys);
+            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.videoMessage, 'video', session);
         } else if (unwrapped.imageMessage) {
             mediaType = 'image';
             mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(msgId, unwrapped.imageMessage, 'image', storeKeys);
+            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.imageMessage, 'image', session);
         } else if (unwrapped.stickerMessage) {
             content = content || '🎭 Sticker';
             mediaType = 'sticker';
             mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(msgId, unwrapped.stickerMessage, 'sticker', storeKeys);
+            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.stickerMessage, 'sticker', session);
         } else if (unwrapped.documentMessage) {
             const docName = unwrapped.documentMessage.fileName || unwrapped.documentMessage.title || 'File';
             content = content || `📄 Document: ${docName}`;
@@ -182,36 +184,15 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             group: chatId.endsWith('@g.us') ? chatId : null,
             timestamp: new Date().toISOString(),
             _ts: Date.now(),
+            botNum,
         };
 
-        for (const k of storeKeys) {
-            global._antideleteStore.set(k, entry);
-            _adMongoSave(k, botNum, chatId, msgId, entry);
-        }
-
-        // RAM + Mongo instant; disk flush debounced ~550ms (500–600ms target)
-        if (typeof global._antideleteDiskSave === 'function') {
-            global._antideleteDiskSave();
-        }
+        session.set(chatId, msgId, entry);
+        _adMongoSave(botNum, chatId, msgId, entry);
+        session.scheduleDiskSave();
     } catch (e) {
         console.error('[ANTIDELETE] cache error:', e.message);
     }
-}
-
-function _readDiskEntry(key) {
-    try {
-        if (!fs.existsSync(ANTIDELETE_DISK_STORE)) return null;
-        const entries = JSON.parse(fs.readFileSync(ANTIDELETE_DISK_STORE, 'utf-8'));
-        if (!Array.isArray(entries)) return null;
-        const found = entries.find(([k]) => k === key);
-        return found ? found[1] : null;
-    } catch (_) { return null; }
-}
-
-function _adStoreKeys(botNum, chatId, msgId) {
-    const shared = `${chatId}::${msgId}`;
-    const botKey = botNum ? `${botNum}::${shared}` : shared;
-    return [botKey, shared, msgId];
 }
 
 function _adEntryFromLoadedMessage(loaded, chatId) {
@@ -229,25 +210,34 @@ function _adEntryFromLoadedMessage(loaded, chatId) {
     };
 }
 
-// Lookup cached message: memory → disk → Baileys store (works when bot user phone is offline)
+/**
+ * Lookup cached message scoped to ONE bot session:
+ * session RAM → session disk → MongoDB (botNum+chatId+msgId) → this socket's Baileys store
+ */
 async function _adLookupCachedMessage(sock, botNum, chatId, msgId) {
-    for (const k of _adStoreKeys(botNum, chatId, msgId)) {
-        const mem = global._antideleteStore?.get(k);
+    const clean = cleanBotNum(botNum);
+    if (!clean || !chatId || !msgId) return null;
+
+    const session = getAntideleteSession(clean);
+    if (session) {
+        const mem = session.get(chatId, msgId);
         if (mem) return mem;
-    }
-    for (const k of _adStoreKeys(botNum, chatId, msgId)) {
-        const disk = _readDiskEntry(k);
-        if (disk) return disk;
-    }
-    for (const k of _adStoreKeys(botNum, chatId, msgId)) {
-        const mongo = await _adMongoGet(k);
-        if (mongo) {
-            if (global._antideleteStore) global._antideleteStore.set(k, mongo);
-            return mongo;
+        const disk = session.readDiskEntry(chatId, msgId);
+        if (disk) {
+            session.set(chatId, msgId, disk);
+            return disk;
         }
     }
-    const store = global._baileysMsgStore;
-    if (store?.loadMessage && chatId && msgId) {
+
+    const mongo = await _adMongoGet(clean, chatId, msgId);
+    if (mongo) {
+        session?.set(chatId, msgId, mongo);
+        return mongo;
+    }
+
+    // Per-socket Baileys store — never use a global shared store
+    const store = sock?._baileysMsgStore;
+    if (store?.loadMessage) {
         try {
             const loaded = await store.loadMessage(chatId, msgId);
             if (loaded?.message) return _adEntryFromLoadedMessage(loaded, chatId);
@@ -260,6 +250,15 @@ async function _adLookupCachedMessage(sock, botNum, chatId, msgId) {
         } catch (_) {}
     }
     return null;
+}
+
+function _adRemoveCachedMessage(botNum, chatId, msgId) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return;
+    const session = getAntideleteSession(clean);
+    session?.delete(chatId, msgId);
+    session?.scheduleDiskSave();
+    _adMongoDelete(clean, chatId, msgId);
 }
 
 function _adSerializeForPending(mediaOriginal) {
@@ -295,7 +294,7 @@ function _adQueuePendingReport(botNum, report) {
         });
         if (pending.length > ANTIDELETE_PENDING_MAX) pending = pending.slice(-ANTIDELETE_PENDING_MAX);
         fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(pending, null, 2));
-        console.log(`[ANTIDELETE] Queued offline report for bot ${botNum} (user phone may be offline)`);
+        console.log(`[ANTIDELETE] Queued offline report for bot ${botNum}`);
     } catch (e) {
         console.error('[ANTIDELETE] pending queue error:', e.message);
     }
@@ -306,10 +305,10 @@ async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal
     const mentions = [deletedBy, sender].filter(Boolean);
     try {
         await sock.sendMessage(targetJid, { text, mentions });
-        if (mediaOriginal) await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender);
+        if (mediaOriginal) await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
         return true;
     } catch (e) {
-        console.error('[ANTIDELETE] deliver failed, queuing for later:', e.message);
+        console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
         if (botNum) {
             _adQueuePendingReport(botNum, { targetJid, text, mediaOriginal, sender, deletedBy });
         }
@@ -317,18 +316,17 @@ async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal
     }
 }
 
-// Flush pending reports when bot reconnects — delivers to saved messages even if user was offline
 async function _adFlushPendingReports(sock, botNum, botJid) {
     if (!sock || !botNum || !fs.existsSync(ANTIDELETE_PENDING_FILE)) return;
     let pending = [];
     try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { return; }
     if (!Array.isArray(pending) || !pending.length) return;
 
-    const clean = String(botNum).replace(/[^0-9]/g, '');
-    const mine = pending.filter(p => String(p.botNum).replace(/[^0-9]/g, '') === clean);
+    const clean = cleanBotNum(botNum);
+    const mine = pending.filter(p => cleanBotNum(p.botNum) === clean);
     if (!mine.length) return;
 
-    const remaining = pending.filter(p => String(p.botNum).replace(/[^0-9]/g, '') !== clean);
+    const remaining = pending.filter(p => cleanBotNum(p.botNum) !== clean);
     let flushed = 0;
 
     for (const item of mine) {
@@ -337,7 +335,7 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
         try {
             const mentions = [item.deletedBy, item.sender].filter(Boolean);
             await sock.sendMessage(target, { text: item.text, mentions });
-            if (item.mediaOriginal) await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender);
+            if (item.mediaOriginal) await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
             flushed++;
         } catch (e) {
             item.attempts = (item.attempts || 0) + 1;
@@ -348,7 +346,7 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
     try {
         _adEnsureDbDir();
         fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(remaining.slice(-ANTIDELETE_PENDING_MAX), null, 2));
-        if (flushed > 0) console.log(`[ANTIDELETE] Flushed ${flushed} pending report(s) to ${clean} saved messages`);
+        if (flushed > 0) console.log(`[ANTIDELETE][${clean}] Flushed ${flushed} pending report(s)`);
     } catch (_) {}
 }
 
@@ -452,10 +450,10 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
     }
 }
 
-async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender) {
+async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum) {
     if (!sock || !targetJid || !mediaOriginal) return;
     const _info = _adResolveMediaInfo(mediaOriginal);
-    const _hasFile = mediaOriginal.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
+    let _hasFile = mediaOriginal.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
     if (!_info && !_hasFile) return;
 
     const _senderTag = sender ? sender.split('@')[0] : 'unknown';
@@ -515,7 +513,7 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender) {
             });
         }
     } catch (e) {
-        console.error('[ANTIDELETE] media send error:', e.message);
+        console.error(`[ANTIDELETE][${botNum || '?'}] media send error:`, e.message);
     }
     if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
 }
@@ -528,8 +526,10 @@ global._adDeliverAntideleteReport = _adDeliverAntideleteReport;
 global._adFlushPendingReports = _adFlushPendingReports;
 global._adQueuePendingReport = _adQueuePendingReport;
 global._cacheMessageForAntidelete = cacheMessageForAntidelete;
+global._adRemoveCachedMessage = _adRemoveCachedMessage;
 global._adMongoDelete = _adMongoDelete;
 global.unwrapWaMessage = unwrapWaMessage;
+global.getAntideleteSession = getAntideleteSession;
 
 module.exports = {
     _serializeRawMedia,
@@ -541,5 +541,7 @@ module.exports = {
     _adQueuePendingReport,
     cacheMessageForAntidelete,
     unwrapWaMessage,
+    _adRemoveCachedMessage,
     _adMongoDelete,
+    getAntideleteSession,
 };

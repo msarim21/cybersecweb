@@ -205,11 +205,9 @@ global.banned = global.banned || {};  // For banned users
 
 // ============ ANTIEDIT / ANTIDELETE STORES ============
 if (!global._antieditStore) global._antieditStore = new Map();
-if (!global._antideleteStore) global._antideleteStore = new Map();
+// Anti-delete uses per-session stores: global._antideleteSessions (see allfunc/antidelete-session.js)
 
 // PERF FIX: One periodic sweep per store instead of thousands of individual 24h timers.
-// Individual timers (one per message) bloat the Node.js timer heap → GC pauses after 1-2h.
-// Periodic sweep runs every 30 min and removes entries older than 2h.
 if (!global._antieditSweepStarted) {
     global._antieditSweepStarted = true;
     setInterval(() => {
@@ -220,22 +218,11 @@ if (!global._antieditSweepStarted) {
         }
     }, 30 * 60 * 1000);
 }
-if (!global._antideleteSweepStarted) {
-    global._antideleteSweepStarted = true;
-    setInterval(() => {
-        const _adcut = Date.now() - 24 * 60 * 60 * 1000; // FIX: 24h instead of 2h
-        for (const [_k, _v] of global._antideleteStore) {
-            if (_v?._ts && _v._ts < _adcut) global._antideleteStore.delete(_k);
-        }
-    }, 30 * 60 * 1000);
-}
 if (!global._antieditConfig) global._antieditConfig = { mode: 'off' };
 if (!global._antideleteConfig) global._antideleteConfig = { mode: 'off' };
 
 const ANTIEDIT_CONFIG_FILE = './database/antiedit_config.json';
 const ANTIDELETE_CONFIG_FILE = './database/antidelete_config.json';
-const ANTIDELETE_TEMP_DIR = './tmp/antidelete_media';
-const ANTIDELETE_DISK_STORE = './database/antidelete_store.json';
 const ANTICALL_CONFIG_FILE = './database/anticall_config.json';
 const STICKERCMD_FILE = './database/stickercmds.json';
 const WARNLIMIT_FILE = './database/warnlimit.json';
@@ -264,98 +251,14 @@ function antiStoreKey(chatId, msgId) {
     return `${chatId || 'unknown'}::${msgId}`;
 }
 
+require('./allfunc/antidelete-session');
 const {
     _serializeRawMedia,
     _adForwardDeletedMedia,
     _adLookupCachedMessage,
     _adDeliverAntideleteReport,
+    getAntideleteSession,
 } = require('./allfunc/antidelete-helpers');
-
-// ── Persistent antidelete disk store helpers ──
-const ANTIDELETE_MAX_ENTRIES = 2000;
-
-let _saveDiskDebounce = null;
-function _saveDiskStore() {
-    // PERF FIX: debounced async write — was fs.writeFileSync on EVERY message (50-200ms block!)
-    // Batches all saves within 2s into a single async write instead.
-    if (_saveDiskDebounce) return;
-    _saveDiskDebounce = setTimeout(() => {
-        _saveDiskDebounce = null;
-        try {
-            if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-            const entries = [];
-            for (const [key, val] of global._antideleteStore.entries()) {
-                entries.push([key, val]);
-            }
-            const trimmed = entries.slice(-ANTIDELETE_MAX_ENTRIES);
-            fs.promises.writeFile(ANTIDELETE_DISK_STORE, JSON.stringify(trimmed), 'utf-8').catch(() => {});
-        } catch (e) {}
-    }, 550);
-}
-global._antideleteDiskSave = _saveDiskStore; // FIX: expose globally so pair.js can persist to disk even in private mode
-
-function _writeDiskStoreSync() {
-    try {
-        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        const entries = [];
-        for (const [key, val] of global._antideleteStore.entries()) {
-            entries.push([key, val]);
-        }
-        fs.writeFileSync(ANTIDELETE_DISK_STORE, JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES)), 'utf-8');
-    } catch (e) {}
-}
-
-function _saveDiskStoreNow() {
-    if (_saveDiskDebounce) {
-        clearTimeout(_saveDiskDebounce);
-        _saveDiskDebounce = null;
-    }
-    _writeDiskStoreSync();
-}
-global._antideleteDiskSaveNow = _saveDiskStoreNow;
-
-function _loadDiskStore() {
-    try {
-        if (fs.existsSync(ANTIDELETE_DISK_STORE)) {
-            const entries = JSON.parse(fs.readFileSync(ANTIDELETE_DISK_STORE, 'utf-8'));
-            if (Array.isArray(entries)) {
-                const now = Date.now();
-                for (const [key, val] of entries) {
-                    // Skip entries older than 24 hours
-                    const _entryAge = val?.timestamp ? now - new Date(val.timestamp).getTime() : 0;
-                    if (_entryAge > 24 * 60 * 60 * 1000) continue; // FIX: 24h instead of 2h
-                    // Add _ts so periodic sweep can expire this entry correctly
-                    if (!val._ts) val._ts = val.timestamp ? new Date(val.timestamp).getTime() : now;
-                    global._antideleteStore.set(key, val);
-                }
-            }
-        }
-    } catch (e) {}
-}
-
-function _getFromDiskStore(key) {
-    try {
-        if (fs.existsSync(ANTIDELETE_DISK_STORE)) {
-            const entries = JSON.parse(fs.readFileSync(ANTIDELETE_DISK_STORE, 'utf-8'));
-            if (Array.isArray(entries)) {
-                const found = entries.find(([k]) => k === key);
-                return found ? found[1] : null;
-            }
-        }
-    } catch (e) {}
-    return null;
-}
-
-// Load disk store into memory on startup (only once per process)
-if (!global._antideleteStoreLoaded) {
-    _loadDiskStore();
-    global._antideleteStoreLoaded = true;
-}
-
-// Ensure temp dir exists
-if (!fs.existsSync(ANTIDELETE_TEMP_DIR)) {
-    try { fs.mkdirSync(ANTIDELETE_TEMP_DIR, { recursive: true }); } catch (e) {}
-}
 
 function _antieditCfgFile(botNum) {
     if (botNum) return './database/antiedit_config_' + botNum + '.json';
@@ -3992,9 +3895,9 @@ _Auto-saved via status antidelete_`;
             // Skip if the bot itself is the one who deleted
             // Note: even if _adOwnerJid is empty (socket not fully ready), still process but skip self-delete check
             if (jidToNum(_adDeletedBy) === _adBotNum || m.key?.fromMe) {
-                global._antideleteStore.delete(`${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`);
-                global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
-                global._antideleteStore.delete(_adMsgId);
+                if (typeof global._adRemoveCachedMessage === 'function') {
+                    global._adRemoveCachedMessage(_adBotNum, _adChatId, _adMsgId);
+                }
                 return;
             }
             // If bot JID is still empty, fall back to chat as reporting target
@@ -4006,12 +3909,8 @@ _Auto-saved via status antidelete_`;
             if (_adMode === 'chat' && _adIsGroup) { return; }
             if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
 
-            // Look up cached message — memory → disk → MongoDB → Baileys store
-            const _adBotKey = `${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`;
-            let _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId)
-                || _getFromDiskStore(_adBotKey)
-                || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
-                || _getFromDiskStore(_adMsgId);
+            // Session-scoped lookup — this bot's cache only (no global/shared keys)
+            let _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId);
             if (!_adOriginal) {
                 await new Promise((r) => setTimeout(r, 550));
                 _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId);
@@ -4056,9 +3955,9 @@ _Auto-saved via status antidelete_`;
                 const _adSender = _adOriginal.sender || _adDeletedBy;
                 const _adSenderNum = _adSender.split('@')[0];
                 if (_adOriginal.fromMe || _adSenderNum === _adBotNum) {
-                    global._antideleteStore.delete(_adBotKey);
-                    global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
-                    global._antideleteStore.delete(_adMsgId);
+                    if (typeof global._adRemoveCachedMessage === 'function') {
+                        global._adRemoveCachedMessage(_adBotNum, _adChatId, _adMsgId);
+                    }
                 } else {
                     let _adText = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
                         `*🗑️ Deleted By:* @${_adDeletedBy.split('@')[0]}\n` +
@@ -4074,11 +3973,8 @@ _Auto-saved via status antidelete_`;
                         // private / private_pm / private_groups → THIS bot's own saved messages (DM)
                         await _adSendReport(_adEffectiveOwnerJid, _adText, _adOriginal, _adSender);
                     }
-                    global._antideleteStore.delete(_adBotKey);
-                    global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
-                    global._antideleteStore.delete(_adMsgId);
-                    if (typeof global._adMongoDelete === 'function') {
-                        global._adMongoDelete([_adBotKey, antiStoreKey(_adChatId, _adMsgId), _adMsgId]);
+                    if (typeof global._adRemoveCachedMessage === 'function') {
+                        global._adRemoveCachedMessage(_adBotNum, _adChatId, _adMsgId);
                     }
                 }
             } else {
