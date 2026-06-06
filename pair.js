@@ -977,8 +977,10 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on view-once save errors
             }
 
-            // ── Antidelete: store ALL incoming non-protocol messages before the public-mode guard ──
-            // This ensures messages are cached for antidelete even when bot is in self/private mode
+            // ── Antidelete: cache ALL incoming non-protocol messages BEFORE the
+            //    public-mode guard so antidelete works even in self/private mode.
+            //    Schema MUST match case.js's _adMsgData2 schema exactly — the
+            //    replay path reads same field names from both sources.
             try {
                 const _adRaw = nexusboijid;
                 if (_adRaw?.key?.id && _adRaw?.key?.remoteJid && !_adRaw?.message?.protocolMessage && !_adRaw?.key?.fromMe) {
@@ -986,23 +988,118 @@ async function startpairing(nexusDevNumber) {
                     const _adChatId = _adRaw.key.remoteJid;
                     const _adSender = _adRaw.key.participant || _adRaw.key.remoteJid;
                     const _adMsg = _adRaw.message || {};
-                    const _adText =
-                        _adMsg.conversation ||
-                        _adMsg.extendedTextMessage?.text ||
-                        _adMsg.imageMessage?.caption ||
-                        _adMsg.videoMessage?.caption ||
-                        _adMsg.documentMessage?.caption ||
-                        _adMsg.audioMessage?.caption || '';
+
+                    // ── Extract content + media type ──
+                    let _adContent = '';
+                    let _adMediaType = '';
+                    if (_adMsg.conversation) {
+                        _adContent = _adMsg.conversation;
+                    } else if (_adMsg.extendedTextMessage?.text) {
+                        _adContent = _adMsg.extendedTextMessage.text;
+                    } else if (_adMsg.imageMessage) {
+                        _adMediaType = 'image'; _adContent = _adMsg.imageMessage.caption || '';
+                    } else if (_adMsg.videoMessage) {
+                        _adMediaType = 'video'; _adContent = _adMsg.videoMessage.caption || '';
+                    } else if (_adMsg.audioMessage) {
+                        _adMediaType = 'audio'; _adContent = Boolean(_adMsg.audioMessage.ptt) ? '🎤 Voice Note' : '🎵 Audio';
+                    } else if (_adMsg.stickerMessage) {
+                        _adMediaType = 'sticker'; _adContent = '🎭 Sticker';
+                    } else if (_adMsg.documentMessage) {
+                        _adMediaType = 'document';
+                        const _dn = _adMsg.documentMessage.fileName || _adMsg.documentMessage.title || 'File';
+                        _adContent = `📄 Document: ${_dn}`;
+                    }
+
+                    // ── Serialize raw media metadata (Buffers → base64) for safe JSON persist ──
+                    const _adRawMedia = (() => {
+                        const _am = _adMsg?.audioMessage    || null;
+                        const _vm = _adMsg?.videoMessage    || null;
+                        const _im = _adMsg?.imageMessage    || null;
+                        const _sm = _adMsg?.stickerMessage  || null;
+                        const _dm = _adMsg?.documentMessage || null;
+                        const _mm = _am || _vm || _im || _sm || _dm;
+                        const _mt = _am ? 'audio' : _vm ? 'video' : _im ? 'image' : _sm ? 'sticker' : _dm ? 'document' : null;
+                        if (!_mm || !_mt) return null;
+                        try {
+                            return {
+                                type: _mt,
+                                url: _mm.url || null,
+                                directPath: _mm.directPath || null,
+                                mediaKey: _mm.mediaKey ? Buffer.from(_mm.mediaKey).toString('base64') : null,
+                                fileEncSha256: _mm.fileEncSha256 ? Buffer.from(_mm.fileEncSha256).toString('base64') : null,
+                                fileSha256: _mm.fileSha256 ? Buffer.from(_mm.fileSha256).toString('base64') : null,
+                                mimetype: _mm.mimetype || (_mt === 'audio' ? 'audio/ogg; codecs=opus' : _mt === 'sticker' ? 'image/webp' : _mt === 'image' ? 'image/jpeg' : 'video/mp4'),
+                                ptt: Boolean(_mm.ptt),
+                                caption: _mm.caption || null,
+                                isAnimated: Boolean(_mm.isAnimated),
+                                fileName: _mm.fileName || _mm.title || null,
+                            };
+                        } catch (_) { return null; }
+                    })();
+
+                    // ── Eager-download to disk with size caps (mirrors case.js helper) ──
+                    const _adTempDir = './tmp/antidelete_media';
+                    try { if (!fs.existsSync(_adTempDir)) fs.mkdirSync(_adTempDir, { recursive: true }); } catch(_) {}
+
+                    const _adEagerDl = async (mediaPart, baileysType, ext, byteCap) => {
+                        try {
+                            const _flRaw = mediaPart?.fileLength;
+                            let _fl = 0;
+                            if (_flRaw != null) {
+                                if (typeof _flRaw === 'number') _fl = _flRaw;
+                                else if (typeof _flRaw === 'bigint') _fl = Number(_flRaw);
+                                else if (typeof _flRaw === 'string') _fl = parseInt(_flRaw, 10) || 0;
+                                else if (typeof _flRaw === 'object' && _flRaw.low != null) {
+                                    _fl = (_flRaw.high || 0) * 0x100000000 + (_flRaw.low >>> 0);
+                                }
+                            }
+                            if (byteCap && _fl > byteCap) return '';
+                            const _st = await downloadContentFromMessage(mediaPart, baileysType);
+                            const _chs = [];
+                            let _tot = 0;
+                            for await (const _c of _st) {
+                                _tot += _c.length;
+                                if (byteCap && _tot > byteCap) { try { _st.destroy?.(); } catch(_) {} return ''; }
+                                _chs.push(_c);
+                            }
+                            const _b = Buffer.concat(_chs);
+                            if (!_b.length) return '';
+                            const _p = `${_adTempDir}/${_adMsgId}.${ext}`;
+                            await fs.promises.writeFile(_p, _b);
+                            return _p;
+                        } catch (_) { return ''; }
+                    };
+
+                    let _adMediaPath = '';
+                    if (_adMediaType === 'image') {
+                        _adMediaPath = (await _adEagerDl(_adMsg.imageMessage, 'image', 'jpg', 15 * 1024 * 1024)) || '__redownload__';
+                    } else if (_adMediaType === 'video') {
+                        _adMediaPath = (await _adEagerDl(_adMsg.videoMessage, 'video', 'mp4', 30 * 1024 * 1024)) || '__redownload__';
+                    } else if (_adMediaType === 'audio') {
+                        const _ext = Boolean(_adMsg.audioMessage.ptt) ? 'ogg' : 'mp3';
+                        _adMediaPath = (await _adEagerDl(_adMsg.audioMessage, 'audio', _ext, 15 * 1024 * 1024)) || '__redownload__';
+                    } else if (_adMediaType === 'sticker') {
+                        _adMediaPath = (await _adEagerDl(_adMsg.stickerMessage, 'sticker', 'webp', 5 * 1024 * 1024)) || '__redownload__';
+                    } else if (_adMediaType === 'document') {
+                        const _docName = _adMsg.documentMessage.fileName || _adMsg.documentMessage.title || 'File';
+                        const _eM = String(_docName).match(/\.([a-z0-9]{1,8})$/i);
+                        const _dEx = (_eM ? _eM[1] : 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+                        _adMediaPath = (await _adEagerDl(_adMsg.documentMessage, 'document', _dEx, 25 * 1024 * 1024)) || '__redownload__';
+                    }
+
                     const _adBotNum = (nexus.user?.id || '').split(':')[0].split('@')[0];
                     const _adKey = _adBotNum
                         ? `${_adBotNum}::${_adChatId}::${_adMsgId}`
                         : `${_adChatId}::${_adMsgId}`;
                     if (!global._antideleteStore) global._antideleteStore = new Map();
+
+                    // ── Build entry with case.js-compatible schema (NO raw protobuf!) ──
                     const _adEntry = {
-                        content: String(_adText || ''),
-                        rawMsg: _adMsg,  // FIX: store full message so media can be forwarded on delete
-                        mediaType: _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : _adMsg.documentMessage ? 'document' : '',
-                        mediaPath: '',
+                        content: String(_adContent || ''),
+                        mediaType: _adMediaType,
+                        mediaPath: _adMediaPath,
+                        isPtt: _adMediaType === 'audio' && Boolean(_adMsg?.audioMessage?.ptt),
+                        rawMediaMsg: _adRawMedia,
                         fromMe: false,
                         sender: _adSender,
                         group: (_adChatId || '').endsWith('@g.us') ? _adChatId : null,
@@ -1010,9 +1107,10 @@ async function startpairing(nexusDevNumber) {
                         _ts: Date.now(),
                     };
                     global._antideleteStore.set(_adKey, _adEntry);
-                    // also store shared-key for backward compat
+                    // Also store shared-key for backward compat
                     global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
-                    // FIX: persist to disk so bot restart doesn't lose cached messages
+
+                    // Persist to disk (debounced, async)
                     if (typeof global._antideleteDiskSave === 'function') {
                         global._antideleteDiskSave();
                     } else if (!global._pairAdSaveTimer) {
