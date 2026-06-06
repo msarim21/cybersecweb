@@ -109,6 +109,13 @@ async function startWorker() {
   await ensureDbReady();
 
   try {
+    const { clearStalePairingRequests } = require('./server/db-service');
+    await clearStalePairingRequests();
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] clearStalePairingRequests:', e.message));
+  }
+
+  try {
     require('./case');
     console.log(chalk.green('✅ WhatsApp command handler loaded'));
   } catch (e) {

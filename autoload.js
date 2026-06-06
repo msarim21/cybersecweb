@@ -76,6 +76,18 @@ async function processUser(user, index, total) {
   // Restore creds from MongoDB before handing off to pair.js
   await restoreSessionBeforeConnect(user);
 
+  const clean = user.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+  const sessionPath = path.join(__dirname, 'nexstore', 'pairing', user);
+  const altPath = path.join(__dirname, 'nexstore', 'pairing', clean);
+  if (!hasValidCreds(sessionPath) && !hasValidCreds(altPath)) {
+    const { getSessionCreds } = require('./server/db-service');
+    const dbCreds = await getSessionCreds(clean).catch(() => null);
+    if (!dbCreds || !Object.keys(dbCreds).length) {
+      throw new Error(`No saved session for ${clean} — pair once via website to save creds to DB`);
+    }
+    throw new Error(`Could not restore session files for ${clean} from DB`);
+  }
+
   try {
     const startpairing = require('./pair');
     const sock = await startpairing(user);

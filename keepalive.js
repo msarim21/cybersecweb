@@ -210,6 +210,24 @@ function startKeepAlive() {
     // Every 10 min: dead sessions silently reconnect karo
     setInterval(refreshBotSessions, 10 * 60 * 1000);
 
+    // Every 5 min: backup all connected sessions to DB (survives dyno restart)
+    if (isWhatsAppWorker()) {
+        setInterval(async () => {
+            try {
+                const { backupSessionFolder } = require('./session-db');
+                const tracker = global._rentbotTracker;
+                if (!tracker || !tracker.size) return;
+                for (const [key, t] of tracker.entries()) {
+                    if (!key.includes('@')) continue;
+                    const ws = t?.connection?.ws;
+                    if (!ws || ws.readyState !== 1) continue;
+                    const clean = key.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+                    await backupSessionFolder(clean, require('path').join(__dirname, 'nexstore', 'pairing', key));
+                }
+            } catch (_) {}
+        }, 5 * 60 * 1000);
+    }
+
     // Node.js event loop alive rakhne ke liye
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
 

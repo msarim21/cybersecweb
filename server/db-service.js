@@ -788,31 +788,63 @@ async function requestPairing(number, ownerId = null) {
   const owner = ownerId != null ? String(ownerId) : null;
   if (isMongoMode()) {
     const { BotSession } = M();
-    await BotSession.findOneAndUpdate(
-      { number: clean },
-      {
-        pairingStatus: 'requested',
-        pairingCode: null,
-        pairingOwnerId: owner,
-        status: 'pending',
-        lastActive: new Date(),
-      },
-      { upsert: true }
-    );
+    const existing = await BotSession.findOne({ number: clean }).lean();
+    const update = {
+      pairingStatus: 'requested',
+      pairingCode: null,
+      pairingOwnerId: owner,
+      lastActive: new Date(),
+    };
+    if (!existing?.sessionData) update.status = 'pending';
+    await BotSession.findOneAndUpdate({ number: clean }, update, { upsert: true });
     return;
   }
   await ensurePgBotSessionColumns();
+  // Do NOT reset status/session_data on conflict — only queue pairing code request
   await pg().query(
     `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, pairing_owner_id, last_active)
      VALUES ($1, 'pending', 'requested', NULL, $2, NOW())
      ON CONFLICT (number) DO UPDATE SET
-       status = 'pending',
        pairing_status = 'requested',
        pairing_code = NULL,
-       pairing_owner_id = $2,
+       pairing_owner_id = COALESCE(EXCLUDED.pairing_owner_id, bot_sessions.pairing_owner_id),
        last_active = NOW()`,
     [clean, owner]
   );
+}
+
+/** Clear stale pairing queue entries for numbers that already have saved session creds */
+async function clearStalePairingRequests() {
+  let cleared = 0;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const res = await BotSession.updateMany(
+      {
+        sessionData: { $ne: null },
+        pairingStatus: { $in: ['requested', 'pairing', 'code_ready'] },
+      },
+      { $set: { pairingStatus: null, pairingCode: null } }
+    );
+    cleared += res.modifiedCount || 0;
+  } else {
+    await ensurePgBotSessionColumns();
+    const { rowCount } = await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = NULL, pairing_code = NULL
+       WHERE session_data IS NOT NULL
+         AND pairing_status IN ('requested', 'pairing', 'code_ready')`
+    ).catch(() => ({ rowCount: 0 }));
+    cleared += rowCount || 0;
+  }
+  try {
+    const linked = await getAllActiveLinkedNumbers();
+    for (const n of linked) {
+      await clearPairingRequest(n);
+      cleared += 1;
+    }
+  } catch (_) {}
+  if (cleared > 0) console.log(`[db] Cleared ${cleared} stale pairing queue entry/entries`);
+  return cleared;
 }
 
 async function setPairingCode(number, code) {
@@ -1050,7 +1082,7 @@ module.exports = {
   getActiveLinkedNumbers: getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds, deleteSessionCreds,
   requestPairing, setPairingCode, getPairingState, getPendingPairingRequests,
-  markPairingInProgress, resetPairingRequest, clearPairingRequest,
+  markPairingInProgress, resetPairingRequest, clearPairingRequest, clearStalePairingRequests,
   getSiteSetting, setSiteSetting,
   countAdmins,
   sendChatMessage, getChatMessages, markChatMessagesRead, getChatUnreadCounts, getActiveChatUsers,

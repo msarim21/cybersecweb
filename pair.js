@@ -1864,10 +1864,16 @@ async function startpairing(nexusDevNumber) {
 
     nexus.ev.on('creds.update', async () => {
         saveCreds();
-        // Backup session files to MongoDB — debounced to avoid per-message sync reads
-        // FIX: Previously read ALL session files synchronously on EVERY creds.update.
-        // creds.update fires on EVERY received message → blocked event loop constantly.
-        // Now debounced 10s — only one backup per 10 seconds of activity.
+        // First creds update after connect → immediate DB backup (critical for restart reconnect)
+        if (!tracker._firstCredsBackedUp) {
+            tracker._firstCredsBackedUp = true;
+            try {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const { backupSessionFolder } = require('./session-db');
+                await backupSessionFolder(cleanNum, `./nexstore/pairing/${nexusDevNumber}`);
+            } catch (_) {}
+        }
+        // Backup session files to DB — debounced to avoid per-message sync reads
         if (!tracker._credsBackupTimer) {
             tracker._credsBackupTimer = setTimeout(async () => {
                 tracker._credsBackupTimer = null;
