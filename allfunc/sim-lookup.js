@@ -266,11 +266,10 @@ function formatSimRecordsMessage({ records, normalized, rawQuery, title }) {
     msg += `🏠 *Address:* ${rec.address || 'N/A'}\n`;
     msg += `📡 *Network:* ${rec.network || 'N/A'}\n`;
     if (rec.year) msg += `📅 *Year:* ${rec.year}\n`;
-    if (rec.source) msg += `🔗 *Source:* ${rec.source}\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   });
 
-  msg += `_Multi-source lookup • Latest records preferred_`;
+  msg += `_CYBER SEC PRO SIM Database_`;
   return msg;
 }
 

