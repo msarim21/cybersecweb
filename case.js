@@ -11510,69 +11510,96 @@ case 'waifu': {
 break;
 
 case 'vv':
-case 'vvgh': {
-    if (!m.quoted) return;
-    let mime = (m.quoted.msg || m.quoted).mimetype || '';
-    try {
-        let media = await m.quoted.download();
-        let botNumber = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
-        if (/image/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                image: media,
-                caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
-                mentions: [m.sender]
-            });
-        } else if (/video/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                video: media,
-                caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
-                mentions: [m.sender]
-            });
-        } else if (/audio/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                audio: media,
-                mimetype: 'audio/mpeg',
-                ptt: true
-            });
-        }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-    } catch (error) {
-        console.error('vv error:', error);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-    }
-}
-break;
-
+case 'vvgh':
 case 'vv2':
 case 'readviewonce2': {
-    if (!m.quoted) return;
-    let mime = (m.quoted.msg || m.quoted).mimetype || '';
-    try {
-        let media = await m.quoted.download();
-        let botNumber = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
-        if (/image/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                image: media,
-                caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
-                mentions: [m.sender]
-            });
-        } else if (/video/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                video: media,
-                caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`,
-                mentions: [m.sender]
-            });
-        } else if (/audio/.test(mime)) {
-            await devtrust.sendMessage(botNumber, {
-                audio: media,
-                mimetype: 'audio/mpeg',
-                ptt: true
-            });
+    const _vvSilent  = (command === 'vv2' || command === 'readviewonce2');
+    const _vvBotNum  = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
+    const { downloadContentFromMessage: _dlcVV } = require('@whiskeysockets/baileys');
+
+    // ── Build entry from cache → quoted → last-vo ──
+    let _vvEntry = null;
+    const _vvQuotedId = m.quoted?.id || m.msg?.contextInfo?.stanzaId || null;
+    if (_vvQuotedId && global._viewOnceBufferMap?.has(_vvQuotedId)) {
+        _vvEntry = global._viewOnceBufferMap.get(_vvQuotedId);
+    }
+    if (!_vvEntry && m.quoted) {
+        const _qMsg = m.quoted?.message || m.quoted || {};
+        const _qType = _qMsg.imageMessage ? 'imageMessage'
+            : _qMsg.videoMessage ? 'videoMessage'
+            : _qMsg.audioMessage ? 'audioMessage'
+            : (m.quoted.mtype || '');
+        const _qInner = _qMsg[_qType] || m.quoted.msg || m.quoted;
+        if (_qType && _qInner) {
+            _vvEntry = {
+                msg: { [_qType]: _qInner },
+                type: _qType,
+                mime: _qInner?.mimetype
+                    || (_qType === 'imageMessage' ? 'image/jpeg'
+                        : _qType === 'videoMessage' ? 'video/mp4'
+                        : _qType === 'audioMessage' ? 'audio/ogg; codecs=opus' : ''),
+                caption: _qInner?.caption || '',
+                isPtt: Boolean(_qInner?.ptt),
+                sender: (m.quoted.sender || m.sender || '').split(':')[0].replace('@s.whatsapp.net', ''),
+                chat: m.chat,
+                buffer: null,
+                ts: Date.now()
+            };
         }
-        // No reaction — silent download only
-    } catch (err) {
-        console.error('vv2 error:', err);
-        // Silent fail — no reaction on error either
+    }
+    if (!_vvEntry) {
+        const _cand = global._lastViewOnce?.[m.chat];
+        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) _vvEntry = _cand;
+    }
+    if (!_vvEntry) {
+        if (!_vvSilent) reply('❌ Reply to a view-once media (or send within 30 min).');
+        break;
+    }
+
+    // ── Ensure buffer ──
+    if (!_vvEntry.buffer && _vvEntry.type) {
+        try {
+            const _mType = _vvEntry.type.replace('Message', '');
+            const _src   = _vvEntry.msg?.[_vvEntry.type];
+            if (_src) {
+                const _s = await _dlcVV(_src, _mType);
+                const _c = []; for await (const _ch of _s) _c.push(_ch);
+                const _b = Buffer.concat(_c);
+                if (_b.length > 0) _vvEntry.buffer = _b;
+            }
+        } catch (_vvDlE) { console.error('vv dl error:', _vvDlE?.message); }
+    }
+    if ((!_vvEntry.buffer || _vvEntry.buffer.length === 0) && m.quoted) {
+        try {
+            const _b = await m.quoted.download();
+            if (Buffer.isBuffer(_b) && _b.length > 0) _vvEntry.buffer = _b;
+        } catch(_) {}
+    }
+    if (!_vvEntry.buffer || _vvEntry.buffer.length === 0) {
+        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        break;
+    }
+
+    const _vvTime = new Date().toLocaleString('en-US', {
+        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
+        hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+    });
+    const _vvSenderShort = _vvEntry.sender || (m.sender || '').split('@')[0];
+    const _vvCapBase = `From: @${_vvSenderShort}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${_vvTime}` +
+        (_vvEntry.caption ? `\n📝 ${_vvEntry.caption}` : '');
+
+    try {
+        if (_vvEntry.type === 'imageMessage') {
+            await devtrust.sendMessage(_vvBotNum, { image: _vvEntry.buffer, caption: `📸 *View-Once Image*\n${_vvCapBase}`, mimetype: _vvEntry.mime || 'image/jpeg', mentions: [m.sender] });
+        } else if (_vvEntry.type === 'videoMessage') {
+            await devtrust.sendMessage(_vvBotNum, { video: _vvEntry.buffer, caption: `🎥 *View-Once Video*\n${_vvCapBase}`, mimetype: _vvEntry.mime || 'video/mp4', mentions: [m.sender] });
+        } else if (_vvEntry.type === 'audioMessage') {
+            await devtrust.sendMessage(_vvBotNum, { audio: _vvEntry.buffer, mimetype: _vvEntry.mime || 'audio/ogg; codecs=opus', ptt: _vvEntry.isPtt });
+        }
+        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    } catch (_vvSendE) {
+        console.error('vv send error:', _vvSendE?.message);
+        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
     }
 }
 break;
@@ -11633,82 +11660,118 @@ case '🦋': {
     // Destination: ALWAYS bot's own DM (Message Yourself) — sender ko pata nahi chalta
     const _voDest = botNumber;
 
-    // ── Path 1: Quoted reply to a view-once ──
-    if (m.quoted) {
-        // ── Robust mime detection for view-once quoted messages ──
-        // smsg unwraps viewOnceMessage → m.quoted becomes { imageMessage: {...} } or { videoMessage: {...} }
-        // So direct .mimetype is often empty — check nested structure too
-        let mime = (m.quoted.msg || m.quoted).mimetype || '';
-        if (!mime) {
-            mime = m.quoted.imageMessage?.mimetype
-                || m.quoted.videoMessage?.mimetype
-                || m.quoted.audioMessage?.mimetype
-                || '';
-        }
-        if (!mime) {
-            // mtype fallback (e.g. mtype = "imageMessage")
-            const _qt = (m.quoted.mtype || '').toLowerCase();
-            if (_qt.includes('image'))      mime = 'image/jpeg';
-            else if (_qt.includes('video')) mime = 'video/mp4';
-            else if (_qt.includes('audio')) mime = 'audio/mpeg';
-        }
-        try {
-            let media = await m.quoted.download();
-            // If still no mime but we got a buffer, detect by magic bytes
-            if (!mime && Buffer.isBuffer(media) && media.length > 3) {
-                if (media[0] === 0xFF && media[1] === 0xD8) mime = 'image/jpeg';
-                else if (media[0] === 0x89 && media[1] === 0x50) mime = 'image/png';
-                else if (media[0] === 0x47 && media[1] === 0x49) mime = 'image/gif';
-                else if (media[4] === 0x66 && media[5] === 0x74) mime = 'video/mp4';
-                else mime = 'image/jpeg'; // safest default for view-once
-            }
-            if (/image/.test(mime)) {
-                await devtrust.sendMessage(_voDest, {
-                    image: media,
-                    caption: `📸 *View-Once Image*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`
-                });
-            } else if (/video/.test(mime)) {
-                await devtrust.sendMessage(_voDest, {
-                    video: media,
-                    caption: `🎥 *View-Once Video*\nFrom: @${m.sender.split('@')[0]}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${new Date().toLocaleString()}`
-                });
-            } else if (/audio/.test(mime)) {
-                await devtrust.sendMessage(_voDest, { audio: media, mimetype: 'audio/mpeg', ptt: true });
-            }
-            // Silent ✅ reaction — no visible message, sender doesn't know
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
+    // ── DEDUP: pair.js already handled this fromMe reply? Skip to avoid duplicate send ──
+    if (m.key?.id && global._viewOnceHandledIds?.has(m.key.id)) {
         break;
     }
 
-    // ── Path 2: Standalone emoji — check last stored view-once for this chat (within 10 min) ──
-    const _storedVO = global._lastViewOnce?.[m.chat];
-    if (_storedVO && (Date.now() - _storedVO.ts) < 10 * 60 * 1000) {
+    const { downloadContentFromMessage: _dlcVO } = require('@whiskeysockets/baileys');
+
+    // ── Time / chat helpers ──
+    const _voTime = new Date().toLocaleString('en-US', {
+        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
+        hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+    });
+    const _voChatLabel = m.chat.includes('g.us') ? 'Group' : 'Private';
+
+    // ── Build "entry" from one of three sources, in priority order ──
+    let _voEntry = null;
+
+    // 1️⃣ Eager-cache hit by quoted msgId
+    const _voQuotedId = m.quoted?.id || m.msg?.contextInfo?.stanzaId || null;
+    if (_voQuotedId && global._viewOnceBufferMap?.has(_voQuotedId)) {
+        _voEntry = global._viewOnceBufferMap.get(_voQuotedId);
+    }
+
+    // 2️⃣ Standalone emoji → last view-once in this chat (≤30 min)
+    if (!_voEntry) {
+        const _cand = global._lastViewOnce?.[m.chat];
+        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) _voEntry = _cand;
+    }
+
+    // 3️⃣ Fallback: build entry from m.quoted (smsg unwraps view-once)
+    if (!_voEntry && m.quoted) {
+        const _qMsg = m.quoted?.message || m.quoted || {};
+        let _qType =
+            _qMsg.imageMessage ? 'imageMessage'
+            : _qMsg.videoMessage ? 'videoMessage'
+            : _qMsg.audioMessage ? 'audioMessage'
+            : (m.quoted.mtype || '');
+        let _qInner = _qMsg[_qType] || m.quoted.msg || m.quoted;
+        if (_qType && _qInner) {
+            _voEntry = {
+                msg: { [_qType]: _qInner },
+                type: _qType,
+                mime: _qInner?.mimetype
+                    || (_qType === 'imageMessage' ? 'image/jpeg'
+                        : _qType === 'videoMessage' ? 'video/mp4'
+                        : _qType === 'audioMessage' ? 'audio/ogg; codecs=opus' : ''),
+                caption: _qInner?.caption || '',
+                isPtt: Boolean(_qInner?.ptt),
+                sender: (m.quoted.sender || m.sender || '').split(':')[0].replace('@s.whatsapp.net', ''),
+                chat: m.chat,
+                buffer: null,
+                ts: Date.now()
+            };
+        }
+    }
+
+    if (!_voEntry) break;
+
+    // ── Ensure buffer ──
+    if (!_voEntry.buffer && _voEntry.type) {
         try {
-            const _voMsg    = _storedVO.msg;
-            const _voType   = Object.keys(_voMsg)[0];
-            const _voCont   = _voMsg[_voType];
-            if (_voCont && _voType) {
-                const _mType  = _voType.replace('Message', '');
-                const { downloadContentFromMessage: _dlcVO } = require('@whiskeysockets/baileys');
-                const _stream = await _dlcVO(_voCont, _mType);
+            const _mType  = _voEntry.type.replace('Message', '');
+            const _voSrc  = _voEntry.msg?.[_voEntry.type] || null;
+            if (_voSrc) {
+                const _stream = await _dlcVO(_voSrc, _mType);
                 const _chunks = [];
                 for await (const _ch of _stream) _chunks.push(_ch);
                 const _buf = Buffer.concat(_chunks);
-                if (_buf.length > 0) {
-                    const _cap = `📸 *View-Once Saved!*\nFrom: @${_storedVO.sender}\nTime: ${new Date().toLocaleString()}`;
-                    if (_voType === 'imageMessage') {
-                        await devtrust.sendMessage(_voDest, { image: _buf, caption: _cap });
-                    } else if (_voType === 'videoMessage') {
-                        await devtrust.sendMessage(_voDest, { video: _buf, caption: _cap });
-                    } else if (_voType === 'audioMessage') {
-                        await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
-                    }
-                    // Silent ✅ reaction — no message in chat
-                    await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                }
+                if (_buf.length > 0) _voEntry.buffer = _buf;
             }
-        } catch (_voSErr) { console.error('Emoji vv (stored) error:', _voSErr); }
+        } catch (_voDlErr) {
+            console.error('[emoji vv] download error:', _voDlErr?.message);
+        }
+    }
+
+    // ── Last resort: use Baileys quoted.download() ──
+    if ((!_voEntry.buffer || _voEntry.buffer.length === 0) && m.quoted) {
+        try {
+            const _b = await m.quoted.download();
+            if (Buffer.isBuffer(_b) && _b.length > 0) _voEntry.buffer = _b;
+        } catch (_qdErr) { /* silent */ }
+    }
+
+    if (!_voEntry.buffer || _voEntry.buffer.length === 0) {
+        try { await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch(_) {}
+        console.log('[emoji vv] no buffer — view-once likely already revoked');
+        break;
+    }
+
+    // ── Build caption + payload ──
+    const _voSender = _voEntry.sender || (m.quoted?.sender || m.sender || '').split('@')[0];
+    const _voCap = `🔐 *View-Once Saved!*\n👤 From: @${_voSender}\n💬 Chat: ${_voChatLabel}\n🕒 ${_voTime}` +
+        (_voEntry.caption ? `\n\n📝 ${_voEntry.caption}` : '');
+
+    let _voPayload = null;
+    if (_voEntry.type === 'imageMessage') {
+        _voPayload = { image: _voEntry.buffer, caption: _voCap, mimetype: _voEntry.mime || 'image/jpeg' };
+    } else if (_voEntry.type === 'videoMessage') {
+        _voPayload = { video: _voEntry.buffer, caption: _voCap, mimetype: _voEntry.mime || 'video/mp4' };
+    } else if (_voEntry.type === 'audioMessage') {
+        _voPayload = { audio: _voEntry.buffer, mimetype: _voEntry.mime || 'audio/ogg; codecs=opus', ptt: _voEntry.isPtt };
+    }
+
+    if (_voPayload) {
+        try {
+            await devtrust.sendMessage(_voDest, _voPayload);
+            // ✅ react ONLY on successful DM delivery
+            try { await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } }); } catch(_) {}
+        } catch (_voSendErr) {
+            console.error('[emoji vv] send error:', _voSendErr?.message);
+            try { await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch(_) {}
+        }
     }
 }
 break;

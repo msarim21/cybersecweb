@@ -888,93 +888,138 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on status forward errors
             }
 
-            // ✅ NEW: View-Once Auto-Save — when bot user replies (any emoji/text)
-            //         to a one-time pic/video, auto-save it to bot user's DM
+            // ✅ View-Once Auto-Save — bot user (fromMe) jab view-once par
+            //    reply ya reaction kare, eagerly-cached buffer use karke us user
+            //    ke apne DM (Saved Messages) mein bhej do. React ✅ SIRF tab
+            //    lagao jab actually media DM mein deliver ho jaye.
             try {
                 const isFromMe2 = nexusboijid.key?.fromMe;
                 const msgContent2 = nexusboijid.message;
-                // Get contextInfo from any message type
-                const innerMsg2 = msgContent2?.extendedTextMessage
-                    || msgContent2?.imageMessage
-                    || msgContent2?.videoMessage
-                    || msgContent2?.audioMessage
-                    || msgContent2?.reactionMessage;
-                const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
-                const quotedMsg2 = ctxInfo2?.quotedMessage;
 
-                // ── Helper: download + send view-once content ──
-                const _sendViewOnce = async (voMsg, senderNum, label) => {
-                    if (!voMsg) return;
-                    const voType = Object.keys(voMsg)[0];
-                    const voContent = voMsg[voType];
-                    if (!voContent) return;
-                    const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your ${label}_`;
-                    let voBuffer = null;
-                    try {
-                        const mediaType = voType.replace('Message', '');
-                        const stream = await downloadContentFromMessage(voContent, mediaType);
-                        const chunks = [];
-                        for await (const chunk of stream) chunks.push(chunk);
-                        const _tmpBuf = Buffer.concat(chunks);
-                        if (_tmpBuf.length > 0) voBuffer = _tmpBuf;
-                    } catch (dlErr) {
-                        console.error('[ViewOnce] download failed for', voType, ':', dlErr.message);
+                if (isFromMe2 && msgContent2) {
+                    const innerMsg2 = msgContent2?.extendedTextMessage
+                        || msgContent2?.imageMessage
+                        || msgContent2?.videoMessage
+                        || msgContent2?.audioMessage
+                        || msgContent2?.reactionMessage;
+                    const ctxInfo2   = innerMsg2?.contextInfo || msgContent2?.contextInfo;
+                    const quotedMsg2 = ctxInfo2?.quotedMessage;
+                    const reactionM2 = msgContent2?.reactionMessage;
+
+                    // Detect which original message the user is responding to
+                    const _voChatId = nexusboijid.key?.remoteJid;
+                    const _voTargetMsgId = reactionM2?.key?.id
+                        || ctxInfo2?.stanzaId
+                        || ctxInfo2?.participant && ctxInfo2?.stanzaId
+                        || null;
+
+                    // 1️⃣ Try eagerly-cached buffer first (by msgId, then by chat)
+                    let _voEntry = null;
+                    if (_voTargetMsgId && global._viewOnceBufferMap?.has(_voTargetMsgId)) {
+                        _voEntry = global._viewOnceBufferMap.get(_voTargetMsgId);
+                    } else if (_voChatId && global._lastViewOnce?.[_voChatId]) {
+                        const _candidate = global._lastViewOnce[_voChatId];
+                        // Sirf 30 min ke andar wali entry valid
+                        if (_candidate && (Date.now() - _candidate.ts) < 30 * 60 * 1000) {
+                            _voEntry = _candidate;
+                        }
                     }
-                    if (!voBuffer) return;
-                    let voPayload = null;
-                    if (voType === 'imageMessage') {
-                        voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
-                    } else if (voType === 'videoMessage') {
-                        voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
-                    } else if (voType === 'audioMessage') {
-                        voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(voContent.ptt), caption: voCaption };
+
+                    // 2️⃣ Fallback: build entry from quoted contextInfo
+                    if (!_voEntry && quotedMsg2) {
+                        const _voQ = quotedMsg2?.viewOnceMessage?.message
+                            || quotedMsg2?.viewOnceMessageV2?.message
+                            || quotedMsg2?.viewOnceMessageV2Extension?.message
+                            || (quotedMsg2?.imageMessage?.viewOnce ? quotedMsg2 : null)
+                            || (quotedMsg2?.videoMessage?.viewOnce  ? quotedMsg2 : null)
+                            || (quotedMsg2?.audioMessage?.viewOnce  ? quotedMsg2 : null);
+                        if (_voQ) {
+                            const _qType  = Object.keys(_voQ)[0];
+                            const _qInner = _voQ[_qType];
+                            const _qSender = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').split(':')[0].replace('@s.whatsapp.net', '');
+                            _voEntry = {
+                                msg: _voQ,
+                                type: _qType,
+                                mime: _qInner?.mimetype
+                                    || (_qType === 'imageMessage' ? 'image/jpeg'
+                                        : _qType === 'videoMessage' ? 'video/mp4'
+                                        : _qType === 'audioMessage' ? 'audio/ogg; codecs=opus' : ''),
+                                caption: _qInner?.caption || '',
+                                isPtt: Boolean(_qInner?.ptt),
+                                sender: _qSender,
+                                chat: _voChatId,
+                                buffer: null,
+                                ts: Date.now()
+                            };
+                        }
                     }
-                    if (voPayload) await nexus.sendMessage(botNumber, voPayload);
-                };
 
-                if (isFromMe2 && quotedMsg2) {
-                    // Check for view-once message (both old and new format)
-                    const voMsg = quotedMsg2?.viewOnceMessage?.message
-                        || quotedMsg2?.viewOnceMessageV2?.message
-                        || quotedMsg2?.viewOnceMessageV2Extension?.message
-                        || (quotedMsg2?.imageMessage?.viewOnce ? quotedMsg2 : null)
-                        || (quotedMsg2?.videoMessage?.viewOnce ? quotedMsg2 : null)
-                        || (quotedMsg2?.audioMessage?.viewOnce ? quotedMsg2 : null);
+                    // Trigger condition: kuch fromMe message (text/emoji reply OR reaction)
+                    //                   AND view-once entry mil gayi
+                    const _voTriggered = Boolean(_voEntry && (quotedMsg2 || reactionM2));
 
-                    if (voMsg) {
-                        const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
-                        await _sendViewOnce(voMsg, senderNum, 'reply');
-                    }
-                }
-
-                // ── FIX: Also handle reactionMessage (emoji reactions to view-once) ──
-                // Reactions use a "key" reference instead of contextInfo.quotedMessage
-                if (isFromMe2 && msgContent2?.reactionMessage) {
-                    try {
-                        const _rk = msgContent2.reactionMessage.key;
-                        const _rjid = _rk?.remoteJid || nexusboijid.key?.remoteJid;
-                        const _rid = _rk?.id;
-                        if (_rjid && _rid && store) {
-                            const _reactedMsg = await store.loadMessage(_rjid, _rid);
-                            if (_reactedMsg?.message) {
-                                const _rInner = _reactedMsg.message;
-                                const _voMsgR = _rInner?.viewOnceMessage?.message
-                                    || _rInner?.viewOnceMessageV2?.message
-                                    || _rInner?.viewOnceMessageV2Extension?.message
-                                    || (_rInner?.imageMessage?.viewOnce ? _rInner : null)
-                                    || (_rInner?.videoMessage?.viewOnce ? _rInner : null);
-                                if (_voMsgR) {
-                                    const _senderR = (_reactedMsg.key?.participant || _rjid || '').replace('@s.whatsapp.net', '');
-                                    await _sendViewOnce(_voMsgR, _senderR, 'reaction');
+                    if (_voTriggered) {
+                        // Ensure buffer is available — download now if cache missed
+                        if (!_voEntry.buffer && _voEntry.type) {
+                            try {
+                                const _voMType = _voEntry.type.replace('Message', '');
+                                const _voSrc = _voEntry.msg?.[_voEntry.type] || null;
+                                if (_voSrc) {
+                                    const _vS = await downloadContentFromMessage(_voSrc, _voMType);
+                                    const _vC = []; for await (const _ch of _vS) _vC.push(_ch);
+                                    const _vB = Buffer.concat(_vC);
+                                    if (_vB.length > 0) _voEntry.buffer = _vB;
                                 }
+                            } catch (_voNowErr) {
+                                console.log('[ViewOnce] lazy dl failed:', _voNowErr?.message);
                             }
                         }
-                    } catch (_reactionVoErr) {
-                        // Silent fail
+
+                        if (_voEntry.buffer && _voEntry.buffer.length > 0) {
+                            const _voTime = new Date().toLocaleString('en-US', {
+                                timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
+                                hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+                            });
+                            const _voLabel = reactionM2 ? 'reaction' : 'reply';
+                            const _voCap = `🔐 *View-Once Saved!*\n👤 From: @${_voEntry.sender || 'unknown'}\n💬 Chat: ${(_voChatId || '').endsWith('@g.us') ? 'Group' : 'Private'}\n🕒 ${_voTime}` +
+                                (_voEntry.caption ? `\n\n📝 ${_voEntry.caption}` : '') +
+                                `\n\n_Auto-saved via ${_voLabel}_`;
+
+                            let _voPayload = null;
+                            if (_voEntry.type === 'imageMessage') {
+                                _voPayload = { image: _voEntry.buffer, caption: _voCap, mimetype: _voEntry.mime || 'image/jpeg' };
+                            } else if (_voEntry.type === 'videoMessage') {
+                                _voPayload = { video: _voEntry.buffer, caption: _voCap, mimetype: _voEntry.mime || 'video/mp4' };
+                            } else if (_voEntry.type === 'audioMessage') {
+                                _voPayload = { audio: _voEntry.buffer, mimetype: _voEntry.mime || 'audio/ogg; codecs=opus', ptt: _voEntry.isPtt };
+                            }
+
+                            if (_voPayload) {
+                                try {
+                                    await nexus.sendMessage(botNumber, _voPayload);
+                                    // ✅ Confirm: SIRF actual send ke baad react karo
+                                    try { await nexus.sendMessage(_voChatId, { react: { text: '✅', key: nexusboijid.key } }); } catch(_) {}
+                                    // Dedup: case.js emoji handler dobara send na kare
+                                    if (!global._viewOnceHandledIds) global._viewOnceHandledIds = new Set();
+                                    if (nexusboijid.key?.id) {
+                                        global._viewOnceHandledIds.add(nexusboijid.key.id);
+                                        setTimeout(() => global._viewOnceHandledIds.delete(nexusboijid.key.id), 5 * 60 * 1000);
+                                    }
+                                    console.log(`[ViewOnce] ✅ ${_voEntry.type} → DM via ${_voLabel}`);
+                                } catch (_voSendErr) {
+                                    console.log('[ViewOnce] ❌ send to DM failed:', _voSendErr?.message);
+                                    try { await nexus.sendMessage(_voChatId, { react: { text: '❌', key: nexusboijid.key } }); } catch(_) {}
+                                }
+                            }
+                        } else if (quotedMsg2 || reactionM2) {
+                            // Buffer kabhi nahi mila — silent ❌ react taake user ko pata chal jaye
+                            try { await nexus.sendMessage(_voChatId, { react: { text: '❌', key: nexusboijid.key } }); } catch(_) {}
+                            console.log('[ViewOnce] ❌ no buffer available — view-once likely expired/revoked');
+                        }
                     }
                 }
             } catch (voErr) {
-                // Silent fail — don't crash on view-once save errors
+                console.log('[ViewOnce] handler error:', voErr?.message);
             }
 
             // ── Antidelete: store ALL incoming non-protocol messages before the public-mode guard ──
@@ -1106,11 +1151,16 @@ async function startpairing(nexusDevNumber) {
                   }
               } catch (_aeErr) { console.error('[ANTIEDIT STORE]', _aeErr?.message); }
 
-            // ── VIEW-ONCE STORE: Cache incoming view-once by chat so emoji works without quoting ──
+            // ── VIEW-ONCE EAGER-DOWNLOAD STORE ─────────────────────────────────
+            //  Jaise hi view-once message arrive ho, BUFFER turant download karke
+            //  cache mein rakho. Replies / reactions baad mein cached buffer use
+            //  karte hain — original media keys revoke ho jane se download fail
+            //  hone ka risk eliminated. Per-bot key + per-msgId so dedup safe.
             try {
                 const _vsRaw = nexusboijid;
                 if (!_vsRaw?.key?.fromMe && _vsRaw?.key?.remoteJid && _vsRaw?.message) {
                     const _vsChatId = _vsRaw.key.remoteJid;
+                    const _vsMsgId  = _vsRaw.key.id;
                     const _vsMsg    = _vsRaw.message;
                     const _vsSender = _vsRaw.key.participant || _vsRaw.key.remoteJid || '';
                     const _vsContent =
@@ -1121,12 +1171,63 @@ async function startpairing(nexusDevNumber) {
                         || (_vsMsg?.videoMessage?.viewOnce  ? _vsMsg : null)
                         || (_vsMsg?.audioMessage?.viewOnce  ? _vsMsg : null);
                     if (_vsContent) {
-                        if (!global._lastViewOnce) global._lastViewOnce = {};
-                        global._lastViewOnce[_vsChatId] = {
+                        if (!global._lastViewOnce)      global._lastViewOnce = {};
+                        if (!global._viewOnceBufferMap) global._viewOnceBufferMap = new Map();
+
+                        const _vsType  = Object.keys(_vsContent)[0];
+                        const _vsInner = _vsContent[_vsType];
+                        const _vsMime  = _vsInner?.mimetype
+                            || (_vsType === 'imageMessage' ? 'image/jpeg'
+                                : _vsType === 'videoMessage' ? 'video/mp4'
+                                : _vsType === 'audioMessage' ? 'audio/ogg; codecs=opus' : '');
+                        const _vsCaption = _vsInner?.caption || '';
+                        const _vsIsPtt   = Boolean(_vsInner?.ptt);
+                        const _vsCleanSender = String(_vsSender).split(':')[0].replace('@s.whatsapp.net', '');
+
+                        const _vsBaseEntry = {
                             msg: _vsContent,
-                            sender: _vsSender.replace('@s.whatsapp.net', ''),
+                            type: _vsType,
+                            mime: _vsMime,
+                            caption: _vsCaption,
+                            isPtt: _vsIsPtt,
+                            sender: _vsCleanSender,
+                            chat: _vsChatId,
+                            msgId: _vsMsgId,
+                            buffer: null,
                             ts: Date.now()
                         };
+                        global._lastViewOnce[_vsChatId] = _vsBaseEntry;
+                        if (_vsMsgId) global._viewOnceBufferMap.set(_vsMsgId, _vsBaseEntry);
+
+                        // Eager download — async, don't block message pipeline
+                        (async () => {
+                            try {
+                                const _voMType = _vsType.replace('Message', '');
+                                const _voStream = await downloadContentFromMessage(_vsInner, _voMType);
+                                const _voChunks = [];
+                                for await (const _ch of _voStream) _voChunks.push(_ch);
+                                const _voBuf = Buffer.concat(_voChunks);
+                                if (_voBuf && _voBuf.length > 0) {
+                                    _vsBaseEntry.buffer = _voBuf;
+                                    console.log(`[ViewOnce] ✅ pre-cached ${_voBuf.length}B ${_vsType} from ${_vsCleanSender} in ${_vsChatId}`);
+                                }
+                            } catch (_voDlErr) {
+                                console.log(`[ViewOnce] ⚠️ eager dl failed for ${_vsType}: ${_voDlErr?.message}`);
+                            }
+                        })();
+
+                        // TTL prune — sirf 30 min purani entries rakho, max 200
+                        try {
+                            const _voCut = Date.now() - 30 * 60 * 1000;
+                            for (const [_k, _v] of global._viewOnceBufferMap) {
+                                if (!_v || _v.ts < _voCut) global._viewOnceBufferMap.delete(_k);
+                            }
+                            if (global._viewOnceBufferMap.size > 200) {
+                                const _vs = [...global._viewOnceBufferMap.entries()].sort((a, b) => (a[1]?.ts || 0) - (b[1]?.ts || 0));
+                                const _del = _vs.slice(0, _vs.length - 200);
+                                for (const [_dk] of _del) global._viewOnceBufferMap.delete(_dk);
+                            }
+                        } catch (_pErr) { /* silent */ }
                     }
                 }
             } catch (_vsErr) { /* silent */ }
