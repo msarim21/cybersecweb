@@ -274,22 +274,12 @@ const requireDb = (req, res, next) => {
 // Meta (filename, original name, mimetype) saved to uploads/audio-meta.json
 // ══════════════════════════════════════════════════════════════════════════════
 
-const jwt = require('jsonwebtoken');
 const multer = require('multer');
-const JWT_SECRET_AUDIO = process.env.JWT_SECRET || 'cybersecpro_default_secret_change_in_production';
+const { protect, adminOnly } = require('./middleware/auth');
 const AUDIO_META_FILE  = path.join(UPLOADS_DIR, 'audio-meta.json');
 
-// JWT-only admin check (no DB round-trip) — used only for audio routes
-const protectJwt = (req, res, next) => {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token.' });
-    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET_AUDIO);
-    next();
-  } catch { return res.status(401).json({ error: 'Invalid token.' }); }
-};
-// adminJwt removed — generateToken only stores { id }, no role field.
-// protectJwt (valid JWT) is sufficient: only logged-in admins have tokens.
+// Admin audio routes — valid JWT + admin role required
+const protectAdminAudio = [protect, adminOnly];
 
 // Disk storage — save file directly, no base64, no compression
 const audioStorage = multer.diskStorage({
@@ -359,8 +349,8 @@ app.get('/api/site/audio/file', (req, res) => {
   }
 });
 
-// ── Admin: upload audio (admin only) ─────────────────────────────────────────
-app.post('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res, next) => {
+// ── Admin: upload audio (JWT-only auth — NO requireDb, no 503) ───────────────
+app.post('/api/admin/audio', ...protectAdminAudio, (req, res, next) => {
   audioUploadMw.single('audio')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Max 20MB allowed.' });
@@ -375,14 +365,14 @@ app.post('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res, next)
   res.json({ status: 'done', original: req.file.originalname, filename: req.file.filename });
 });
 
-// ── Admin: get audio info ────────────────────────────────────────────────────
-app.get('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res) => {
+// ── Admin: get audio info (JWT-only, no DB) ──────────────────────────────────
+app.get('/api/admin/audio', ...protectAdminAudio, (req, res) => {
   const m = readAudioMeta();
   res.json({ filename: m?.filename || '', original: m?.original || '' });
 });
 
-// ── Admin: delete audio ──────────────────────────────────────────────────────
-app.delete('/api/admin/audio', requireDb, protectAuth, adminOnly, (req, res) => {
+// ── Admin: delete audio (JWT-only, no DB) ───────────────────────────────────
+app.delete('/api/admin/audio', ...protectAdminAudio, (req, res) => {
   clearAudioMeta();
   res.json({ message: 'Audio removed.' });
 });

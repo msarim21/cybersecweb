@@ -1619,7 +1619,20 @@ async function startpairing(nexusDevNumber) {
                 }
             } catch (_) {}
 
-            
+            // Restore saved bot mode on reconnect (.public persists across restarts)
+            try {
+                const _modeNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const dbMode = await getBotMode(_modeNum).catch(() => null);
+                if (dbMode === 'public') {
+                    nexus.public = true;
+                } else {
+                    nexus.public = false;
+                    if (!dbMode) await setBotMode(_modeNum, 'self');
+                }
+                console.log(chalk.cyan(`[pair] 📋 Mode for ${_modeNum}: ${nexus.public ? 'PUBLIC' : 'SELF (private)'}`));
+            } catch (_) {
+                nexus.public = false;
+            }
 
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);

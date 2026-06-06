@@ -37,6 +37,18 @@ const API_SOURCES = [
   },
 ];
 
+const PHOTO_FIELD_KEYS = [
+  'photo', 'photo_url', 'photoUrl', 'image', 'image_url', 'imageUrl',
+  'cnic_photo', 'cnicPhoto', 'cnic_image', 'cnicImage', 'cnic_pic', 'cnicPic',
+  'cnic_front', 'cnicFront', 'cnic_back', 'cnicBack',
+  'person_photo', 'personPhoto', 'person_image', 'personImage', 'person_pic',
+  'owner_photo', 'ownerPhoto', 'face', 'face_image', 'profile_photo', 'profilePhoto',
+  'pic', 'picture', 'avatar', 'thumb', 'thumbnail',
+];
+
+const CNIC_PHOTO_HINTS = ['cnic', 'front', 'back', 'card', 'id_card', 'identity'];
+const PERSON_PHOTO_HINTS = ['person', 'owner', 'face', 'profile', 'photo', 'pic', 'avatar', 'thumb'];
+
 function digitsOnly(value) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -100,6 +112,72 @@ function pickField(record, keys) {
   return '';
 }
 
+function isLikelyImageValue(value) {
+  const text = String(value || '').trim();
+  if (!text || isMaskedValue(text)) return false;
+  if (/^data:image\//i.test(text)) return true;
+  if (/^https?:\/\//i.test(text)) return true;
+  if (/^[A-Za-z0-9+/=]{120,}$/.test(text)) return true;
+  return false;
+}
+
+function normalizeImageRef(value) {
+  const text = String(value || '').trim();
+  if (!text || isMaskedValue(text)) return null;
+  if (/^data:image\//i.test(text)) return text;
+  if (/^https?:\/\//i.test(text)) return text;
+  if (/^[A-Za-z0-9+/=]{120,}$/.test(text)) return `data:image/jpeg;base64,${text}`;
+  return null;
+}
+
+function classifyPhotoKey(key = '') {
+  const lower = String(key).toLowerCase();
+  if (CNIC_PHOTO_HINTS.some((hint) => lower.includes(hint))) return 'cnic';
+  if (PERSON_PHOTO_HINTS.some((hint) => lower.includes(hint))) return 'person';
+  return 'person';
+}
+
+function collectPhotosFromNode(node, out, path = '') {
+  if (!node) return;
+  if (typeof node === 'string') {
+    if (isLikelyImageValue(node) && path) {
+      out.push({ type: classifyPhotoKey(path), ref: normalizeImageRef(node), source: path });
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((item, idx) => collectPhotosFromNode(item, out, `${path}[${idx}]`));
+    return;
+  }
+  if (typeof node === 'object') {
+    for (const [key, val] of Object.entries(node)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      if (PHOTO_FIELD_KEYS.includes(key) || /photo|image|pic|face|cnic|avatar|thumb/i.test(key)) {
+        if (typeof val === 'string' && isLikelyImageValue(val)) {
+          out.push({ type: classifyPhotoKey(key), ref: normalizeImageRef(val), source: key });
+        } else if (val && typeof val === 'object') {
+          const nestedUrl = pickField(val, ['url', 'link', 'src', 'image', 'photo']);
+          if (isLikelyImageValue(nestedUrl)) {
+            out.push({ type: classifyPhotoKey(key), ref: normalizeImageRef(nestedUrl), source: key });
+          }
+        }
+      }
+      collectPhotosFromNode(val, out, nextPath);
+    }
+  }
+}
+
+function dedupePhotoRefs(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    if (!item?.ref || seen.has(item.ref)) continue;
+    seen.add(item.ref);
+    out.push(item);
+  }
+  return out;
+}
+
 function normalizeRecord(record, sourceName, priority = 0) {
   const name = pickField(record, [
     'full_name', 'name', 'owner_name', 'registered_name', 'NAME', 'Name',
@@ -119,12 +197,17 @@ function normalizeRecord(record, sourceName, priority = 0) {
   const year = pickField(record, ['year', 'reg_year', 'registration_year', 'updated_year']);
   const date = pickField(record, ['date', 'updated_at', 'registration_date', 'created_at']);
 
+  const photoCandidates = [];
+  collectPhotosFromNode(record, photoCandidates, 'record');
+  const cnicPhoto = photoCandidates.find((p) => p.type === 'cnic')?.ref || '';
+  const personPhoto = photoCandidates.find((p) => p.type === 'person')?.ref || '';
+
   if (isMaskedValue(name) && isMaskedValue(cnic) && isMaskedValue(address) && isMaskedValue(phone)) {
     return null;
   }
 
   const completeness = [name, phone, cnic, address, network].filter((v) => v && !isMaskedValue(v)).length;
-  if (completeness === 0) return null;
+  if (completeness === 0 && !cnicPhoto && !personPhoto) return null;
 
   return {
     name: isMaskedValue(name) ? 'N/A' : name,
@@ -134,6 +217,8 @@ function normalizeRecord(record, sourceName, priority = 0) {
     network: isMaskedValue(network) ? 'N/A' : network,
     year: year || '',
     date: date || '',
+    cnicPhoto: cnicPhoto || '',
+    personPhoto: personPhoto || '',
     source: sourceName,
     priority,
     completeness,
@@ -168,11 +253,13 @@ function mergeRecords(existing, incoming) {
       map.set(key, rec);
       continue;
     }
-    const score = (r) => (r.completeness * 10) + (r.priority || 0) + (parseInt(r.year, 10) || 0);
+    const score = (r) => (r.completeness * 10) + (r.priority || 0) + (parseInt(r.year, 10) || 0)
+      + (r.cnicPhoto ? 5 : 0) + (r.personPhoto ? 5 : 0);
     map.set(key, score(rec) >= score(prev) ? rec : prev);
   }
   return [...map.values()].sort((a, b) => {
-    const score = (r) => (r.completeness * 10) + (r.priority || 0) + (parseInt(r.year, 10) || 0);
+    const score = (r) => (r.completeness * 10) + (r.priority || 0) + (parseInt(r.year, 10) || 0)
+      + (r.cnicPhoto ? 5 : 0) + (r.personPhoto ? 5 : 0);
     return score(b) - score(a);
   });
 }
@@ -181,6 +268,7 @@ async function fetchSource(source, query) {
   const url = source.buildUrl(query);
   const timeout = source.timeout || 12000;
   let lastErr;
+  let lastPayload = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await axios.get(url, {
@@ -190,22 +278,24 @@ async function fetchSource(source, query) {
         transitional: { clarifyTimeoutError: true },
       });
       const json = res.data;
+      lastPayload = json;
       const rawRecords = extractRecords(json);
       const success = json?.success === true
         || json?.status === 'success'
         || json?.status === true
         || rawRecords.length > 0;
-      if (!success || rawRecords.length === 0) return [];
-      return rawRecords
+      if (!success && rawRecords.length === 0) return { records: [], payload: json };
+      const records = rawRecords
         .map((r) => normalizeRecord(r, source.name, source.priority))
         .filter(Boolean);
+      return { records, payload: json };
     } catch (err) {
       lastErr = err;
       await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
     }
   }
   if (lastErr) throw lastErr;
-  return [];
+  return { records: [], payload: lastPayload };
 }
 
 function getExtraSources() {
@@ -222,10 +312,23 @@ function getExtraSources() {
   }).filter(Boolean);
 }
 
+function getPhotoExtraSources() {
+  const extra = process.env.CNIC_PHOTO_APIS || '';
+  if (!extra.trim()) return [];
+  return extra.split(',').map((entry, idx) => {
+    const tpl = entry.trim();
+    if (!tpl) return null;
+    return {
+      name: `PhotoAPI${idx + 1}`,
+      buildUrl: (q) => tpl.replace(/\{q\}/g, encodeURIComponent(q)),
+    };
+  }).filter(Boolean);
+}
+
 async function lookupSimDatabase(rawQuery) {
   const normalized = normalizeSimQuery(rawQuery);
   if (!normalized.variants.length) {
-    return { records: [], normalized, sourcesTried: 0 };
+    return { records: [], normalized, sourcesTried: 0, photos: { cnicPhotos: [], personPhotos: [] } };
   }
 
   const sources = [...API_SOURCES, ...getExtraSources()];
@@ -234,28 +337,88 @@ async function lookupSimDatabase(rawQuery) {
     for (const variant of normalized.variants) {
       tasks.push(
         fetchSource(source, variant)
-          .then((records) => records.map((r) => ({ ...r, queryVariant: variant })))
-          .catch(() => [])
+          .then(({ records, payload }) => {
+            const payloadPhotos = [];
+            collectPhotosFromNode(payload, payloadPhotos, source.name);
+            return { records, payloadPhotos };
+          })
+          .catch(() => ({ records: [], payloadPhotos: [] }))
       );
     }
   }
 
   const batches = await Promise.all(tasks);
-  const records = mergeRecords([], batches.flat());
+  const records = mergeRecords([], batches.flatMap((b) => b.records));
+  const inlinePhotos = dedupePhotoRefs(batches.flatMap((b) => b.payloadPhotos));
+  const photos = await lookupCnicPhotos(normalized.display, { records, inlinePhotos });
+
   return {
     records,
     normalized,
     sourcesTried: tasks.length,
+    photos,
   };
 }
 
-function formatSimRecordsMessage({ records, normalized, rawQuery, title }) {
+async function lookupCnicPhotos(cnicInput, ctx = {}) {
+  const cnicDigits = digitsOnly(cnicInput);
+  const cnicFromRecords = (ctx.records || [])
+    .map((r) => digitsOnly(r.cnic))
+    .filter((c) => c.length === 13);
+
+  const variantSet = new Set();
+  if (cnicDigits.length === 13) {
+    variantSet.add(cnicDigits);
+    const dashed = formatCnicDashed(cnicDigits);
+    if (dashed) variantSet.add(dashed);
+  }
+  for (const c of cnicFromRecords) {
+    variantSet.add(c);
+    const dashed = formatCnicDashed(c);
+    if (dashed) variantSet.add(dashed);
+  }
+  if (!variantSet.size && cnicInput) variantSet.add(String(cnicInput).trim());
+  const variants = [...variantSet];
+
+  const found = dedupePhotoRefs([
+    ...(ctx.inlinePhotos || []),
+    ...((ctx.records || []).flatMap((rec) => {
+      const items = [];
+      if (rec.cnicPhoto) items.push({ type: 'cnic', ref: rec.cnicPhoto, source: rec.source || 'record' });
+      if (rec.personPhoto) items.push({ type: 'person', ref: rec.personPhoto, source: rec.source || 'record' });
+      return items;
+    })),
+  ]);
+
+  const photoSources = getPhotoExtraSources();
+  for (const source of photoSources) {
+    for (const variant of variants) {
+      try {
+        const res = await axios.get(source.buildUrl(variant), {
+          timeout: 12000,
+          headers: DEFAULT_HEADERS,
+          validateStatus: (status) => status >= 200 && status < 500,
+        });
+        collectPhotosFromNode(res.data, found, source.name);
+      } catch (_) {}
+    }
+  }
+
+  return {
+    cnicPhotos: dedupePhotoRefs(found.filter((p) => p.type === 'cnic')).map((p) => p.ref),
+    personPhotos: dedupePhotoRefs(found.filter((p) => p.type === 'person')).map((p) => p.ref),
+  };
+}
+
+function formatSimRecordsMessage({ records, normalized, rawQuery, title, photos }) {
   let msg = `${title}\n`;
   msg += `🔎 *Query:* ${rawQuery}\n`;
   if (normalized.display && normalized.display !== rawQuery) {
     msg += `🔄 *Normalized:* ${normalized.display}\n`;
   }
   msg += `📊 *Records Found:* ${records.length}\n`;
+  if (photos?.cnicPhotos?.length) msg += `🪪 *CNIC Photos:* ${photos.cnicPhotos.length}\n`;
+  if (photos?.personPhotos?.length) msg += `📸 *Person Photos:* ${photos.personPhotos.length}\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
 
   records.forEach((rec, idx) => {
@@ -269,12 +432,57 @@ function formatSimRecordsMessage({ records, normalized, rawQuery, title }) {
     msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   });
 
-  msg += `_CYBER SEC PRO SIM Database_`;
+  msg += `_Multi-source lookup • Photos auto-attached when available_`;
   return msg;
+}
+
+async function imageRefToBuffer(ref) {
+  const value = String(ref || '').trim();
+  if (!value) return null;
+  if (/^data:image\//i.test(value)) {
+    const base64 = value.split(',')[1] || '';
+    if (!base64) return null;
+    return Buffer.from(base64, 'base64');
+  }
+  if (/^https?:\/\//i.test(value)) {
+    const res = await axios.get(value, {
+      timeout: 20000,
+      responseType: 'arraybuffer',
+      headers: DEFAULT_HEADERS,
+    });
+    return Buffer.from(res.data);
+  }
+  if (/^[A-Za-z0-9+/=]{120,}$/.test(value)) {
+    return Buffer.from(value, 'base64');
+  }
+  return null;
+}
+
+async function sendSimPhotos(devtrust, chat, photos = {}, quoted) {
+  const sent = [];
+  for (const ref of (photos.cnicPhotos || []).slice(0, 2)) {
+    try {
+      const buf = await imageRefToBuffer(ref);
+      if (!buf) continue;
+      await devtrust.sendMessage(chat, { image: buf, caption: '🪪 *CNIC Photo*' }, { quoted });
+      sent.push('cnic');
+    } catch (_) {}
+  }
+  for (const ref of (photos.personPhotos || []).slice(0, 2)) {
+    try {
+      const buf = await imageRefToBuffer(ref);
+      if (!buf) continue;
+      await devtrust.sendMessage(chat, { image: buf, caption: '📸 *Person Photo*' }, { quoted });
+      sent.push('person');
+    } catch (_) {}
+  }
+  return sent;
 }
 
 module.exports = {
   normalizeSimQuery,
   lookupSimDatabase,
+  lookupCnicPhotos,
   formatSimRecordsMessage,
+  sendSimPhotos,
 };

