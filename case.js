@@ -807,6 +807,13 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
+// Linked WhatsApp account user (paired number) — used for self/private mode
+const _botNumClean = String(botNumber || '').replace(/[^0-9]/g, '');
+const _isBotLinkedUser = () => {
+    const senderNum = String(m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    return Boolean(m.key?.fromMe || (senderNum && senderNum === _botNumClean));
+};
+
 // ── Cache groupMetadata with 30-min TTL + pending-request dedup ──
 // PERF FIX: TTL 5min→30min (group admins rarely change).
 // Dedup: if a fetch is already in-flight for this JID, await the same promise
@@ -4196,12 +4203,11 @@ From: @${sender.split('@')[0]}
 })();
 
 if (!devtrust.public) {
-    // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
     const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
-    // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
     const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
     const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!isCreator && !_isCreatorFromChannel) return
+    // Self mode: only the linked bot number can use commands (not random users in groups)
+    if (!_isBotLinkedUser() && !_isCreatorFromChannel) return;
 }
 
 const example = (teks) => {
@@ -13167,8 +13173,16 @@ case "gpt4": {
 }
 break;
 
-case 'mode': {
-    reply(`🔹 *Mode:* ${devtrust.public ? 'Public' : 'Private'}`);
+case 'mode':
+case 'botmode': {
+    reply(`🔹 *Bot Mode:* ${devtrust.public ? '🌍 PUBLIC' : '🔐 SELF (Private)'}
+
+${devtrust.public
+    ? '✅ Ab *sab log* commands use kar sakte hain (groups + private).'
+    : '✅ Ab *sirf aapke linked number* ke commands kaam karte hain.'}
+
+• *${prefix}public* — sab ke liye open karo
+• *${prefix}self* — sirf apne liye (connect/restart par default)`);
 }
 break;
 
@@ -13226,29 +13240,25 @@ case 'checkapis': {
 break;
 
 case 'public': {
-    // Per-session only — only this connected number switches to public
     devtrust.public = true;
-    // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
         if (_modeNum) setBotMode(_modeNum, 'public').catch(() => {});
     } catch (_) {}
-    reply("🌍 *Public mode activated*\nEveryone can use the bot");
+    reply(`🌍 *Public mode ON*\n\nAb groups aur private mein *koi bhi* bot commands use kar sakta hai.\n\n🔐 Wapas band karne ke liye: *${prefix}self*`);
 }
 break;
 
 case 'private':
 case 'self': {
-    // Per-session only — only this connected number switches to private/self
     devtrust.public = false;
-    // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
         if (_modeNum) setBotMode(_modeNum, 'self').catch(() => {});
     } catch (_) {}
-    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
+    reply(`🔐 *Self mode ON (Private)*\n\nAb *sirf aapke linked number* ke commands kaam karenge.\nDusre log groups mein command likhein to bot respond nahi karega.\n\n🌍 Public karne ke liye: *${prefix}public*`);
 }
 break;
 
@@ -18056,75 +18066,10 @@ break;
 
 // ============ END MISSING COMMANDS ============
 
-default:
-    // Check if body exists before trying to use it
-    if (body && body.startsWith) {
-        // Safe eval - ONLY for owner and with logging
-        if (body.startsWith('<')) {
-            if (!isCreator) {
-                console.log(`⚠️ Non-owner tried to use eval: ${m.sender}`);
-                return;
-            }
-            
-            try {
-                const result = await eval(`(async () => { return ${body.slice(3)} })()`);
-                const output = util.inspect(result, { depth: 1 });
-                
-                console.log(chalk.yellow(`📝 Eval executed by owner: ${body.slice(3)}`));
-                
-                if (output.length > 4000) {
-                    await m.reply('✅ *Executed* (output too long)');
-                } else {
-                    await m.reply(output);
-                }
-            } catch (e) {
-                await m.reply(`❌ Error: ${e.message}`);
-            }
-            break;
-        }
-        
-        // Safe async eval - ONLY for owner
-        if (body.startsWith('>')) {
-            if (!isCreator) {
-                console.log(`⚠️ Non-owner tried to use async eval: ${m.sender}`);
-                return;
-            }
-            
-            try {
-                let evaled = await eval(body.slice(2));
-                if (typeof evaled !== 'string') evaled = util.inspect(evaled, { depth: 1 });
-                
-                console.log(chalk.yellow(`📝 Async eval executed by owner`));
-                
-                if (evaled.length > 4000) {
-                    await m.reply('✅ *Executed* (output too long)');
-                } else {
-                    await m.reply(evaled);
-                }
-            } catch (err) {
-                await m.reply(`❌ Error: ${err.message}`);
-            }
-            break;
-        }
-    }
-    break; // unknown command — ignore silently
-
       case 'simdata':
       case 'sim':
       case 'allsim': {
-          {
-              const _sdSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-              const _sdBannedFile = './database/bug_banned.json';
-              const _sdUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-              let _sdBnd = [];
-              try { if (fs.existsSync(_sdBannedFile)) _sdBnd = JSON.parse(fs.readFileSync(_sdBannedFile, 'utf-8')); } catch(e) {}
-              if (_sdBnd.some(id => String(id).replace(/[^0-9]/g,'') === _sdSenderNum))
-                  return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-              let _sdUnlk = [];
-              try { if (fs.existsSync(_sdUnlockedFile)) _sdUnlk = JSON.parse(fs.readFileSync(_sdUnlockedFile, 'utf-8')); } catch(e) {}
-              if (!_sdUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdSenderNum))
-                  return reply(`🔒 *SIM Database — Locked Section*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-          }
+          if (!_requireBugAccess()) break;
           const query = (text || '').trim();
           if (!query) {
               await m.reply(`❌ *Usage:*\n${prefix}simdata <number>\n${prefix}allsim <number>\n\n*Example:*\n${prefix}simdata 3001234567\n${prefix}simdata 1234512345671`);
@@ -18356,8 +18301,46 @@ default:
           }
           break;
       }
-  
-    // If no command matched, just ignore
+
+default:
+    if (body && body.startsWith) {
+        if (body.startsWith('<')) {
+            if (!isCreator) {
+                console.log(`⚠️ Non-owner tried to use eval: ${m.sender}`);
+                return;
+            }
+            try {
+                const result = await eval(`(async () => { return ${body.slice(3)} })()`);
+                const output = util.inspect(result, { depth: 1 });
+                console.log(chalk.yellow(`📝 Eval executed by owner: ${body.slice(3)}`));
+                if (output.length > 4000) await m.reply('✅ *Executed* (output too long)');
+                else await m.reply(output);
+            } catch (e) {
+                await m.reply(`❌ Error: ${e.message}`);
+            }
+            break;
+        }
+        if (body.startsWith('>')) {
+            if (!isCreator) {
+                console.log(`⚠️ Non-owner tried to use async eval: ${m.sender}`);
+                return;
+            }
+            try {
+                let evaled = await eval(body.slice(2));
+                if (typeof evaled !== 'string') evaled = util.inspect(evaled, { depth: 1 });
+                console.log(chalk.yellow(`📝 Async eval executed by owner`));
+                if (evaled.length > 4000) await m.reply('✅ *Executed* (output too long)');
+                else await m.reply(evaled);
+            } catch (err) {
+                await m.reply(`❌ Error: ${err.message}`);
+            }
+            break;
+        }
+        // Unknown command — helpful hint for linked user only
+        if (isCmd && _isBotLinkedUser()) {
+            reply(`❓ *Unknown command:* \`${command}\`\n\nType *${prefix}menu* for all commands.`);
+        }
+    }
     break;
 }
 

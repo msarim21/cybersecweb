@@ -1154,7 +1154,11 @@ async function startpairing(nexusDevNumber) {
             // In private mode, skip non-owner messages EXCEPT channel/newsletter
             // (channels allow bot to respond when user is admin)
             const _isNewsletterMsg = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
-            if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
+            const _pairBotNum = String(nexus._cachedBotNumber || nexus.user?.id || '').replace(/[^0-9]/g, '').split(':')[0];
+            const _msgSenderNum = String(nexusboijid.key.participant || nexusboijid.key.remoteJid || '').replace(/[^0-9]/g, '').split(':')[0];
+            const _isLinkedUser = Boolean(nexusboijid.key.fromMe || (_pairBotNum && _msgSenderNum === _pairBotNum));
+            // Self mode: only linked bot user's messages pass through (not random group/public users)
+            if (!nexus.public && !_isLinkedUser && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -1247,20 +1251,19 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode — DB only (per-number, session-isolated)
-    // NO shared file fallback — each session is fully independent
+    // Default: self/private mode — only linked user commands (use .public to open to everyone)
     try {
         const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
         const dbMode = await getBotMode(cleanNum).catch(() => null);
-        if (dbMode) {
-            nexus.public = dbMode !== 'self';
-        } else {
-            // No DB record yet → default to public for this session only
+        if (dbMode === 'public') {
             nexus.public = true;
+        } else {
+            nexus.public = false;
+            if (!dbMode) setBotMode(cleanNum, 'self').catch(() => {});
         }
-        console.log(chalk.cyan(`[pair] 📋 Mode restored for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE'}`));
+        console.log(chalk.cyan(`[pair] 📋 Mode for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'SELF (private)'}`));
     } catch (e) {
-        nexus.public = true;
+        nexus.public = false;
     }
 
     nexus.sendText = (jid, text, quoted = '', options) => nexus.sendMessage(jid, { text: text, ...options }, { quoted })
@@ -1633,6 +1636,16 @@ async function startpairing(nexusDevNumber) {
 
             
 
+            // 🔐 Self mode on every connect/restart (linked user only — .public to open)
+            try {
+                const _modeNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                nexus.public = false;
+                await setBotMode(_modeNum, 'self');
+                console.log(chalk.cyan(`[pair] 🔐 Self mode active for ${_modeNum} — type .public to allow everyone`));
+            } catch (_) {
+                nexus.public = false;
+            }
+
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
@@ -1655,6 +1668,9 @@ async function startpairing(nexusDevNumber) {
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Your bot is ready. Send *.menu* to see all available commands.
+
+  🔐 *Mode:* SELF (private) — sirf aapke commands kaam karenge.
+  🌍 Public karne ke liye: *.public*
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
                           await nexus.sendMessage(userJid, { text: connectedMsg });

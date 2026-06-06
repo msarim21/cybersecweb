@@ -618,7 +618,7 @@ async function setBotMode(number, mode) {
   }
   // Ensure column exists (safe — only runs once, ignored if already there)
   try {
-    await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'public'`);
+    await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'self'`);
   } catch (_) {}
   await pg().query(
     `INSERT INTO bot_sessions (number, bot_mode, status, last_active)
@@ -634,15 +634,15 @@ async function getBotMode(number) {
     if (isMongoMode()) {
       const { BotSession } = M();
       const doc = await BotSession.findOne({ number: clean }).lean();
-      return (doc && doc.botMode) ? doc.botMode : 'public';
+      return (doc && doc.botMode) ? doc.botMode : 'self';
     }
     const { rows } = await pg().query(
       `SELECT bot_mode FROM bot_sessions WHERE number = $1`,
       [clean]
     );
-    return (rows.length && rows[0].bot_mode) ? rows[0].bot_mode : 'public';
+    return (rows.length && rows[0].bot_mode) ? rows[0].bot_mode : 'self';
   } catch (_) {
-    return 'public';
+    return 'self';
   }
 }
 
