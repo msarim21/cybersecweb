@@ -1536,8 +1536,8 @@ async function startpairing(nexusDevNumber) {
         const { connection, lastDisconnect } = update;
         const tracker = rentbotTracker.get(nexusDevNumber);
 
-        // Request pairing code only after socket is connecting (fixes intermittent code generation)
-        if (connection === 'connecting' && pairingCode && !state.creds.registered) {
+        // Request pairing code once socket is connecting or open (unregistered session)
+        if ((connection === 'connecting' || connection === 'open') && pairingCode && !state.creds.registered) {
             const _pairPhone = String(nexusDevNumber).replace(/[^0-9]/g, '');
             _requestPairingCodeWithRetry(_pairPhone).catch(err => {
                 console.log(chalk.red(`[Pairing] Code request failed for ${_pairPhone}: ${err.message}`));

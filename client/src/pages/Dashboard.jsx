@@ -311,18 +311,29 @@ const LinkModal = ({ onClose, onAdd }) => {
     e.preventDefault();
     if (!form.number || !form.botName) return toast.error('All fields required');
     setStep(2);
+    const clean = form.number.replace(/\D/g, '');
     try {
-      const { data } = await axios.post('/api/pairing/request', { phoneNumber: form.number });
-      setCode(data.code);
-      setTimer(300);
-      setStep(3);
+      await axios.post('/api/pairing/request', { phoneNumber: form.number });
+
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        const { data } = await axios.get(`/api/pairing/code/${clean}`);
+        if (data.code) {
+          setCode(data.code);
+          setTimer(300);
+          setStep(3);
+          return;
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      throw new Error('Pairing code timeout — worker dyno check karein aur dubara try karein.');
     } catch (err) {
       setStep(1);
       const errCode = err.response?.data?.error;
       if (errCode === 'PLAN_LIMIT_REACHED' || errCode === 'TRIAL_EXPIRED') {
         toast.error(err.response?.data?.message || 'Limit reached'); onClose();
       } else {
-        toast.error(err.response?.data?.error || 'Failed to get pairing code. Try again.');
+        toast.error(err.response?.data?.error || err.message || 'Failed to get pairing code. Try again.');
       }
     }
   };
@@ -390,7 +401,7 @@ const LinkModal = ({ onClose, onAdd }) => {
                 <div className="text-center">
                   <div className="font-display text-sm text-[#00f5ff] tracking-widest mb-1">CONNECTING TO WHATSAPP</div>
                   <div className="font-mono text-[10px] text-gray-500">Requesting pairing code for {form.number}…</div>
-                  <div className="font-mono text-[10px] text-gray-600 mt-1">This takes ~5 seconds</div>
+                  <div className="font-mono text-[10px] text-gray-600 mt-1">Usually 10–30 seconds — please wait</div>
                 </div>
               </motion.div>
             )}

@@ -26,6 +26,7 @@ async function processPairingQueue() {
             getPendingPairingRequests,
             markPairingInProgress,
             resetPairingRequest,
+            getPairingState,
         } = require('../server/db-service');
 
         const pending = await getPendingPairingRequests();
@@ -73,7 +74,16 @@ async function processPairingQueue() {
 
                     await new Promise((r) => setTimeout(r, 1500));
 
-                    await pairMod(jid);
+                    pairMod(jid).catch((err) => {
+                        console.error(`[PairingQueue] pair() error for ${clean}:`, err.message);
+                    });
+
+                    const deadline = Date.now() + 120_000;
+                    while (Date.now() < deadline) {
+                        const st = await getPairingState(clean).catch(() => null);
+                        if (st?.code) break;
+                        await new Promise((r) => setTimeout(r, 1000));
+                    }
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
                     try {
@@ -91,7 +101,7 @@ async function processPairingQueue() {
 
 function startPairingProcessor(intervalMs = 2000) {
     if (process.env.WHATSAPP_WORKER !== '1') return null;
-    setTimeout(() => processPairingQueue().catch(() => {}), 2000);
+    setTimeout(() => processPairingQueue().catch(() => {}), 500);
     const timer = setInterval(() => processPairingQueue().catch(() => {}), intervalMs);
     console.log(`[PairingQueue] Worker pairing processor started (${intervalMs / 1000}s poll)`);
     return timer;

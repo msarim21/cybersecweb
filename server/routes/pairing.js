@@ -17,8 +17,12 @@ const PAIRING_JSON  = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE   = path.join(__dirname, '../../pair');
 const SESSION_DB    = path.join(__dirname, '../../session-db');
 
-function isWebDyno() {
-  return Boolean(process.env.DYNO) && process.env.WHATSAPP_WORKER !== '1';
+/** Web/API process must queue pairing to worker on PaaS (Heroku, Render). */
+function shouldQueueToWorker() {
+  if (process.env.WHATSAPP_WORKER === '1') return false;
+  if (process.env.DYNO) return true;
+  if (process.env.RENDER === 'true') return true;
+  return false;
 }
 
 function ensureDir(p) {
@@ -36,27 +40,60 @@ function deleteFolderRecursive(p) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function pollPairingCode(clean, deadlineMs = 90_000) {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    try {
-      const state = await getPairingState(clean);
-      if (state?.code) return state.code;
-    } catch (_) {}
-    if (!isWebDyno()) {
-      try {
-        const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
-        const obj = JSON.parse(raw);
-        const savedNum = (obj.number || '').replace(/[^0-9]/g, '');
-        if (obj.code && savedNum === clean) return obj.code;
-      } catch (_) {}
-    }
-    await sleep(400);
-  }
+async function readCodeFromFile(clean) {
+  try {
+    const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
+    const obj = JSON.parse(raw);
+    const savedNum = (obj.number || '').replace(/[^0-9]/g, '');
+    if (obj.code && savedNum === clean) return obj.code;
+  } catch (_) {}
   return null;
 }
 
-// ── POST /api/pairing/request ─────────────────────────────────────────────────
+async function prepareFreshPairing(clean) {
+  const jid = `${clean}@s.whatsapp.net`;
+  const sessionPath = path.join(PAIRING_BASE, jid);
+
+  const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
+  removeFromStoppedBots(clean);
+
+  try {
+    const pairMod = require(PAIR_MODULE);
+    if (pairMod?.stopBot) {
+      pairMod.stopBot(jid);
+      pairMod.stopBot(clean);
+    }
+    if (pairMod?.clearSession) pairMod.clearSession(clean);
+  } catch (_) {}
+
+  if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
+
+  try {
+    const { deleteSessionCreds } = require(SESSION_DB);
+    await deleteSessionCreds(clean);
+  } catch (_) {}
+
+  try { await fs.unlink(PAIRING_JSON); } catch (_) {}
+
+  ensureDir(PAIRING_BASE);
+  ensureDir(sessionPath);
+}
+
+function startPairingInBackground(clean) {
+  const jid = `${clean}@s.whatsapp.net`;
+  setImmediate(() => {
+    try {
+      const startpairing = require(PAIR_MODULE);
+      startpairing(jid).catch((err) => {
+        console.error(`[Pairing/bg] startpairing error for ${clean}:`, err.message);
+      });
+    } catch (err) {
+      console.error(`[Pairing/bg] failed to load pair.js for ${clean}:`, err.message);
+    }
+  });
+}
+
+// ── POST /api/pairing/request — start pairing, return immediately ─────────────
 router.post('/request', protect, async (req, res) => {
   const { phoneNumber } = req.body;
   if (!phoneNumber) return res.status(400).json({ error: 'Phone number required.' });
@@ -71,67 +108,44 @@ router.post('/request', protect, async (req, res) => {
     return res.status(400).json({ error: 'Invalid phone number format.' });
   }
 
-  const jid = clean + '@s.whatsapp.net';
-  const sessionPath = path.join(PAIRING_BASE, jid);
-
-  const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
-  removeFromStoppedBots(clean);
-
   try {
-    const pairMod = require(PAIR_MODULE);
-    if (pairMod && typeof pairMod.stopBot === 'function') {
-      pairMod.stopBot(jid);
-      pairMod.stopBot(clean);
+    await prepareFreshPairing(clean);
+    await requestPairing(clean, req.user.id);
+
+    if (shouldQueueToWorker()) {
+      // Worker pairing-processor picks up DB queue within ~2s
+      return res.json({ status: 'queued', number: clean });
     }
-  } catch (_) {}
 
-  await sleep(2000);
-
-  try {
-    const { deleteSessionCreds } = require(SESSION_DB);
-    await deleteSessionCreds(clean);
-  } catch (_) {}
-
-  try { await fs.unlink(PAIRING_JSON); } catch (_) {}
-
-  // Web dyno (Heroku/Render): queue pairing for worker — do NOT run pair.js here
-  if (isWebDyno()) {
-    try {
-      await requestPairing(clean, req.user.id);
-      // Brief delay so worker picks up the queue before we poll
-      await sleep(1500);
-      const code = await pollPairingCode(clean);
-      if (!code) {
-        return res.status(500).json({
-          error: 'Timed out waiting for pairing code. Worker dyno check karein — dubara try karein.',
-        });
-      }
-      return res.json({ code, number: clean });
-    } catch (err) {
-      console.error('[Pairing/web]', err.message);
-      return res.status(500).json({ error: err.message || 'Could not queue pairing request.' });
-    }
-  }
-
-  // Worker or local dev: run pair.js directly
-  if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
-  ensureDir(PAIRING_BASE);
-  ensureDir(sessionPath);
-
-  try {
-    const startpairing = require(PAIR_MODULE);
-    startpairing(jid).catch(err => {
-      console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
-    });
-
-    const code = await pollPairingCode(clean);
-    if (!code) {
-      return res.status(500).json({ error: 'Timed out waiting for pairing code. WhatsApp server slow hai — dubara try karein.' });
-    }
-    return res.json({ code, number: clean });
+    startPairingInBackground(clean);
+    return res.json({ status: 'started', number: clean });
   } catch (err) {
-    console.error('[Pairing]', err.message);
-    return res.status(500).json({ error: err.message || 'Could not generate pairing code. Please try again.' });
+    console.error('[Pairing/request]', err.message);
+    return res.status(500).json({ error: err.message || 'Could not start pairing.' });
+  }
+});
+
+// ── GET /api/pairing/code/:number — client polls for pairing code ─────────────
+router.get('/code/:number', protect, async (req, res) => {
+  const clean = req.params.number.replace(/[^0-9]/g, '');
+  if (!clean) return res.status(400).json({ error: 'Invalid number.' });
+
+  try {
+    const state = await getPairingState(clean);
+    if (state?.code) {
+      return res.json({ code: state.code, status: 'ready', number: clean });
+    }
+
+    const fileCode = await readCodeFromFile(clean);
+    if (fileCode) {
+      return res.json({ code: fileCode, status: 'ready', number: clean });
+    }
+
+    const status = state?.pairingStatus || 'pending';
+    return res.json({ code: null, status, number: clean });
+  } catch (err) {
+    console.error('[Pairing/code]', err.message);
+    return res.status(500).json({ error: 'Could not read pairing status.' });
   }
 });
 

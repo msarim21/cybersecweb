@@ -858,8 +858,12 @@ async function setPairingCode(number, code) {
   }
   await ensurePgBotSessionColumns();
   await pg().query(
-    `UPDATE bot_sessions SET pairing_code = $2, pairing_status = 'code_ready', last_active = NOW()
-     WHERE number = $1`,
+    `INSERT INTO bot_sessions (number, pairing_code, pairing_status, last_active)
+     VALUES ($1, $2, 'code_ready', NOW())
+     ON CONFLICT (number) DO UPDATE SET
+       pairing_code = EXCLUDED.pairing_code,
+       pairing_status = 'code_ready',
+       last_active = NOW()`,
     [clean, code]
   );
 }
