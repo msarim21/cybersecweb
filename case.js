@@ -338,6 +338,35 @@ if (!fs.existsSync(ANTIDELETE_TEMP_DIR)) {
     try { fs.mkdirSync(ANTIDELETE_TEMP_DIR, { recursive: true }); } catch (e) {}
 }
 
+// ── Temp-file sweeper: remove orphan eager-downloaded media older than 24h ──
+// Without this, files for messages that were never deleted accumulate forever
+// (disk-bloat). Runs once on boot + every 6h.
+if (!global._antideleteTempSweepStarted) {
+    global._antideleteTempSweepStarted = true;
+    const _adSweepTemp = async () => {
+        try {
+            if (!fs.existsSync(ANTIDELETE_TEMP_DIR)) return;
+            const _now = Date.now();
+            const _cut = _now - 24 * 60 * 60 * 1000;
+            const _files = await fs.promises.readdir(ANTIDELETE_TEMP_DIR);
+            let _removed = 0;
+            for (const _f of _files) {
+                try {
+                    const _p = `${ANTIDELETE_TEMP_DIR}/${_f}`;
+                    const _st = await fs.promises.stat(_p);
+                    if (_st.isFile() && _st.mtimeMs < _cut) {
+                        await fs.promises.unlink(_p);
+                        _removed++;
+                    }
+                } catch (_) {}
+            }
+            if (_removed > 0) console.log(`[ANTIDELETE] 🧹 temp sweep removed ${_removed} orphan file(s)`);
+        } catch (_) {}
+    };
+    setTimeout(_adSweepTemp, 60 * 1000);          // 1 min after boot
+    setInterval(_adSweepTemp, 6 * 60 * 60 * 1000); // then every 6h
+}
+
 function _antieditCfgFile(botNum) {
     if (botNum) return './database/antiedit_config_' + botNum + '.json';
     return ANTIEDIT_CONFIG_FILE;
@@ -4008,59 +4037,99 @@ if (typeof global._cacheMessageForAntidelete === 'function') {
             const _adSender2 = m.key.participant || m.key.remoteJid;
             const msg = m.message || {};
 
+            // ── Dedup: if pair.js (or a prior pass) already cached this msg with
+            //    a valid disk file, skip re-download. Saves bandwidth + I/O when
+            //    the message goes through both pair.js AND case.js in public mode.
+            const _adExistingShared = global._antideleteStore.get(antiStoreKey(_adChatId2, _adMsgId2));
+            if (_adExistingShared?.mediaPath &&
+                _adExistingShared.mediaPath !== '__redownload__' &&
+                _adExistingShared.mediaPath !== '' &&
+                fs.existsSync(_adExistingShared.mediaPath)) {
+                // Already eagerly downloaded — touch _ts so periodic sweep keeps it alive
+                _adExistingShared._ts = Date.now();
+                return;
+            }
+
+            // ── Helper: eager-download media to disk with size guard ──
+            // Returns the saved path if successful, '' otherwise (caller still keeps
+            // rawMediaMsg metadata so a later re-download attempt can fall back).
+            const _adEagerDl = async (mediaPart, baileysType, ext, byteCap) => {
+                try {
+                    // Quick size pre-check using protobuf fileLength (if present)
+                    const _flRaw = mediaPart?.fileLength;
+                    let _fl = 0;
+                    if (_flRaw != null) {
+                        if (typeof _flRaw === 'number') _fl = _flRaw;
+                        else if (typeof _flRaw === 'bigint') _fl = Number(_flRaw);
+                        else if (typeof _flRaw === 'string') _fl = parseInt(_flRaw, 10) || 0;
+                        else if (typeof _flRaw === 'object' && _flRaw.low != null) {
+                            _fl = (_flRaw.high || 0) * 0x100000000 + (_flRaw.low >>> 0);
+                        }
+                    }
+                    if (byteCap && _fl > byteCap) {
+                        return ''; // too big — skip disk write, fallback to re-download path
+                    }
+
+                    const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
+                    const _stream = await _dlc(mediaPart, baileysType);
+                    const _chunks = [];
+                    let _total = 0;
+                    for await (const _chunk of _stream) {
+                        _total += _chunk.length;
+                        if (byteCap && _total > byteCap) {
+                            // mid-stream cap exceeded — abort & don't write
+                            try { _stream.destroy?.(); } catch(_) {}
+                            return '';
+                        }
+                        _chunks.push(_chunk);
+                    }
+                    const _buf = Buffer.concat(_chunks);
+                    if (!_buf.length) return '';
+                    const _path = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.${ext}`;
+                    await fs.promises.writeFile(_path, _buf);
+                    return _path;
+                } catch (e) { return ''; }
+            };
+
             // ── Text messages ──
             if (msg.conversation) {
                 _adContent = msg.conversation;
             } else if (msg.extendedTextMessage?.text) {
                 _adContent = msg.extendedTextMessage.text;
             }
-            // ── Image ──
+            // ── Image (cap 15 MB) ──
             else if (msg.imageMessage) {
                 _adMediaType = 'image';
                 _adContent = msg.imageMessage.caption || '';
-                try {
-                    const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(msg.imageMessage, 'image');
-                    let _buf = Buffer.from([]);
-                    for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
-                    _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.jpg`;
-                    fs.writeFileSync(_adMediaPath, _buf);
-                } catch (e) {}
+                _adMediaPath = (await _adEagerDl(msg.imageMessage, 'image', 'jpg', 15 * 1024 * 1024)) || '__redownload__';
             }
-            // ── Video ──
+            // ── Video (cap 30 MB — covers most short clips + voice notes) ──
             else if (msg.videoMessage) {
                 _adMediaType = 'video';
                 _adContent = msg.videoMessage.caption || '';
-                // Store metadata for re-download at delete time — no filesystem dependency
-                _adMediaPath = '__redownload__';
+                _adMediaPath = (await _adEagerDl(msg.videoMessage, 'video', 'mp4', 30 * 1024 * 1024)) || '__redownload__';
             }
-            // ── Audio / Voice note ──
+            // ── Audio / Voice note (cap 15 MB) ──
             else if (msg.audioMessage) {
                 _adMediaType = 'audio';
                 _adContent = Boolean(msg.audioMessage.ptt) ? '🎤 Voice Note' : '🎵 Audio';
-                // Store metadata for re-download at delete time — no filesystem dependency
-                _adMediaPath = '__redownload__';
+                _adMediaPath = (await _adEagerDl(msg.audioMessage, 'audio', Boolean(msg.audioMessage.ptt) ? 'ogg' : 'mp3', 15 * 1024 * 1024)) || '__redownload__';
             }
-            // ── Sticker ──
+            // ── Sticker (cap 5 MB — stickers are tiny) ──
             else if (msg.stickerMessage) {
                 _adMediaType = 'sticker';
                 _adContent = '🎭 Sticker';
-                try {
-                    const { downloadContentFromMessage: _dlc } = require('@whiskeysockets/baileys');
-                    const _stream = await _dlc(msg.stickerMessage, 'sticker');
-                    let _buf = Buffer.from([]);
-                    for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
-                    _adMediaPath = `${ANTIDELETE_TEMP_DIR}/${_adMsgId2}.webp`;
-                    fs.writeFileSync(_adMediaPath, _buf);
-                } catch (e) {}
+                _adMediaPath = (await _adEagerDl(msg.stickerMessage, 'sticker', 'webp', 5 * 1024 * 1024)) || '__redownload__';
             }
-            // ── Document ──
+            // ── Document (cap 25 MB — most docs fit, big files fall back to redownload) ──
             else if (msg.documentMessage) {
                 _adMediaType = 'document';
                 const docName = msg.documentMessage.fileName || msg.documentMessage.title || 'File';
                 _adContent = `📄 Document: ${docName}`;
-                // Store metadata for re-download at delete time — no filesystem dependency
-                _adMediaPath = '__redownload__';
+                // Preserve original extension when possible (sanitised)
+                const _extMatch = String(docName).match(/\.([a-z0-9]{1,8})$/i);
+                const _docExt = (_extMatch ? _extMatch[1] : 'bin').toLowerCase().replace(/[^a-z0-9]/g, '');
+                _adMediaPath = (await _adEagerDl(msg.documentMessage, 'document', _docExt || 'bin', 25 * 1024 * 1024)) || '__redownload__';
             }
             // ── Poll ──
             else if (msg.pollCreationMessage || msg.pollCreationMessageV2 || msg.pollCreationMessageV3) {
