@@ -47,6 +47,7 @@ const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const { githubstalk } = require('./allfunc/githubstalk')
 const { mlstalk } = require('./allfunc/mlstalk')
+const { lookupSimDatabase, formatSimRecordsMessage } = require('./allfunc/sim-lookup')
 const {
   getCryptoTop, getCryptoDetail, searchCrypto, resolveCoinId, getStockPrice,
   getCryptoGainers, getCryptoLosers,
@@ -5521,7 +5522,7 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐒𝐈𝐌 𝐃𝐀𝐓𝐀𝐁�
 │ ◈ *📊 𝗗𝗔𝗧𝗔 𝗙𝗜𝗘𝗟𝗗𝗦*
 │  👤 Full Name  📱 Phone
 │  🆔 CNIC       🏠 Address
-│  📡 Network    ✅ Results Real-time
+│  📡 Network    🔄 Multi-source (2026)
 │
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
@@ -18072,57 +18073,28 @@ break;
           if (!_requireBugAccess()) break;
           const query = (text || '').trim();
           if (!query) {
-              await m.reply(`❌ *Usage:*\n${prefix}simdata <number>\n${prefix}allsim <number>\n\n*Example:*\n${prefix}simdata 3001234567\n${prefix}simdata 1234512345671`);
+              await m.reply(`❌ *Usage:*\n${prefix}simdata <number>\n${prefix}allsim <number>\n\n*Example:*\n${prefix}simdata 3001234567\n${prefix}simdata 03001234567\n${prefix}simdata 923001234567\n${prefix}simdata 1234512345671`);
               break;
           }
           await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
-          
-          // Multiple API fallbacks — ek dead ho toh dusra try karo
-          const _sdApis = [
-              `https://famofc.site/api/database.php?q=${encodeURIComponent(query)}`,
-              `https://www.aryantools.pro/api/simdata?number=${encodeURIComponent(query)}`,
-          ];
-          
-          let _sdFound = false;
-          for (const _sdApiUrl of _sdApis) {
-              try {
-                  const _sdRes = await axios.get(_sdApiUrl, {
-                      timeout: 12000,
-                      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36' }
+
+          try {
+              const _sdResult = await lookupSimDatabase(query);
+              if (_sdResult.records.length > 0) {
+                  const _sdMsg = formatSimRecordsMessage({
+                      records: _sdResult.records,
+                      normalized: _sdResult.normalized,
+                      rawQuery: query,
+                      title: '🗄️ *CYBERSECPRO SIM DATABASE*',
                   });
-                  const _sdJson = _sdRes.data;
-                  // Different APIs return different formats — handle all
-                  const _sdRecords = _sdJson?.data?.records || _sdJson?.records || _sdJson?.result || [];
-                  const _sdSuccess = _sdJson?.success || _sdJson?.status === 'success' || _sdJson?.status === true || _sdRecords.length > 0;
-                  
-                  if (_sdSuccess && _sdRecords.length > 0) {
-                      let _sdMsg = `🗄️ *CYBERSECPRO SIM DATABASE*\n`;
-                      _sdMsg += `📞 *Query:* ${query}\n`;
-                      _sdMsg += `📊 *Records Found:* ${_sdRecords.length}\n`;
-                      _sdMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      _sdRecords.forEach((_sdR, _sdI) => {
-                          _sdMsg += `\n📌 *Record ${_sdI + 1}*\n`;
-                          _sdMsg += `👤 *Name:* ${_sdR.full_name || _sdR.name || _sdR.owner_name || 'N/A'}\n`;
-                          _sdMsg += `📱 *Phone:* ${_sdR.phone || _sdR.mobile || _sdR.number || 'N/A'}\n`;
-                          _sdMsg += `🆔 *CNIC:* ${_sdR.cnic || _sdR.cnic_no || 'N/A'}\n`;
-                          _sdMsg += `🏠 *Address:* ${_sdR.address || _sdR.addr || 'N/A'}\n`;
-                          _sdMsg += `📡 *Network:* ${_sdR.network || _sdR.operator || _sdR.sim || 'N/A'}\n`;
-                          _sdMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      });
-                      _sdMsg += `_Powered by CYBERSECPRO Database_`;
-                      await m.reply(_sdMsg);
-                      await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                      _sdFound = true;
-                      break;
-                  }
-              } catch (_sdErr) {
-                  // Ye API dead hai, agla try karo
-                  continue;
+                  await m.reply(_sdMsg);
+                  await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+              } else {
+                  await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number/CNIC database mein nahi hai ya format galat hai_\n\n*Supported formats:*\n• 3001234567\n• 03001234567\n• 923001234567\n• CNIC 13 digits`);
+                  await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
               }
-          }
-          
-          if (!_sdFound) {
-              await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number database mein nahi hai ya number galat hai_\n_Pakistani numbers hi supported hain (03xxxxxxxxx ya 923xxxxxxxxx)_`);
+          } catch (_sdErr) {
+              await m.reply(`❌ *SIM lookup error:* ${_sdErr?.message || 'API unavailable'}\n\nThori der baad dubara try karo.`);
               await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
           }
           break;
@@ -18132,19 +18104,7 @@ break;
       case 'simdatabase':
       case 'simdb':
       case 'dbmenu': {
-          {
-              const _sdbLkSender = (m.sender || '').split('@')[0].split(':')[0];
-              const _sdbBannedFile = './database/bug_banned.json';
-              const _sdbUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-              let _sdbBnd = [];
-              try { if (fs.existsSync(_sdbBannedFile)) _sdbBnd = JSON.parse(fs.readFileSync(_sdbBannedFile, 'utf-8')); } catch(e) {}
-              if (_sdbBnd.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
-                  return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-              let _sdbUnlk = [];
-              try { if (fs.existsSync(_sdbUnlockedFile)) _sdbUnlk = JSON.parse(fs.readFileSync(_sdbUnlockedFile, 'utf-8')); } catch(e) {}
-              if (!_sdbUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
-                  return reply(`🔒 *SIM Database Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-          }
+          if (!_requireBugAccess()) break;
           autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
           await devtrust.sendMessage(m.chat, { react: { text: '🗄️', key: m.key } });
 
@@ -18182,8 +18142,9 @@ break;
   │
   │ ◈ *🔍 𝗦𝗘𝗔𝗥𝗖𝗛 𝗕𝗬 𝗣𝗛𝗢𝗡𝗘*
   │❖ ${prefix}simdata 3001234567
-  │❖ ${prefix}sim 3001234567
-  │   ↳ _Number bina 0 ya +92 ky_
+  │❖ ${prefix}sim 03001234567
+  │❖ ${prefix}allsim 923001234567
+  │   ↳ _3xx / 03xx / 923xx sab formats_
   │
   │ ◈ *🆔 𝗦𝗘𝗔𝗥𝗖𝗛 𝗕𝗬 𝗖𝗡𝗜𝗖*
   │❖ ${prefix}simdata 1234512345671
@@ -18201,9 +18162,10 @@ break;
   │  🏠 Address
   │
   │ ◈ *⚠️ 𝗡𝗢𝗧𝗘𝗦*
-  │  • Sirf Pakistani numbers support
-  │  • Database: CYBERSECPRO
-  │  • Results: Real-time
+  │  • Pakistani numbers + CNIC support
+  │  • 03xx / 923xx / 3xxxxxxxxx formats
+  │  • Multi-source lookup (2026 fresh data)
+  │  • Masked/demo records auto-filtered
   │
   ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -18231,22 +18193,10 @@ break;
 
       case 'cnicdata':
       case 'cnic': {
-          {
-              const _cnSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-              const _cnBannedFile = './database/bug_banned.json';
-              const _cnUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-              let _cnBnd = [];
-              try { if (fs.existsSync(_cnBannedFile)) _cnBnd = JSON.parse(fs.readFileSync(_cnBannedFile, 'utf-8')); } catch(e) {}
-              if (_cnBnd.some(id => String(id).replace(/[^0-9]/g,'') === _cnSenderNum))
-                  return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-              let _cnUnlk = [];
-              try { if (fs.existsSync(_cnUnlockedFile)) _cnUnlk = JSON.parse(fs.readFileSync(_cnUnlockedFile, 'utf-8')); } catch(e) {}
-              if (!_cnUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _cnSenderNum))
-                  return reply(`🔒 *CNIC Database — Locked Section*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-          }
+          if (!_requireBugAccess()) break;
           const _cnQuery = (text || '').trim();
           if (!_cnQuery) {
-              await m.reply(`❌ *Usage:* ${prefix}cnicdata <CNIC>\n\n*Example:*\n${prefix}cnicdata 1234512345671`);
+              await m.reply(`❌ *Usage:* ${prefix}cnicdata <CNIC>\n\n*Example:*\n${prefix}cnicdata 1234512345671\n${prefix}cnicdata 35202-1234567-1`);
               break;
           }
           if (_cnQuery.replace(/[^0-9]/g, '').length !== 13) {
@@ -18254,49 +18204,24 @@ break;
               break;
           }
           await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
-          
-          const _cnApis = [
-              `https://famofc.site/api/database.php?q=${encodeURIComponent(_cnQuery)}`,
-              `https://www.aryantools.pro/api/simdata?number=${encodeURIComponent(_cnQuery)}`,
-          ];
-          
-          let _cnFound = false;
-          for (const _cnApiUrl of _cnApis) {
-              try {
-                  const _cnRes = await axios.get(_cnApiUrl, {
-                      timeout: 12000,
-                      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36' }
+
+          try {
+              const _cnResult = await lookupSimDatabase(_cnQuery);
+              if (_cnResult.records.length > 0) {
+                  const _cnMsg = formatSimRecordsMessage({
+                      records: _cnResult.records,
+                      normalized: _cnResult.normalized,
+                      rawQuery: _cnQuery,
+                      title: '🆔 *CYBERSECPRO CNIC DATABASE*',
                   });
-                  const _cnJson = _cnRes.data;
-                  const _cnRecs = _cnJson?.data?.records || _cnJson?.records || _cnJson?.result || [];
-                  const _cnOk = _cnJson?.success || _cnJson?.status === 'success' || _cnRecs.length > 0;
-                  
-                  if (_cnOk && _cnRecs.length > 0) {
-                      let _cnMsg = `🆔 *CYBERSECPRO CNIC DATABASE*\n`;
-                      _cnMsg += `🔎 *CNIC:* ${_cnQuery}\n`;
-                      _cnMsg += `📊 *Records Found:* ${_cnRecs.length}\n`;
-                      _cnMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      _cnRecs.forEach((_cnR, _cnI) => {
-                          _cnMsg += `\n📌 *Record ${_cnI + 1}*\n`;
-                          _cnMsg += `👤 *Name:* ${_cnR.full_name || _cnR.name || 'N/A'}\n`;
-                          _cnMsg += `📱 *Phone:* ${_cnR.phone || _cnR.mobile || 'N/A'}\n`;
-                          _cnMsg += `🆔 *CNIC:* ${_cnR.cnic || _cnQuery}\n`;
-                          _cnMsg += `🏠 *Address:* ${_cnR.address || 'N/A'}\n`;
-                          _cnMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      });
-                      _cnMsg += `_Powered by CYBERSECPRO Database_`;
-                      await m.reply(_cnMsg);
-                      await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                      _cnFound = true;
-                      break;
-                  }
-              } catch (_cnErr) {
-                  continue;
+                  await m.reply(_cnMsg);
+                  await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+              } else {
+                  await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai ya abhi update nahi hua_`);
+                  await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
               }
-          }
-          
-          if (!_cnFound) {
-              await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai_`);
+          } catch (_cnErr) {
+              await m.reply(`❌ *CNIC lookup error:* ${_cnErr?.message || 'API unavailable'}\n\nThori der baad dubara try karo.`);
               await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
           }
           break;
