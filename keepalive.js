@@ -2,6 +2,8 @@
 
 const https = require('https');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 let _timer = null;
 let _noopTimer = null;
@@ -63,9 +65,39 @@ async function selfPing() {
     }
 }
 
+function isWhatsAppWorker() {
+    return process.env.WHATSAPP_WORKER === '1' || process.env.DYNO?.startsWith('worker');
+}
+
+// ── Full memory cleanup before scheduled restart ─────────────────────────────
+function cleanupBotMemory() {
+    try {
+        if (global._antideleteStore?.clear) global._antideleteStore.clear();
+        if (global._antieditStore?.clear) global._antieditStore.clear();
+        if (global._statusCache?.clear) global._statusCache.clear();
+        if (global._processedMsgIds?.clear) global._processedMsgIds.clear();
+        global._lastViewOnce = {};
+        global._pcMemCache = null;
+        global._antideleteConfigs = {};
+        global._antieditConfigs = {};
+        const tmpDir = path.join(__dirname, 'tmp', 'antidelete_media');
+        if (fs.existsSync(tmpDir)) {
+            for (const f of fs.readdirSync(tmpDir)) {
+                try { fs.unlinkSync(path.join(tmpDir, f)); } catch (_) {}
+            }
+        }
+        if (typeof global.gc === 'function') global.gc();
+        console.log('[AutoRestart] 🧹 Memory caches cleared — fresh start');
+    } catch (e) {
+        console.log('[AutoRestart] cleanup warning:', e.message);
+    }
+}
+
 // ── Silent bot-session refresh ────────────────────────────────────────────────
 // Every 10 min: reconnect dead sessions AND trigger full autoload if nothing loaded.
+// ONLY on worker dyno — web dyno must never touch WhatsApp sockets (440 disconnects).
 async function refreshBotSessions() {
+    if (!isWhatsAppWorker()) return;
     try {
         const pairMod = require('./pair');
         const { getActiveLinkedNumbers } = require('./session-db');
@@ -118,12 +150,6 @@ async function refreshBotSessions() {
     } catch (_) {}
 }
 
-// ── Bot process detector ──────────────────────────────────────────────────────
-function isBotProcess() {
-    return typeof global.stoppedBots !== 'undefined';
-}
-
-
 // ── Prince AI API warmup — prevent first-command cold-start delay ─────────────
 async function warmupPrinceAPIs() {
     const endpoints = [
@@ -141,10 +167,9 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-// ── Auto-restart every 8 hours ────────────────────────────────────────────────
-// process.exit(0) = clean exit → Heroku automatically restarts the dyno.
-// 8h = memory cleanup without frequent antidelete/connection downtime.
-const AUTO_RESTART_MS = 8 * 60 * 60 * 1000; // 8 hours
+// ── Auto-restart every 3 hours ────────────────────────────────────────────────
+// process.exit(0) = clean exit → platform restarts dyno with fresh memory.
+const AUTO_RESTART_MS = 3 * 60 * 60 * 1000; // 3 hours
 
 function scheduleAutoRestart() {
     const warnings = [
@@ -164,12 +189,13 @@ function scheduleAutoRestart() {
     }
 
     setTimeout(() => {
-        console.log('[AutoRestart] 🔄 8-hour auto-restart — memory cleanup. Restarting now...');
+        console.log('[AutoRestart] 🔄 3-hour auto-restart — full memory cleanup. Restarting now...');
+        cleanupBotMemory();
         setTimeout(() => process.exit(0), 500);
     }, AUTO_RESTART_MS);
 
     const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
-    console.log(`[AutoRestart] ✅ Scheduled — bot & website restart at ${nextStr} (every 8 hours)`);
+    console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
 }
 
 function startKeepAlive() {
@@ -189,7 +215,7 @@ function startKeepAlive() {
     warmupPrinceAPIs();
     setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
 
-    // 5-hour auto-restart for speed & fresh memory
+    // 3-hour auto-restart for speed & fresh memory
     scheduleAutoRestart();
 
     const appUrl = getAppUrl();

@@ -4214,10 +4214,50 @@ _Auto-saved via status antidelete_`;
             } else if (msg.listResponseMessage) {
                 _adContent = `📋 List reply: ${msg.listResponseMessage.title || msg.listResponseMessage.singleSelectReply?.selectedRowId || ''}`;
             }
-            // ── View once (mark as such, can't resend) ──
-            else if (msg.viewOnceMessage || msg.viewOnceMessageV2) {
-                const inner = msg.viewOnceMessage?.message || msg.viewOnceMessageV2?.message || {};
-                _adContent = inner.imageMessage ? '🔒 View once image' : inner.videoMessage ? '🔒 View once video' : '🔒 View once message';
+            // ── View once — prefetch media for antidelete recovery ──
+            else if (msg.viewOnceMessage || msg.viewOnceMessageV2 || msg.viewOnceMessageV2Extension) {
+                const inner = msg.viewOnceMessage?.message || msg.viewOnceMessageV2?.message || msg.viewOnceMessageV2Extension?.message || {};
+                const _voInnerKey = Object.keys(inner)[0];
+                const _voInnerCont = inner[_voInnerKey];
+                if (_voInnerKey === 'imageMessage') {
+                    _adMediaType = 'image';
+                    _adContent = inner.imageMessage?.caption || '🔒 View once image';
+                } else if (_voInnerKey === 'videoMessage') {
+                    _adMediaType = 'video';
+                    _adContent = inner.videoMessage?.caption || '🔒 View once video';
+                } else if (_voInnerKey === 'audioMessage') {
+                    _adMediaType = 'audio';
+                    _adContent = '🎤 View once audio';
+                } else {
+                    _adContent = '🔒 View once message';
+                }
+                if (_voInnerCont && _voInnerKey) {
+                    _adMediaPath = '__redownload__';
+                    const _voDlId = _adMsgId2;
+                    const _voStoreKeys = [_adStoreKey2, antiStoreKey(_adChatId2, _adMsgId2)];
+                    setImmediate(async () => {
+                        try {
+                            const { downloadContentFromMessage: _dlVO } = require('@whiskeysockets/baileys');
+                            const _mType = _voInnerKey.replace('Message', '');
+                            const _stream = await _dlVO(_voInnerCont, _mType);
+                            let _buf = Buffer.from([]);
+                            for await (const _chunk of _stream) _buf = Buffer.concat([_buf, _chunk]);
+                            if (!_buf.length) return;
+                            const _ext = _mType === 'video' ? 'mp4' : _mType === 'audio' ? 'ogg' : 'jpg';
+                            const _voPath = `${ANTIDELETE_TEMP_DIR}/${_voDlId}.${_ext}`;
+                            await fs.promises.writeFile(_voPath, _buf);
+                            for (const _k of _voStoreKeys) {
+                                const _ex = global._antideleteStore.get(_k);
+                                if (_ex) {
+                                    _ex.mediaPath = _voPath;
+                                    _ex.mediaType = _mType;
+                                    global._antideleteStore.set(_k, _ex);
+                                }
+                            }
+                            _saveDiskStore();
+                        } catch (_) {}
+                    });
+                }
             }
             // ── Fallback: unknown type ──
             else {
@@ -4245,8 +4285,8 @@ _Auto-saved via status antidelete_`;
             _adMsgData2._ts = Date.now();
             global._antideleteStore.set(_adStoreKey2, _adMsgData2);
             global._antideleteStore.set(antiStoreKey(_adChatId2, _adMsgId2), _adMsgData2);
-            // Immediate disk write — survives bot restart / user phone offline
-            _saveDiskStoreNow();
+            // Debounced disk write — sync write on every message was killing bot speed
+            _saveDiskStore();
         }
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
@@ -11724,30 +11764,30 @@ case '🦋': {
         break;
     }
 
-    // ── Path 2: Standalone emoji — check last stored view-once for this chat (within 10 min) ──
+    // ── Path 2: Standalone emoji — use prefetched buffer (30 min window) ──
     const _storedVO = global._lastViewOnce?.[m.chat];
-    if (_storedVO && (Date.now() - _storedVO.ts) < 10 * 60 * 1000) {
+    if (_storedVO && (Date.now() - _storedVO.ts) < 30 * 60 * 1000) {
         try {
             const _voMsg    = _storedVO.msg;
-            const _voType   = Object.keys(_voMsg)[0];
-            const _voCont   = _voMsg[_voType];
-            if (_voCont && _voType) {
+            const _voType   = _storedVO.voType || Object.keys(_voMsg || {})[0];
+            const _voCont   = _voMsg?.[_voType];
+            let _buf = _storedVO.buffer || null;
+            if (!_buf && _voCont && _voType) {
                 const _mType  = _voType.replace('Message', '');
                 const { downloadContentFromMessage: _dlcVO } = require('@whiskeysockets/baileys');
                 const _stream = await _dlcVO(_voCont, _mType);
                 const _chunks = [];
                 for await (const _ch of _stream) _chunks.push(_ch);
-                const _buf = Buffer.concat(_chunks);
-                if (_buf.length > 0) {
-                    const _cap = `📸 *View-Once Saved!*\nFrom: @${_storedVO.sender}\nTime: ${new Date().toLocaleString()}`;
-                    if (_voType === 'imageMessage') {
-                        await devtrust.sendMessage(_voDest, { image: _buf, caption: _cap });
-                    } else if (_voType === 'videoMessage') {
-                        await devtrust.sendMessage(_voDest, { video: _buf, caption: _cap });
-                    } else if (_voType === 'audioMessage') {
-                        await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
-                    }
-                    // Silent save — no reaction in chat
+                _buf = Buffer.concat(_chunks);
+            }
+            if (_buf && _buf.length > 0) {
+                const _cap = `📸 *View-Once Saved!*\nFrom: @${_storedVO.sender}\nTime: ${new Date().toLocaleString()}`;
+                if (_voType === 'imageMessage') {
+                    await devtrust.sendMessage(_voDest, { image: _buf, caption: _cap });
+                } else if (_voType === 'videoMessage') {
+                    await devtrust.sendMessage(_voDest, { video: _buf, caption: _cap, mimetype: _storedVO.mimetype || 'video/mp4' });
+                } else if (_voType === 'audioMessage') {
+                    await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont?.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont?.ptt) });
                 }
             }
         } catch (_voSErr) { console.error('Emoji vv (stored) error:', _voSErr); }

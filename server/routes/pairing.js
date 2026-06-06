@@ -128,12 +128,12 @@ router.post('/request', protect, async (req, res) => {
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
 router.get('/status/:number', protect, async (req, res) => {
   const clean    = req.params.number.replace(/[^0-9]/g, '');
-  const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
-  // 1) Check filesystem flag (same dyno)
-  if (fsSync.existsSync(flagFile)) {
+  const { readConnectedFlag, isConnected } = require('../../allfunc/connected-flag');
+  // 1) Check filesystem flag (both path variants — works across dynos when shared FS)
+  if (isConnected(clean)) {
     try {
-      const data = JSON.parse(fsSync.readFileSync(flagFile, 'utf-8'));
-      return res.json({ connected: true, ts: data.ts });
+      const data = readConnectedFlag(clean);
+      if (data?.ts) return res.json({ connected: true, ts: data.ts });
     } catch (_) {}
     return res.json({ connected: true });
   }

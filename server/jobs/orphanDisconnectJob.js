@@ -39,11 +39,12 @@ async function runOrphanDisconnectCheck() {
 
     const dbSet = new Set(dbNumbers);
 
+    const { isConnected: isBotConnected } = require('../../allfunc/connected-flag');
+
     for (const dir of dirs) {
       const cleanNum = dir.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-      const flagFile = path.join(PAIRING_BASE, dir, 'connected.flag');
 
-      const isConnected = fs.existsSync(flagFile);
+      const isConnected = isBotConnected(cleanNum);
       const inDb = dbSet.has(cleanNum);
       const isStopped = stoppedNums.has(cleanNum);
 
@@ -54,7 +55,8 @@ async function runOrphanDisconnectCheck() {
           if (typeof pairMod.stopBot === 'function') pairMod.stopBot(cleanNum + '@s.whatsapp.net');
         } catch (_) {}
         try {
-          if (fs.existsSync(flagFile)) fs.unlinkSync(flagFile);
+          const { removeConnectedFlag } = require('../../allfunc/connected-flag');
+          removeConnectedFlag(cleanNum);
         } catch (_) {}
         try {
           const { deleteSessionCreds, upsertBotSession } = require('../../session-db');

@@ -584,14 +584,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log("ℹ️  Telegram bot disabled — set TELEGRAM_BOT_TOKEN env var to enable");
   }
 
-  // Start WhatsApp auto-load for connected sessions (only once)
-  try {
-    const { autoLoadPairs } = require("../autoload");
-    autoLoadPairs().catch(err => console.error("[AutoLoad] WhatsApp sessions failed:", err.message));
-    console.log("✅ WhatsApp session auto-load started");
-  } catch (err) {
-    console.error("⚠️  WhatsApp auto-load failed:", err.message);
-  }
+  // WhatsApp sessions run ONLY on worker dyno (worker.js) — never load here.
+  // Loading on web + worker together causes error 440 and random disconnects.
+  console.log("ℹ️  WhatsApp bot runs on worker dyno only (see Procfile)");
 
 });
 

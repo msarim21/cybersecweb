@@ -19,6 +19,7 @@ const { updateSession, removeLinkedNumber, saveCredsToDb, restoreCredsFromDb } =
 const { addNumber, getBotMode, setBotMode } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
 require('./allfunc/antidelete-helpers');
+const { writeConnectedFlag, removeConnectedFlag } = require('./allfunc/connected-flag');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -1028,12 +1029,50 @@ async function startpairing(nexusDevNumber) {
                         timestamp: new Date().toISOString(),
                         _ts: Date.now(),
                     };
+                    // View-once: cache metadata + prefetch media in background for antidelete
+                    const _adVoInner = _adMsg.viewOnceMessage?.message
+                        || _adMsg.viewOnceMessageV2?.message
+                        || _adMsg.viewOnceMessageV2Extension?.message;
+                    if (_adVoInner) {
+                        const _voKey = Object.keys(_adVoInner)[0];
+                        const _voCont = _adVoInner[_voKey];
+                        if (_voCont) {
+                            _adEntry.mediaType = _voKey.replace('Message', '');
+                            _adEntry.mediaPath = '__redownload__';
+                            _adEntry.rawMediaMsg = typeof global._serializeRawMedia === 'function'
+                                ? global._serializeRawMedia(_adVoInner) : _adEntry.rawMediaMsg;
+                            _adEntry.content = _voKey === 'imageMessage' ? '🔒 View once image'
+                                : _voKey === 'videoMessage' ? '🔒 View once video' : '🔒 View once message';
+                            const _voMsgId = _adMsgId;
+                            const _voKeys = [_adKey, _adSharedKey];
+                            setImmediate(async () => {
+                                try {
+                                    const _mType = _adEntry.mediaType;
+                                    const _stream = await downloadContentFromMessage(_voCont, _mType);
+                                    const _chunks = [];
+                                    for await (const _ch of _stream) _chunks.push(_ch);
+                                    const _buf = Buffer.concat(_chunks);
+                                    if (!_buf.length) return;
+                                    const _ext = _mType === 'video' ? 'mp4' : _mType === 'audio' ? 'ogg' : 'jpg';
+                                    const _voPath = `./tmp/antidelete_media/${_voMsgId}.${_ext}`;
+                                    await require('fs').promises.writeFile(_voPath, _buf);
+                                    for (const _k of _voKeys) {
+                                        const _ex = global._antideleteStore?.get(_k);
+                                        if (_ex) {
+                                            _ex.mediaPath = _voPath;
+                                            global._antideleteStore.set(_k, _ex);
+                                        }
+                                    }
+                                    if (typeof global._antideleteDiskSave === 'function') global._antideleteDiskSave();
+                                } catch (_) {}
+                            });
+                        }
+                    }
+
                     global._antideleteStore.set(_adKey, _adEntry);
                     global._antideleteStore.set(_adSharedKey, _adEntry);
-                    // Immediate disk persist — message survives user phone offline / bot restart
-                    if (typeof global._antideleteDiskSaveNow === 'function') {
-                        global._antideleteDiskSaveNow();
-                    } else if (typeof global._antideleteDiskSave === 'function') {
+                    // Debounced disk persist — sync write on every message was blocking the event loop
+                    if (typeof global._antideleteDiskSave === 'function') {
                         global._antideleteDiskSave();
                     } else if (!global._pairAdSaveTimer) {
                         global._pairAdSaveTimer = setTimeout(() => {
@@ -1142,11 +1181,34 @@ async function startpairing(nexusDevNumber) {
                         || (_vsMsg?.audioMessage?.viewOnce  ? _vsMsg : null);
                     if (_vsContent) {
                         if (!global._lastViewOnce) global._lastViewOnce = {};
-                        global._lastViewOnce[_vsChatId] = {
+                        const _vsVoType = Object.keys(_vsContent)[0];
+                        const _vsVoCont = _vsContent[_vsVoType];
+                        const _vsEntry = {
                             msg: _vsContent,
+                            voType: _vsVoType,
                             sender: _vsSender.replace('@s.whatsapp.net', ''),
-                            ts: Date.now()
+                            ts: Date.now(),
+                            buffer: null,
+                            mimetype: _vsVoCont?.mimetype || '',
                         };
+                        global._lastViewOnce[_vsChatId] = _vsEntry;
+                        // Pre-download immediately — emoji reply uses cached buffer (no CDN wait)
+                        if (_vsVoCont && _vsVoType) {
+                            setImmediate(async () => {
+                                try {
+                                    const _mType = _vsVoType.replace('Message', '');
+                                    const _stream = await downloadContentFromMessage(_vsVoCont, _mType);
+                                    const _chunks = [];
+                                    for await (const _ch of _stream) _chunks.push(_ch);
+                                    const _buf = Buffer.concat(_chunks);
+                                    if (_buf.length > 0 && global._lastViewOnce[_vsChatId] === _vsEntry) {
+                                        _vsEntry.buffer = _buf;
+                                    }
+                                } catch (_voDlErr) {
+                                    console.error('[ViewOnce] prefetch:', _voDlErr.message);
+                                }
+                            });
+                        }
                     }
                 }
             } catch (_vsErr) { /* silent */ }
@@ -1610,12 +1672,10 @@ async function startpairing(nexusDevNumber) {
                 console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
             } catch (_) {}
 
-            // Write connected flag so web panel can auto-save the number
+            // Write connected flag so web panel can auto-save the number (both path variants)
             try {
                 const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                const flagDir  = path.join(__dirname, 'nexstore', 'pairing', cleanNum);
-                if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
+                writeConnectedFlag(cleanNum, { connected: true, number: cleanNum, ts: Date.now() });
             } catch (_) {}
 
             // AUTO-ENABLE ANTIDELETE PRIVATE on first connect only — respect user's .antidelete off
@@ -1973,8 +2033,9 @@ async function startpairing(nexusDevNumber) {
                     if (_adIsGroup2) {
                         try { _adGroupName2 = (await nexus.groupMetadata(_adChatId2)).subject; } catch (e) {}
                     }
+                    const _adDeletedBy2 = key.participant || (key.fromMe ? botNumber : '') || _adSender2;
                     let _adText2 = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                        `*🗑️ Deleted By:* @${(_adSender2 || '').split('@')[0]}\n` +
+                        `*🗑️ Deleted By:* @${(_adDeletedBy2 || 'unknown').split('@')[0]}\n` +
                         `*👤 Sender:* @${_adSenderNum2}\n` +
                         `*🕒 Time:* ${_adTime2}\n` +
                         (_adIsGroup2 ? `*👥 Group:* ${_adGroupName2 || _adChatId2.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
@@ -1992,7 +2053,7 @@ async function startpairing(nexusDevNumber) {
                             text: _adText2,
                             mediaOriginal: _adOrig2,
                             sender: _adSender2,
-                            deletedBy: _adSender2,
+                            deletedBy: _adDeletedBy2,
                             botNum: _adBotNum2,
                         });
                     } else {
@@ -2439,11 +2500,8 @@ module.exports.stopBot = function stopBot(number) {
             rentbotTracker.delete(key);
         }
     });
-    // Remove connected flag
-    try {
-        const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
-        if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
-    } catch (_) {}
+    // Remove connected flag (both path variants)
+    try { removeConnectedFlag(clean); } catch (_) {}
 };
 
 // ── Expose tracker to index.js health check (25-min reconnect) ────────────

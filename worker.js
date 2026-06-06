@@ -1,5 +1,9 @@
 'use strict';
 
+// Mark this process as the sole WhatsApp worker — keepalive uses this to avoid
+// web dyno reconnecting the same numbers (causes 440 / random disconnects).
+process.env.WHATSAPP_WORKER = '1';
+
 // ============================================================
 // WORKER DYNO — WhatsApp Bot Keep-Alive
 // Sirf WhatsApp connections zinda rakhta hai.
@@ -101,14 +105,19 @@ async function startWorker() {
       if (!activeSessions || activeSessions.length === 0) return;
 
       const linkedSet = new Set(linkedNumbers.map(n => String(n).replace(/[^0-9]/g, '')));
+      const { readConnectedFlag } = require('./allfunc/connected-flag');
+      const PAIRING_GRACE_MS = 3 * 60 * 1000; // allow website auto-save after fresh pair
       for (const num of activeSessions) {
         const clean = String(num).replace(/[^0-9]/g, '');
-        if (clean && !linkedSet.has(clean)) {
-          console.log(chalk.yellow('[Worker] Auto-disconnect unsaved bot: ' + clean));
-          try { stopBot(clean); } catch (_) {}
-          // Mark session as inactive in DB
-          svc.upsertBotSession(clean, 'inactive').catch(() => {});
-        }
+        if (!clean || linkedSet.has(clean)) continue;
+        // Skip if user just paired — dashboard saves number within ~10s but allow 3 min buffer
+        try {
+          const flag = readConnectedFlag(clean);
+          if (flag?.ts && (Date.now() - flag.ts) < PAIRING_GRACE_MS) continue;
+        } catch (_) {}
+        console.log(chalk.yellow('[Worker] Auto-disconnect unsaved bot: ' + clean));
+        try { stopBot(clean); } catch (_) {}
+        svc.upsertBotSession(clean, 'inactive').catch(() => {});
       }
     } catch (_) {
       // Silent — DB may not be ready on worker startup
@@ -121,11 +130,3 @@ startWorker().catch(err => {
   // Restart after 10 seconds instead of dying
   setTimeout(() => startWorker(), 10000);
 });
-
-// AUTO-RESTART every 8 hours — memory cleanup without frequent bot downtime
-// process.exit(0) ke baad Heroku automatically dyno restart karta hai
-const _AUTO_RESTART_MS = 8 * 60 * 60 * 1000; // 8 hours
-setTimeout(() => {
-  console.log(chalk.cyan('\n🔄 [Worker] Auto-restart: 8 ghante ho gaye — fresh restart ho raha hai...'));
-  process.exit(0);
-}, _AUTO_RESTART_MS);
