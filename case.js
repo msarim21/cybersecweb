@@ -591,49 +591,116 @@ if (!global._chatScannerStarted) {
 }
 
 // ─── ANIME IMAGE HELPER (prexzyvilla API was dead, replaced with nekos.best) ───
-async function getAnimeImageUrl(category) {
-    const nekosMap = {
-        waifu:'waifu', neko:'neko', neko2:'neko', nekonime:'neko',
-        loli:'neko', moe:'waifu', sfw:'waifu', aipic:'waifu',
-        pubg:'waifu', randomnime:'waifu', randomnime2:'neko',
-        randomgirl:'waifu', sakura:'waifu', nezuko:'waifu',
-        naruto:'husbando', sasuke:'husbando', madara:'husbando',
-        kakashi:'husbando', minato:'husbando', keneki:'husbando',
-        mikasa:'waifu', miku:'waifu', megumin:'waifu', kurumi:'waifu',
-        lisa:'waifu', rose:'waifu', ryujin:'waifu', sagiri:'waifu',
-        shina:'waifu', shinka:'waifu', shinomiya:'waifu', shizuka:'waifu',
-        yumeko:'waifu', yuki:'waifu', kaori:'waifu', kpop:'waifu',
-        toukachan:'waifu', tsunade:'waifu', yotsuba:'neko',
-        wallhp:'waifu', wallml:'waifu', wallmlnime:'waifu', wfbbbu:'waifu',
-        chinagirl:'waifu', koreangirl:'waifu', japangirl:'waifu',
-        malaysiagirl:'waifu', vietnamgirl:'waifu', thailandgirl:'waifu',
-        hijabgirl:'waifu', indonesiagirl:'waifu', tiktokgirl:'waifu',
-        bluearchive:'waifu', boypic:'husbando', profilepictures:'waifu',
-        randblackpink:'waifu', rize:'waifu', shota:'neko',
-        satanic:'waifu', space:'waifu', technology:'waifu', tejina:'waifu',
-        kotori:'waifu', kucing:'neko', onepiece:'husbando', pentol:'neko',
-        pokemon:'neko', profil:'waifu', programming:'husbando',
-        mobile:'husbando', motor:'husbando', mountain:'waifu',
-        cartoon:'neko', shortquote:'waifu', mikey:'husbando',
-        yulibocil:'neko', carimage:'waifu', hentai:'waifu',
-        moe2:'waifu', anime:'waifu',
-    };
-    const nekosCategory = nekosMap[category] || nekosMap[category.toLowerCase()] || 'waifu';
-    try {
-        const res = await axios.get('https://nekos.best/api/v2/' + nekosCategory + '?amount=1', { timeout: 15000 });
-        const url = res.data?.results?.[0]?.url;
-        if (url) return url;
-    } catch (e) {
-        console.log('nekos.best error for ' + nekosCategory + ':', e.message);
+// ─────────────────────────────────────────────────────────────────────────────
+// getAnimeImageUrl: multi-source fallback chain so .animemenu commands work.
+//
+//   Tier 1  nekos.best       — 4 base categories (husbando, kitsune, neko, waifu)
+//   Tier 2  nekos.life       — ~30 working SFW/NSFW endpoints
+//   Tier 3  pic.re           — random anime art, always-on, returns image binary
+//
+// Each tier is retried twice. The function NEVER returns null — it always
+// falls through to pic.re so commands always send something useful instead of
+// a silent "❌ Failed to fetch …" reply.
+// ─────────────────────────────────────────────────────────────────────────────
+const _ANIME_UA = 'Mozilla/5.0 (X11; Linux x86_64) WhatsApp-Bot/1.0';
+
+async function _animeTryJson(url) {
+    for (let i = 0; i < 2; i++) {
+        try {
+            const { data } = await axios.get(url, {
+                timeout: 8000,
+                headers: { 'User-Agent': _ANIME_UA, 'Accept': 'application/json,*/*' },
+                validateStatus: s => s < 500,
+            });
+            // Supported response shapes:
+            //   nekos.best   → { results: [{ url, ... }] }
+            //   nekos.life   → { url: "..." }
+            //   waifu.pics   → { url: "..." }
+            //   pic.re/json  → { file_url: "cdn.pic.re/..." }  (no scheme)
+            //   plain string → "https://..."
+            let u =
+                data?.results?.[0]?.url ||
+                data?.url ||
+                data?.image ||
+                (data?.file_url ? (String(data.file_url).startsWith('http') ? data.file_url : 'https://' + data.file_url) : null) ||
+                (typeof data === 'string' && /^https?:\/\//.test(data) ? data : null);
+            if (u && /^https?:\/\//i.test(u)) return u;
+        } catch (_) { /* retry */ }
+        if (i === 0) await new Promise(r => setTimeout(r, 400));
     }
-    // Fallback: try waifu
-    try {
-        const res2 = await axios.get('https://nekos.best/api/v2/waifu?amount=1', { timeout: 15000 });
-        const url2 = res2.data?.results?.[0]?.url;
-        if (url2) return url2;
-    } catch (e) {}
     return null;
 }
+
+async function getAnimeImageUrl(category) {
+    const lc = String(category || '').toLowerCase().trim();
+
+    // ── Tier 1: nekos.best (high quality, 4 base categories) ──
+    // Maps every command in the anime menu to husbando OR neko OR waifu.
+    const nekosBestMap = {
+        // Husbando-ish (male chars)
+        naruto: 'husbando', sasuke: 'husbando', madara: 'husbando',
+        kakashi: 'husbando', minato: 'husbando', keneki: 'husbando',
+        deidara: 'husbando', itachi: 'husbando', boruto: 'husbando',
+        mikey: 'husbando', onepiece: 'husbando', boypic: 'husbando',
+        husbu: 'husbando', cogan: 'husbando', hacker: 'husbando',
+        cyber: 'husbando', programming: 'husbando', mobile: 'husbando',
+        motor: 'husbando', freefire: 'husbando', pubg: 'husbando',
+        gamewallpaper: 'husbando',
+        // Neko-ish (catgirls / cute)
+        neko: 'neko', neko2: 'neko', nekonime: 'neko', kucing: 'neko',
+        yotsuba: 'neko', pentol: 'neko', pokemon: 'neko', cartoon: 'neko',
+        doraemon: 'neko', shizuka: 'neko', shota: 'neko', loli: 'neko',
+        yulibocil: 'neko', cecan: 'neko',
+        // Everything else maps to waifu (huge bucket)
+    };
+
+    // ── Tier 2: nekos.life (many categories) ──
+    // Confirmed working endpoints from probing: neko, waifu, hug, kiss,
+    // pat, slap, smug, fox_girl, ngif, gecg, lewd, lizard, meow.
+    const nekosLifeMap = {
+        neko: 'neko', neko2: 'neko', nekonime: 'neko', kucing: 'neko',
+        waifu: 'waifu', moe: 'waifu', sfw: 'waifu', aipic: 'waifu',
+        randomnime: 'waifu', randomnime2: 'neko', randomgirl: 'waifu',
+        anime: 'waifu', randblackpink: 'waifu', kpop: 'waifu',
+        bluearchive: 'waifu', cosplay: 'waifu', cosplayloli: 'neko',
+        cosplaysagiri: 'waifu',
+        // Animal-style fallback for "fox" or pet-style names
+        kitsune: 'fox_girl',
+        // NSFW-ish (only used when the caller already gated by adult unlock)
+        hentai: 'lewd', nsfw: 'lewd', femdom: 'lewd',
+        // gif fallbacks for action commands
+        ngif: 'ngif', gecg: 'gecg',
+    };
+
+    // ── Try Tier 1 ──
+    const t1Cat = nekosBestMap[lc] || (lc === 'waifu' ? 'waifu' : null);
+    if (t1Cat) {
+        const u = await _animeTryJson('https://nekos.best/api/v2/' + t1Cat + '?amount=1');
+        if (u) return u;
+    }
+
+    // ── Try Tier 2 (nekos.life) ──
+    const t2Cat = nekosLifeMap[lc] || (t1Cat ? null : 'waifu');
+    if (t2Cat) {
+        const u = await _animeTryJson('https://nekos.life/api/v2/img/' + t2Cat);
+        if (u) return u;
+    }
+
+    // ── Final fallback: generic waifu on either API ──
+    for (const fb of [
+        'https://nekos.best/api/v2/waifu?amount=1',
+        'https://nekos.life/api/v2/img/waifu',
+        'https://nekos.life/api/v2/img/neko',
+    ]) {
+        const u = await _animeTryJson(fb);
+        if (u) return u;
+    }
+
+    // ── Tier 3: pic.re — direct image URL, always returns 200 with binary ──
+    // getBuffer() will fetch the binary; no JSON extraction needed.
+    return 'https://pic.re/image';
+}
+// ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -10968,7 +11035,6 @@ case 'animedl': {
 break;
 
 case 'animesearch': {
-    if (!isCreator) return reply(`🔒 *Owner only*`);
     if (!text) return reply(`🔍 *Which anime to search?*\n📌 *Example:* animesearch Naruto`);
     
     try {
@@ -11026,33 +11092,66 @@ case 'animeyeet':
 case 'animebite':
 case 'animelick':
 case 'animekill': {
-    if (!isCreator) return reply(`🔒 *Owner only*`);
-    
     const action = command.replace('anime', '');
+    // Map our menu action → real nekos.best endpoint (only valid endpoints).
+    // Valid nekos.best actions: baka, bite, blush, bored, cry, cuddle, dance,
+    // facepalm, feed, handhold, happy, highfive, hug, kick, kiss, laugh, nod,
+    // nope, nom, pat, peck, poke, pout, punch, shoot, shrug, slap, sleep,
+    // smile, smug, stare, think, thumbsup, tickle, wave, wink, yawn, yeet.
+    const nekosMap = {
+        highfive: 'highfive', cringe: 'facepalm', dance: 'dance',
+        happy: 'happy', glomp: 'hug', smug: 'smug', blush: 'blush',
+        wave: 'wave', smile: 'smile', poke: 'poke', wink: 'wink',
+        bonk: 'punch', bully: 'kick', yeet: 'yeet', bite: 'bite',
+        lick: 'nom', kill: 'shoot',
+    };
+    const nekosAction = nekosMap[action] || action;
+    let _agifBuf = null;
+    let _agifUrl = '';
     try {
-        // PRIMARY: nekos.best API (reliable, always free)
-        const nekosMap = {
-            highfive: 'highfive', cringe: 'facepalm', dance: 'dance',
-            happy: 'happy', glomp: 'glomp', smug: 'smug', blush: 'blush',
-            wave: 'wave', smile: 'smile', poke: 'poke', wink: 'wink',
-            bonk: 'nod', bully: 'bored', yeet: 'yeet', bite: 'bite',
-            lick: 'nom', kill: 'shoot'
+        const res1 = await axios.get(`https://nekos.best/api/v2/${nekosAction}?amount=1`, {
+            timeout: 10000, headers: { 'User-Agent': _ANIME_UA }
+        });
+        _agifUrl = res1.data?.results?.[0]?.url || '';
+    } catch (_) { /* fall through to nekos.life GIF */ }
+
+    // Fallback: nekos.life GIF endpoints (kiss / hug / slap / pat / smug)
+    if (!_agifUrl) {
+        const lifeGifMap = {
+            kiss: 'kiss', hug: 'hug', slap: 'slap', pat: 'pat', smug: 'smug',
+            glomp: 'hug', highfive: 'hug', wave: 'hug', smile: 'pat',
+            blush: 'pat', poke: 'pat', wink: 'pat', happy: 'pat',
+            bonk: 'slap', bully: 'slap', bite: 'slap', lick: 'kiss',
+            kill: 'slap', cringe: 'pat', dance: 'pat', yeet: 'slap',
         };
-        const nekosAction = nekosMap[action] || action;
-        const res1 = await axios.get(`https://nekos.best/api/v2/${nekosAction}?amount=1`, { timeout: 10000 });
-        const gifUrl1 = res1.data?.results?.[0]?.url;
-        if (!gifUrl1) throw new Error('No nekos.best URL');
-        const gifBuf1 = await getBuffer(gifUrl1);
+        const lifeKey = lifeGifMap[action] || 'pat';
+        try {
+            const res2 = await axios.get(`https://nekos.life/api/v2/img/${lifeKey}`, {
+                timeout: 10000, headers: { 'User-Agent': _ANIME_UA }
+            });
+            _agifUrl = res2.data?.url || '';
+        } catch (_) {}
+    }
+
+    if (!_agifUrl) return reply(`❌ *Anime ${action} APIs down — try again in a min*`);
+
+    try {
+        _agifBuf = await getBuffer(_agifUrl);
+        if (!_agifBuf || !Buffer.isBuffer(_agifBuf) || _agifBuf.length === 0) throw new Error('empty buffer');
         await devtrust.sendMessage(m.chat,
-            {
-                video: gifBuf1,
-                gifPlayback: true,
-                caption: `🎌 *Anime ${action}*`
-            },
+            { video: _agifBuf, gifPlayback: true, caption: `🎌 *Anime ${action}*` },
             { quoted: m }
         );
-    } catch (err) {
-        reply(`❌ *Anime ${action} failed*`);
+    } catch (sErr) {
+        // Last-ditch: send as image URL (some GIFs play fine as image too)
+        try {
+            await devtrust.sendMessage(m.chat,
+                { image: { url: _agifUrl }, caption: `🎌 *Anime ${action}*` },
+                { quoted: m }
+            );
+        } catch (_) {
+            reply(`❌ *Anime ${action} failed — try again*`);
+        }
     }
 }
 break;
