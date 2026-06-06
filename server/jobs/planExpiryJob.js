@@ -4,7 +4,7 @@ const { getExpiredUsers, disconnectAllUserDevices, getNumbersByOwner } = require
 const path = require('path');
 const fsSync = require('fs');
 
-const PAIRING_BASE = path.join(__dirname, '../../database/pairing');
+const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const SESSIONS_BASE = path.join(__dirname, '../../database/sessions');
 
 function deleteFolderRecursive(p) {

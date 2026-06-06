@@ -286,10 +286,10 @@ router.get('/new-signups', async (req, res) => {
       const User = mongoose.model('User');
       const newUsers = await User.find({ createdAt: { $gt: since } })
         .sort({ createdAt: -1 })
-        .select('username email subscription_plan created_at createdAt');
+        .select('username email subscriptionPlan createdAt');
       return res.json({ newUsers: newUsers.map(u => ({
         id: u._id, username: u.username, email: u.email,
-        plan: u.subscription_plan || 'free',
+        plan: u.subscriptionPlan || u.subscription_plan || 'free',
         createdAt: u.createdAt || u.created_at
       })), count: newUsers.length });
     }

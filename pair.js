@@ -1636,12 +1636,17 @@ async function startpairing(nexusDevNumber) {
 
             
 
-            // 🔐 Self mode on every connect/restart (linked user only — .public to open)
+            // Restore saved bot mode on reconnect (.public persists across restarts)
             try {
                 const _modeNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                nexus.public = false;
-                await setBotMode(_modeNum, 'self');
-                console.log(chalk.cyan(`[pair] 🔐 Self mode active for ${_modeNum} — type .public to allow everyone`));
+                const dbMode = await getBotMode(_modeNum).catch(() => null);
+                if (dbMode === 'public') {
+                    nexus.public = true;
+                } else {
+                    nexus.public = false;
+                    if (!dbMode) await setBotMode(_modeNum, 'self');
+                }
+                console.log(chalk.cyan(`[pair] 📋 Mode for ${_modeNum}: ${nexus.public ? 'PUBLIC' : 'SELF (private)'}`));
             } catch (_) {
                 nexus.public = false;
             }

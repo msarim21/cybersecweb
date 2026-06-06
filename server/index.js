@@ -274,22 +274,12 @@ const requireDb = (req, res, next) => {
 // Meta (filename, original name, mimetype) saved to uploads/audio-meta.json
 // ══════════════════════════════════════════════════════════════════════════════
 
-const jwt = require('jsonwebtoken');
 const multer = require('multer');
-const JWT_SECRET_AUDIO = process.env.JWT_SECRET || 'cybersecpro_default_secret_change_in_production';
+const { protect, adminOnly } = require('./middleware/auth');
 const AUDIO_META_FILE  = path.join(UPLOADS_DIR, 'audio-meta.json');
 
-// JWT-only admin check (no DB round-trip) — used only for audio routes
-const protectJwt = (req, res, next) => {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token.' });
-    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET_AUDIO);
-    next();
-  } catch { return res.status(401).json({ error: 'Invalid token.' }); }
-};
-// adminJwt removed — generateToken only stores { id }, no role field.
-// protectJwt (valid JWT) is sufficient: only logged-in admins have tokens.
+// Admin audio routes — valid JWT + admin role required
+const protectAdminAudio = [protect, adminOnly];
 
 // Disk storage — save file directly, no base64, no compression
 const audioStorage = multer.diskStorage({
@@ -360,7 +350,7 @@ app.get('/api/site/audio/file', (req, res) => {
 });
 
 // ── Admin: upload audio (JWT-only auth — NO requireDb, no 503) ───────────────
-app.post('/api/admin/audio', protectJwt, (req, res, next) => {
+app.post('/api/admin/audio', ...protectAdminAudio, (req, res, next) => {
   audioUploadMw.single('audio')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Max 20MB allowed.' });
@@ -376,13 +366,13 @@ app.post('/api/admin/audio', protectJwt, (req, res, next) => {
 });
 
 // ── Admin: get audio info (JWT-only, no DB) ──────────────────────────────────
-app.get('/api/admin/audio', protectJwt, (req, res) => {
+app.get('/api/admin/audio', ...protectAdminAudio, (req, res) => {
   const m = readAudioMeta();
   res.json({ filename: m?.filename || '', original: m?.original || '' });
 });
 
 // ── Admin: delete audio (JWT-only, no DB) ───────────────────────────────────
-app.delete('/api/admin/audio', protectJwt, (req, res) => {
+app.delete('/api/admin/audio', ...protectAdminAudio, (req, res) => {
   clearAudioMeta();
   res.json({ message: 'Audio removed.' });
 });
@@ -584,13 +574,18 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log("ℹ️  Telegram bot disabled — set TELEGRAM_BOT_TOKEN env var to enable");
   }
 
-  // Start WhatsApp auto-load for connected sessions (only once)
-  try {
-    const { autoLoadPairs } = require("../autoload");
-    autoLoadPairs().catch(err => console.error("[AutoLoad] WhatsApp sessions failed:", err.message));
-    console.log("✅ WhatsApp session auto-load started");
-  } catch (err) {
-    console.error("⚠️  WhatsApp auto-load failed:", err.message);
+  // WhatsApp auto-load belongs on worker dyno only (avoid duplicate sessions on web)
+  const _isWebDyno = process.env.DYNO && String(process.env.DYNO).startsWith('web.');
+  if (!_isWebDyno) {
+    try {
+      const { autoLoadPairs } = require("../autoload");
+      autoLoadPairs().catch(err => console.error("[AutoLoad] WhatsApp sessions failed:", err.message));
+      console.log("✅ WhatsApp session auto-load started");
+    } catch (err) {
+      console.error("⚠️  WhatsApp auto-load failed:", err.message);
+    }
+  } else {
+    console.log("ℹ️  Web dyno — WhatsApp auto-load skipped (worker handles sessions)");
   }
 
 });

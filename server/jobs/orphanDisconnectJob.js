@@ -30,10 +30,10 @@ async function runOrphanDisconnectCheck() {
 
     if (!dirs.length) { _running = false; return; }
 
-    const { getActiveLinkedNumbers } = require('../db-service');
+    const { getAllActiveLinkedNumbers, upsertBotSession } = require('../db-service');
     let dbNumbers = [];
     try {
-      const raw = await getActiveLinkedNumbers();
+      const raw = await getAllActiveLinkedNumbers();
       dbNumbers = (raw || []).map(n => String(n).replace(/[^0-9]/g, ''));
     } catch (_) {}
 
@@ -41,9 +41,12 @@ async function runOrphanDisconnectCheck() {
 
     for (const dir of dirs) {
       const cleanNum = dir.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-      const flagFile = path.join(PAIRING_BASE, dir, 'connected.flag');
-
-      const isConnected = fs.existsSync(flagFile);
+      const flagCandidates = [
+        path.join(PAIRING_BASE, cleanNum, 'connected.flag'),
+        path.join(PAIRING_BASE, dir, 'connected.flag'),
+      ];
+      const flagFile = flagCandidates.find((p) => fs.existsSync(p));
+      const isConnected = Boolean(flagFile);
       const inDb = dbSet.has(cleanNum);
       const isStopped = stoppedNums.has(cleanNum);
 
@@ -53,11 +56,13 @@ async function runOrphanDisconnectCheck() {
           const pairMod = require('../../pair');
           if (typeof pairMod.stopBot === 'function') pairMod.stopBot(cleanNum + '@s.whatsapp.net');
         } catch (_) {}
+        for (const candidate of flagCandidates) {
+          try {
+            if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+          } catch (_) {}
+        }
         try {
-          if (fs.existsSync(flagFile)) fs.unlinkSync(flagFile);
-        } catch (_) {}
-        try {
-          const { deleteSessionCreds, upsertBotSession } = require('../../session-db');
+          const { deleteSessionCreds } = require('../../session-db');
           await deleteSessionCreds(cleanNum);
           await upsertBotSession(cleanNum, 'inactive');
         } catch (_) {}
