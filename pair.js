@@ -577,6 +577,15 @@ async function startpairing(nexusDevNumber) {
     })
     
     tracker.connection = nexus;
+
+    // Anti-detection: light jitter only when burst limit exceeded (no delay on normal replies)
+    const _origSendMessage = nexus.sendMessage.bind(nexus);
+    nexus.sendMessage = async (jid, content, options) => {
+        const chatId = typeof jid === 'string' ? jid : (jid?.remoteJid || String(jid));
+        const { delay } = SecurityGuard.canSend(chatId);
+        if (delay > 0) await sleep(delay);
+        return _origSendMessage(jid, content, options);
+    };
     
     if (store) {
         store.bind(nexus.ev);
@@ -633,57 +642,51 @@ async function startpairing(nexusDevNumber) {
         }
     });
 
-    if (pairingCode && !state.creds.registered) {
+    // Pairing code is requested once the socket is actually connecting (not at creation time)
+    let _pairingCodeRequested = false;
+    const _writePairingJson = (phoneNumber, code) => {
+        const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+        ensureDirectoryExists('./nexstore/pairing');
+        const pairingData = JSON.stringify({
+            number: phoneNumber,
+            code: formatted,
+            timestamp: new Date().toISOString()
+        }, null, 2);
+        fs.writeFileSync('./nexstore/pairing/pairing.json', pairingData, 'utf8');
+        const absPath = path.join(__dirname, 'nexstore', 'pairing', 'pairing.json');
+        if (absPath !== path.resolve('./nexstore/pairing/pairing.json')) {
+            try { fs.writeFileSync(absPath, pairingData, 'utf8'); } catch (_) {}
+        }
+        return formatted;
+    };
+    const _requestPairingCodeWithRetry = async (phoneNumber) => {
+        if (_pairingCodeRequested || !pairingCode || state.creds.registered) return;
+        _pairingCodeRequested = true;
         if (useMobile) {
             throw new Error('Cannot use pairing code with mobile API');
         }
+        if (!phoneNumber) throw new Error('Invalid phone number');
 
-        let phoneNumber = nexusDevNumber.replace(/[^0-9]/g, '');
-        
-        if (!phoneNumber) {
-            throw new Error('Invalid phone number');
-        }
-        
-        // Wait 3s then request pairing code with up to 5 retries
-        const _requestCode = async () => {
-            const MAX_ATTEMPTS = 5;
-            const RETRY_DELAY = 3000;
-            for (let _attempt = 1; _attempt <= MAX_ATTEMPTS; _attempt++) {
-                try {
-                    await sleep(RETRY_DELAY);
-                    let code = await nexus.requestPairingCode(phoneNumber);
-                    if (!code) throw new Error('Empty pairing code returned');
-                    code = code?.match(/.{1,4}/g)?.join("-") || code;
-
-                    console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
-
-                    ensureDirectoryExists('./nexstore/pairing');
-
-                    const pairingData = JSON.stringify({
-                        number: nexusDevNumber,
-                        code: code,
-                        timestamp: new Date().toISOString()
-                    }, null, 2);
-
-                    fs.writeFileSync('./nexstore/pairing/pairing.json', pairingData, 'utf8');
-
-                    const absPath = path.join(__dirname, 'nexstore', 'pairing', 'pairing.json');
-                    if (absPath !== path.resolve('./nexstore/pairing/pairing.json')) {
-                        try { fs.writeFileSync(absPath, pairingData, 'utf8'); } catch(_) {}
-                    }
-
-                    console.log(chalk.green(`✓ Pairing code saved to pairing.json (attempt ${_attempt})`));
-                    return; // success — stop retrying
-                } catch (err) {
-                    console.log(chalk.red(`❌ Pairing code attempt ${_attempt}/${MAX_ATTEMPTS} failed: ${err.message}`));
-                    if (_attempt === MAX_ATTEMPTS) {
-                        console.log(chalk.red(`❌ All ${MAX_ATTEMPTS} pairing code attempts failed for ${nexusDevNumber}`));
-                    }
+        const MAX_ATTEMPTS = 8;
+        const RETRY_DELAY = 4000;
+        for (let _attempt = 1; _attempt <= MAX_ATTEMPTS; _attempt++) {
+            try {
+                await sleep(_attempt === 1 ? 2000 : RETRY_DELAY);
+                let code = await nexus.requestPairingCode(phoneNumber);
+                if (!code) throw new Error('Empty pairing code returned');
+                const formatted = _writePairingJson(phoneNumber, code);
+                console.log(chalk.bgGreen.black(`📱 Pairing code for ${phoneNumber}: ${chalk.white.bold(formatted)}`));
+                console.log(chalk.green(`✓ Pairing code saved to pairing.json (attempt ${_attempt})`));
+                return;
+            } catch (err) {
+                console.log(chalk.red(`❌ Pairing code attempt ${_attempt}/${MAX_ATTEMPTS} failed: ${err.message}`));
+                if (_attempt === MAX_ATTEMPTS) {
+                    _pairingCodeRequested = false;
+                    console.log(chalk.red(`❌ All ${MAX_ATTEMPTS} pairing code attempts failed for ${phoneNumber}`));
                 }
             }
-        };
-        _requestCode();
-    }
+        }
+    };
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
         const { type: rawType = 'INFO', name, description = '', picture = null, react, id, newsletter_id = key, ...media } = content;
@@ -902,6 +905,14 @@ async function startpairing(nexusDevNumber) {
                 const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
                 const quotedMsg2 = ctxInfo2?.quotedMessage;
 
+                // Remove reaction from original message — keeps view-once save invisible in chat
+                const _clearReaction = async (jid, msgKey) => {
+                    if (!jid || !msgKey?.id) return;
+                    try {
+                        await nexus.sendMessage(jid, { react: { text: '', key: msgKey } });
+                    } catch (_) { /* silent */ }
+                };
+
                 // ── Helper: download + send view-once content ──
                 const _sendViewOnce = async (voMsg, senderNum, label) => {
                     if (!voMsg) return;
@@ -966,6 +977,8 @@ async function startpairing(nexusDevNumber) {
                                 if (_voMsgR) {
                                     const _senderR = (_reactedMsg.key?.participant || _rjid || '').replace('@s.whatsapp.net', '');
                                     await _sendViewOnce(_voMsgR, _senderR, 'reaction');
+                                    // User's emoji reaction was only a trigger — remove it immediately
+                                    await _clearReaction(_rjid, _rk);
                                 }
                             }
                         }
@@ -1141,7 +1154,11 @@ async function startpairing(nexusDevNumber) {
             // In private mode, skip non-owner messages EXCEPT channel/newsletter
             // (channels allow bot to respond when user is admin)
             const _isNewsletterMsg = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
-            if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
+            const _pairBotNum = String(nexus._cachedBotNumber || nexus.user?.id || '').replace(/[^0-9]/g, '').split(':')[0];
+            const _msgSenderNum = String(nexusboijid.key.participant || nexusboijid.key.remoteJid || '').replace(/[^0-9]/g, '').split(':')[0];
+            const _isLinkedUser = Boolean(nexusboijid.key.fromMe || (_pairBotNum && _msgSenderNum === _pairBotNum));
+            // Self mode: only linked bot user's messages pass through (not random group/public users)
+            if (!nexus.public && !_isLinkedUser && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -1234,20 +1251,19 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode — DB only (per-number, session-isolated)
-    // NO shared file fallback — each session is fully independent
+    // Default: self/private mode — only linked user commands (use .public to open to everyone)
     try {
         const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
         const dbMode = await getBotMode(cleanNum).catch(() => null);
-        if (dbMode) {
-            nexus.public = dbMode !== 'self';
-        } else {
-            // No DB record yet → default to public for this session only
+        if (dbMode === 'public') {
             nexus.public = true;
+        } else {
+            nexus.public = false;
+            if (!dbMode) setBotMode(cleanNum, 'self').catch(() => {});
         }
-        console.log(chalk.cyan(`[pair] 📋 Mode restored for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE'}`));
+        console.log(chalk.cyan(`[pair] 📋 Mode for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'SELF (private)'}`));
     } catch (e) {
-        nexus.public = true;
+        nexus.public = false;
     }
 
     nexus.sendText = (jid, text, quoted = '', options) => nexus.sendMessage(jid, { text: text, ...options }, { quoted })
@@ -1409,6 +1425,14 @@ async function startpairing(nexusDevNumber) {
     nexus.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
         const tracker = rentbotTracker.get(nexusDevNumber);
+
+        // Request pairing code only after socket is connecting (fixes intermittent code generation)
+        if (connection === 'connecting' && pairingCode && !state.creds.registered) {
+            const _pairPhone = String(nexusDevNumber).replace(/[^0-9]/g, '');
+            _requestPairingCodeWithRetry(_pairPhone).catch(err => {
+                console.log(chalk.red(`[Pairing] Code request failed for ${_pairPhone}: ${err.message}`));
+            });
+        }
 
         if (connection === "close") {
             // ✅ Always clear all timers before any reconnect attempt
@@ -1612,6 +1636,16 @@ async function startpairing(nexusDevNumber) {
 
             
 
+            // 🔐 Self mode on every connect/restart (linked user only — .public to open)
+            try {
+                const _modeNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                nexus.public = false;
+                await setBotMode(_modeNum, 'self');
+                console.log(chalk.cyan(`[pair] 🔐 Self mode active for ${_modeNum} — type .public to allow everyone`));
+            } catch (_) {
+                nexus.public = false;
+            }
+
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
@@ -1634,6 +1668,9 @@ async function startpairing(nexusDevNumber) {
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Your bot is ready. Send *.menu* to see all available commands.
+
+  🔐 *Mode:* SELF (private) — sirf aapke commands kaam karenge.
+  🌍 Public karne ke liye: *.public*
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
                           await nexus.sendMessage(userJid, { text: connectedMsg });

