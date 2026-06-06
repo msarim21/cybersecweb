@@ -1042,101 +1042,10 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on view-once save errors
             }
 
-            // ── Antidelete: store ALL incoming non-protocol messages before the public-mode guard ──
-            // This ensures messages are cached for antidelete even when bot is in self/private mode
+            // ── Antidelete: cache ALL messages (incl. fromMe/self-chat) before public-mode guard ──
             try {
-                const _adRaw = nexusboijid;
-                if (_adRaw?.key?.id && _adRaw?.key?.remoteJid && !_adRaw?.message?.protocolMessage && !_adRaw?.key?.fromMe) {
-                    const _adMsgId = _adRaw.key.id;
-                    const _adChatId = _adRaw.key.remoteJid;
-                    const _adSender = _adRaw.key.participant || _adRaw.key.remoteJid;
-                    const _adMsg = _adRaw.message || {};
-                    const _adText =
-                        _adMsg.conversation ||
-                        _adMsg.extendedTextMessage?.text ||
-                        _adMsg.imageMessage?.caption ||
-                        _adMsg.videoMessage?.caption ||
-                        _adMsg.documentMessage?.caption ||
-                        _adMsg.audioMessage?.caption || '';
-                    const _adBotNum = (nexus.user?.id || '').split(':')[0].split('@')[0];
-                    const _adKey = _adBotNum
-                        ? `${_adBotNum}::${_adChatId}::${_adMsgId}`
-                        : `${_adChatId}::${_adMsgId}`;
-                    if (!global._antideleteStore) global._antideleteStore = new Map();
-                    const _adSharedKey = `${_adChatId}::${_adMsgId}`;
-                    const _adExisting = global._antideleteStore.get(_adKey) || global._antideleteStore.get(_adSharedKey);
-                    const _adMediaType = _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : _adMsg.documentMessage ? 'document' : '';
-                    const _adRawMedia = typeof global._serializeRawMedia === 'function' ? global._serializeRawMedia(_adMsg) : null;
-                    const _adEntry = {
-                        content: String(_adText || _adExisting?.content || ''),
-                        rawMsg: _adMsg,
-                        rawMediaMsg: _adRawMedia || _adExisting?.rawMediaMsg || null,
-                        mediaType: _adMediaType || _adExisting?.mediaType || '',
-                        mediaPath: _adExisting?.mediaPath || '',
-                        isPtt: Boolean(_adMsg.audioMessage?.ptt || _adExisting?.isPtt),
-                        fromMe: false,
-                        sender: _adSender,
-                        group: (_adChatId || '').endsWith('@g.us') ? _adChatId : null,
-                        timestamp: new Date().toISOString(),
-                        _ts: Date.now(),
-                    };
-                    // View-once: cache metadata + prefetch media in background for antidelete
-                    const _adVoInner = _adMsg.viewOnceMessage?.message
-                        || _adMsg.viewOnceMessageV2?.message
-                        || _adMsg.viewOnceMessageV2Extension?.message;
-                    if (_adVoInner) {
-                        const _voKey = Object.keys(_adVoInner)[0];
-                        const _voCont = _adVoInner[_voKey];
-                        if (_voCont) {
-                            _adEntry.mediaType = _voKey.replace('Message', '');
-                            _adEntry.mediaPath = '__redownload__';
-                            _adEntry.rawMediaMsg = typeof global._serializeRawMedia === 'function'
-                                ? global._serializeRawMedia(_adVoInner) : _adEntry.rawMediaMsg;
-                            _adEntry.content = _voKey === 'imageMessage' ? '🔒 View once image'
-                                : _voKey === 'videoMessage' ? '🔒 View once video' : '🔒 View once message';
-                            const _voMsgId = _adMsgId;
-                            const _voKeys = [_adKey, _adSharedKey];
-                            setImmediate(async () => {
-                                try {
-                                    const _mType = _adEntry.mediaType;
-                                    const _stream = await downloadContentFromMessage(_voCont, _mType);
-                                    const _chunks = [];
-                                    for await (const _ch of _stream) _chunks.push(_ch);
-                                    const _buf = Buffer.concat(_chunks);
-                                    if (!_buf.length) return;
-                                    const _ext = _mType === 'video' ? 'mp4' : _mType === 'audio' ? 'ogg' : 'jpg';
-                                    const _voPath = `./tmp/antidelete_media/${_voMsgId}.${_ext}`;
-                                    await require('fs').promises.writeFile(_voPath, _buf);
-                                    for (const _k of _voKeys) {
-                                        const _ex = global._antideleteStore?.get(_k);
-                                        if (_ex) {
-                                            _ex.mediaPath = _voPath;
-                                            global._antideleteStore.set(_k, _ex);
-                                        }
-                                    }
-                                    if (typeof global._antideleteDiskSave === 'function') global._antideleteDiskSave();
-                                } catch (_) {}
-                            });
-                        }
-                    }
-
-                    global._antideleteStore.set(_adKey, _adEntry);
-                    global._antideleteStore.set(_adSharedKey, _adEntry);
-                    // Debounced disk persist — sync write on every message was blocking the event loop
-                    if (typeof global._antideleteDiskSave === 'function') {
-                        global._antideleteDiskSave();
-                    } else if (!global._pairAdSaveTimer) {
-                        global._pairAdSaveTimer = setTimeout(() => {
-                            global._pairAdSaveTimer = null;
-                            try {
-                                const _pFs = require('fs');
-                                if (!_pFs.existsSync('./database')) _pFs.mkdirSync('./database', { recursive: true });
-                                const _pEntries = [];
-                                for (const [k, v] of (global._antideleteStore || new Map()).entries()) _pEntries.push([k, v]);
-                                _pFs.promises.writeFile('./database/antidelete_store.json', JSON.stringify(_pEntries.slice(-2000)), 'utf-8').catch(() => {});
-                            } catch(_pe) {}
-                        }, 3000);
-                    }
+                if (typeof global._cacheMessageForAntidelete === 'function') {
+                    global._cacheMessageForAntidelete(nexusboijid, nexus);
                 }
             } catch (_adErr) { /* silent */ }
 
@@ -2136,6 +2045,9 @@ async function startpairing(nexusDevNumber) {
                     global._antideleteStore.delete(_adBotKey2);
                     global._antideleteStore.delete(_adSharedKey2);
                     global._antideleteStore.delete(_adMsgId2);
+                    if (typeof global._adMongoDelete === 'function') {
+                        global._adMongoDelete([_adBotKey2, _adSharedKey2, _adMsgId2]);
+                    }
                 } catch (_adE2) { /* silent */ }
             }
         } catch (_de) {

@@ -290,7 +290,7 @@ function _saveDiskStore() {
             const trimmed = entries.slice(-ANTIDELETE_MAX_ENTRIES);
             fs.promises.writeFile(ANTIDELETE_DISK_STORE, JSON.stringify(trimmed), 'utf-8').catch(() => {});
         } catch (e) {}
-    }, 2000);
+    }, 500);
 }
 global._antideleteDiskSave = _saveDiskStore; // FIX: expose globally so pair.js can persist to disk even in private mode
 
@@ -4006,12 +4006,16 @@ _Auto-saved via status antidelete_`;
             if (_adMode === 'chat' && _adIsGroup) { return; }
             if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
 
-            // Look up cached message — memory, disk, Baileys store (works when bot user phone is offline)
+            // Look up cached message — memory → disk → MongoDB → Baileys store
             const _adBotKey = `${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`;
             let _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId)
                 || _getFromDiskStore(_adBotKey)
                 || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
                 || _getFromDiskStore(_adMsgId);
+            if (!_adOriginal) {
+                await new Promise((r) => setTimeout(r, 400));
+                _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId);
+            }
 
             if (!_adOriginal) {
                 const _aeMsg = global._antieditStore.get(_adChatId)?.get(_adMsgId);
@@ -4073,6 +4077,9 @@ _Auto-saved via status antidelete_`;
                     global._antideleteStore.delete(_adBotKey);
                     global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
                     global._antideleteStore.delete(_adMsgId);
+                    if (typeof global._adMongoDelete === 'function') {
+                        global._adMongoDelete([_adBotKey, antiStoreKey(_adChatId, _adMsgId), _adMsgId]);
+                    }
                 }
             } else {
                 // Message not in cache — still report with available info
@@ -4093,10 +4100,15 @@ _Auto-saved via status antidelete_`;
     return;
 }
 
-// ── Store messages for antidelete recovery (ALWAYS store — mode-independent) ──
+// ── Store messages for antidelete recovery (ALL messages incl. fromMe / self-chat) ──
+if (typeof global._cacheMessageForAntidelete === 'function') {
+    try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
+}
+
+// Legacy detailed store (kept for edge types) — skip if unified cache already ran
 (async () => {
     try {
-        if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessage(m, devtrust)) {
+        if (false && m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage) {
             const _adMsgId2 = m.key.id;
             const _adChatId2 = m.key.remoteJid;
             let _adContent = '';

@@ -4,30 +4,196 @@ const path = require('path');
 const ANTIDELETE_DISK_STORE = './database/antidelete_store.json';
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
+const ANTIDELETE_TEMP_DIR = './tmp/antidelete_media';
+const ANTIDELETE_MONGO_TTL_MS = 48 * 60 * 60 * 1000;
 
 function _adEnsureDbDir() {
     if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
 }
 
+function unwrapWaMessage(msg) {
+    if (!msg || typeof msg !== 'object') return {};
+    if (msg.ephemeralMessage?.message) return unwrapWaMessage(msg.ephemeralMessage.message);
+    if (msg.viewOnceMessage?.message) return unwrapWaMessage(msg.viewOnceMessage.message);
+    if (msg.viewOnceMessageV2?.message) return unwrapWaMessage(msg.viewOnceMessageV2.message);
+    if (msg.viewOnceMessageV2Extension?.message) return unwrapWaMessage(msg.viewOnceMessageV2Extension.message);
+    if (msg.documentWithCaptionMessage?.message) return unwrapWaMessage(msg.documentWithCaptionMessage.message);
+    if (msg.buttonsMessage?.message) return unwrapWaMessage(msg.buttonsMessage.message);
+    return msg;
+}
+
 function _adExtractText(msg) {
-    if (!msg) return '';
-    return msg.conversation
-        || msg.extendedTextMessage?.text
-        || msg.imageMessage?.caption
-        || msg.videoMessage?.caption
-        || msg.documentMessage?.caption
-        || msg.audioMessage?.caption
+    const m = unwrapWaMessage(msg);
+    if (!m) return '';
+    return m.conversation
+        || m.extendedTextMessage?.text
+        || m.imageMessage?.caption
+        || m.videoMessage?.caption
+        || m.documentMessage?.caption
+        || m.audioMessage?.caption
         || '';
 }
 
 function _adMediaTypeFromMsg(msg) {
-    if (!msg) return '';
-    if (msg.imageMessage) return 'image';
-    if (msg.videoMessage) return 'video';
-    if (msg.audioMessage) return 'audio';
-    if (msg.stickerMessage) return 'sticker';
-    if (msg.documentMessage) return 'document';
+    const m = unwrapWaMessage(msg);
+    if (!m) return '';
+    if (m.imageMessage) return 'image';
+    if (m.videoMessage) return 'video';
+    if (m.audioMessage) return 'audio';
+    if (m.stickerMessage) return 'sticker';
+    if (m.documentMessage) return 'document';
     return '';
+}
+
+async function _adMongoGet(key) {
+    try {
+        const { isMongoMode, initDb } = require('../server/db');
+        if (!isMongoMode()) return null;
+        await initDb();
+        const AntideleteCache = require('../server/models/AntideleteCache');
+        const doc = await AntideleteCache.findOne({ key }).lean();
+        return doc?.data || null;
+    } catch (_) { return null; }
+}
+
+function _adMongoSave(key, botNum, chatId, msgId, entry) {
+    setImmediate(async () => {
+        try {
+            const { isMongoMode, initDb } = require('../server/db');
+            if (!isMongoMode()) return;
+            await initDb();
+            const AntideleteCache = require('../server/models/AntideleteCache');
+            await AntideleteCache.findOneAndUpdate(
+                { key },
+                {
+                    key,
+                    botNum: String(botNum || ''),
+                    chatId: String(chatId || ''),
+                    msgId: String(msgId || ''),
+                    data: entry,
+                    expiresAt: new Date(Date.now() + ANTIDELETE_MONGO_TTL_MS),
+                },
+                { upsert: true }
+            );
+        } catch (_) {}
+    });
+}
+
+function _adMongoDelete(keys) {
+    setImmediate(async () => {
+        try {
+            const { isMongoMode, initDb } = require('../server/db');
+            if (!isMongoMode()) return;
+            await initDb();
+            const AntideleteCache = require('../server/models/AntideleteCache');
+            await AntideleteCache.deleteMany({ key: { $in: keys.filter(Boolean) } });
+        } catch (_) {}
+    });
+}
+
+function _adPrefetchMedia(msgId, mediaContent, mtype, storeKeys) {
+    if (!mediaContent || !mtype || !msgId) return;
+    if (!fs.existsSync(ANTIDELETE_TEMP_DIR)) {
+        try { fs.mkdirSync(ANTIDELETE_TEMP_DIR, { recursive: true }); } catch (_) {}
+    }
+    const ext = mtype === 'video' ? 'mp4' : mtype === 'audio' ? 'ogg' : mtype === 'sticker' ? 'webp' : 'jpg';
+    const filePath = path.join(ANTIDELETE_TEMP_DIR, `${msgId}.${ext}`);
+    setImmediate(async () => {
+        try {
+            const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+            const stream = await downloadContentFromMessage(mediaContent, mtype);
+            const chunks = [];
+            for await (const ch of stream) chunks.push(ch);
+            const buf = Buffer.concat(chunks);
+            if (!buf.length) return;
+            await fs.promises.writeFile(filePath, buf);
+            for (const k of storeKeys) {
+                const ex = global._antideleteStore?.get(k);
+                if (ex) {
+                    ex.mediaPath = filePath;
+                    global._antideleteStore.set(k, ex);
+                }
+            }
+            if (typeof global._antideleteDiskSave === 'function') global._antideleteDiskSave();
+        } catch (_) {}
+    });
+}
+
+/** Cache any message (including fromMe / self-chat) for antidelete recovery */
+function cacheMessageForAntidelete(rawMsg, sock) {
+    try {
+        if (!rawMsg?.key?.id || !rawMsg?.key?.remoteJid) return;
+        if (rawMsg.message?.protocolMessage) return;
+
+        const chatId = rawMsg.key.remoteJid;
+        const msgId = rawMsg.key.id;
+        const botNum = String(sock?.user?.id || sock?._cachedBotNumber || '').split(':')[0].split('@')[0];
+        const unwrapped = unwrapWaMessage(rawMsg.message || {});
+        const sender = rawMsg.key.participant || rawMsg.key.remoteJid;
+        const sharedKey = `${chatId}::${msgId}`;
+        const botKey = botNum ? `${botNum}::${sharedKey}` : sharedKey;
+        const storeKeys = [botKey, sharedKey, msgId];
+
+        if (!global._antideleteStore) global._antideleteStore = new Map();
+
+        const existing = global._antideleteStore.get(botKey)
+            || global._antideleteStore.get(sharedKey)
+            || global._antideleteStore.get(msgId);
+
+        let content = _adExtractText(unwrapped) || existing?.content || '';
+        let mediaType = _adMediaTypeFromMsg(unwrapped) || existing?.mediaType || '';
+        let mediaPath = existing?.mediaPath || '';
+        const rawMediaMsg = _serializeRawMedia(unwrapped) || existing?.rawMediaMsg || null;
+
+        if (unwrapped.audioMessage) {
+            content = content || (unwrapped.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
+            mediaType = 'audio';
+            mediaPath = mediaPath || '__redownload__';
+        } else if (unwrapped.videoMessage) {
+            mediaType = 'video';
+            mediaPath = mediaPath || '__redownload__';
+            _adPrefetchMedia(msgId, unwrapped.videoMessage, 'video', storeKeys);
+        } else if (unwrapped.imageMessage) {
+            mediaType = 'image';
+            mediaPath = mediaPath || '__redownload__';
+            _adPrefetchMedia(msgId, unwrapped.imageMessage, 'image', storeKeys);
+        } else if (unwrapped.stickerMessage) {
+            content = content || '🎭 Sticker';
+            mediaType = 'sticker';
+            mediaPath = mediaPath || '__redownload__';
+            _adPrefetchMedia(msgId, unwrapped.stickerMessage, 'sticker', storeKeys);
+        } else if (unwrapped.documentMessage) {
+            const docName = unwrapped.documentMessage.fileName || unwrapped.documentMessage.title || 'File';
+            content = content || `📄 Document: ${docName}`;
+            mediaType = 'document';
+            mediaPath = mediaPath || '__redownload__';
+        }
+
+        const entry = {
+            content,
+            rawMsg: unwrapped,
+            rawMediaMsg,
+            mediaType,
+            mediaPath,
+            isPtt: Boolean(unwrapped.audioMessage?.ptt || existing?.isPtt),
+            fromMe: Boolean(rawMsg.key.fromMe),
+            sender,
+            group: chatId.endsWith('@g.us') ? chatId : null,
+            timestamp: new Date().toISOString(),
+            _ts: Date.now(),
+        };
+
+        for (const k of storeKeys) {
+            global._antideleteStore.set(k, entry);
+            _adMongoSave(k, botNum, chatId, msgId, entry);
+        }
+
+        if (typeof global._antideleteDiskSave === 'function') {
+            global._antideleteDiskSave();
+        }
+    } catch (e) {
+        console.error('[ANTIDELETE] cache error:', e.message);
+    }
 }
 
 function _readDiskEntry(key) {
@@ -47,7 +213,7 @@ function _adStoreKeys(botNum, chatId, msgId) {
 }
 
 function _adEntryFromLoadedMessage(loaded, chatId) {
-    const msg = loaded?.message || {};
+    const msg = unwrapWaMessage(loaded?.message || {});
     return {
         content: _adExtractText(msg),
         rawMsg: msg,
@@ -70,6 +236,13 @@ async function _adLookupCachedMessage(sock, botNum, chatId, msgId) {
     for (const k of _adStoreKeys(botNum, chatId, msgId)) {
         const disk = _readDiskEntry(k);
         if (disk) return disk;
+    }
+    for (const k of _adStoreKeys(botNum, chatId, msgId)) {
+        const mongo = await _adMongoGet(k);
+        if (mongo) {
+            if (global._antideleteStore) global._antideleteStore.set(k, mongo);
+            return mongo;
+        }
     }
     const store = global._baileysMsgStore;
     if (store?.loadMessage && chatId && msgId) {
@@ -352,6 +525,9 @@ global._adLookupCachedMessage = _adLookupCachedMessage;
 global._adDeliverAntideleteReport = _adDeliverAntideleteReport;
 global._adFlushPendingReports = _adFlushPendingReports;
 global._adQueuePendingReport = _adQueuePendingReport;
+global._cacheMessageForAntidelete = cacheMessageForAntidelete;
+global._adMongoDelete = _adMongoDelete;
+global.unwrapWaMessage = unwrapWaMessage;
 
 module.exports = {
     _serializeRawMedia,
@@ -361,4 +537,7 @@ module.exports = {
     _adDeliverAntideleteReport,
     _adFlushPendingReports,
     _adQueuePendingReport,
+    cacheMessageForAntidelete,
+    unwrapWaMessage,
+    _adMongoDelete,
 };

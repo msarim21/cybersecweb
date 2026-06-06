@@ -72,7 +72,7 @@ function isWhatsAppWorker() {
 // ── Full memory cleanup before scheduled restart ─────────────────────────────
 function cleanupBotMemory() {
     try {
-        if (global._antideleteStore?.clear) global._antideleteStore.clear();
+        // Keep antidelete/antiedit caches — data survives restarts via Mongo/disk
         if (global._antieditStore?.clear) global._antieditStore.clear();
         if (global._statusCache?.clear) global._statusCache.clear();
         if (global._processedMsgIds?.clear) global._processedMsgIds.clear();
@@ -80,12 +80,6 @@ function cleanupBotMemory() {
         global._pcMemCache = null;
         global._antideleteConfigs = {};
         global._antieditConfigs = {};
-        const tmpDir = path.join(__dirname, 'tmp', 'antidelete_media');
-        if (fs.existsSync(tmpDir)) {
-            for (const f of fs.readdirSync(tmpDir)) {
-                try { fs.unlinkSync(path.join(tmpDir, f)); } catch (_) {}
-            }
-        }
         if (typeof global.gc === 'function') global.gc();
         console.log('[AutoRestart] 🧹 Memory caches cleared — fresh start');
     } catch (e) {
