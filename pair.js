@@ -27,8 +27,7 @@ const {
 } = require('@hapi/boom')
 const EventEmitter = require('events');
 const PhoneNumber = require('awesome-phonenumber')
-let phoneNumber = "923417022212";
-const pairingCode = !!phoneNumber || process.argv.includes("--pairing-code");
+const pairingCode = true;
 const useMobile = process.argv.includes("--mobile");
 const readline = require("readline");
 const pino = require('pino')
@@ -544,12 +543,23 @@ async function startpairing(nexusDevNumber) {
     }
     if (!credsOnDisk) {
         const cleanNum = nexusDevNumber.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-        console.log(chalk.cyan(`[pair] 📥 No local creds for ${cleanNum} — restoring from DB...`));
-        const restored = await restoreCredsFromDb(cleanNum, sessionPath).catch(() => false);
-        if (restored) {
-            console.log(chalk.green(`[pair] ✅ Session restored from DB: ${cleanNum}`));
-        } else {
-            console.log(chalk.yellow(`[pair] ℹ️  No DB session for ${cleanNum} — fresh session`));
+        let skipRestore = false;
+        try {
+            const { getPairingState } = require('./server/db-service');
+            const ps = await getPairingState(cleanNum);
+            if (ps?.pairingStatus === 'requested' || ps?.pairingStatus === 'pairing') {
+                skipRestore = true;
+                console.log(chalk.cyan(`[pair] Fresh pairing in progress for ${cleanNum} — skipping DB restore`));
+            }
+        } catch (_) {}
+        if (!skipRestore) {
+            console.log(chalk.cyan(`[pair] 📥 No local creds for ${cleanNum} — restoring from DB...`));
+            const restored = await restoreCredsFromDb(cleanNum, sessionPath).catch(() => false);
+            if (restored) {
+                console.log(chalk.green(`[pair] ✅ Session restored from DB: ${cleanNum}`));
+            } else {
+                console.log(chalk.yellow(`[pair] ℹ️  No DB session for ${cleanNum} — fresh session`));
+            }
         }
     }
     // ────────────────────────────────────────────────────────────────────────
@@ -662,7 +672,7 @@ async function startpairing(nexusDevNumber) {
 
     // Pairing code is requested once the socket is actually connecting (not at creation time)
     let _pairingCodeRequested = false;
-    const _writePairingJson = (phoneNumber, code) => {
+    const _writePairingJson = async (phoneNumber, code) => {
         const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
         ensureDirectoryExists('./nexstore/pairing');
         const pairingData = JSON.stringify({
@@ -679,7 +689,7 @@ async function startpairing(nexusDevNumber) {
         try {
             const cleanPair = String(phoneNumber).replace(/[^0-9]/g, '');
             const { setPairingCode } = require('./server/db-service');
-            setPairingCode(cleanPair, formatted).catch(() => {});
+            await setPairingCode(cleanPair, formatted).catch(() => {});
         } catch (_) {}
         return formatted;
     };
@@ -698,7 +708,7 @@ async function startpairing(nexusDevNumber) {
                 await sleep(_attempt === 1 ? 2000 : RETRY_DELAY);
                 let code = await nexus.requestPairingCode(phoneNumber);
                 if (!code) throw new Error('Empty pairing code returned');
-                const formatted = _writePairingJson(phoneNumber, code);
+                const formatted = await _writePairingJson(phoneNumber, code);
                 console.log(chalk.bgGreen.black(`📱 Pairing code for ${phoneNumber}: ${chalk.white.bold(formatted)}`));
                 console.log(chalk.green(`✓ Pairing code saved to pairing.json (attempt ${_attempt})`));
                 return;

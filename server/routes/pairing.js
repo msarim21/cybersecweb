@@ -36,7 +36,7 @@ function deleteFolderRecursive(p) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function pollPairingCode(clean, deadlineMs = 60_000) {
+async function pollPairingCode(clean, deadlineMs = 90_000) {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     try {
@@ -94,10 +94,12 @@ router.post('/request', protect, async (req, res) => {
 
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
-  // Web dyno (Heroku): queue pairing for worker — do NOT run pair.js here
+  // Web dyno (Heroku/Render): queue pairing for worker — do NOT run pair.js here
   if (isWebDyno()) {
     try {
       await requestPairing(clean, req.user.id);
+      // Brief delay so worker picks up the queue before we poll
+      await sleep(1500);
       const code = await pollPairingCode(clean);
       if (!code) {
         return res.status(500).json({

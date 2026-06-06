@@ -813,15 +813,18 @@ async function requestPairing(number, ownerId = null) {
   );
 }
 
-/** Clear stale pairing queue entries for numbers that already have saved session creds */
+/** Clear only OLD stale pairing entries — never wipe fresh user pairing requests */
 async function clearStalePairingRequests() {
+  const STALE_MINUTES = 15;
   let cleared = 0;
   if (isMongoMode()) {
     const { BotSession } = M();
+    const cutoff = new Date(Date.now() - STALE_MINUTES * 60 * 1000);
     const res = await BotSession.updateMany(
       {
         sessionData: { $ne: null },
-        pairingStatus: { $in: ['requested', 'pairing', 'code_ready'] },
+        pairingStatus: { $in: ['pairing', 'code_ready'] },
+        lastActive: { $lt: cutoff },
       },
       { $set: { pairingStatus: null, pairingCode: null } }
     );
@@ -832,17 +835,11 @@ async function clearStalePairingRequests() {
       `UPDATE bot_sessions
        SET pairing_status = NULL, pairing_code = NULL
        WHERE session_data IS NOT NULL
-         AND pairing_status IN ('requested', 'pairing', 'code_ready')`
+         AND pairing_status IN ('pairing', 'code_ready')
+         AND last_active < NOW() - INTERVAL '${STALE_MINUTES} minutes'`
     ).catch(() => ({ rowCount: 0 }));
     cleared += rowCount || 0;
   }
-  try {
-    const linked = await getAllActiveLinkedNumbers();
-    for (const n of linked) {
-      await clearPairingRequest(n);
-      cleared += 1;
-    }
-  } catch (_) {}
   if (cleared > 0) console.log(`[db] Cleared ${cleared} stale pairing queue entry/entries`);
   return cleared;
 }
