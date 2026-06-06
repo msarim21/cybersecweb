@@ -48,6 +48,26 @@ function isStopped(number) {
     return readStopped().includes(cleanNum(number));
 }
 
+/** Remove any website-linked numbers from stopped list so restart can reconnect them */
+async function syncStoppedWithLinkedNumbers() {
+    try {
+        const { getActiveLinkedNumbers } = require('../session-db');
+        const linked = await getActiveLinkedNumbers();
+        if (!linked || !linked.length) return 0;
+        const stopped = readStopped();
+        const linkedSet = new Set(linked.map(cleanNum).filter(Boolean));
+        const kept = stopped.filter((n) => !linkedSet.has(n));
+        if (kept.length !== stopped.length) {
+            writeStopped(kept);
+            console.log(`[stopped-bots] Cleared ${stopped.length - kept.length} linked number(s) from stopped list`);
+        }
+        return stopped.length - kept.length;
+    } catch (e) {
+        console.error('[stopped-bots] sync failed:', e.message);
+        return 0;
+    }
+}
+
 module.exports = {
     STOPPED_FILE,
     readStopped,
@@ -55,4 +75,5 @@ module.exports = {
     addToStoppedBots,
     removeFromStoppedBots,
     isStopped,
+    syncStoppedWithLinkedNumbers,
 };

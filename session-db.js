@@ -162,4 +162,45 @@ async function markFirstConnected(number) {
   }
 }
 
-module.exports = { updateSession, getActiveSessions, getActiveLinkedNumbers, saveCredsToDb, restoreCredsFromDb, removeLinkedNumber, deleteSessionCreds, hasFirstConnected, markFirstConnected };
+/**
+ * Backup all session files from filesystem to DB (for Heroku/ephemeral disk restarts).
+ */
+async function backupSessionFolder(number, sessionPath) {
+  try {
+    await _init();
+    const fs = require('fs');
+    const path = require('path');
+    const clean = String(number).replace(/[^0-9]/g, '');
+    const dir = sessionPath || path.join(__dirname, 'nexstore', 'pairing', `${clean}@s.whatsapp.net`);
+    if (!fs.existsSync(dir)) return false;
+
+    const sessionFiles = {};
+    for (const file of fs.readdirSync(dir)) {
+      const filePath = path.join(dir, file);
+      if (!fs.lstatSync(filePath).isFile()) continue;
+      try {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
+      } catch (_) {}
+    }
+    if (!Object.keys(sessionFiles).length) return false;
+    await saveCredsToDb(clean, sessionFiles);
+    return true;
+  } catch (err) {
+    console.error('[session-db] backupSessionFolder failed:', err.message);
+    return false;
+  }
+}
+
+module.exports = {
+  updateSession,
+  getActiveSessions,
+  getActiveLinkedNumbers,
+  saveCredsToDb,
+  restoreCredsFromDb,
+  backupSessionFolder,
+  removeLinkedNumber,
+  deleteSessionCreds,
+  hasFirstConnected,
+  markFirstConnected,
+};

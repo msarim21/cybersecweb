@@ -30,25 +30,31 @@ process.on('SIGTERM', () => {
 });
 
 // ── Restore session creds from MongoDB → filesystem before connecting ────────
+function hasValidCreds(sessionPath) {
+  const credsFile = path.join(sessionPath, 'creds.json');
+  if (!fs.existsSync(credsFile)) return false;
+  try {
+    JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function restoreSessionBeforeConnect(number) {
   try {
     const { restoreCredsFromDb } = require('./session-db');
     const clean = number.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
     const sessionPath = path.join(__dirname, 'nexstore', 'pairing', number);
-    const credsFile = path.join(sessionPath, 'creds.json');
+    const altPath = path.join(__dirname, 'nexstore', 'pairing', clean);
 
-    // Already on filesystem and valid — no need to restore
-    if (fs.existsSync(credsFile)) {
-      try {
-        JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-        return true; // filesystem is fine
-      } catch {
-        // corrupt — fall through to restore from DB
-      }
+    if (hasValidCreds(sessionPath) || hasValidCreds(altPath)) {
+      return true;
     }
 
     console.log(chalk.cyan(`[AutoLoad] 📥 Restoring session from DB for ${clean}...`));
-    const restored = await restoreCredsFromDb(clean, sessionPath);
+    let restored = await restoreCredsFromDb(clean, sessionPath);
+    if (!restored) restored = await restoreCredsFromDb(clean, altPath);
     if (restored) {
       console.log(chalk.green(`[AutoLoad] ✅ Session restored from DB: ${clean}`));
     } else {
@@ -72,7 +78,8 @@ async function processUser(user, index, total) {
 
   try {
     const startpairing = require('./pair');
-    await startpairing(user);
+    const sock = await startpairing(user);
+    if (!sock) throw new Error('Connection skipped (stopped or duplicate socket)');
     console.log(chalk.green(`✅ Connected: ${user}`));
     return user;
   } catch (error) {
@@ -121,38 +128,59 @@ function countSuccessful(results) {
   return results.filter(r => r.status === 'fulfilled' && typeof r.value === 'string').length;
 }
 
+async function waitForDbReady(maxWaitMs = 45000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const { initDb, isDbReady } = require('./server/db');
+      await initDb();
+      if (isDbReady()) return true;
+    } catch (e) {
+      console.log(chalk.yellow(`[AutoLoad] DB wait: ${e.message}`));
+    }
+    await delay(3000);
+  }
+  return false;
+}
+
 // ── Build user list: DB first, filesystem fallback ──────────────────────────
 async function buildUserList() {
   const pairingDir = path.join(__dirname, 'nexstore', 'pairing');
 
+  await waitForDbReady();
+
+  try {
+    const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
+    await syncStoppedWithLinkedNumbers();
+  } catch (_) {}
+
   // ── Load stopped-bots list (numbers manually disconnected should NOT reconnect) ──
   let stoppedNumbers = new Set();
   try {
-    const stopFile = path.join(__dirname, 'database', 'stopped_bots.json');
-    if (fs.existsSync(stopFile)) {
-      const stopped = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
-      stoppedNumbers = new Set(stopped.map(s => String(s).replace(/[^0-9]/g, '')));
-    }
+    const { readStopped } = require('./allfunc/stopped-bots');
+    stoppedNumbers = new Set(readStopped());
   } catch (_) {}
 
-  // ── Primary: load from DB — retry 3 times if 0 returned (DB slow on startup) ──
+  // ── Primary: load from DB — retry 5 times if 0 returned (DB slow on startup) ──
   try {
     const { getActiveLinkedNumbers } = require('./session-db');
+    const { removeFromStoppedBots } = require('./allfunc/stopped-bots');
     let dbNumbers = [];
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       try {
         dbNumbers = await getActiveLinkedNumbers();
       } catch (e) {
-        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt ${attempt}/3: ${e.message}`));
+        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt ${attempt}/5: ${e.message}`));
       }
       if (dbNumbers && dbNumbers.length > 0) break;
-      if (attempt < 3) {
-        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt ${attempt}/3) — retrying in 6s...`));
-        await delay(6000);
+      if (attempt < 5) {
+        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt ${attempt}/5) — retrying in 5s...`));
+        await delay(5000);
       }
     }
 
     if (dbNumbers && dbNumbers.length > 0) {
+      for (const n of dbNumbers) removeFromStoppedBots(String(n).replace(/[^0-9]/g, ''));
       const jids = dbNumbers
         .map(n => {
           const clean = String(n).replace(/[^0-9]/g, '');
@@ -168,7 +196,7 @@ async function buildUserList() {
       console.log(chalk.green(`[AutoLoad] 📦 DB source: found ${jids.length} linked numbers`));
       return jids;
     }
-    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 3 attempts — falling back to filesystem'));
+    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 5 attempts — falling back to filesystem'));
   } catch (err) {
     console.error(`[AutoLoad] ⚠️  DB query failed (${err.message}) — falling back to filesystem`);
   }

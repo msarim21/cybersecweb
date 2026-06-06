@@ -51,6 +51,54 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+async function ensureDbReady(maxWaitMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const { initDb, isDbReady } = require('./server/db');
+      await initDb();
+      if (isDbReady()) {
+        console.log(chalk.green('✅ [Worker] Database ready'));
+        return true;
+      }
+    } catch (e) {
+      console.log(chalk.yellow(`[Worker] Waiting for DB: ${e.message}`));
+    }
+    await delay(3000);
+  }
+  console.log(chalk.red('[Worker] ⚠️  Database not ready after timeout — autoload may fail'));
+  return false;
+}
+
+async function runAutoLoadWithRetries(maxAttempts = 5) {
+  const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
+  const { getActiveLinkedNumbers } = require('./session-db');
+  let lastResult = { successful: 0, total: 0 };
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await syncStoppedWithLinkedNumbers();
+    } catch (_) {}
+
+    const linked = await getActiveLinkedNumbers().catch(() => []);
+    lastResult = await autoLoadPairs({ batchSize: 3 });
+
+    console.log(chalk.green(
+      `[Worker] Auto-load attempt ${attempt}/${maxAttempts}: ${lastResult.successful || 0}/${lastResult.total || 0} connected (DB linked: ${linked.length})`
+    ));
+
+    if (!linked.length && !lastResult.total) return lastResult;
+    if (linked.length > 0 && (lastResult.successful || 0) >= linked.length) return lastResult;
+    if (lastResult.total > 0 && (lastResult.successful || 0) >= lastResult.total) return lastResult;
+
+    if (attempt < maxAttempts) {
+      console.log(chalk.yellow('[Worker] Retrying auto-load in 12s...'));
+      await delay(12000);
+    }
+  }
+  return lastResult;
+}
+
 async function startWorker() {
   console.log(chalk.cyan('\n╔══════════════════════════════════╗'));
   console.log(chalk.cyan('║   CYBER PRO — BOT WORKER DYNO   ║'));
@@ -58,7 +106,8 @@ async function startWorker() {
   console.log(chalk.green('✅ Worker dyno started — WhatsApp bot keep-alive mode'));
   console.log(chalk.yellow('⚠️  Telegram commands are DISABLED in this dyno (silent mode)\n'));
 
-  // Load WhatsApp commands module (needed by pair.js internally)
+  await ensureDbReady();
+
   try {
     require('./case');
     console.log(chalk.green('✅ WhatsApp command handler loaded'));
@@ -66,17 +115,13 @@ async function startWorker() {
     console.log(chalk.yellow('[Worker] case.js load warning:', e.message));
   }
 
-  // Auto-load all paired WhatsApp sessions
   console.log(chalk.blue('\n🔄 Loading all paired WhatsApp sessions...'));
   try {
-    const result = await autoLoadPairs({ batchSize: 5 });
-    console.log(chalk.green(`✅ Auto-load done — ${result.successful || 0}/${result.total || 0} sessions connected`));
+    await runAutoLoadWithRetries(5);
   } catch (e) {
     console.log(chalk.red('[Worker] Auto-load error:', e.message));
   }
 
-  // Keep Node.js event loop alive + self-ping web dyno every 14 min
-  // (prevents web dyno sleep, reconnects dead sessions, warms up AI APIs)
   startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — bot will stay alive 24/7'));
 
@@ -86,10 +131,24 @@ async function startWorker() {
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // AUTO-DISCONNECT: Every 30s — koi bhi bot jo web pe save nahi, disconnect
-  // ──────────────────────────────────────────────────────────────────────────
-  // Wait 60s on startup before first check (let sessions load first)
+  // Aggressive reconnect sweep first 15 min after restart (every 2 min)
+  let sweepCount = 0;
+  const startupSweep = setInterval(async () => {
+    sweepCount += 1;
+    if (sweepCount > 8) {
+      clearInterval(startupSweep);
+      return;
+    }
+    try {
+      const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
+      await syncStoppedWithLinkedNumbers();
+      const { isRunning } = require('./autoload');
+      if (!isRunning()) {
+        await autoLoadPairs({ batchSize: 3 });
+      }
+    } catch (_) {}
+  }, 2 * 60 * 1000);
+
   await delay(60000);
 
   const { stopBot } = require('./pair');
@@ -101,22 +160,18 @@ async function startWorker() {
         svc.getActiveBotSessions().catch(() => []),
         svc.getAllActiveLinkedNumbers().catch(() => [])
       ]);
-      // 🛡️ SAFETY GUARD: if DB returned 0 linked numbers, it's a DB blip —
-      // killing every active bot would be catastrophic, so skip this cycle.
       if (!linkedNumbers || linkedNumbers.length === 0) {
         console.log(chalk.yellow('[Worker] Auto-disconnect skipped — DB returned 0 linked numbers (likely DB issue)'));
         return;
       }
-      // 🛡️ SAFETY GUARD: if activeSessions is empty, nothing to check
       if (!activeSessions || activeSessions.length === 0) return;
 
       const linkedSet = new Set(linkedNumbers.map(n => String(n).replace(/[^0-9]/g, '')));
       const { readConnectedFlag } = require('./allfunc/connected-flag');
-      const PAIRING_GRACE_MS = 3 * 60 * 1000; // allow website auto-save after fresh pair
+      const PAIRING_GRACE_MS = 3 * 60 * 1000;
       for (const num of activeSessions) {
         const clean = String(num).replace(/[^0-9]/g, '');
         if (!clean || linkedSet.has(clean)) continue;
-        // Skip if user just paired — dashboard saves number within ~10s but allow 3 min buffer
         try {
           const flag = readConnectedFlag(clean);
           if (flag?.ts && (Date.now() - flag.ts) < PAIRING_GRACE_MS) continue;
@@ -125,14 +180,11 @@ async function startWorker() {
         try { stopBot(clean); } catch (_) {}
         svc.upsertBotSession(clean, 'inactive').catch(() => {});
       }
-    } catch (_) {
-      // Silent — DB may not be ready on worker startup
-    }
+    } catch (_) {}
   }, 30 * 1000);
 }
 
 startWorker().catch(err => {
   console.error(chalk.red('[Worker] Fatal startup error:'), err.message);
-  // Restart after 10 seconds instead of dying
   setTimeout(() => startWorker(), 10000);
 });

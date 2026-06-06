@@ -111,6 +111,8 @@ async function refreshBotSessions() {
         if (trackerSize === 0 || trackerSize === -1) {
             console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} number(s) — triggering autoload...`);
             try {
+                const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
+                await syncStoppedWithLinkedNumbers();
                 const { autoLoadPairs } = require('./autoload');
                 autoLoadPairs({ batchSize: 3 }).catch(() => {});
             } catch (_) {}

@@ -458,14 +458,19 @@ async function startpairing(nexusDevNumber) {
 
     const clean = String(nexusDevNumber).replace(/[^0-9]/g, '');
 
-    // ── Check if this number was manually stopped/disconnected ─────────────
+    // ── Check stopped list — but allow reconnect if number is still linked on website ──
     try {
-        const stopFile = path.join(__dirname, 'database', 'stopped_bots.json');
-        if (fs.existsSync(stopFile)) {
-            const stopped = JSON.parse(fs.readFileSync(stopFile, 'utf8'));
-            if (stopped.includes(clean)) {
-                console.log(chalk.yellow(`\u26d4 [${nexusDevNumber}] Skipping start — number was manually disconnected. Remove from stopped_bots.json to reconnect.`));
-                return;
+        const { isStopped, removeFromStoppedBots } = require('./allfunc/stopped-bots');
+        if (isStopped(clean)) {
+            const { getActiveLinkedNumbers } = require('./session-db');
+            const linked = await getActiveLinkedNumbers().catch(() => []);
+            const linkedSet = new Set((linked || []).map((n) => String(n).replace(/[^0-9]/g, '')));
+            if (linkedSet.has(clean)) {
+                removeFromStoppedBots(clean);
+                console.log(chalk.cyan(`[pair] ${clean} was stopped but is linked on website — reconnecting`));
+            } else {
+                console.log(chalk.yellow(`⛔ [${nexusDevNumber}] Skipping — manually disconnected (not in linked_numbers)`));
+                return null;
             }
         }
     } catch (_) {}
@@ -1690,6 +1695,15 @@ async function startpairing(nexusDevNumber) {
 
             // Persist active status to DB (awaited so web panel status poll works immediately)
             try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+
+            // Immediate session backup — survives dyno restart / ephemeral filesystem wipe
+            try {
+                const _bkClean = nexusDevNumber.replace(/[^0-9]/g, '');
+                const { backupSessionFolder } = require('./session-db');
+                const { removeFromStoppedBots } = require('./allfunc/stopped-bots');
+                await backupSessionFolder(_bkClean, `./nexstore/pairing/${nexusDevNumber}`);
+                removeFromStoppedBots(_bkClean);
+            } catch (_) {}
 
             // ── Auto-register main bot in linked_numbers so website dashboard shows it ──
             try {
