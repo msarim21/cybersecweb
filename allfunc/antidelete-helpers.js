@@ -189,11 +189,8 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             _adMongoSave(k, botNum, chatId, msgId, entry);
         }
 
-        // Text: instant disk flush (~1s ready). Media: short debounce (metadata already in RAM/Mongo).
-        const _isTextOnly = !mediaType && Boolean(content);
-        if (_isTextOnly && typeof global._antideleteDiskSaveNow === 'function') {
-            global._antideleteDiskSaveNow();
-        } else if (typeof global._antideleteDiskSave === 'function') {
+        // RAM + Mongo instant; disk flush debounced ~550ms (500–600ms target)
+        if (typeof global._antideleteDiskSave === 'function') {
             global._antideleteDiskSave();
         }
     } catch (e) {
