@@ -253,6 +253,15 @@ module.exports = {
       return { success: false, message: 'Shutdown in progress' };
     }
 
+    if (!global.__ISOLATED_BOT) {
+      try {
+        const { shouldRunWhatsAppSupervisor } = require('./allfunc/whatsapp-host');
+        if (!shouldRunWhatsAppSupervisor()) {
+          return { success: false, message: 'Auto-load skipped — not WhatsApp host dyno' };
+        }
+      } catch (_) {}
+    }
+
     if (isAutoLoadRunning) {
       console.log(chalk.yellow('⚠️ Auto-load already in progress. Skipping...'));
       return { success: false, message: 'Auto-load already running' };

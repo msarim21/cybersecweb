@@ -29,9 +29,15 @@ function shouldRunWhatsAppSupervisor() {
     return isWorkerDyno();
 }
 
+/** True only on the dyno that may open WhatsApp sockets (prevents 440 duplicate sessions). */
+function canHostWhatsAppSessions() {
+    return shouldRunWhatsAppSupervisor();
+}
+
 module.exports = {
     getWhatsAppHostDyno,
     shouldRunWhatsAppSupervisor,
+    canHostWhatsAppSessions,
     isWebDyno,
     isWorkerDyno,
 };

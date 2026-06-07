@@ -33,9 +33,12 @@ const PAIRING_JSON  = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE   = path.join(__dirname, '../../pair');
 const SESSION_DB    = path.join(__dirname, '../../session-db');
 
-/** Web/API process must queue pairing to worker on PaaS (Heroku, Render). */
+/** Queue pairing only when WhatsApp host runs on another dyno (legacy worker-only setup). */
 function shouldQueueToWorker() {
-  if (process.env.WHATSAPP_WORKER === '1') return false;
+  try {
+    const { shouldRunWhatsAppSupervisor } = require('../../allfunc/whatsapp-host');
+    if (shouldRunWhatsAppSupervisor()) return false;
+  } catch (_) {}
   if (process.env.DYNO) return true;
   if (process.env.RENDER === 'true') return true;
   return false;

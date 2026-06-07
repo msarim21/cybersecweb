@@ -135,8 +135,8 @@ async function runBot() {
     await startpairing(jid);
 
     // Minimal keepalive — only this bot's socket
-    const { startKeepAlive } = require('../keepalive');
-    startKeepAlive();
+    const { startBotChildKeepAlive } = require('../keepalive');
+    startBotChildKeepAlive();
 
     // Flush pending antidelete reports for this bot
     try {

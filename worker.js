@@ -1,9 +1,5 @@
 'use strict';
 
-// Mark this process as the sole WhatsApp worker — keepalive uses this to avoid
-// web dyno reconnecting the same numbers (causes 440 / random disconnects).
-process.env.WHATSAPP_WORKER = '1';
-
 // ============================================================
 // WORKER DYNO — WhatsApp Bot Keep-Alive
 // Sirf WhatsApp connections zinda rakhta hai.

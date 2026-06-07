@@ -9,7 +9,6 @@ const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 let _running = false;
 
 function shouldRunOrphanJob() {
-  if (process.env.WHATSAPP_WORKER === '1') return true;
   try {
     const { shouldRunWhatsAppSupervisor } = require('../../allfunc/whatsapp-host');
     return shouldRunWhatsAppSupervisor();

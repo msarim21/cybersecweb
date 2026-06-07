@@ -18,8 +18,17 @@ function deleteFolderRecursive(p) {
  * When pairing_status = 'requested', ALWAYS generate a fresh pairing code:
  * stop socket → wipe FS session → delete DB creds → pair().
  */
+function isPairingHost() {
+    try {
+        const { shouldRunWhatsAppSupervisor } = require('../allfunc/whatsapp-host');
+        return shouldRunWhatsAppSupervisor();
+    } catch {
+        return false;
+    }
+}
+
 async function processPairingQueue() {
-    if (process.env.WHATSAPP_WORKER !== '1') return false;
+    if (!isPairingHost()) return false;
 
     try {
         const {
@@ -108,7 +117,7 @@ async function processPairingQueue() {
 }
 
 function startPairingProcessor(intervalMs = 150) {
-    if (process.env.WHATSAPP_WORKER !== '1') return null;
+    if (!isPairingHost()) return null;
 
     const tick = async () => {
         const hadWork = await processPairingQueue().catch(() => false);

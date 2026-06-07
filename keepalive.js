@@ -66,12 +66,11 @@ async function selfPing() {
 }
 
 function isWhatsAppWorker() {
-    if (process.env.WHATSAPP_WORKER === '1') return true;
     try {
         const { shouldRunWhatsAppSupervisor } = require('./allfunc/whatsapp-host');
-        if (shouldRunWhatsAppSupervisor()) return true;
+        return shouldRunWhatsAppSupervisor();
     } catch (_) {}
-    return process.env.DYNO?.startsWith('worker');
+    return false;
 }
 
 // ── Full memory cleanup before scheduled restart ─────────────────────────────
@@ -207,6 +206,13 @@ function scheduleAutoRestart() {
     console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
 }
 
+/** Isolated bot child — event loop only; no dyno restart or session refresh */
+function startBotChildKeepAlive() {
+    if (_started) return;
+    _started = true;
+    _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
+}
+
 function startKeepAlive() {
     if (_started) return;
     _started = true;
@@ -264,4 +270,4 @@ function stopKeepAlive() {
     console.log('[KeepAlive] ⛔ Stopped.');
 }
 
-module.exports = { startKeepAlive, stopKeepAlive };
+module.exports = { startKeepAlive, startBotChildKeepAlive, stopKeepAlive };

@@ -464,7 +464,22 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
     }
 }
 
+function canOpenWhatsAppSocket() {
+    if (global.__ISOLATED_BOT) return true;
+    if (process.env.BOT_PAIRING === '1') return true;
+    try {
+        const { shouldRunWhatsAppSupervisor } = require('./allfunc/whatsapp-host');
+        return shouldRunWhatsAppSupervisor();
+    } catch (_) {}
+    return !process.env.DYNO;
+}
+
 async function startpairing(nexusDevNumber) {
+    if (!canOpenWhatsAppSocket()) {
+        console.log(chalk.gray(`[pair] Skip ${nexusDevNumber} — WhatsApp host dyno is not this process`));
+        return;
+    }
+
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
 
@@ -1611,6 +1626,12 @@ async function startpairing(nexusDevNumber) {
                 }
                 return;
             } else if (reason === 440) {
+                if (!canOpenWhatsAppSocket()) {
+                    console.log(chalk.gray(`[pair] 440 on non-host dyno — stop retry for ${nexusDevNumber}`));
+                    tracker.disconnected = true;
+                    tracker.connection = null;
+                    return;
+                }
                 // ♻️ 440 = connection replaced (another WA client opened) — ALWAYS retry, no limit
                 tracker.err440Retry = (tracker.err440Retry || 0) + 1;
                 const d440 = Math.min(tracker.err440Retry * 10000, 5 * 60 * 1000); // up to 5-min gap
