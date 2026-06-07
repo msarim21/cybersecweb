@@ -275,11 +275,10 @@ const requireDb = (req, res, next) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const multer = require('multer');
-const { protect, adminOnly } = require('./middleware/auth');
 const AUDIO_META_FILE  = path.join(UPLOADS_DIR, 'audio-meta.json');
 
-// Admin audio routes — valid JWT + admin role required
-const protectAdminAudio = [protect, adminOnly];
+// Admin audio routes — valid JWT + admin role required (no requireDb — avoids 503 on audio upload)
+const protectAdminAudio = [protectAuth, adminOnly];
 
 // Disk storage — save file directly, no base64, no compression
 const audioStorage = multer.diskStorage({
