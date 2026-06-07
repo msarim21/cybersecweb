@@ -1030,23 +1030,6 @@ async function startpairing(nexusDevNumber) {
                     global._antideleteStore.set(_adKey, _adEntry);
                     // also store shared-key for backward compat
                     global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
-                    // Download media bytes immediately — most reliable approach (no CDN at delete time)
-                    if (_adEntry.mediaType) {
-                        const _dlMsg = _adMsg.imageMessage || _adMsg.videoMessage || _adMsg.audioMessage || _adMsg.stickerMessage || _adMsg.documentMessage;
-                        if (_dlMsg) {
-                            (async () => {
-                                try {
-                                    const _dlStream = await downloadContentFromMessage(_dlMsg, _adEntry.mediaType);
-                                    const _dlChs = [];
-                                    for await (const _dlC of _dlStream) _dlChs.push(_dlC);
-                                    const _dlBuf = Buffer.concat(_dlChs);
-                                    if (_dlBuf.length > 0) {
-                                        _adEntry.rawBuffer = _dlBuf;
-                                    }
-                                } catch (_dlE) { /* silent — rawMediaMsg CDN fallback used */ }
-                            })();
-                        }
-                    }
                     // FIX: persist to disk so bot restart doesn't lose cached messages
                     if (typeof global._antideleteDiskSave === 'function') {
                         global._antideleteDiskSave();
