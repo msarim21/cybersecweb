@@ -66,7 +66,12 @@ async function selfPing() {
 }
 
 function isWhatsAppWorker() {
-    return process.env.WHATSAPP_WORKER === '1' || process.env.DYNO?.startsWith('worker');
+    if (process.env.WHATSAPP_WORKER === '1') return true;
+    try {
+        const { shouldRunWhatsAppSupervisor } = require('./allfunc/whatsapp-host');
+        if (shouldRunWhatsAppSupervisor()) return true;
+    } catch (_) {}
+    return process.env.DYNO?.startsWith('worker');
 }
 
 // ── Full memory cleanup before scheduled restart ─────────────────────────────
@@ -209,8 +214,8 @@ function startKeepAlive() {
     // Website ping every 14 min — hosting platform sleep se bachao
     _timer = setInterval(selfPing, 14 * 60 * 1000);
 
-    // Every 10 min: dead sessions silently reconnect karo
-    setInterval(refreshBotSessions, 10 * 60 * 1000);
+    // Every 3 min: dead sessions / unhealthy child bots reconnect
+    setInterval(refreshBotSessions, 3 * 60 * 1000);
 
     // Every 5 min: backup all connected sessions to DB (survives dyno restart)
     if (isWhatsAppWorker()) {

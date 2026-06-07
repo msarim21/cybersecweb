@@ -147,6 +147,25 @@ async function runBot() {
         }
     } catch (_) {}
 
+    const { touchBotHeartbeat } = require('../allfunc/bot-heartbeat');
+    touchBotHeartbeat(BOT_NUMBER, { phase: 'started' });
+    if (!global._botHeartbeatTimer) {
+        global._botHeartbeatTimer = setInterval(() => {
+            try {
+                const pairMod = require('../pair');
+                const jid = `${BOT_NUMBER}@s.whatsapp.net`;
+                const tracker = pairMod._getTracker?.()?.get(jid) || pairMod._getTracker?.()?.get(BOT_NUMBER);
+                const ws = tracker?.connection?.ws;
+                touchBotHeartbeat(BOT_NUMBER, {
+                    wsState: ws?.readyState ?? -1,
+                    connected: Boolean(tracker?.connection?.user),
+                });
+            } catch (_) {
+                touchBotHeartbeat(BOT_NUMBER);
+            }
+        }, 60_000);
+    }
+
     console.log(chalk.green(`[BotRunner:${BOT_NUMBER}] 🟢 Running in isolated mode`));
 }
 

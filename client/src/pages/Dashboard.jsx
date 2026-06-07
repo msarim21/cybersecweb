@@ -948,7 +948,14 @@ export default function Dashboard() {
                               <div className="font-mono text-sm text-white">{n.number}</div>
                               <div className="font-mono text-[10px] text-gray-500">{n.botName}</div>
                             </div>
-                            <span className={n.status === 'active' ? 'status-active' : 'status-inactive'}>{n.status.toUpperCase()}</span>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className={n.status === 'active' ? 'status-active' : 'status-inactive'}>{n.status.toUpperCase()}</span>
+                              {n.status === 'active' && (
+                                <span className={`font-mono text-[9px] ${n.botOnline ? 'text-[#00ff88]' : 'text-[#ffaa00]'}`}>
+                                  {n.botOnline ? '● BOT ONLINE' : '○ BOT OFFLINE'}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         ))
                       )}
@@ -1006,6 +1013,12 @@ export default function Dashboard() {
                             <div className="font-mono text-[10px] text-gray-600 mt-0.5">Added {new Date(n.createdAt).toLocaleDateString()}</div>
                           </div>
                           <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                            {n.status === 'active' && (
+                              <span className={`font-mono text-[9px] px-2 py-1 rounded-lg ${n.botOnline ? 'text-[#00ff88]' : 'text-[#ffaa00]'}`}
+                                style={{ background: n.botOnline ? 'rgba(0,255,136,0.08)' : 'rgba(255,170,0,0.08)', border: `1px solid ${n.botOnline ? 'rgba(0,255,136,0.3)' : 'rgba(255,170,0,0.3)'}` }}>
+                                {n.botOnline ? '● ONLINE' : '○ OFFLINE'}
+                              </span>
+                            )}
                             <button onClick={() => handleToggle(n._id)} className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
                               {n.status.toUpperCase()}
                             </button>

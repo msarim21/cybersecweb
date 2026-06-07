@@ -73,7 +73,12 @@ function spawnBot(botNum, opts = {}) {
     });
 
     const restarts = [];
-    children.set(clean, { child, restarts, pairing: Boolean(opts.pairing) });
+    children.set(clean, {
+        child,
+        restarts,
+        pairing: Boolean(opts.pairing),
+        spawnedAt: Date.now(),
+    });
 
     child.on('exit', (code, sig) => {
         const wasPairing = children.get(clean)?.pairing;
@@ -142,6 +147,28 @@ function _hasRegisteredCreds(clean) {
     return false;
 }
 
+function _isChildProcessAlive(entry) {
+    if (!entry?.child) return false;
+    if (entry.child.killed) return false;
+    if (entry.child.exitCode !== null) return false;
+    return true;
+}
+
+function _isChildHealthy(clean, entry) {
+    if (!_isChildProcessAlive(entry)) return false;
+
+    const graceMs = 4 * 60 * 1000;
+    const spawnedAt = entry.spawnedAt || 0;
+    if (spawnedAt && Date.now() - spawnedAt < graceMs) return true;
+
+    try {
+        const { isBotHeartbeatFresh } = require('../allfunc/bot-heartbeat');
+        if (isBotHeartbeatFresh(clean)) return true;
+    } catch (_) {}
+
+    return false;
+}
+
 /** Local creds OR restore from MongoDB/PostgreSQL after dyno restart */
 async function _ensureBotSessionReady(clean) {
     if (_hasRegisteredCreds(clean)) return true;
@@ -205,6 +232,19 @@ async function syncBots() {
         if (_hasRegisteredCreds(clean) && isConnected(clean)) {
             promotePairingToNormal(clean);
         }
+    }
+
+    // Restart unhealthy children (process alive but WA socket dead / no heartbeat)
+    for (const [clean, entry] of [...children]) {
+        if (entry?.pairing) continue;
+        if (global._pairingInFlight?.has(clean)) continue;
+        if (!linkedSet.has(clean)) continue;
+        if (_isChildHealthy(clean, entry)) continue;
+
+        console.log(chalk.red(`[Supervisor] 💀 +${clean} unhealthy — auto-restarting`));
+        killBot(clean, 'SIGTERM');
+        const ready = await _ensureBotSessionReady(clean);
+        if (ready) spawnBot(clean);
     }
 
     // Start bots that should be running (restore DB session after Heroku/dyno restart)
@@ -304,8 +344,11 @@ function startSupervisor() {
     });
     runSync();
     // Fast reconnect sweep after worker/dyno restart (ephemeral disk is empty)
-    [3000, 8000, 20000, 45000].forEach((ms) => setTimeout(runSync, ms));
+    [3000, 8000, 20000, 45000, 90000].forEach((ms) => setTimeout(runSync, ms));
     _syncTimer = setInterval(runSync, SYNC_INTERVAL_MS);
+    if (!global._supervisorHealthTimer) {
+        global._supervisorHealthTimer = setInterval(runSync, 3 * 60 * 1000);
+    }
 
     // Patch pair.js stopBot so web/worker cleanup kills child processes
     try {

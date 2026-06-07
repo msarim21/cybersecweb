@@ -85,7 +85,13 @@ function isTrialExpired(user) {
 router.get('/', protect, async (req, res) => {
   try {
     const numbers = await getNumbersByOwner(req.user.id, req.query.search || null);
-    res.json(numbers);
+    const { isBotHeartbeatFresh } = require('../../allfunc/bot-heartbeat');
+    const enriched = numbers.map((n) => {
+      const clean = String(n.number || '').replace(/[^0-9]/g, '');
+      const botOnline = n.status === 'active' && clean && isBotHeartbeatFresh(clean);
+      return { ...n, botOnline };
+    });
+    res.json(enriched);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

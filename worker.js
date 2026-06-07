@@ -115,8 +115,21 @@ async function startWorker() {
     console.log(chalk.yellow('[Worker] clearStalePairingRequests:', e.message));
   }
 
+  const { shouldRunWhatsAppSupervisor, getWhatsAppHostDyno } = require('./allfunc/whatsapp-host');
+  const { startWhatsAppStack } = require('./worker/start-whatsapp');
+
+  if (startWhatsAppStack()) {
+    console.log(chalk.green(`\n🟢 Supervisor running on worker (WHATSAPP_HOST_DYNO=${getWhatsAppHostDyno()})`));
+    return;
+  }
+
+  if (getWhatsAppHostDyno() === 'web') {
+    console.log(chalk.cyan('ℹ️  WhatsApp bots hosted on web dyno (Eco keepalive) — worker standby'));
+    startKeepAlive();
+    return;
+  }
+
   // ── Per-bot isolation: one Node process per linked number ─────────────────
-  // Set BOT_ISOLATION=0 to fall back to legacy single-process multi-bot mode.
   const useIsolation = process.env.BOT_ISOLATION !== '0';
 
   if (useIsolation) {
@@ -133,7 +146,6 @@ async function startWorker() {
     const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
 
-    // Supervisor sync sweep first 15 min
     let sweepCount = 0;
     const startupSweep = setInterval(async () => {
       sweepCount += 1;

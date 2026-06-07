@@ -825,6 +825,10 @@ async function startpairing(nexusDevNumber) {
         // ── Track last real WhatsApp message time (used by dead-connection watchdog) ──
         const _tracker = rentbotTracker.get(nexusDevNumber);
         if (_tracker) _tracker.lastWAMessage = Date.now();
+        try {
+            const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+            touchBotHeartbeat(nexusDevNumber.replace(/[^0-9]/g, ''), { event: 'message' });
+        } catch (_) {}
 
         // ── Antidelete: cache EVERY message in batch (albums, history sync, multi-msg upserts) ──
         if (typeof global._cacheMessageForAntidelete === 'function') {
@@ -1716,6 +1720,11 @@ async function startpairing(nexusDevNumber) {
                 const { backupSessionFolder } = require('./session-db');
                 const _sessDir = path.join(__dirname, 'nexstore', 'pairing', nexusDevNumber.includes('@') ? nexusDevNumber : `${cleanNum}@s.whatsapp.net`);
                 backupSessionFolder(cleanNum, _sessDir).catch(() => {});
+            } catch (_) {}
+
+            try {
+                const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+                touchBotHeartbeat(cleanNum, { event: 'connected', wsState: nexus.ws?.readyState ?? 1 });
             } catch (_) {}
 
             // ── Web pairing: auto-link owner + promote pairing child → full bot ──

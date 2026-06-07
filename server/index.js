@@ -552,7 +552,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   server.headersTimeout   = 66000;         // keepAliveTimeout se thoda zyada
 
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
-  startKeepAlive();
+  if (!process.env.DYNO?.startsWith('web')) startKeepAlive();
 
   // Start Telegram bot (OPTIONAL — only if TELEGRAM_BOT_TOKEN is set)
   if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_TOKEN.trim() !== '') {
@@ -566,9 +566,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log("ℹ️  Telegram bot disabled — set TELEGRAM_BOT_TOKEN env var to enable");
   }
 
-  // WhatsApp sessions run ONLY on worker dyno (worker.js) — never load here.
-  // Loading on web + worker together causes error 440 and random disconnects.
-  console.log("ℹ️  WhatsApp bot runs on worker dyno only (see Procfile)");
+    const { getWhatsAppHostDyno } = require('../allfunc/whatsapp-host');
+    console.log(`ℹ️  WhatsApp host dyno: ${getWhatsAppHostDyno()} (WHATSAPP_HOST_DYNO env to override)`);
 
 });
 
@@ -596,8 +595,19 @@ initDb()
     await ensureAdminAccount();
     console.log('✅ Database initialised successfully');
 
-    // WhatsApp sessions are loaded by the worker dyno (worker.js) only.
-    // Do NOT load them here — web dyno is for API/dashboard only.
+    try {
+      const { startWhatsAppStack } = require('../worker/start-whatsapp');
+      const { getWhatsAppHostDyno, shouldRunWhatsAppSupervisor } = require('../allfunc/whatsapp-host');
+      if (startWhatsAppStack()) {
+        console.log(`✅ WhatsApp bots started on web dyno (WHATSAPP_HOST_DYNO=${getWhatsAppHostDyno()})`);
+      } else if (!shouldRunWhatsAppSupervisor()) {
+        const { startKeepAlive } = require('../keepalive');
+        startKeepAlive();
+      }
+    } catch (err) {
+      console.log('ℹ️  WhatsApp supervisor on web:', err.message);
+      try { require('../keepalive').startKeepAlive(); } catch (_) {}
+    }
 
     // Start plan expiry auto-disconnect cron (every 60 seconds)
     startPlanExpiryJob(60_000);
