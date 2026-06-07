@@ -5,6 +5,97 @@ const { getAntideleteSession, cleanBotNum } = require('./antidelete-session');
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
 const ANTIDELETE_MONGO_TTL_MS = 48 * 60 * 60 * 1000;
+const ANTIDELETE_MEDIA_B64_MAX = 8 * 1024 * 1024; // 8MB — store inline for reliable recovery
+const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
+
+function _adToBuffer(v) {
+    if (!v) return null;
+    if (Buffer.isBuffer(v)) return v;
+    if (typeof v === 'string') {
+        try { return Buffer.from(v, 'base64'); } catch (_) { return null; }
+    }
+    if (v?.type === 'Buffer' && Array.isArray(v.data)) {
+        try { return Buffer.from(v.data); } catch (_) { return null; }
+    }
+    return null;
+}
+
+function _adToB64(v) {
+    const buf = _adToBuffer(v);
+    return buf ? buf.toString('base64') : null;
+}
+
+function _adChatIdsFromKey(key) {
+    const ids = new Set();
+    if (key?.remoteJid) ids.add(String(key.remoteJid));
+    if (key?.remoteJidAlt) ids.add(String(key.remoteJidAlt));
+    if (key?.participant && !String(key.remoteJid || '').endsWith('@g.us')) {
+        ids.add(String(key.participant));
+    }
+    return [...ids].filter(Boolean);
+}
+
+function _adSanitizeEntryForPersistence(entry) {
+    if (!entry) return entry;
+    const out = {
+        content: entry.content || '',
+        rawMediaMsg: entry.rawMediaMsg || null,
+        mediaType: entry.mediaType || '',
+        mediaPath: entry.mediaPath || '',
+        mediaBufferB64: entry.mediaBufferB64 || null,
+        extraPayload: entry.extraPayload || null,
+        msgKind: entry.msgKind || '',
+        isPtt: Boolean(entry.isPtt),
+        fromMe: Boolean(entry.fromMe),
+        sender: entry.sender || '',
+        group: entry.group || null,
+        timestamp: entry.timestamp || new Date().toISOString(),
+        _ts: entry._ts || Date.now(),
+        botNum: entry.botNum || '',
+    };
+    if (out.mediaBufferB64) {
+        const approx = Math.ceil(out.mediaBufferB64.length * 0.75);
+        if (approx > ANTIDELETE_MEDIA_B64_MAX) delete out.mediaBufferB64;
+    }
+    return out;
+}
+
+function _adWasDeleteProcessed(botNum, chatId, msgId) {
+    if (!global._adDeleteDedup) global._adDeleteDedup = new Map();
+    const k = `${cleanBotNum(botNum)}::${chatId}::${msgId}`;
+    const now = Date.now();
+    const prev = global._adDeleteDedup.get(k);
+    if (prev && now - prev < ANTIDELETE_DELETE_DEDUP_MS) return true;
+    global._adDeleteDedup.set(k, now);
+    if (global._adDeleteDedup.size > 8000) {
+        for (const [dk, ts] of global._adDeleteDedup) {
+            if (now - ts > ANTIDELETE_DELETE_DEDUP_MS) global._adDeleteDedup.delete(dk);
+        }
+    }
+    return false;
+}
+
+function loadAntideleteCfg(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+    if (clean && global._antideleteConfigs[clean]) return global._antideleteConfigs[clean];
+    const paths = clean
+        ? [`./database/antidelete_config_${clean}.json`, './database/antidelete_config.json']
+        : ['./database/antidelete_config.json'];
+    for (const p of paths) {
+        try {
+            if (fs.existsSync(p)) {
+                const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
+                const result = d.mode ? d : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
+                if (clean) global._antideleteConfigs[clean] = result;
+                return result;
+            }
+        } catch (_) {}
+    }
+    const _default = { mode: 'private', enabled: true };
+    if (clean) global._antideleteConfigs[clean] = _default;
+    return _default;
+}
 
 function _adEnsureDbDir() {
     if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
@@ -18,28 +109,162 @@ function unwrapWaMessage(msg) {
     if (msg.viewOnceMessageV2Extension?.message) return unwrapWaMessage(msg.viewOnceMessageV2Extension.message);
     if (msg.documentWithCaptionMessage?.message) return unwrapWaMessage(msg.documentWithCaptionMessage.message);
     if (msg.buttonsMessage?.message) return unwrapWaMessage(msg.buttonsMessage.message);
+    if (msg.editedMessage?.message) return unwrapWaMessage(msg.editedMessage.message);
+    if (msg.associatedChildMessage?.message) return unwrapWaMessage(msg.associatedChildMessage.message);
+    if (msg.templateMessage?.hydratedTemplate?.hydratedContentText) {
+        return { conversation: String(msg.templateMessage.hydratedTemplate.hydratedContentText) };
+    }
+    if (msg.templateMessage?.hydratedFourRowTemplate?.hydratedContentText) {
+        return { conversation: String(msg.templateMessage.hydratedFourRowTemplate.hydratedContentText) };
+    }
+    if (msg.templateMessage?.fourRowTemplate?.content?.text) {
+        return { conversation: String(msg.templateMessage.fourRowTemplate.content.text) };
+    }
     return msg;
 }
 
-function _adExtractText(msg) {
-    const m = unwrapWaMessage(msg);
-    if (!m) return '';
-    return m.conversation
+function _adIsViewOnce(rawMessage, unwrapped) {
+    return Boolean(
+        rawMessage?.viewOnceMessage ||
+        rawMessage?.viewOnceMessageV2 ||
+        rawMessage?.viewOnceMessageV2Extension ||
+        unwrapped?.imageMessage?.viewOnce ||
+        unwrapped?.videoMessage?.viewOnce ||
+        unwrapped?.audioMessage?.viewOnce
+    );
+}
+
+function _adExtractContent(rawMessage, unwrapped) {
+    const m = unwrapped || {};
+    const vo = _adIsViewOnce(rawMessage, m);
+    const prefix = vo ? '🔒 View Once — ' : '';
+
+    let text = m.conversation
         || m.extendedTextMessage?.text
         || m.imageMessage?.caption
         || m.videoMessage?.caption
         || m.documentMessage?.caption
         || m.audioMessage?.caption
         || '';
+
+    const poll = m.pollCreationMessage || m.pollCreationMessageV2 || m.pollCreationMessageV3;
+    if (poll) {
+        const opts = (poll.options || [])
+            .map((o, i) => `  ${i + 1}. ${o.optionName || o.name || 'Option'}`)
+            .join('\n');
+        return `${prefix}📊 Poll: ${poll.name || 'Untitled'}${opts ? `\n${opts}` : ''}`;
+    }
+
+    const loc = m.locationMessage || m.liveLocationMessage;
+    if (loc) {
+        const live = m.liveLocationMessage ? ' (live)' : '';
+        const label = loc.name || loc.address || '';
+        return `${prefix}📍 Location${live}${label ? `: ${label}` : ''}\nhttps://maps.google.com/?q=${loc.degreesLatitude},${loc.degreesLongitude}`;
+    }
+
+    if (m.contactMessage) {
+        return `${prefix}👤 Contact: ${m.contactMessage.displayName || 'Unknown'}`;
+    }
+    if (m.contactsArrayMessage) {
+        const names = (m.contactsArrayMessage.contacts || [])
+            .map((c) => c.displayName).filter(Boolean).join(', ');
+        return `${prefix}👥 Contacts: ${names || 'Multiple contacts'}`;
+    }
+
+    if (m.reactionMessage) {
+        return `${m.reactionMessage.text || '❤️'} (reaction)`;
+    }
+
+    if (m.buttonsResponseMessage) {
+        return `🔘 Button: ${m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || ''}`;
+    }
+    if (m.listResponseMessage) {
+        return `📋 List: ${m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || ''}`;
+    }
+    if (m.templateButtonReplyMessage) {
+        return `🔘 Template: ${m.templateButtonReplyMessage.selectedDisplayText || m.templateButtonReplyMessage.selectedId || ''}`;
+    }
+
+    if (m.groupInviteMessage) {
+        return `${prefix}🔗 Group invite: ${m.groupInviteMessage.groupName || m.groupInviteMessage.groupJid || 'Unknown'}`;
+    }
+
+    if (m.productMessage) {
+        const title = m.productMessage.product?.title || m.productMessage.title || 'Product';
+        return `${prefix}🛒 Product: ${title}`;
+    }
+    if (m.orderMessage) {
+        return `${prefix}📦 Order: ${m.orderMessage.orderTitle || m.orderMessage.itemCount || 'Order'}`;
+    }
+
+    if (m.interactiveMessage) {
+        const body = m.interactiveMessage.body?.text
+            || m.interactiveMessage.header?.title
+            || m.interactiveMessage.nativeFlowMessage?.buttons?.[0]?.name
+            || '';
+        return `${prefix}💬 Interactive${body ? `: ${body}` : ''}`;
+    }
+    if (m.listMessage) {
+        return `${prefix}📋 List: ${m.listMessage.title || m.listMessage.description || 'Menu'}`;
+    }
+    if (m.buttonsMessage) {
+        return `${prefix}🔘 Buttons: ${m.buttonsMessage.contentText || m.buttonsMessage.text || 'Options'}`;
+    }
+
+    if (m.eventMessage) {
+        return `${prefix}📅 Event: ${m.eventMessage.name || 'Event'}`;
+    }
+
+    if (text) return vo ? `${prefix}${text}` : text;
+
+    const known = Object.keys(m).filter((k) => k !== 'messageContextInfo' && k.endsWith('Message'));
+    if (known.length) {
+        return `${prefix}[${known[0].replace(/Message$/, '')}]`;
+    }
+    return '';
+}
+
+function _adBuildExtraPayload(unwrapped) {
+    const m = unwrapped || {};
+    const loc = m.locationMessage || m.liveLocationMessage;
+    if (loc) {
+        return {
+            type: 'location',
+            latitude: loc.degreesLatitude,
+            longitude: loc.degreesLongitude,
+            name: loc.name || loc.address || '',
+            isLive: Boolean(m.liveLocationMessage),
+        };
+    }
+    if (m.contactMessage?.vcard) {
+        return {
+            type: 'contact',
+            displayName: m.contactMessage.displayName || 'Contact',
+            vcard: m.contactMessage.vcard,
+        };
+    }
+    if (m.groupInviteMessage) {
+        return {
+            type: 'groupInvite',
+            groupJid: m.groupInviteMessage.groupJid || '',
+            groupName: m.groupInviteMessage.groupName || '',
+            caption: m.groupInviteMessage.caption || '',
+        };
+    }
+    return null;
+}
+
+function _adExtractText(msg) {
+    return _adExtractContent(null, unwrapWaMessage(msg));
 }
 
 function _adMediaTypeFromMsg(msg) {
     const m = unwrapWaMessage(msg);
     if (!m) return '';
     if (m.imageMessage) return 'image';
-    if (m.videoMessage) return 'video';
+    if (m.videoMessage) return m.videoMessage.ptv ? 'ptv' : 'video';
     if (m.audioMessage) return 'audio';
-    if (m.stickerMessage) return 'sticker';
+    if (m.stickerMessage || m.lottieStickerMessage) return 'sticker';
     if (m.documentMessage) return 'document';
     return '';
 }
@@ -51,7 +276,10 @@ async function _adMongoGet(botNum, chatId, msgId) {
         await initDb();
         const AntideleteCache = require('../server/models/AntideleteCache');
         const clean = cleanBotNum(botNum);
-        const doc = await AntideleteCache.findOne({ botNum: clean, chatId, msgId }).lean();
+        let doc = await AntideleteCache.findOne({ botNum: clean, chatId, msgId }).lean();
+        if (!doc?.data && msgId) {
+            doc = await AntideleteCache.findOne({ botNum: clean, msgId }).sort({ updatedAt: -1 }).lean();
+        }
         return doc?.data || null;
     } catch (_) { return null; }
 }
@@ -74,7 +302,7 @@ function _adMongoSave(botNum, chatId, msgId, entry) {
                     botNum: clean,
                     chatId: String(chatId || ''),
                     msgId: String(msgId || ''),
-                    data: entry,
+                    data: _adSanitizeEntryForPersistence(entry),
                     expiresAt: new Date(Date.now() + ANTIDELETE_MONGO_TTL_MS),
                 },
                 { upsert: true }
@@ -99,7 +327,11 @@ function _adMongoDelete(botNum, chatId, msgId) {
 
 function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
     if (!mediaContent || !mtype || !msgId || !session || !chatId) return;
-    const ext = mtype === 'video' ? 'mp4' : mtype === 'audio' ? 'ogg' : mtype === 'sticker' ? 'webp' : 'jpg';
+    const ext = mtype === 'video' ? 'mp4'
+        : mtype === 'audio' ? 'ogg'
+        : mtype === 'sticker' ? 'webp'
+        : mtype === 'document' ? 'bin'
+        : 'jpg';
     const filePath = session.mediaFilePath(msgId, ext);
     setImmediate(async () => {
         try {
@@ -110,15 +342,54 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
             const buf = Buffer.concat(chunks);
             if (!buf.length) return;
             await fs.promises.writeFile(filePath, buf);
-            const ex = session.get(chatId, msgId);
+            const ex = session.get(chatId, msgId) || session.findByMsgId(msgId)?.entry;
             if (ex) {
                 ex.mediaPath = filePath;
-                session.set(chatId, msgId, ex);
-                _adMongoSave(botNum, chatId, msgId, ex);
+                if (buf.length <= ANTIDELETE_MEDIA_B64_MAX) {
+                    ex.mediaBufferB64 = buf.toString('base64');
+                }
+                const primaryChat = session.msgIdIndex.get(String(msgId)) || chatId;
+                session.set(primaryChat, msgId, ex);
+                _adMongoSave(botNum, primaryChat, msgId, ex);
             }
             session.scheduleDiskSave();
-        } catch (_) {}
+        } catch (e) {
+            console.error(`[ANTIDELETE][${botNum}] prefetch ${mtype}:`, e.message);
+        }
     });
+}
+
+function _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state) {
+    const m = unwrapped || {};
+    const sticker = m.stickerMessage || m.lottieStickerMessage;
+
+    if (m.audioMessage) {
+        state.content = state.content || (m.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
+        state.mediaType = 'audio';
+        state.isPtt = Boolean(m.audioMessage.ptt);
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.audioMessage, 'audio', session);
+    } else if (m.videoMessage) {
+        state.mediaType = m.videoMessage.ptv ? 'ptv' : 'video';
+        state.isPtt = Boolean(m.videoMessage.ptv);
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.videoMessage, 'video', session);
+    } else if (m.imageMessage) {
+        state.mediaType = 'image';
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.imageMessage, 'image', session);
+    } else if (sticker) {
+        state.content = state.content || '🎭 Sticker';
+        state.mediaType = 'sticker';
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, sticker, 'sticker', session);
+    } else if (m.documentMessage) {
+        const docName = m.documentMessage.fileName || m.documentMessage.title || 'File';
+        state.content = state.content || `📄 Document: ${docName}`;
+        state.mediaType = 'document';
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.documentMessage, 'document', session);
+    }
 }
 
 /**
@@ -132,53 +403,41 @@ function cacheMessageForAntidelete(rawMsg, sock) {
 
         const chatId = rawMsg.key.remoteJid;
         const msgId = rawMsg.key.id;
+        const aliasChatIds = _adChatIdsFromKey(rawMsg.key).filter((id) => id !== chatId);
         const botNum = cleanBotNum(sock?.user?.id || sock?._cachedBotNumber || '');
         if (!botNum) return;
 
         const session = getAntideleteSession(botNum);
         if (!session) return;
 
-        const unwrapped = unwrapWaMessage(rawMsg.message || {});
+        const rawMessage = rawMsg.message || {};
+        const unwrapped = unwrapWaMessage(rawMessage);
         const sender = rawMsg.key.participant || rawMsg.key.remoteJid;
         const existing = session.get(chatId, msgId);
 
-        let content = _adExtractText(unwrapped) || existing?.content || '';
-        let mediaType = _adMediaTypeFromMsg(unwrapped) || existing?.mediaType || '';
-        let mediaPath = existing?.mediaPath || '';
-        const rawMediaMsg = _serializeRawMedia(unwrapped) || existing?.rawMediaMsg || null;
+        const state = {
+            content: _adExtractContent(rawMessage, unwrapped) || existing?.content || '',
+            mediaType: _adMediaTypeFromMsg(unwrapped) || existing?.mediaType || '',
+            mediaPath: existing?.mediaPath || '',
+            mediaBufferB64: existing?.mediaBufferB64 || null,
+            isPtt: existing?.isPtt || false,
+        };
 
-        if (unwrapped.audioMessage) {
-            content = content || (unwrapped.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
-            mediaType = 'audio';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.audioMessage, 'audio', session);
-        } else if (unwrapped.videoMessage) {
-            mediaType = 'video';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.videoMessage, 'video', session);
-        } else if (unwrapped.imageMessage) {
-            mediaType = 'image';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.imageMessage, 'image', session);
-        } else if (unwrapped.stickerMessage) {
-            content = content || '🎭 Sticker';
-            mediaType = 'sticker';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.stickerMessage, 'sticker', session);
-        } else if (unwrapped.documentMessage) {
-            const docName = unwrapped.documentMessage.fileName || unwrapped.documentMessage.title || 'File';
-            content = content || `📄 Document: ${docName}`;
-            mediaType = 'document';
-            mediaPath = mediaPath || '__redownload__';
-        }
+        _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state);
+
+        const rawMediaMsg = _serializeRawMedia(unwrapped) || existing?.rawMediaMsg || null;
+        const extraPayload = _adBuildExtraPayload(unwrapped) || existing?.extraPayload || null;
+        const msgKind = Object.keys(unwrapped).find((k) => k.endsWith('Message') && k !== 'messageContextInfo') || existing?.msgKind || '';
 
         const entry = {
-            content,
-            rawMsg: unwrapped,
+            content: state.content,
             rawMediaMsg,
-            mediaType,
-            mediaPath,
-            isPtt: Boolean(unwrapped.audioMessage?.ptt || existing?.isPtt),
+            mediaType: state.mediaType,
+            mediaPath: state.mediaPath,
+            mediaBufferB64: state.mediaBufferB64,
+            extraPayload,
+            msgKind,
+            isPtt: Boolean(state.isPtt),
             fromMe: Boolean(rawMsg.key.fromMe),
             sender,
             group: chatId.endsWith('@g.us') ? chatId : null,
@@ -187,7 +446,7 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             botNum,
         };
 
-        session.set(chatId, msgId, entry);
+        session.set(chatId, msgId, entry, aliasChatIds);
         _adMongoSave(botNum, chatId, msgId, entry);
         session.scheduleDiskSave();
     } catch (e) {
@@ -199,10 +458,10 @@ function _adEntryFromLoadedMessage(loaded, chatId) {
     const msg = unwrapWaMessage(loaded?.message || {});
     return {
         content: _adExtractText(msg),
-        rawMsg: msg,
         rawMediaMsg: _serializeRawMedia(msg),
         mediaType: _adMediaTypeFromMsg(msg),
         mediaPath: '',
+        mediaBufferB64: null,
         fromMe: Boolean(loaded?.key?.fromMe),
         sender: loaded?.key?.participant || chatId,
         timestamp: new Date().toISOString(),
@@ -210,44 +469,52 @@ function _adEntryFromLoadedMessage(loaded, chatId) {
     };
 }
 
-/**
- * Lookup cached message scoped to ONE bot session:
- * session RAM → session disk → MongoDB (botNum+chatId+msgId) → this socket's Baileys store
- */
-async function _adLookupCachedMessage(sock, botNum, chatId, msgId) {
+async function _adLookupCachedMessage(sock, botNum, chatId, msgId, altChatIds = []) {
     const clean = cleanBotNum(botNum);
-    if (!clean || !chatId || !msgId) return null;
+    if (!clean || !msgId) return null;
 
+    const tryIds = [...new Set([chatId, ...altChatIds].filter(Boolean))];
     const session = getAntideleteSession(clean);
+
     if (session) {
-        const mem = session.get(chatId, msgId);
-        if (mem) return mem;
-        const disk = session.readDiskEntry(chatId, msgId);
-        if (disk) {
-            session.set(chatId, msgId, disk);
-            return disk;
+        for (const cid of tryIds) {
+            const mem = session.get(cid, msgId);
+            if (mem) return mem;
+        }
+        const byId = session.findByMsgId(msgId);
+        if (byId?.entry) return byId.entry;
+
+        for (const cid of tryIds) {
+            const disk = session.readDiskEntry(cid, msgId);
+            if (disk) {
+                session.set(cid, msgId, disk);
+                return disk;
+            }
         }
     }
 
-    const mongo = await _adMongoGet(clean, chatId, msgId);
-    if (mongo) {
-        session?.set(chatId, msgId, mongo);
-        return mongo;
+    for (const cid of tryIds) {
+        const mongo = await _adMongoGet(clean, cid, msgId);
+        if (mongo) {
+            session?.set(cid, msgId, mongo);
+            return mongo;
+        }
     }
 
-    // Per-socket Baileys store — never use a global shared store
     const store = sock?._baileysMsgStore;
-    if (store?.loadMessage) {
-        try {
-            const loaded = await store.loadMessage(chatId, msgId);
-            if (loaded?.message) return _adEntryFromLoadedMessage(loaded, chatId);
-        } catch (_) {}
-    }
-    if (sock?.loadMessage) {
-        try {
-            const loaded = await sock.loadMessage(chatId, msgId);
-            if (loaded?.message) return _adEntryFromLoadedMessage(loaded, chatId);
-        } catch (_) {}
+    for (const cid of tryIds) {
+        if (store?.loadMessage) {
+            try {
+                const loaded = await store.loadMessage(cid, msgId);
+                if (loaded?.message) return _adEntryFromLoadedMessage(loaded, cid);
+            } catch (_) {}
+        }
+        if (sock?.loadMessage) {
+            try {
+                const loaded = await sock.loadMessage(cid, msgId);
+                if (loaded?.message) return _adEntryFromLoadedMessage(loaded, cid);
+            } catch (_) {}
+        }
     }
     return null;
 }
@@ -267,6 +534,8 @@ function _adSerializeForPending(mediaOriginal) {
         content: mediaOriginal.content,
         mediaType: mediaOriginal.mediaType,
         mediaPath: mediaOriginal.mediaPath,
+        mediaBufferB64: mediaOriginal.mediaBufferB64 || null,
+        extraPayload: mediaOriginal.extraPayload || null,
         isPtt: mediaOriginal.isPtt,
         rawMediaMsg: mediaOriginal.rawMediaMsg,
         sender: mediaOriginal.sender,
@@ -305,7 +574,10 @@ async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal
     const mentions = [deletedBy, sender].filter(Boolean);
     try {
         await sock.sendMessage(targetJid, { text, mentions });
-        if (mediaOriginal) await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
+        if (mediaOriginal) {
+            await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
+            await _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender);
+        }
         return true;
     } catch (e) {
         console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
@@ -335,7 +607,10 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
         try {
             const mentions = [item.deletedBy, item.sender].filter(Boolean);
             await sock.sendMessage(target, { text: item.text, mentions });
-            if (item.mediaOriginal) await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
+            if (item.mediaOriginal) {
+                await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
+                await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
+            }
             flushed++;
         } catch (e) {
             item.attempts = (item.attempts || 0) + 1;
@@ -351,16 +626,17 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
 }
 
 function _serializeRawMedia(msg) {
-    const _am = msg?.audioMessage || null;
-    const _vm = msg?.videoMessage || null;
-    const _im = msg?.imageMessage || null;
-    const _sm = msg?.stickerMessage || null;
-    const _dm = msg?.documentMessage || null;
+    const m = unwrapWaMessage(msg);
+    const _am = m?.audioMessage || null;
+    const _vm = m?.videoMessage || null;
+    const _im = m?.imageMessage || null;
+    const _sm = m?.stickerMessage || m?.lottieStickerMessage || null;
+    const _dm = m?.documentMessage || null;
     const _mm = _am || _vm || _im || _sm || _dm;
-    const _mtype = _am ? 'audio' : _vm ? 'video' : _im ? 'image' : _sm ? 'sticker' : _dm ? 'document' : null;
+    const _mtype = _am ? 'audio' : _vm ? (_vm.ptv ? 'ptv' : 'video') : _im ? 'image' : _sm ? 'sticker' : _dm ? 'document' : null;
     if (!_mm || !_mtype) return null;
     try {
-        const _buf = (v) => (v ? (Buffer.isBuffer(v) ? v.toString('base64') : String(v)) : null);
+        const _buf = (v) => _adToB64(v);
         return {
             type: _mtype,
             url: _mm.url || null,
@@ -370,6 +646,7 @@ function _serializeRawMedia(msg) {
             fileSha256: _mm.fileSha256 ? _buf(_mm.fileSha256) : null,
             mimetype: _mm.mimetype || (_mtype === 'audio' ? 'audio/ogg; codecs=opus' : _mtype === 'sticker' ? 'image/webp' : _mtype === 'image' ? 'image/jpeg' : 'video/mp4'),
             ptt: Boolean(_mm.ptt),
+            ptv: Boolean(_mm.ptv),
             caption: _mm.caption || null,
             isAnimated: Boolean(_mm.isAnimated),
             fileName: _mm.fileName || _mm.title || null,
@@ -399,7 +676,7 @@ function _adResolveMediaInfo(mediaOriginal) {
     for (const [_key, _mtype] of _map) {
         const _mm = _rawMsg[_key];
         if (!_mm) continue;
-        const _buf = (v) => (v ? (Buffer.isBuffer(v) ? v.toString('base64') : String(v)) : null);
+        const _buf = (v) => _adToB64(v);
         return {
             raw: {
                 type: _mtype,
@@ -426,17 +703,12 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
     if (!raw?.mediaKey && !protoMsg) return null;
     try {
         const { downloadContentFromMessage: _dlcR } = require('@whiskeysockets/baileys');
-        const _toBuf = (v) => {
-            if (!v) return null;
-            if (Buffer.isBuffer(v)) return v;
-            try { return Buffer.from(v, 'base64'); } catch (_) { return null; }
-        };
         const _rc = protoMsg || {
             url: raw.url,
             directPath: raw.directPath,
-            mediaKey: _toBuf(raw.mediaKey),
-            fileEncSha256: _toBuf(raw.fileEncSha256),
-            fileSha256: _toBuf(raw.fileSha256),
+            mediaKey: _adToBuffer(raw.mediaKey),
+            fileEncSha256: _adToBuffer(raw.fileEncSha256),
+            fileSha256: _adToBuffer(raw.fileSha256),
             mimetype: raw.mimetype,
         };
         const _st = await _dlcR(_rc, mtype);
@@ -453,8 +725,9 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
 async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum) {
     if (!sock || !targetJid || !mediaOriginal) return;
     const _info = _adResolveMediaInfo(mediaOriginal);
-    let _hasFile = mediaOriginal.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
-    if (!_info && !_hasFile) return;
+    const _hasFile = mediaOriginal.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
+    const _hasB64 = Boolean(mediaOriginal.mediaBufferB64);
+    if (!_info && !_hasFile && !_hasB64) return;
 
     const _senderTag = sender ? sender.split('@')[0] : 'unknown';
     const _adMO = { caption: `*Deleted ${mediaOriginal.mediaType || _info?.mediaType || 'media'}*\nFrom: @${_senderTag}`, mentions: sender ? [sender] : [] };
@@ -462,7 +735,13 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
     try {
         const _mtype = _info?.mtype || mediaOriginal.mediaType;
         let _buf = null;
-        if (_info) {
+        if (_hasB64) {
+            _buf = _adToBuffer(mediaOriginal.mediaBufferB64);
+        }
+        if (!_buf && _hasFile) {
+            try { _buf = fs.readFileSync(mediaOriginal.mediaPath); } catch (_) {}
+        }
+        if (!_buf && _info) {
             _buf = await _adRedownloadMedia(_info.raw, _info.mtype, _info.protoMsg);
             if (!_buf && _info.raw?.url) {
                 try {
@@ -481,16 +760,20 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
                 } catch (_) {}
             }
         }
-        if (!_buf && _hasFile) _buf = fs.readFileSync(mediaOriginal.mediaPath);
 
-        if (!_buf || !_buf.length) return;
+        if (!_buf || !_buf.length) {
+            console.error(`[ANTIDELETE][${botNum || '?'}] no media buffer for ${_mtype}`);
+            return;
+        }
 
         if (_mtype === 'audio') {
             const _mime = _info?.raw?.mimetype || 'audio/ogg; codecs=opus';
             await sock.sendMessage(targetJid, { audio: _buf, mimetype: _mime, ptt: Boolean(_info?.isPtt) });
-        } else if (_mtype === 'video') {
+        } else if (_mtype === 'video' || _mtype === 'ptv') {
+            const _isPtv = _mtype === 'ptv' || Boolean(_info?.raw?.ptv || mediaOriginal.isPtt);
             await sock.sendMessage(targetJid, {
                 video: _buf,
+                ptv: _isPtv,
                 caption: _info?.raw?.caption || _adMO.caption,
                 mentions: _adMO.mentions,
             });
@@ -518,7 +801,144 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
     if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
 }
 
+async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
+    if (!sock || !targetJid || !mediaOriginal?.extraPayload) return;
+    const ex = mediaOriginal.extraPayload;
+    const _senderTag = sender ? sender.split('@')[0] : 'unknown';
+    try {
+        if (ex.type === 'location' && ex.latitude != null && ex.longitude != null) {
+            await sock.sendMessage(targetJid, {
+                location: {
+                    degreesLatitude: ex.latitude,
+                    degreesLongitude: ex.longitude,
+                    name: ex.name || `Deleted location from @${_senderTag}`,
+                },
+            });
+        } else if (ex.type === 'contact' && ex.vcard) {
+            await sock.sendMessage(targetJid, {
+                contacts: {
+                    displayName: ex.displayName || 'Contact',
+                    contacts: [{ vcard: ex.vcard }],
+                },
+            });
+        }
+    } catch (e) {
+        console.error('[ANTIDELETE] extra forward error:', e.message);
+    }
+}
+
+async function _adHandleMessageDelete(sock, opts = {}) {
+    const {
+        botNum,
+        chatId,
+        msgId,
+        deletedBy = '',
+        fromMeDelete = false,
+        altChatIds = [],
+    } = opts;
+    const clean = cleanBotNum(botNum);
+    if (!sock || !clean || !chatId || !msgId) return false;
+    if (_adWasDeleteProcessed(clean, chatId, msgId)) return false;
+
+    const cfg = loadAntideleteCfg(clean);
+    const mode = cfg.mode || 'off';
+    if (mode === 'off') return false;
+
+    const isGroup = String(chatId).endsWith('@g.us');
+    if (mode === 'private_pm' && isGroup) return false;
+    if (mode === 'private_groups' && !isGroup) return false;
+    if (mode === 'chat' && isGroup) return false;
+    if (mode === 'chat_groups' && !isGroup) return false;
+
+    const deletedByNum = cleanBotNum(deletedBy);
+    if (fromMeDelete && deletedByNum === clean) {
+        _adRemoveCachedMessage(clean, chatId, msgId);
+        return false;
+    }
+
+    const altIds = [...new Set(altChatIds.filter(Boolean))];
+    let orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+    if (!orig) {
+        await new Promise((r) => setTimeout(r, 600));
+        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+    }
+    if (!orig) {
+        await new Promise((r) => setTimeout(r, 1200));
+        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+    }
+
+    const ownerJid = `${clean}@s.whatsapp.net`;
+    const timeStr = new Date().toLocaleString('en-US', {
+        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        day: '2-digit', month: '2-digit', year: 'numeric',
+    });
+
+    let groupName = '';
+    if (isGroup) {
+        try { groupName = (await sock.groupMetadata(chatId)).subject; } catch (_) {}
+    }
+
+    const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
+
+    if (!orig) {
+        const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
+            `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
+            `*🕒 Time:* ${timeStr}\n` +
+            (isGroup ? `*👥 Group:* ${groupName || chatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
+            `\n_[Original message not in cache]_`;
+        try {
+            await sock.sendMessage(target, { text, mentions: [deletedBy].filter(Boolean) });
+        } catch (e) {
+            console.error(`[ANTIDELETE][${clean}] cache-miss report failed:`, e.message);
+        }
+        return true;
+    }
+
+    const sender = orig.sender || deletedBy || chatId;
+    const senderNum = String(sender).split('@')[0];
+    const senderNumClean = cleanBotNum(sender);
+
+    if (orig.fromMe && fromMeDelete && deletedByNum === clean) {
+        _adRemoveCachedMessage(clean, chatId, msgId);
+        return false;
+    }
+    if (senderNumClean === clean && orig.fromMe) {
+        _adRemoveCachedMessage(clean, chatId, msgId);
+        return false;
+    }
+
+    const hasMedia = Boolean(
+        orig.mediaType ||
+        orig.rawMediaMsg ||
+        orig.mediaBufferB64 ||
+        orig.extraPayload ||
+        (orig.mediaPath && orig.mediaPath !== '__redownload__')
+    );
+
+    const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
+        `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
+        `*👤 Sender:* @${senderNum}\n` +
+        `*🕒 Time:* ${timeStr}\n` +
+        (isGroup ? `*👥 Group:* ${groupName || chatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
+        `\n*💬 Deleted Message:*\n${orig.content || '_[media / no text]_'}`;
+
+    await _adDeliverAntideleteReport(sock, {
+        targetJid: target,
+        text,
+        mediaOriginal: hasMedia ? orig : null,
+        sender,
+        deletedBy,
+        botNum: clean,
+    });
+    _adRemoveCachedMessage(clean, chatId, msgId);
+    return true;
+}
+
 global._serializeRawMedia = _serializeRawMedia;
+global._adHandleMessageDelete = _adHandleMessageDelete;
+global.loadAntideleteCfg = loadAntideleteCfg;
+global._adChatIdsFromKey = _adChatIdsFromKey;
 global._adResolveMediaInfo = _adResolveMediaInfo;
 global._adForwardDeletedMedia = _adForwardDeletedMedia;
 global._adLookupCachedMessage = _adLookupCachedMessage;
@@ -532,6 +952,9 @@ global.unwrapWaMessage = unwrapWaMessage;
 global.getAntideleteSession = getAntideleteSession;
 
 module.exports = {
+    _adHandleMessageDelete,
+    loadAntideleteCfg,
+    _adChatIdsFromKey,
     _serializeRawMedia,
     _adResolveMediaInfo,
     _adForwardDeletedMedia,

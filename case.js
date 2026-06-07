@@ -1,5 +1,7 @@
 
 require('./setting/config')
+require('./allfunc/antidelete-session');
+require('./allfunc/antidelete-helpers');
 const { 
   default: baileys, proto, jidNormalizedUser, generateWAMessage, 
   generateWAMessageFromContent, getContentType, prepareWAMessageMedia 
@@ -3843,202 +3845,32 @@ _Auto-saved via status antidelete_`;
             const _adMsgId = _adelProto.key.id;
             const _adChatId = m.key?.remoteJid || _adelProto.key?.remoteJid || '';
             const _adDeletedBy = m.key?.participant || _adelProto.key?.participant || m.key?.remoteJid || '';
-            const _adBotNum = _adBotNumPre;
-            const _adOwnerJid = getBotJid(devtrust);
-            const _adIsGroup = (_adChatId || '').endsWith('@g.us');
-
-            // Skip if the bot itself is the one who deleted
-            // Note: even if _adOwnerJid is empty (socket not fully ready), still process but skip self-delete check
-            if (jidToNum(_adDeletedBy) === _adBotNum || m.key?.fromMe) {
-                global._antideleteStore.delete(`${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`);
-                global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
-                global._antideleteStore.delete(_adMsgId);
-                return;
-            }
-            // If bot JID is still empty, fall back to chat as reporting target
-            const _adEffectiveOwnerJid = _adOwnerJid || _adChatId;
-
-            // Mode filtering
-            if (_adMode === 'private_pm' && _adIsGroup) { return; }
-            if (_adMode === 'private_groups' && !_adIsGroup) { return; }
-            if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
-
-            // Look up cached message — check per-bot key first, then shared key for backward compat
-            const _adBotKey = `${_adBotNum}::${antiStoreKey(_adChatId, _adMsgId)}`;
-            let _adOriginal = global._antideleteStore.get(_adBotKey)
-                || global._antideleteStore.get(antiStoreKey(_adChatId, _adMsgId))
-                || global._antideleteStore.get(_adMsgId)
-                || _getFromDiskStore(_adBotKey)
-                || _getFromDiskStore(antiStoreKey(_adChatId, _adMsgId))
-                || _getFromDiskStore(_adMsgId);
-
-            if (!_adOriginal) {
-                const _aeMsg = global._antieditStore.get(_adChatId)?.get(_adMsgId);
-                if (_aeMsg) {
-                    _adOriginal = {
-                        content: _aeMsg.content || '',
-                        fromMe: Boolean(_aeMsg.fromMe),
-                        sender: _aeMsg.sender || _adDeletedBy,
-                        group: _adIsGroup ? _adChatId : null,
-                        mediaType: '', mediaPath: '',
-                        timestamp: new Date().toISOString()
-                    };
-                }
-            }
-
-            let _adGroupName = '';
-            if (_adIsGroup) {
-                try { _adGroupName = (await devtrust.groupMetadata(_adChatId)).subject; } catch (e) {}
-            }
-            const _adTime = new Date().toLocaleString('en-US', {
-                timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
-                hour: '2-digit', minute: '2-digit', second: '2-digit',
-                day: '2-digit', month: '2-digit', year: 'numeric'
-            });
-
-            const _adSendReport = async (targetJid, text, mediaOriginal, sender) => {
-                await devtrust.sendMessage(targetJid, { text, mentions: [_adDeletedBy, sender].filter(Boolean) });
-
-                // Helper: re-download from WhatsApp using stored metadata (no filesystem needed)
-                const _adRedl = async (raw, mtype) => {
-                    if (!raw?.mediaKey) return null;
-                    try {
-                        const { downloadContentFromMessage: _dlcR } = require('@whiskeysockets/baileys');
-                        const _rc = {
-                            url: raw.url,
-                            directPath: raw.directPath,
-                            mediaKey: Buffer.from(raw.mediaKey, 'base64'),
-                            fileEncSha256: raw.fileEncSha256 ? Buffer.from(raw.fileEncSha256, 'base64') : null,
-                            fileSha256: raw.fileSha256 ? Buffer.from(raw.fileSha256, 'base64') : null,
-                            mimetype: raw.mimetype,
-                        };
-                        const _st = await _dlcR(_rc, mtype);
-                        const _chs = [];
-                        for await (const _ch of _st) _chs.push(_ch);
-                        const _b = Buffer.concat(_chs);
-                        return _b.length > 0 ? _b : null;
-                    } catch (_de) { console.error('[ANTIDELETE] re-dl error:', _de.message); return null; }
-                };
-
-                const _hasRaw = mediaOriginal?.rawMediaMsg?.mediaKey;
-                const _hasFile = mediaOriginal?.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
-                const _adMO = { caption: `*Deleted ${mediaOriginal.mediaType}*\nFrom: @${sender.split('@')[0]}`, mentions: [sender] };
-
-                // BEST: use pre-downloaded buffer stored at message arrival (no CDN needed)
-                if (mediaOriginal?.rawBuffer?.length > 0) {
-                    try {
-                        const _rb = mediaOriginal.rawBuffer;
-                        const _rbMeta = mediaOriginal.rawMediaMsg;
-                        if (mediaOriginal.mediaType === 'image') {
-                            const _cap = _rbMeta?.caption || null;
-                            await devtrust.sendMessage(targetJid, _cap
-                                ? { image: _rb, caption: _cap, mentions: [sender] }
-                                : { image: _rb, ..._adMO });
-                        } else if (mediaOriginal.mediaType === 'video') {
-                            await devtrust.sendMessage(targetJid, { video: _rb, caption: _rbMeta?.caption || _adMO.caption, mentions: _adMO.mentions });
-                        } else if (mediaOriginal.mediaType === 'audio') {
-                            await devtrust.sendMessage(targetJid, { audio: _rb, mimetype: _rbMeta?.mimetype || 'audio/ogg; codecs=opus', ptt: Boolean(mediaOriginal.isPtt) });
-                        } else if (mediaOriginal.mediaType === 'sticker') {
-                            await devtrust.sendMessage(targetJid, { sticker: _rb });
-                        } else if (mediaOriginal.mediaType === 'document') {
-                            await devtrust.sendMessage(targetJid, { document: _rb, mimetype: _rbMeta?.mimetype || 'application/octet-stream', fileName: _rbMeta?.fileName || 'deleted_file', caption: `*Deleted Document*\nFrom: @${sender.split('@')[0]}\n📄 ${_rbMeta?.fileName || 'deleted_file'}`, mentions: [sender] });
-                        }
-                        return; // sent from buffer — no CDN needed
-                    } catch (_rbe) { /* fall through to CDN approach */ }
-                }
-
-                if (_hasRaw || _hasFile) {
-                    try {
-                        if (mediaOriginal.mediaType === 'audio') {
-                            const _buf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'audio') : (_hasFile ? fs.readFileSync(mediaOriginal.mediaPath) : null);
-                            if (_buf && _buf.length > 0) {
-                                const _mime = mediaOriginal.rawMediaMsg?.mimetype || 'audio/ogg; codecs=opus';
-                                await devtrust.sendMessage(targetJid, { audio: _buf, mimetype: _mime, ptt: Boolean(mediaOriginal.isPtt) });
-                            }
-                        } else if (mediaOriginal.mediaType === 'video') {
-                            const _buf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'video') : null;
-                            if (_buf && _buf.length > 0) await devtrust.sendMessage(targetJid, { video: _buf, caption: mediaOriginal.rawMediaMsg?.caption || _adMO.caption, mentions: _adMO.mentions });
-                            else if (_hasFile) await devtrust.sendMessage(targetJid, { video: { url: mediaOriginal.mediaPath }, ..._adMO });
-                        } else if (mediaOriginal.mediaType === 'image') {
-                            const _imgBuf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'image') : null;
-                            if (_imgBuf && _imgBuf.length > 0) {
-                                const _imgCap = mediaOriginal.rawMediaMsg?.caption || null;
-                                await devtrust.sendMessage(targetJid, _imgCap ? { image: _imgBuf, caption: _imgCap, mentions: _adMO.mentions } : { image: _imgBuf, ..._adMO });
-                            } else if (_hasFile) await devtrust.sendMessage(targetJid, { image: { url: mediaOriginal.mediaPath }, ..._adMO });
-                        } else if (mediaOriginal.mediaType === 'sticker') {
-                            const _stkBuf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'sticker') : null;
-                            if (_stkBuf && _stkBuf.length > 0) await devtrust.sendMessage(targetJid, { sticker: _stkBuf });
-                            else if (_hasFile) await devtrust.sendMessage(targetJid, { sticker: { url: mediaOriginal.mediaPath } });
-                        } else if (mediaOriginal.mediaType === 'document') {
-                            const _docBuf = _hasRaw ? await _adRedl(mediaOriginal.rawMediaMsg, 'document') : null;
-                            if (_docBuf && _docBuf.length > 0) {
-                                const _docName = mediaOriginal.rawMediaMsg?.fileName || 'deleted_file';
-                                const _docMime = mediaOriginal.rawMediaMsg?.mimetype || 'application/octet-stream';
-                                await devtrust.sendMessage(targetJid, {
-                                    document: _docBuf,
-                                    mimetype: _docMime,
-                                    fileName: _docName,
-                                    caption: `*Deleted Document*
-From: @${sender.split('@')[0]}
-📄 ${_docName}`,
-                                    mentions: [sender]
-                                });
-                            }
-                        }
-                    } catch (e) { console.error('[ANTIDELETE] media send error:', e.message); }
-                    if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (e) {} }
-                }
-            };
-
-            if (_adOriginal) {
-                const _adSender = _adOriginal.sender || _adDeletedBy;
-                const _adSenderNum = _adSender.split('@')[0];
-                if (_adOriginal.fromMe || _adSenderNum === _adBotNum) {
-                    global._antideleteStore.delete(_adBotKey);
-                    global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
-                    global._antideleteStore.delete(_adMsgId);
-                } else {
-                    let _adText = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                        `*🗑️ Deleted By:* @${_adDeletedBy.split('@')[0]}\n` +
-                        `*👤 Sender:* @${_adSenderNum}\n` +
-                        `*🕒 Time:* ${_adTime}\n` +
-                        (_adIsGroup ? `*👥 Group:* ${_adGroupName || _adChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
-                    // Always show content section — even empty string was silently skipping text messages
-                    _adText += `\n*💬 Deleted Message:*\n${_adOriginal.content || '_[media / no text]_'}`;
-                    // Decide where to send the report
-                    if (_adMode === 'chat' || _adMode === 'chat_groups') {
-                        await _adSendReport(_adChatId, _adText, _adOriginal, _adSender);
-                    } else {
-                        // private / private_pm / private_groups → THIS bot's own saved messages (DM)
-                        await _adSendReport(_adEffectiveOwnerJid, _adText, _adOriginal, _adSender);
-                    }
-                    global._antideleteStore.delete(_adBotKey);
-                    global._antideleteStore.delete(antiStoreKey(_adChatId, _adMsgId));
-                    global._antideleteStore.delete(_adMsgId);
-                }
-            } else {
-                // Message not in cache — still report with available info
-                let _adText = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                    `*🗑️ Deleted By:* @${_adDeletedBy.split('@')[0]}\n` +
-                    `*🕒 Time:* ${_adTime}\n` +
-                    (_adIsGroup ? `*👥 Group:* ${_adGroupName || _adChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
-                    `\n_[Original message not in cache]_`;
-                if (_adMode === 'chat' || _adMode === 'chat_groups') {
-                    await devtrust.sendMessage(_adChatId, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
-                } else {
-                    // Always send to THIS bot's own DM — even if owner JID was empty, fallback to chat
-                    await devtrust.sendMessage(_adEffectiveOwnerJid, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
-                }
+            if (typeof global._adHandleMessageDelete === 'function') {
+                await global._adHandleMessageDelete(devtrust, {
+                    botNum: _adBotNumPre,
+                    chatId: _adChatId,
+                    msgId: _adMsgId,
+                    deletedBy: _adDeletedBy,
+                    fromMeDelete: Boolean(m.key?.fromMe),
+                    altChatIds: typeof global._adChatIdsFromKey === 'function'
+                        ? global._adChatIdsFromKey(m.key || _adelProto.key || {})
+                        : [],
+                });
             }
         } catch (e) { console.error('[ANTIDELETE]', e); }
     }
     return;
 }
 
-// ── Store messages for antidelete recovery (ALWAYS store — mode-independent) ──
+// ── Store messages for antidelete recovery (ALL messages incl. fromMe / self-chat) ──
+if (typeof global._cacheMessageForAntidelete === 'function') {
+    try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
+}
+
+// Legacy detailed store disabled — unified session cache handles all message types
 (async () => {
     try {
-        if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessage(m, devtrust)) {
+        if (false && m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage) {
             const _adMsgId2 = m.key.id;
             const _adChatId2 = m.key.remoteJid;
             let _adContent = '';

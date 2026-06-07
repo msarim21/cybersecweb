@@ -18,6 +18,8 @@ const {
 const { updateSession, removeLinkedNumber, saveCredsToDb, restoreCredsFromDb } = require('./session-db');
 const { addNumber, getBotMode, setBotMode } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
+require('./allfunc/antidelete-session');
+require('./allfunc/antidelete-helpers');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -789,12 +791,32 @@ async function startpairing(nexusDevNumber) {
         const _tracker = rentbotTracker.get(nexusDevNumber);
         if (_tracker) _tracker.lastWAMessage = Date.now();
 
+        // ── Antidelete: cache EVERY message in batch (albums, history sync, multi-msg upserts) ──
+        if (typeof global._cacheMessageForAntidelete === 'function') {
+            for (const _batchMsg of (chatUpdate.messages || [])) {
+                try {
+                    if (_batchMsg?.key?.id && _batchMsg?.message && Object.keys(_batchMsg.message).length
+                        && !_batchMsg.message?.protocolMessage) {
+                        global._cacheMessageForAntidelete(_batchMsg, nexus);
+                    }
+                } catch (_) {}
+            }
+        }
+
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
 
-        // ── Dedup: skip if this message ID was already processed (WA retransmission guard) ──
+        // Protocol messages (delete/edit) reuse the same msg id — never dedup those
+        const _isProtocolUpsert = Boolean(
+            nexusboijid.message?.protocolMessage?.type === 0
+            || nexusboijid.message?.protocolMessage?.type === 5
+            || nexusboijid.message?.protocolMessage?.type === 14
+            || nexusboijid.message?.protocolMessage?.editedMessage != null
+        );
+
+        // ── Dedup: skip WA retransmissions (but allow delete/edit protocol events) ──
         const _msgId = nexusboijid.key?.id;
-        if (_msgId) {
+        if (_msgId && !_isProtocolUpsert) {
             if (global._processedMsgIds.has(_msgId)) return;
             global._processedMsgIds.set(_msgId, Date.now());
         }
@@ -977,76 +999,35 @@ async function startpairing(nexusDevNumber) {
                 // Silent fail — don't crash on view-once save errors
             }
 
-            // ── Antidelete: store ALL incoming non-protocol messages before the public-mode guard ──
-            // This ensures messages are cached for antidelete even when bot is in self/private mode
+            // ── Antidelete: cache ALL messages (incl. fromMe/self-chat) before public-mode guard ──
             try {
-                const _adRaw = nexusboijid;
-                if (_adRaw?.key?.id && _adRaw?.key?.remoteJid && !_adRaw?.message?.protocolMessage && !_adRaw?.key?.fromMe) {
-                    const _adMsgId = _adRaw.key.id;
-                    const _adChatId = _adRaw.key.remoteJid;
-                    const _adSender = _adRaw.key.participant || _adRaw.key.remoteJid;
-                    const _adMsg = _adRaw.message || {};
-                    const _adText =
-                        _adMsg.conversation ||
-                        _adMsg.extendedTextMessage?.text ||
-                        _adMsg.imageMessage?.caption ||
-                        _adMsg.videoMessage?.caption ||
-                        _adMsg.documentMessage?.caption ||
-                        _adMsg.audioMessage?.caption || '';
-                    const _adBotNum = (nexus.user?.id || '').split(':')[0].split('@')[0];
-                    const _adKey = _adBotNum
-                        ? `${_adBotNum}::${_adChatId}::${_adMsgId}`
-                        : `${_adChatId}::${_adMsgId}`;
-                    if (!global._antideleteStore) global._antideleteStore = new Map();
-                    const _adEntry = {
-                        content: String(_adText || ''),
-                        rawMediaMsg: (() => {
-                            const _m = _adMsg.imageMessage || _adMsg.videoMessage || _adMsg.audioMessage || _adMsg.stickerMessage || _adMsg.documentMessage;
-                            if (!_m) return null;
-                            const _mtype = _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : 'document';
-                            try {
-                                return {
-                                    type: _mtype,
-                                    url: _m.url || null,
-                                    directPath: _m.directPath || null,
-                                    mediaKey: _m.mediaKey ? Buffer.from(_m.mediaKey).toString('base64') : null,
-                                    fileEncSha256: _m.fileEncSha256 ? Buffer.from(_m.fileEncSha256).toString('base64') : null,
-                                    fileSha256: _m.fileSha256 ? Buffer.from(_m.fileSha256).toString('base64') : null,
-                                    mimetype: _m.mimetype || null,
-                                    ptt: Boolean(_m.ptt),
-                                    caption: _m.caption || null,
-                                    fileName: _m.fileName || null,
-                                };
-                            } catch (_re) { return null; }
-                        })(),
-                        mediaType: _adMsg.imageMessage ? 'image' : _adMsg.videoMessage ? 'video' : _adMsg.audioMessage ? 'audio' : _adMsg.stickerMessage ? 'sticker' : _adMsg.documentMessage ? 'document' : '',
-                        mediaPath: '',
-                        fromMe: false,
-                        sender: _adSender,
-                        group: (_adChatId || '').endsWith('@g.us') ? _adChatId : null,
-                        timestamp: new Date().toISOString(),
-                        _ts: Date.now(),
-                    };
-                    global._antideleteStore.set(_adKey, _adEntry);
-                    // also store shared-key for backward compat
-                    global._antideleteStore.set(`${_adChatId}::${_adMsgId}`, _adEntry);
-                    // FIX: persist to disk so bot restart doesn't lose cached messages
-                    if (typeof global._antideleteDiskSave === 'function') {
-                        global._antideleteDiskSave();
-                    } else if (!global._pairAdSaveTimer) {
-                        global._pairAdSaveTimer = setTimeout(() => {
-                            global._pairAdSaveTimer = null;
-                            try {
-                                const _pFs = require('fs');
-                                if (!_pFs.existsSync('./database')) _pFs.mkdirSync('./database', { recursive: true });
-                                const _pEntries = [];
-                                for (const [k, v] of (global._antideleteStore || new Map()).entries()) _pEntries.push([k, v]);
-                                _pFs.promises.writeFile('./database/antidelete_store.json', JSON.stringify(_pEntries.slice(-2000)), 'utf-8').catch(() => {});
-                            } catch(_pe) {}
-                        }, 3000);
-                    }
+                if (typeof global._cacheMessageForAntidelete === 'function') {
+                    global._cacheMessageForAntidelete(nexusboijid, nexus);
                 }
             } catch (_adErr) { /* silent */ }
+
+            // ── Antidelete: handle delete/revoke protocol in upsert (append + notify) ──
+            try {
+                const _revokeProto = nexusboijid.message?.protocolMessage;
+                if (_revokeProto && (_revokeProto.type === 0 || _revokeProto.type === 5) && _revokeProto.key?.id) {
+                    const _adBotNumR = String(nexus._cachedBotNumber || nexus.user?.id || '').replace(/[^0-9]/g, '').split(':')[0];
+                    const _adChatR = nexusboijid.key?.remoteJid || _revokeProto.key?.remoteJid || '';
+                    if (_adBotNumR && _adChatR && typeof global._adHandleMessageDelete === 'function') {
+                        setImmediate(() => {
+                            global._adHandleMessageDelete(nexus, {
+                                botNum: _adBotNumR,
+                                chatId: _adChatR,
+                                msgId: _revokeProto.key.id,
+                                deletedBy: nexusboijid.key?.participant || _revokeProto.key?.participant || nexusboijid.key?.remoteJid || '',
+                                fromMeDelete: Boolean(nexusboijid.key?.fromMe),
+                                altChatIds: typeof global._adChatIdsFromKey === 'function'
+                                    ? global._adChatIdsFromKey(nexusboijid.key)
+                                    : [],
+                            }).catch(() => {});
+                        });
+                    }
+                }
+            } catch (_) { /* silent */ }
 
             // ── Antiedit: store ALL incoming non-protocol messages before the public-mode guard ──
             // This ensures messages are cached for antiedit even when bot is in self/private mode
@@ -1628,6 +1609,15 @@ async function startpairing(nexusDevNumber) {
                 console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
             }
 
+            // Deliver any antidelete reports queued while user phone was offline
+            try {
+                const _flushNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const _flushJid = nexus._cachedBotNumber || userJid;
+                if (typeof global._adFlushPendingReports === 'function') {
+                    global._adFlushPendingReports(nexus, _flushNum, _flushJid).catch(() => {});
+                }
+            } catch (_) {}
+
             
 
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
@@ -1863,142 +1853,23 @@ async function startpairing(nexusDevNumber) {
                 }
 
                 // ── REGULAR CHAT deletions: antidelete via messages.delete event ──
-                // Baileys 6.7.x can fire messages.delete for regular chat deletions
-                // instead of (or in addition to) messages.upsert protocolMessage type 0.
-                // We handle it here so antidelete works regardless of which event fires.
                 try {
-                    if (!global._antideleteStore) continue;
-                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
-
-                    // Load antidelete config for this bot (memory cache first)
-                    let _adCfg2 = global._antideleteConfigs[_adBotNum2];
-                    if (!_adCfg2) {
-                        const _adFs2 = require('fs');
-                        const _adFile2 = _adBotNum2
-                            ? `./database/antidelete_config_${_adBotNum2}.json`
-                            : './database/antidelete_config.json';
-                        try {
-                            if (_adFs2.existsSync(_adFile2)) {
-                                const _d2 = JSON.parse(_adFs2.readFileSync(_adFile2, 'utf-8'));
-                                _adCfg2 = _d2.mode ? _d2 : (_d2.enabled === true ? { mode: 'private' } : { mode: 'off' });
-                            } else {
-                                _adCfg2 = { mode: 'off' };
-                            }
-                        } catch (_fe) { _adCfg2 = { mode: 'off' }; }
-                        global._antideleteConfigs[_adBotNum2] = _adCfg2;
-                    }
-                    const _adMode2 = _adCfg2.mode || 'off';
-                    if (_adMode2 === 'off') continue;
-
-                    const _adMsgId2 = key.id;
                     const _adChatId2 = key.remoteJid || '';
-                    const _adIsGroup2 = _adChatId2.endsWith('@g.us');
+                    const _adMsgId2 = key.id;
+                    if (!_adChatId2 || !_adMsgId2) continue;
 
-                    // Mode filtering
-                    if (_adMode2 === 'private_pm' && _adIsGroup2) continue;
-                    if (_adMode2 === 'private_groups' && !_adIsGroup2) continue;
-                    if (_adMode2 === 'chat_groups' && !_adIsGroup2) continue;
-
-                    // Look up in store (per-bot key first, then shared key)
-                    const _adBotKey2 = `${_adBotNum2}::${_adChatId2}::${_adMsgId2}`;
-                    const _adSharedKey2 = `${_adChatId2}::${_adMsgId2}`;
-                    const _adOrig2 = global._antideleteStore.get(_adBotKey2)
-                        || global._antideleteStore.get(_adSharedKey2)
-                        || global._antideleteStore.get(_adMsgId2);
-
-                    // Skip if this entry was already handled by the messages.upsert path
-                    // (the upsert path deletes the entry after reporting)
-                    if (!_adOrig2) continue;
-
-                    // Skip if it's the bot's own message being deleted
-                    const _adSender2 = _adOrig2.sender || '';
-                    const _adSenderNum2 = _adSender2.split('@')[0];
-                    if (_adOrig2.fromMe || _adSenderNum2 === _adBotNum2) {
-                        global._antideleteStore.delete(_adBotKey2);
-                        global._antideleteStore.delete(_adSharedKey2);
-                        continue;
+                    if (typeof global._adHandleMessageDelete === 'function') {
+                        await global._adHandleMessageDelete(nexus, {
+                            botNum: _adBotNum2,
+                            chatId: _adChatId2,
+                            msgId: _adMsgId2,
+                            deletedBy: key.participant || (key.fromMe ? botNumber : '') || '',
+                            fromMeDelete: Boolean(key.fromMe),
+                            altChatIds: typeof global._adChatIdsFromKey === 'function'
+                                ? global._adChatIdsFromKey(key)
+                                : [],
+                        });
                     }
-
-                    // Build report
-                    const _adTime2 = new Date().toLocaleString('en-US', {
-                        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
-                        hour: '2-digit', minute: '2-digit', second: '2-digit',
-                        day: '2-digit', month: '2-digit', year: 'numeric'
-                    });
-                    let _adGroupName2 = '';
-                    if (_adIsGroup2) {
-                        try { _adGroupName2 = (await nexus.groupMetadata(_adChatId2)).subject; } catch (e) {}
-                    }
-                    let _adText2 = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                        `*🗑️ Deleted By:* @${(_adSender2 || '').split('@')[0]}\n` +
-                        `*👤 Sender:* @${_adSenderNum2}\n` +
-                        `*🕒 Time:* ${_adTime2}\n` +
-                        (_adIsGroup2 ? `*👥 Group:* ${_adGroupName2 || _adChatId2.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
-                    if (_adOrig2.content) _adText2 += `\n*💬 Deleted Message:*\n${_adOrig2.content}`;
-
-                    // Determine target
-                    const _adTarget2 = (_adMode2 === 'chat' || _adMode2 === 'chat_groups')
-                        ? _adChatId2
-                        : botNumber; // bot's own saved messages (DM)
-
-                    // Send text report first
-                    await nexus.sendMessage(_adTarget2, {
-                        text: _adText2,
-                        mentions: [_adSender2].filter(Boolean)
-                    });
-
-                    // FIX: Forward actual media if message had image/video/audio/sticker/document
-                    if (_adOrig2.rawMsg) {
-                        const _rawM = _adOrig2.rawMsg;
-                        try {
-                            const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-                            const _dlMedia = async (msgData, mtype) => {
-                                try {
-                                    const _stream = await downloadContentFromMessage(msgData, mtype);
-                                    const _chunks = [];
-                                    for await (const _ch of _stream) _chunks.push(_ch);
-                                    const _buf = Buffer.concat(_chunks);
-                                    return _buf.length > 0 ? _buf : null;
-                                } catch (_) { return null; }
-                            };
-
-                            if (_rawM.imageMessage) {
-                                const _buf = await _dlMedia(_rawM.imageMessage, 'image');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { image: _buf, caption: '📸 *Deleted Image*', mimetype: _rawM.imageMessage.mimetype || 'image/jpeg' });
-                                } else if (_rawM.imageMessage.url) {
-                                    await nexus.sendMessage(_adTarget2, { image: { url: _rawM.imageMessage.url }, caption: '📸 *Deleted Image*' });
-                                }
-                            } else if (_rawM.videoMessage) {
-                                const _buf = await _dlMedia(_rawM.videoMessage, 'video');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { video: _buf, caption: '🎥 *Deleted Video*', mimetype: _rawM.videoMessage.mimetype || 'video/mp4' });
-                                } else if (_rawM.videoMessage.url) {
-                                    await nexus.sendMessage(_adTarget2, { video: { url: _rawM.videoMessage.url }, caption: '🎥 *Deleted Video*' });
-                                }
-                            } else if (_rawM.audioMessage) {
-                                const _buf = await _dlMedia(_rawM.audioMessage, 'audio');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { audio: _buf, mimetype: _rawM.audioMessage.mimetype || 'audio/ogg; codecs=opus', ptt: _rawM.audioMessage.ptt || false });
-                                }
-                            } else if (_rawM.stickerMessage) {
-                                const _buf = await _dlMedia(_rawM.stickerMessage, 'sticker');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { sticker: _buf });
-                                }
-                            } else if (_rawM.documentMessage) {
-                                const _buf = await _dlMedia(_rawM.documentMessage, 'document');
-                                if (_buf) {
-                                    await nexus.sendMessage(_adTarget2, { document: _buf, mimetype: _rawM.documentMessage.mimetype || 'application/octet-stream', fileName: _rawM.documentMessage.fileName || 'deleted_file' });
-                                }
-                            }
-                        } catch (_mediaFwdErr) { /* silent — media may have expired */ }
-                    }
-
-                    // Clean up store to prevent duplicate report from messages.upsert
-                    global._antideleteStore.delete(_adBotKey2);
-                    global._antideleteStore.delete(_adSharedKey2);
-                    global._antideleteStore.delete(_adMsgId2);
                 } catch (_adE2) { /* silent */ }
             }
         } catch (_de) {
@@ -2011,6 +1882,13 @@ async function startpairing(nexusDevNumber) {
           try {
               if (!nexus.user) return;
               for (const { key, update } of updates) {
+                  // Refresh antidelete cache when message content is updated (edits, late media)
+                  if (key?.id && key?.remoteJid && update?.message
+                      && typeof global._cacheMessageForAntidelete === 'function') {
+                      try {
+                          global._cacheMessageForAntidelete({ key, message: update.message }, nexus);
+                      } catch (_) {}
+                  }
 
                   // Format 1: protocolMessage wrapper (some Baileys builds)
                   const _aeProto = update?.message?.protocolMessage;
