@@ -4,7 +4,8 @@ const path = require('path');
 const fs = require('fs');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
-const PAIRING_GRACE_MS = 3 * 60 * 1000;
+// Web pairing: user may take several minutes to enter code + dashboard auto-save
+const PAIRING_GRACE_MS = 15 * 60 * 1000;
 
 let _running = false;
 
@@ -45,6 +46,15 @@ async function runOrphanDisconnectCheck() {
       const isStopped = stoppedNums.has(cleanNum);
 
       if (!isConnected || inDb || isStopped) continue;
+
+      // Web dashboard pairing — number not in linked_numbers until user saves; never orphan-kill
+      try {
+        const { getPairingState } = require('../db-service');
+        const pst = await getPairingState(cleanNum).catch(() => null);
+        if (pst?.pairingOwnerId) continue;
+        if (pst?.pairingStatus && ['requested', 'pairing', 'code_ready'].includes(pst.pairingStatus)) continue;
+        if (pst?.status === 'active') continue;
+      } catch (_) {}
 
       try {
         const flag = readConnectedFlag(cleanNum);

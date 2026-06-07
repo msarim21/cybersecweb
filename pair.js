@@ -28,8 +28,8 @@ const {
 } = require('@hapi/boom')
 const EventEmitter = require('events');
 const PhoneNumber = require('awesome-phonenumber')
-let phoneNumber = "923417022212";
-const pairingCode = !!phoneNumber || process.argv.includes("--pairing-code");
+// Only request WA pairing codes in dedicated pairing child (BOT_PAIRING=1)
+const pairingCode = process.env.BOT_PAIRING === '1' || process.argv.includes('--pairing-code');
 const useMobile = process.argv.includes("--mobile");
 const readline = require("readline");
 const pino = require('pino')
@@ -1708,16 +1708,46 @@ async function startpairing(nexusDevNumber) {
             // Persist active status to DB (awaited so web panel status poll works immediately)
             try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
 
+            const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+
+            // ── Web pairing: auto-link owner + promote pairing child → full bot ──
+            try {
+                const { getPairingState, clearPairingRequest } = require('./server/db-service');
+                const pst = await getPairingState(cleanNum).catch(() => null);
+                if (pst?.pairingOwnerId && pst.pairingOwnerId !== 'system') {
+                    await addNumber(nexusDevNumber, 'CYBER-BOT', pst.pairingOwnerId);
+                    console.log(chalk.cyan(`[pair] 📁 Web pairing: linked +${cleanNum} to owner ${pst.pairingOwnerId}`));
+                }
+                await clearPairingRequest(cleanNum).catch(() => {});
+            } catch (_wpErr) {
+                console.log(chalk.yellow(`[pair] Web pairing post-connect: ${_wpErr.message}`));
+            }
+
+            if (process.env.BOT_PAIRING === '1') {
+                try {
+                    if (!global.__caseLoadedForPairing) {
+                        require('./case');
+                        global.__caseLoadedForPairing = true;
+                        console.log(chalk.green(`[pair] ✅ Command handler loaded after web pairing connect`));
+                    }
+                } catch (_caseErr) {
+                    console.log(chalk.yellow(`[pair] case.js load after pairing: ${_caseErr.message}`));
+                }
+                try {
+                    const { markBotPromoted, isSupervisorActive } = require('./worker/supervisor');
+                    if (isSupervisorActive()) markBotPromoted(cleanNum);
+                } catch (_) {}
+                process.env.BOT_PAIRING = '0';
+            }
+
             // ── Auto-register main bot in linked_numbers so website dashboard shows it ──
             try {
-                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
                 console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
             } catch (_) {}
 
             // Write connected flag so web panel can auto-save the number
             try {
-                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 const flagDir  = path.join(__dirname, 'nexstore', 'pairing', cleanNum);
                 if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
                 fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));

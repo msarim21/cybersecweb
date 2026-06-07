@@ -76,9 +76,16 @@ function spawnBot(botNum, opts = {}) {
     children.set(clean, { child, restarts, pairing: Boolean(opts.pairing) });
 
     child.on('exit', (code, sig) => {
+        const wasPairing = children.get(clean)?.pairing;
         children.delete(clean);
         console.log(chalk.gray(`[Supervisor] Bot +${clean} exited (code=${code}, sig=${sig})`));
-        if (opts.noRestart) return;
+        if (opts.noRestart) {
+            // Pairing child finished — spawn full bot if session exists and number is linked
+            if (wasPairing) {
+                setTimeout(() => syncBots().catch(() => {}), 2500);
+            }
+            return;
+        }
         _scheduleRestart(clean);
     });
 
@@ -121,6 +128,41 @@ function _scheduleRestart(clean) {
     }, RESTART_DELAY_MS);
 }
 
+function _hasRegisteredCreds(clean) {
+    const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', `${clean}@s.whatsapp.net`, 'creds.json');
+    const altPath = path.join(__dirname, '..', 'nexstore', 'pairing', clean, 'creds.json');
+    for (const p of [sessionPath, altPath]) {
+        try {
+            if (!fs.existsSync(p)) continue;
+            const creds = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (creds?.registered) return true;
+        } catch (_) {}
+    }
+    return false;
+}
+
+function markBotPromoted(botNum) {
+    const clean = cleanBotNum(botNum);
+    const entry = children.get(clean);
+    if (entry) entry.pairing = false;
+}
+
+function promotePairingToNormal(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return false;
+    const entry = children.get(clean);
+    if (!entry?.pairing) return false;
+    if (!_hasRegisteredCreds(clean)) return false;
+
+    console.log(chalk.cyan(`[Supervisor] 🔄 Promoting +${clean} pairing child → full bot`));
+    killBot(clean, 'SIGTERM');
+    setTimeout(() => {
+        if (!_active || children.has(clean)) return;
+        spawnBot(clean);
+    }, 2500);
+    return true;
+}
+
 async function syncBots() {
     try {
         const { syncStoppedWithLinkedNumbers } = require('../allfunc/stopped-bots');
@@ -136,11 +178,22 @@ async function syncBots() {
     const stopped = new Set(readStopped());
     const linkedSet = new Set(linked.filter((n) => !stopped.has(n)));
 
+    const { isConnected } = require('../allfunc/connected-flag');
+
+    // Backup: restart pairing-only child as full bot once linked + registered (stuck state)
+    for (const [clean, entry] of [...children]) {
+        if (!entry?.pairing) continue;
+        if (global._pairingInFlight?.has(clean)) continue;
+        if (!linkedSet.has(clean)) continue;
+        if (_hasRegisteredCreds(clean) && isConnected(clean)) {
+            promotePairingToNormal(clean);
+        }
+    }
+
     // Start bots that should be running
     for (const clean of linkedSet) {
         if (global._pairingInFlight?.has(clean)) continue;
         if (!children.has(clean)) {
-            // Only spawn if session exists or was recently connected
             const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', `${clean}@s.whatsapp.net`, 'creds.json');
             const altPath = path.join(__dirname, '..', 'nexstore', 'pairing', clean, 'creds.json');
             const hasCreds = fs.existsSync(sessionPath) || fs.existsSync(altPath);
@@ -276,4 +329,6 @@ module.exports = {
     killBot,
     stopBotExternal,
     handlePairingRequest,
+    markBotPromoted,
+    promotePairingToNormal,
 };
