@@ -73,6 +73,66 @@ function isWhatsAppWorker() {
     return false;
 }
 
+const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 5 * 60 * 1000;
+
+/** Wake idle WhatsApp sockets so first command after silence is instant */
+async function sweepStaleWhatsAppSockets() {
+    const trackerMap = global._rentbotTracker;
+    if (!trackerMap?.size) return;
+
+    let pairMod;
+    try { pairMod = require('./pair'); } catch (_) { return; }
+
+    for (const [key, tracker] of trackerMap.entries()) {
+        if (!tracker || tracker.disconnected) continue;
+        const nexus = tracker.connection;
+        if (!nexus?.user) continue;
+
+        const clean = String(key).replace(/[^0-9]/g, '');
+        const jid = key.includes('@') ? key : (clean ? `${clean}@s.whatsapp.net` : '');
+        if (!jid) continue;
+
+        const lastWa = tracker.lastWAMessage || tracker.lastActivity || 0;
+        const silentMs = Date.now() - lastWa;
+        const wsState = nexus.ws?.readyState ?? -1;
+
+        if (wsState === 3 || wsState === -1) {
+            console.log(`[SocketKeepAlive] ${clean} ws closed (${wsState}) — reconnecting`);
+            try {
+                if (typeof pairMod.stopBot === 'function') pairMod.stopBot(jid);
+                await new Promise((r) => setTimeout(r, 1500));
+                pairMod(jid).catch(() => {});
+            } catch (_) {}
+            continue;
+        }
+
+        if (wsState !== 1 || silentMs < WA_STALE_MS) continue;
+
+        let woke = false;
+        try {
+            await Promise.race([
+                nexus.sendPresenceUpdate('available').then(() => { woke = true; }),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12_000)),
+            ]);
+        } catch (_) {}
+
+        if (woke) {
+            tracker.lastActivity = Date.now();
+            if (silentMs >= 12 * 60 * 1000) {
+                console.log(`[SocketKeepAlive] ✅ Woke ${clean} after ${Math.round(silentMs / 60000)}m idle`);
+            }
+        } else {
+            console.log(`[SocketKeepAlive] 💀 ${clean} idle socket dead — reconnecting`);
+            try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
+            await new Promise((r) => setTimeout(r, 2000));
+            try {
+                if (typeof pairMod.stopBot === 'function') pairMod.stopBot(jid);
+            } catch (_) {}
+            pairMod(jid).catch(() => {});
+        }
+    }
+}
+
 // ── Full memory cleanup before scheduled restart ─────────────────────────────
 function cleanupBotMemory() {
     try {
@@ -206,22 +266,27 @@ function scheduleAutoRestart() {
     console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
 }
 
-/** Isolated bot child — event loop only; no dyno restart or session refresh */
+/** Isolated bot child — wake idle WA socket + event loop (no dyno auto-restart) */
 function startBotChildKeepAlive() {
     if (_started) return;
     _started = true;
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
+    setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 20_000);
+    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 2 * 60 * 1000);
 }
 
 function startKeepAlive() {
     if (_started) return;
     _started = true;
 
-    // Website ping every 14 min — hosting platform sleep se bachao
-    _timer = setInterval(selfPing, 14 * 60 * 1000);
+    // Website ping every 8 min — Heroku Eco sleeps ~30min without HTTP traffic
+    _timer = setInterval(selfPing, 8 * 60 * 1000);
 
-    // Every 3 min: dead sessions / unhealthy child bots reconnect
-    setInterval(refreshBotSessions, 3 * 60 * 1000);
+    // Every 2 min: wake idle WA sockets + dead session reconnect
+    setInterval(async () => {
+        await sweepStaleWhatsAppSockets().catch(() => {});
+        await refreshBotSessions().catch(() => {});
+    }, 2 * 60 * 1000);
 
     // Every 5 min: backup all connected sessions to DB (survives dyno restart)
     if (isWhatsAppWorker()) {
@@ -253,7 +318,7 @@ function startKeepAlive() {
 
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 14 min | dead session reconnect every 10 min`);
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 8 min | WA socket wake every 2 min`);
     } else {
         console.log('[KeepAlive] ⚠️  Started but NO APP_URL detected.');
         console.log('[KeepAlive] 👉 Config Vars mein APP_URL=https://your-app.com set karo');
@@ -261,6 +326,7 @@ function startKeepAlive() {
 
     // First ping 5 second baad
     setTimeout(selfPing, 5000);
+    setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 25_000);
 }
 
 function stopKeepAlive() {
@@ -270,4 +336,4 @@ function stopKeepAlive() {
     console.log('[KeepAlive] ⛔ Stopped.');
 }
 
-module.exports = { startKeepAlive, startBotChildKeepAlive, stopKeepAlive };
+module.exports = { startKeepAlive, startBotChildKeepAlive, stopKeepAlive, sweepStaleWhatsAppSockets };

@@ -123,33 +123,23 @@ const SecurityGuard = {
         return nexus.sendMessage(chatId, payload, options);
     },
 
-    // Human-like presence cycling (makes bot look like real user)
-    // FIX: Added global._presenceCycleActive guard — prevents multiple cycles accumulating
-    // on repeated reconnects. Without this, each reconnect added a new cycle that never
-    // stopped, causing 5+ concurrent presence cycles to fight over the socket → WA disconnect.
+    // Keep session awake — stay "available" so WA delivers messages instantly after idle.
+    // Old cycle sent unavailable + 2–4h gaps → bot felt asleep until user waited minutes.
     startPresenceCycle(nexus, botJid) {
         const numKey = String(botJid).replace(/[^0-9]/g, '');
         if (!global._presenceCycles) global._presenceCycles = {};
-        if (global._presenceCycles[numKey]) return; // already running — do NOT start another
+        if (global._presenceCycles[numKey]) return;
         global._presenceCycles[numKey] = true;
 
-        const cycle = async () => {
-            // Stop if socket is no longer active
+        const keepAwake = async () => {
             if (!global._presenceCycles[numKey]) return;
             try {
-                const onlineDuration = 8 * 60 * 1000 + Math.floor(Math.random() * 12 * 60 * 1000); // 8-20 min
-                const offlineDuration = 60 * 1000 + Math.floor(Math.random() * 180 * 1000); // 1-4 min
                 await nexus.sendPresenceUpdate('available');
-                await sleep(onlineDuration);
-                if (!global._presenceCycles[numKey]) return;
-                await nexus.sendPresenceUpdate('unavailable');
-                await sleep(offlineDuration);
-            } catch (e) { /* silent */ }
-            // Next cycle after 2-4 hour gap
-            const gap = 2 * 60 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 60 * 1000);
-            setTimeout(() => cycle(), gap);
+            } catch (_) { /* healthCheck / socket sweep will reconnect */ }
+            const next = 3 * 60 * 1000 + Math.floor(Math.random() * 90 * 1000);
+            setTimeout(keepAwake, next);
         };
-        setTimeout(cycle, 30000 + Math.floor(Math.random() * 30000));
+        setTimeout(keepAwake, 30_000 + Math.floor(Math.random() * 30_000));
     },
 
     // Stop the presence cycle for a number (call on disconnect/cleanup)
@@ -2223,13 +2213,29 @@ async function startpairing(nexusDevNumber) {
 
         const wsState = nexus.ws?.readyState;
 
+        const _silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
+        const _idleWakeMs = 5 * 60 * 1000;
+
         if (wsState === 1) {
-            // WebSocket appears open — probe with presence update (15s timeout)
+            // Idle but socket open — wake before user sends a command (prevents slow first reply)
+            if (_silentMs >= _idleWakeMs) {
+                try {
+                    await Promise.race([
+                        nexus.sendPresenceUpdate('available'),
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('wake timeout')), 12000)),
+                    ]);
+                    tracker.lastActivity = Date.now();
+                } catch (_) {
+                    tracker._probeFailures = (tracker._probeFailures || 0) + 1;
+                }
+            }
+
+            // WebSocket appears open — probe with presence update (12s timeout)
             let probeOk = false;
             try {
                 await Promise.race([
                     nexus.sendPresenceUpdate('available').then(() => { probeOk = true; }),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 15000))
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 12000))
                 ]);
             } catch (_) { probeOk = false; }
 
@@ -2257,17 +2263,11 @@ async function startpairing(nexusDevNumber) {
             await sleep(3000);
             queuePairing(nexusDevNumber);
         }
-    }, 2 * 60 * 1000); // every 2 minutes
+    }, 90 * 1000); // every 90s — faster dead-socket detection after idle
 
-    // proactiveReconnectTimer removed — unnecessary forced disconnect every 18h was
-    // causing extra churn. Baileys handles WA's connection limits via reconnect logic.
     tracker.proactiveReconnectTimer = null;
-    // (clearTimeout(null) is a no-op, so existing connection.update cleanup code is safe)
 
-    // ✅ WARM PING — har 3 minute mein WA server ko presence bhejo
-    // keepAliveIntervalMs sirf TCP WebSocket alive rakhta hai (layer 1)
-    // WA server ko pata hona chahiye ke session active hai (layer 2)
-    // Bina is ke 3-4 ghante baad WA session "stale" ho jaata hai → slow first reply
+    // WARM PING — every 3 min keep WA session hot (no real messages → no case.js spam)
     tracker.warmPingInterval = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.warmPingInterval);
@@ -2276,15 +2276,11 @@ async function startpairing(nexusDevNumber) {
         }
         try {
             await nexus.sendPresenceUpdate('available');
-        } catch (_) {
-            // silent — healthCheckInterval will handle reconnect if needed
-        }
-    }, 10 * 60 * 1000); // SPEED FIX: 3min→10min — less socket occupation
+            tracker.lastActivity = Date.now();
+        } catch (_) {}
+    }, 3 * 60 * 1000);
 
-    // ✅ 25-MIN KEEPALIVE — presence update signal (no real message = no messages.upsert spam)
-    // FIX: Previously sent a real "." message every 20min which triggered the full case.js
-    // message processing pipeline on every keepalive → added latency to ALL commands.
-    // Now uses sendPresenceUpdate which doesn't generate messages.upsert events.
+    // Backup presence ping every 8 min (if warm ping missed)
     tracker.phantomKeepaliveTimer = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.phantomKeepaliveTimer);
@@ -2293,10 +2289,9 @@ async function startpairing(nexusDevNumber) {
         }
         try {
             await nexus.sendPresenceUpdate('available');
-        } catch (_) {
-            // silent — failure is ok, just a keepalive attempt
-        }
-    }, 25 * 60 * 1000); // every 25 minutes
+            tracker.lastActivity = Date.now();
+        } catch (_) {}
+    }, 8 * 60 * 1000);
 
     return nexus;
 }
