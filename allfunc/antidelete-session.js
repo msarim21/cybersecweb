@@ -21,7 +21,13 @@ const LEGACY_DISK_STORE = './database/antidelete_store.json';
 const DISK_DEBOUNCE_MS = 550;
 
 function cleanBotNum(value) {
-    return String(value || '').replace(/[^0-9]/g, '');
+    const raw = String(value || '');
+    if (!raw) return '';
+    // WhatsApp JIDs include device suffix (e.g. 92300:12@s.whatsapp.net) — strip before digit extraction
+    if (raw.includes('@') || raw.includes(':')) {
+        return raw.split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    }
+    return raw.replace(/[^0-9]/g, '');
 }
 
 class AntideleteSessionStore {

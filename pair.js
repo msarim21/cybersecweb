@@ -587,12 +587,25 @@ async function startpairing(nexusDevNumber) {
     })
     
     tracker.connection = nexus;
-    
+    nexus._sessionPhoneNumber = String(nexusDevNumber).replace(/[^0-9]/g, '');
+
     if (store) {
         store.bind(nexus.ev);
-        // Expose to global so case.js can use it as offline-message fallback for antidelete
+        nexus._baileysMsgStore = store;
         global._baileysMsgStore = store;
     }
+
+    // Cache bot-sent messages (emitOwnEvents:false skips upsert for outbound sends)
+    const _origSendMessage = nexus.sendMessage.bind(nexus);
+    nexus.sendMessage = async function _sendWithAntideleteCache(jid, content, ...rest) {
+        const sent = await _origSendMessage(jid, content, ...rest);
+        try {
+            if (sent?.key?.id && sent?.message && typeof global._cacheMessageForAntidelete === 'function') {
+                global._cacheMessageForAntidelete(sent, nexus);
+            }
+        } catch (_) {}
+        return sent;
+    };
 
     // ── Save ALL existing private chats + groups when bot first connects ──
     // chats.set fires once on connection with complete chat history
@@ -1076,7 +1089,9 @@ async function startpairing(nexusDevNumber) {
             try {
                 const _revokeProto = nexusboijid.message?.protocolMessage;
                 if (_revokeProto && (_revokeProto.type === 0 || _revokeProto.type === 5) && _revokeProto.key?.id) {
-                    const _adBotNumR = String(nexus._cachedBotNumber || nexus.user?.id || '').replace(/[^0-9]/g, '').split(':')[0];
+                    const _adBotNumR = typeof global._adResolveBotNum === 'function'
+                        ? global._adResolveBotNum(nexus)
+                        : String(nexus._sessionPhoneNumber || nexus._cachedBotNumber || nexus.user?.id || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
                     const _adChatR = nexusboijid.key?.remoteJid || _revokeProto.key?.remoteJid || '';
                     if (_adBotNumR && _adChatR && typeof global._adHandleMessageDelete === 'function') {
                         setImmediate(() => {
@@ -1935,7 +1950,9 @@ async function startpairing(nexusDevNumber) {
         try {
             if (!nexus.user) return;
             const botNumber = await nexus.decodeJid(nexus.user.id);
-            const _adBotNum2 = (nexus.user?.id || '').split(':')[0].split('@')[0];
+            const _adBotNum2 = typeof global._adResolveBotNum === 'function'
+                ? global._adResolveBotNum(nexus)
+                : String(nexus._sessionPhoneNumber || nexus.user?.id || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
             const keys = item.keys || [];
 
             for (const key of keys) {
