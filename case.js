@@ -4029,13 +4029,13 @@ _Auto-saved via status antidelete_`;
     return;
 }
 
-// ── Store messages for antidelete recovery (skip bot commands — instant cmd response) ──
-if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
+// ── Store messages for antidelete recovery (ALL messages — antidelete first priority) ──
+if (typeof global._cacheMessageForAntidelete === 'function') {
     try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
 }
 
 // Legacy detailed store disabled — unified session cache handles all message types
-if (!isCmd) (async () => {
+(async () => {
     try {
         if (false && m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage) {
             const _adMsgId2 = m.key.id;

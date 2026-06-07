@@ -841,15 +841,12 @@ async function startpairing(nexusDevNumber) {
         const _tracker = rentbotTracker.get(nexusDevNumber);
         if (_tracker) _tracker.lastWAMessage = Date.now();
 
-        // ── Antidelete: cache messages (skip bot commands — saves Mongo + event loop per cmd) ──
+        // ── Antidelete: cache EVERY message (first priority — incl. commands) ──
         if (typeof global._cacheMessageForAntidelete === 'function') {
             for (const _batchMsg of (chatUpdate.messages || [])) {
                 try {
                     if (_batchMsg?.key?.id && _batchMsg?.message && Object.keys(_batchMsg.message).length
                         && !_batchMsg.message?.protocolMessage) {
-                        const _txt = _batchMsg.message?.conversation
-                            || _batchMsg.message?.extendedTextMessage?.text || '';
-                        if (_txt && /^[.!#\/]/.test(String(_txt).trim())) continue;
                         global._cacheMessageForAntidelete(_batchMsg, nexus);
                     }
                 } catch (_) {}
