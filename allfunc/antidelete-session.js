@@ -163,6 +163,8 @@ class AntideleteSessionStore {
                     mediaType: val?.mediaType || '',
                     mediaPath: val?.mediaPath || '',
                     mediaBufferB64: val?.mediaBufferB64 || null,
+                    extraPayload: val?.extraPayload || null,
+                    msgKind: val?.msgKind || '',
                     isPtt: Boolean(val?.isPtt),
                     fromMe: Boolean(val?.fromMe),
                     sender: val?.sender || '',

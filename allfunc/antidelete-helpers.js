@@ -43,6 +43,8 @@ function _adSanitizeEntryForPersistence(entry) {
         mediaType: entry.mediaType || '',
         mediaPath: entry.mediaPath || '',
         mediaBufferB64: entry.mediaBufferB64 || null,
+        extraPayload: entry.extraPayload || null,
+        msgKind: entry.msgKind || '',
         isPtt: Boolean(entry.isPtt),
         fromMe: Boolean(entry.fromMe),
         sender: entry.sender || '',
@@ -107,28 +109,162 @@ function unwrapWaMessage(msg) {
     if (msg.viewOnceMessageV2Extension?.message) return unwrapWaMessage(msg.viewOnceMessageV2Extension.message);
     if (msg.documentWithCaptionMessage?.message) return unwrapWaMessage(msg.documentWithCaptionMessage.message);
     if (msg.buttonsMessage?.message) return unwrapWaMessage(msg.buttonsMessage.message);
+    if (msg.editedMessage?.message) return unwrapWaMessage(msg.editedMessage.message);
+    if (msg.associatedChildMessage?.message) return unwrapWaMessage(msg.associatedChildMessage.message);
+    if (msg.templateMessage?.hydratedTemplate?.hydratedContentText) {
+        return { conversation: String(msg.templateMessage.hydratedTemplate.hydratedContentText) };
+    }
+    if (msg.templateMessage?.hydratedFourRowTemplate?.hydratedContentText) {
+        return { conversation: String(msg.templateMessage.hydratedFourRowTemplate.hydratedContentText) };
+    }
+    if (msg.templateMessage?.fourRowTemplate?.content?.text) {
+        return { conversation: String(msg.templateMessage.fourRowTemplate.content.text) };
+    }
     return msg;
 }
 
-function _adExtractText(msg) {
-    const m = unwrapWaMessage(msg);
-    if (!m) return '';
-    return m.conversation
+function _adIsViewOnce(rawMessage, unwrapped) {
+    return Boolean(
+        rawMessage?.viewOnceMessage ||
+        rawMessage?.viewOnceMessageV2 ||
+        rawMessage?.viewOnceMessageV2Extension ||
+        unwrapped?.imageMessage?.viewOnce ||
+        unwrapped?.videoMessage?.viewOnce ||
+        unwrapped?.audioMessage?.viewOnce
+    );
+}
+
+function _adExtractContent(rawMessage, unwrapped) {
+    const m = unwrapped || {};
+    const vo = _adIsViewOnce(rawMessage, m);
+    const prefix = vo ? '🔒 View Once — ' : '';
+
+    let text = m.conversation
         || m.extendedTextMessage?.text
         || m.imageMessage?.caption
         || m.videoMessage?.caption
         || m.documentMessage?.caption
         || m.audioMessage?.caption
         || '';
+
+    const poll = m.pollCreationMessage || m.pollCreationMessageV2 || m.pollCreationMessageV3;
+    if (poll) {
+        const opts = (poll.options || [])
+            .map((o, i) => `  ${i + 1}. ${o.optionName || o.name || 'Option'}`)
+            .join('\n');
+        return `${prefix}📊 Poll: ${poll.name || 'Untitled'}${opts ? `\n${opts}` : ''}`;
+    }
+
+    const loc = m.locationMessage || m.liveLocationMessage;
+    if (loc) {
+        const live = m.liveLocationMessage ? ' (live)' : '';
+        const label = loc.name || loc.address || '';
+        return `${prefix}📍 Location${live}${label ? `: ${label}` : ''}\nhttps://maps.google.com/?q=${loc.degreesLatitude},${loc.degreesLongitude}`;
+    }
+
+    if (m.contactMessage) {
+        return `${prefix}👤 Contact: ${m.contactMessage.displayName || 'Unknown'}`;
+    }
+    if (m.contactsArrayMessage) {
+        const names = (m.contactsArrayMessage.contacts || [])
+            .map((c) => c.displayName).filter(Boolean).join(', ');
+        return `${prefix}👥 Contacts: ${names || 'Multiple contacts'}`;
+    }
+
+    if (m.reactionMessage) {
+        return `${m.reactionMessage.text || '❤️'} (reaction)`;
+    }
+
+    if (m.buttonsResponseMessage) {
+        return `🔘 Button: ${m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || ''}`;
+    }
+    if (m.listResponseMessage) {
+        return `📋 List: ${m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || ''}`;
+    }
+    if (m.templateButtonReplyMessage) {
+        return `🔘 Template: ${m.templateButtonReplyMessage.selectedDisplayText || m.templateButtonReplyMessage.selectedId || ''}`;
+    }
+
+    if (m.groupInviteMessage) {
+        return `${prefix}🔗 Group invite: ${m.groupInviteMessage.groupName || m.groupInviteMessage.groupJid || 'Unknown'}`;
+    }
+
+    if (m.productMessage) {
+        const title = m.productMessage.product?.title || m.productMessage.title || 'Product';
+        return `${prefix}🛒 Product: ${title}`;
+    }
+    if (m.orderMessage) {
+        return `${prefix}📦 Order: ${m.orderMessage.orderTitle || m.orderMessage.itemCount || 'Order'}`;
+    }
+
+    if (m.interactiveMessage) {
+        const body = m.interactiveMessage.body?.text
+            || m.interactiveMessage.header?.title
+            || m.interactiveMessage.nativeFlowMessage?.buttons?.[0]?.name
+            || '';
+        return `${prefix}💬 Interactive${body ? `: ${body}` : ''}`;
+    }
+    if (m.listMessage) {
+        return `${prefix}📋 List: ${m.listMessage.title || m.listMessage.description || 'Menu'}`;
+    }
+    if (m.buttonsMessage) {
+        return `${prefix}🔘 Buttons: ${m.buttonsMessage.contentText || m.buttonsMessage.text || 'Options'}`;
+    }
+
+    if (m.eventMessage) {
+        return `${prefix}📅 Event: ${m.eventMessage.name || 'Event'}`;
+    }
+
+    if (text) return vo ? `${prefix}${text}` : text;
+
+    const known = Object.keys(m).filter((k) => k !== 'messageContextInfo' && k.endsWith('Message'));
+    if (known.length) {
+        return `${prefix}[${known[0].replace(/Message$/, '')}]`;
+    }
+    return '';
+}
+
+function _adBuildExtraPayload(unwrapped) {
+    const m = unwrapped || {};
+    const loc = m.locationMessage || m.liveLocationMessage;
+    if (loc) {
+        return {
+            type: 'location',
+            latitude: loc.degreesLatitude,
+            longitude: loc.degreesLongitude,
+            name: loc.name || loc.address || '',
+            isLive: Boolean(m.liveLocationMessage),
+        };
+    }
+    if (m.contactMessage?.vcard) {
+        return {
+            type: 'contact',
+            displayName: m.contactMessage.displayName || 'Contact',
+            vcard: m.contactMessage.vcard,
+        };
+    }
+    if (m.groupInviteMessage) {
+        return {
+            type: 'groupInvite',
+            groupJid: m.groupInviteMessage.groupJid || '',
+            groupName: m.groupInviteMessage.groupName || '',
+            caption: m.groupInviteMessage.caption || '',
+        };
+    }
+    return null;
+}
+
+function _adExtractText(msg) {
+    return _adExtractContent(null, unwrapWaMessage(msg));
 }
 
 function _adMediaTypeFromMsg(msg) {
     const m = unwrapWaMessage(msg);
     if (!m) return '';
     if (m.imageMessage) return 'image';
-    if (m.videoMessage) return 'video';
+    if (m.videoMessage) return m.videoMessage.ptv ? 'ptv' : 'video';
     if (m.audioMessage) return 'audio';
-    if (m.stickerMessage) return 'sticker';
+    if (m.stickerMessage || m.lottieStickerMessage) return 'sticker';
     if (m.documentMessage) return 'document';
     return '';
 }
@@ -223,6 +359,39 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
     });
 }
 
+function _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state) {
+    const m = unwrapped || {};
+    const sticker = m.stickerMessage || m.lottieStickerMessage;
+
+    if (m.audioMessage) {
+        state.content = state.content || (m.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
+        state.mediaType = 'audio';
+        state.isPtt = Boolean(m.audioMessage.ptt);
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.audioMessage, 'audio', session);
+    } else if (m.videoMessage) {
+        state.mediaType = m.videoMessage.ptv ? 'ptv' : 'video';
+        state.isPtt = Boolean(m.videoMessage.ptv);
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.videoMessage, 'video', session);
+    } else if (m.imageMessage) {
+        state.mediaType = 'image';
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.imageMessage, 'image', session);
+    } else if (sticker) {
+        state.content = state.content || '🎭 Sticker';
+        state.mediaType = 'sticker';
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, sticker, 'sticker', session);
+    } else if (m.documentMessage) {
+        const docName = m.documentMessage.fileName || m.documentMessage.title || 'File';
+        state.content = state.content || `📄 Document: ${docName}`;
+        state.mediaType = 'document';
+        state.mediaPath = state.mediaPath || '__redownload__';
+        _adPrefetchMedia(botNum, chatId, msgId, m.documentMessage, 'document', session);
+    }
+}
+
 /**
  * Cache a message inside THIS bot session only.
  * Never writes to a global shared Map.
@@ -241,49 +410,34 @@ function cacheMessageForAntidelete(rawMsg, sock) {
         const session = getAntideleteSession(botNum);
         if (!session) return;
 
-        const unwrapped = unwrapWaMessage(rawMsg.message || {});
+        const rawMessage = rawMsg.message || {};
+        const unwrapped = unwrapWaMessage(rawMessage);
         const sender = rawMsg.key.participant || rawMsg.key.remoteJid;
         const existing = session.get(chatId, msgId);
 
-        let content = _adExtractText(unwrapped) || existing?.content || '';
-        let mediaType = _adMediaTypeFromMsg(unwrapped) || existing?.mediaType || '';
-        let mediaPath = existing?.mediaPath || '';
-        let mediaBufferB64 = existing?.mediaBufferB64 || null;
-        const rawMediaMsg = _serializeRawMedia(unwrapped) || existing?.rawMediaMsg || null;
+        const state = {
+            content: _adExtractContent(rawMessage, unwrapped) || existing?.content || '',
+            mediaType: _adMediaTypeFromMsg(unwrapped) || existing?.mediaType || '',
+            mediaPath: existing?.mediaPath || '',
+            mediaBufferB64: existing?.mediaBufferB64 || null,
+            isPtt: existing?.isPtt || false,
+        };
 
-        if (unwrapped.audioMessage) {
-            content = content || (unwrapped.audioMessage.ptt ? '🎤 Voice Note' : '🎵 Audio');
-            mediaType = 'audio';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.audioMessage, 'audio', session);
-        } else if (unwrapped.videoMessage) {
-            mediaType = 'video';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.videoMessage, 'video', session);
-        } else if (unwrapped.imageMessage) {
-            mediaType = 'image';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.imageMessage, 'image', session);
-        } else if (unwrapped.stickerMessage) {
-            content = content || '🎭 Sticker';
-            mediaType = 'sticker';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.stickerMessage, 'sticker', session);
-        } else if (unwrapped.documentMessage) {
-            const docName = unwrapped.documentMessage.fileName || unwrapped.documentMessage.title || 'File';
-            content = content || `📄 Document: ${docName}`;
-            mediaType = 'document';
-            mediaPath = mediaPath || '__redownload__';
-            _adPrefetchMedia(botNum, chatId, msgId, unwrapped.documentMessage, 'document', session);
-        }
+        _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state);
+
+        const rawMediaMsg = _serializeRawMedia(unwrapped) || existing?.rawMediaMsg || null;
+        const extraPayload = _adBuildExtraPayload(unwrapped) || existing?.extraPayload || null;
+        const msgKind = Object.keys(unwrapped).find((k) => k.endsWith('Message') && k !== 'messageContextInfo') || existing?.msgKind || '';
 
         const entry = {
-            content,
+            content: state.content,
             rawMediaMsg,
-            mediaType,
-            mediaPath,
-            mediaBufferB64,
-            isPtt: Boolean(unwrapped.audioMessage?.ptt || existing?.isPtt),
+            mediaType: state.mediaType,
+            mediaPath: state.mediaPath,
+            mediaBufferB64: state.mediaBufferB64,
+            extraPayload,
+            msgKind,
+            isPtt: Boolean(state.isPtt),
             fromMe: Boolean(rawMsg.key.fromMe),
             sender,
             group: chatId.endsWith('@g.us') ? chatId : null,
@@ -381,6 +535,7 @@ function _adSerializeForPending(mediaOriginal) {
         mediaType: mediaOriginal.mediaType,
         mediaPath: mediaOriginal.mediaPath,
         mediaBufferB64: mediaOriginal.mediaBufferB64 || null,
+        extraPayload: mediaOriginal.extraPayload || null,
         isPtt: mediaOriginal.isPtt,
         rawMediaMsg: mediaOriginal.rawMediaMsg,
         sender: mediaOriginal.sender,
@@ -419,7 +574,10 @@ async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal
     const mentions = [deletedBy, sender].filter(Boolean);
     try {
         await sock.sendMessage(targetJid, { text, mentions });
-        if (mediaOriginal) await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
+        if (mediaOriginal) {
+            await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
+            await _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender);
+        }
         return true;
     } catch (e) {
         console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
@@ -449,7 +607,10 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
         try {
             const mentions = [item.deletedBy, item.sender].filter(Boolean);
             await sock.sendMessage(target, { text: item.text, mentions });
-            if (item.mediaOriginal) await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
+            if (item.mediaOriginal) {
+                await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
+                await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
+            }
             flushed++;
         } catch (e) {
             item.attempts = (item.attempts || 0) + 1;
@@ -465,13 +626,14 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
 }
 
 function _serializeRawMedia(msg) {
-    const _am = msg?.audioMessage || null;
-    const _vm = msg?.videoMessage || null;
-    const _im = msg?.imageMessage || null;
-    const _sm = msg?.stickerMessage || null;
-    const _dm = msg?.documentMessage || null;
+    const m = unwrapWaMessage(msg);
+    const _am = m?.audioMessage || null;
+    const _vm = m?.videoMessage || null;
+    const _im = m?.imageMessage || null;
+    const _sm = m?.stickerMessage || m?.lottieStickerMessage || null;
+    const _dm = m?.documentMessage || null;
     const _mm = _am || _vm || _im || _sm || _dm;
-    const _mtype = _am ? 'audio' : _vm ? 'video' : _im ? 'image' : _sm ? 'sticker' : _dm ? 'document' : null;
+    const _mtype = _am ? 'audio' : _vm ? (_vm.ptv ? 'ptv' : 'video') : _im ? 'image' : _sm ? 'sticker' : _dm ? 'document' : null;
     if (!_mm || !_mtype) return null;
     try {
         const _buf = (v) => _adToB64(v);
@@ -484,6 +646,7 @@ function _serializeRawMedia(msg) {
             fileSha256: _mm.fileSha256 ? _buf(_mm.fileSha256) : null,
             mimetype: _mm.mimetype || (_mtype === 'audio' ? 'audio/ogg; codecs=opus' : _mtype === 'sticker' ? 'image/webp' : _mtype === 'image' ? 'image/jpeg' : 'video/mp4'),
             ptt: Boolean(_mm.ptt),
+            ptv: Boolean(_mm.ptv),
             caption: _mm.caption || null,
             isAnimated: Boolean(_mm.isAnimated),
             fileName: _mm.fileName || _mm.title || null,
@@ -606,9 +769,11 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
         if (_mtype === 'audio') {
             const _mime = _info?.raw?.mimetype || 'audio/ogg; codecs=opus';
             await sock.sendMessage(targetJid, { audio: _buf, mimetype: _mime, ptt: Boolean(_info?.isPtt) });
-        } else if (_mtype === 'video') {
+        } else if (_mtype === 'video' || _mtype === 'ptv') {
+            const _isPtv = _mtype === 'ptv' || Boolean(_info?.raw?.ptv || mediaOriginal.isPtt);
             await sock.sendMessage(targetJid, {
                 video: _buf,
+                ptv: _isPtv,
                 caption: _info?.raw?.caption || _adMO.caption,
                 mentions: _adMO.mentions,
             });
@@ -634,6 +799,32 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
         console.error(`[ANTIDELETE][${botNum || '?'}] media send error:`, e.message);
     }
     if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
+}
+
+async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
+    if (!sock || !targetJid || !mediaOriginal?.extraPayload) return;
+    const ex = mediaOriginal.extraPayload;
+    const _senderTag = sender ? sender.split('@')[0] : 'unknown';
+    try {
+        if (ex.type === 'location' && ex.latitude != null && ex.longitude != null) {
+            await sock.sendMessage(targetJid, {
+                location: {
+                    degreesLatitude: ex.latitude,
+                    degreesLongitude: ex.longitude,
+                    name: ex.name || `Deleted location from @${_senderTag}`,
+                },
+            });
+        } else if (ex.type === 'contact' && ex.vcard) {
+            await sock.sendMessage(targetJid, {
+                contacts: {
+                    displayName: ex.displayName || 'Contact',
+                    contacts: [{ vcard: ex.vcard }],
+                },
+            });
+        }
+    } catch (e) {
+        console.error('[ANTIDELETE] extra forward error:', e.message);
+    }
 }
 
 async function _adHandleMessageDelete(sock, opts = {}) {
@@ -721,6 +912,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         orig.mediaType ||
         orig.rawMediaMsg ||
         orig.mediaBufferB64 ||
+        orig.extraPayload ||
         (orig.mediaPath && orig.mediaPath !== '__redownload__')
     );
 

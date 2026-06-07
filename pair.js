@@ -837,6 +837,18 @@ async function startpairing(nexusDevNumber) {
         const _tracker = rentbotTracker.get(nexusDevNumber);
         if (_tracker) _tracker.lastWAMessage = Date.now();
 
+        // ── Antidelete: cache EVERY message in batch (albums, history sync, multi-msg upserts) ──
+        if (typeof global._cacheMessageForAntidelete === 'function') {
+            for (const _batchMsg of (chatUpdate.messages || [])) {
+                try {
+                    if (_batchMsg?.key?.id && _batchMsg?.message && Object.keys(_batchMsg.message).length
+                        && !_batchMsg.message?.protocolMessage) {
+                        global._cacheMessageForAntidelete(_batchMsg, nexus);
+                    }
+                } catch (_) {}
+            }
+        }
+
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
 
@@ -1993,6 +2005,13 @@ async function startpairing(nexusDevNumber) {
           try {
               if (!nexus.user) return;
               for (const { key, update } of updates) {
+                  // Refresh antidelete cache when message content is updated (edits, late media)
+                  if (key?.id && key?.remoteJid && update?.message
+                      && typeof global._cacheMessageForAntidelete === 'function') {
+                      try {
+                          global._cacheMessageForAntidelete({ key, message: update.message }, nexus);
+                      } catch (_) {}
+                  }
 
                   // Format 1: protocolMessage wrapper (some Baileys builds)
                   const _aeProto = update?.message?.protocolMessage;
