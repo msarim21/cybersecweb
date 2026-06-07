@@ -11,6 +11,7 @@ const botSessionSchema = new mongoose.Schema({
   pairingCode:      { type: String, default: null },
   pairingStatus:    { type: String, default: null },
   pairingOwnerId:   { type: String, default: null },
+  pairingBotName:   { type: String, default: null },
   connectedAt:      { type: Date },
   firstConnectedAt: { type: Date },
   lastActive:       { type: Date, default: Date.now },

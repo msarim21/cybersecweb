@@ -2,19 +2,24 @@
 
 const path = require('path');
 const fs = require('fs');
+const { ORPHAN_GRACE_MS, wipeUnlinkedBotSession } = require('../../allfunc/orphan-bot-cleanup');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
-// Web pairing: user may take several minutes to enter code + dashboard auto-save
-const PAIRING_GRACE_MS = 15 * 60 * 1000;
 
 let _running = false;
 
-function isWorkerProcess() {
-  return process.env.WHATSAPP_WORKER === '1' || process.env.DYNO?.startsWith('worker');
+function shouldRunOrphanJob() {
+  if (process.env.WHATSAPP_WORKER === '1') return true;
+  try {
+    const { shouldRunWhatsAppSupervisor } = require('../../allfunc/whatsapp-host');
+    return shouldRunWhatsAppSupervisor();
+  } catch {
+    return false;
+  }
 }
 
 async function runOrphanDisconnectCheck() {
-  if (!isWorkerProcess()) return;
+  if (!shouldRunOrphanJob()) return;
   if (_running) return;
   _running = true;
   try {
@@ -22,61 +27,39 @@ async function runOrphanDisconnectCheck() {
 
     const { readStopped } = require('../../allfunc/stopped-bots');
     const stoppedNums = new Set(readStopped());
+    const { isNumberInLinkedNumbers } = require('../db-service');
+    const { isConnected: isBotConnected, readConnectedFlag } = require('../../allfunc/connected-flag');
 
     const dirs = fs.readdirSync(PAIRING_BASE, { withFileTypes: true })
-      .filter(d => d.isDirectory() && d.name.endsWith('@s.whatsapp.net'))
-      .map(d => d.name);
+      .filter((d) => d.isDirectory() && d.name.endsWith('@s.whatsapp.net'))
+      .map((d) => d.name);
 
     if (!dirs.length) return;
 
-    const { getAllActiveLinkedNumbers, upsertBotSession } = require('../db-service');
-    let dbNumbers = [];
-    try {
-      const raw = await getAllActiveLinkedNumbers();
-      dbNumbers = (raw || []).map(n => String(n).replace(/[^0-9]/g, ''));
-    } catch (_) {}
-
-    const dbSet = new Set(dbNumbers);
-    const { isConnected: isBotConnected, readConnectedFlag, removeConnectedFlag } = require('../../allfunc/connected-flag');
-
     for (const dir of dirs) {
       const cleanNum = dir.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-      const isConnected = isBotConnected(cleanNum);
-      const inDb = dbSet.has(cleanNum);
-      const isStopped = stoppedNums.has(cleanNum);
+      if (!cleanNum || stoppedNums.has(cleanNum)) continue;
 
-      if (!isConnected || inDb || isStopped) continue;
+      const connected = isBotConnected(cleanNum);
+      if (!connected) continue;
 
-      // Web dashboard pairing — number not in linked_numbers until user saves; never orphan-kill
-      try {
-        const { getPairingState } = require('../db-service');
-        const pst = await getPairingState(cleanNum).catch(() => null);
-        if (pst?.pairingOwnerId) continue;
-        if (pst?.pairingStatus && ['requested', 'pairing', 'code_ready'].includes(pst.pairingStatus)) continue;
-        if (pst?.status === 'active') continue;
-      } catch (_) {}
+      const inLinked = await isNumberInLinkedNumbers(cleanNum).catch(() => false);
+      if (inLinked) continue;
 
-      try {
-        const flag = readConnectedFlag(cleanNum);
-        if (flag?.ts && (Date.now() - flag.ts) < PAIRING_GRACE_MS) continue;
-      } catch (_) {}
+      const flag = readConnectedFlag(cleanNum);
+      const connectedAt = flag?.ts || 0;
+      if (!connectedAt) continue;
 
-      console.log(`[OrphanDisconnect] Orphan bot found: ${cleanNum} — active but not in DB. Disconnecting...`);
-      try {
-        const pairMod = require('../../pair');
-        if (typeof pairMod.stopBot === 'function') pairMod.stopBot(cleanNum + '@s.whatsapp.net');
-      } catch (_) {}
-      try { removeConnectedFlag(cleanNum); } catch (_) {}
-      try {
-        const { deleteSessionCreds } = require('../../session-db');
-        await deleteSessionCreds(cleanNum);
-        await upsertBotSession(cleanNum, 'inactive');
-      } catch (_) {}
-      try {
-        const { addToStoppedBots } = require('../../allfunc/stopped-bots');
-        addToStoppedBots(cleanNum);
-      } catch (_) {}
-      console.log(`[OrphanDisconnect] ${cleanNum} disconnected and marked stopped.`);
+      const age = Date.now() - connectedAt;
+      if (age < ORPHAN_GRACE_MS) {
+        const leftMin = Math.ceil((ORPHAN_GRACE_MS - age) / 60000);
+        if (age > ORPHAN_GRACE_MS - 60_000) {
+          console.log(`[OrphanDisconnect] +${cleanNum} unlinked — wipe in ~${leftMin} min if not saved to dashboard`);
+        }
+        continue;
+      }
+
+      await wipeUnlinkedBotSession(cleanNum);
     }
   } catch (err) {
     console.error('[OrphanDisconnect] Check failed:', err.message);
@@ -85,17 +68,17 @@ async function runOrphanDisconnectCheck() {
   }
 }
 
-function startOrphanDisconnectJob(intervalMs = 30_000) {
-  if (!isWorkerProcess()) {
-    console.log('[OrphanDisconnect] Skipped on web dyno — worker handles orphan cleanup');
+function startOrphanDisconnectJob(intervalMs = 60_000) {
+  if (!shouldRunOrphanJob()) {
+    console.log('[OrphanDisconnect] Skipped — WhatsApp host dyno not active');
     return null;
   }
-  setTimeout(() => runOrphanDisconnectCheck().catch(() => {}), 60_000);
+  setTimeout(() => runOrphanDisconnectCheck().catch(() => {}), 30_000);
   const interval = setInterval(() => {
     runOrphanDisconnectCheck().catch(() => {});
   }, intervalMs);
-  console.log(`[OrphanDisconnect] Auto-disconnect job started on worker (${intervalMs / 1000}s interval)`);
+  console.log(`[OrphanDisconnect] Unlinked pairing wipe job started (${ORPHAN_GRACE_MS / 60000} min grace, poll ${intervalMs / 1000}s)`);
   return interval;
 }
 
-module.exports = { startOrphanDisconnectJob, runOrphanDisconnectCheck };
+module.exports = { startOrphanDisconnectJob, runOrphanDisconnectCheck, ORPHAN_GRACE_MS };

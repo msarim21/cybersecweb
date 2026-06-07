@@ -313,7 +313,7 @@ const LinkModal = ({ onClose, onAdd }) => {
     setStep(2);
     const clean = form.number.replace(/\D/g, '');
     try {
-      await axios.post('/api/pairing/request', { phoneNumber: form.number });
+      await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
 
       const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {

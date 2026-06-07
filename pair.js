@@ -1727,15 +1727,13 @@ async function startpairing(nexusDevNumber) {
                 touchBotHeartbeat(cleanNum, { event: 'connected', wsState: nexus.ws?.readyState ?? 1 });
             } catch (_) {}
 
-            // ── Web pairing: auto-link owner + promote pairing child → full bot ──
+            // ── Web pairing: connect hote hi linked_numbers mein save ──
             try {
-                const { getPairingState, clearPairingRequest } = require('./server/db-service');
-                const pst = await getPairingState(cleanNum).catch(() => null);
-                if (pst?.pairingOwnerId && pst.pairingOwnerId !== 'system') {
-                    await addNumber(nexusDevNumber, 'CYBER-BOT', pst.pairingOwnerId);
-                    console.log(chalk.cyan(`[pair] 📁 Web pairing: linked +${cleanNum} to owner ${pst.pairingOwnerId}`));
+                const { linkNumberOnWebConnect } = require('./allfunc/pairing-link');
+                const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
+                if (!linkResult.linked) {
+                    console.log(chalk.yellow(`[pair] ⚠️ +${cleanNum} connected but not in linked_numbers yet (${linkResult.reason}) — orphan wipe in 30 min if still unlinked`));
                 }
-                await clearPairingRequest(cleanNum).catch(() => {});
             } catch (_wpErr) {
                 console.log(chalk.yellow(`[pair] Web pairing post-connect: ${_wpErr.message}`));
             }

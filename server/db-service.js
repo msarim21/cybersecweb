@@ -717,6 +717,25 @@ async function ensurePgBotSessionColumns() {
   await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_code VARCHAR(32)`).catch(() => {});
   await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_status VARCHAR(20)`).catch(() => {});
   await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_owner_id VARCHAR(50)`).catch(() => {});
+  await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_bot_name VARCHAR(64)`).catch(() => {});
+}
+
+async function isNumberInLinkedNumbers(cleanNum) {
+  const clean = String(cleanNum).replace(/[^0-9]/g, '');
+  if (!clean) return false;
+  if (isMongoMode()) {
+    const { LinkedNumber } = M();
+    const n = await LinkedNumber.findOne({
+      status: 'active',
+      number: { $regex: clean },
+    }).lean();
+    return Boolean(n);
+  }
+  const { rows } = await pg().query(
+    `SELECT 1 FROM linked_numbers WHERE status = 'active' AND number LIKE $1 LIMIT 1`,
+    [`%${clean}%`]
+  );
+  return rows.length > 0;
 }
 
 async function saveSessionCreds(number, sessionFiles) {
@@ -782,10 +801,11 @@ async function getSessionCreds(number) {
 }
 
 // ── Pairing queue (web dyno → worker dyno) ───────────────────────────────────
-async function requestPairing(number, ownerId = null) {
+async function requestPairing(number, ownerId = null, botName = null) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return;
   const owner = ownerId != null ? String(ownerId) : null;
+  const name = botName ? String(botName).trim().slice(0, 64) : null;
   if (isMongoMode()) {
     const { BotSession } = M();
     const existing = await BotSession.findOne({ number: clean }).lean();
@@ -793,6 +813,7 @@ async function requestPairing(number, ownerId = null) {
       pairingStatus: 'requested',
       pairingCode: null,
       pairingOwnerId: owner,
+      pairingBotName: name,
       lastActive: new Date(),
     };
     if (!existing?.sessionData) update.status = 'pending';
@@ -800,16 +821,17 @@ async function requestPairing(number, ownerId = null) {
     return;
   }
   await ensurePgBotSessionColumns();
-  // Do NOT reset status/session_data on conflict — only queue pairing code request
+  await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_bot_name VARCHAR(64)`).catch(() => {});
   await pg().query(
-    `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, pairing_owner_id, last_active)
-     VALUES ($1, 'pending', 'requested', NULL, $2, NOW())
+    `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, pairing_owner_id, pairing_bot_name, last_active)
+     VALUES ($1, 'pending', 'requested', NULL, $2, $3, NOW())
      ON CONFLICT (number) DO UPDATE SET
        pairing_status = 'requested',
        pairing_code = NULL,
        pairing_owner_id = COALESCE(EXCLUDED.pairing_owner_id, bot_sessions.pairing_owner_id),
+       pairing_bot_name = COALESCE(EXCLUDED.pairing_bot_name, bot_sessions.pairing_bot_name),
        last_active = NOW()`,
-    [clean, owner]
+    [clean, owner, name]
   );
 }
 
@@ -880,11 +902,12 @@ async function getPairingState(number) {
       pairingStatus: doc.pairingStatus || null,
       status: doc.status || null,
       pairingOwnerId: doc.pairingOwnerId || null,
+      pairingBotName: doc.pairingBotName || null,
     };
   }
   await ensurePgBotSessionColumns();
   const { rows } = await pg().query(
-    `SELECT pairing_code, pairing_status, status, pairing_owner_id
+    `SELECT pairing_code, pairing_status, status, pairing_owner_id, pairing_bot_name
      FROM bot_sessions WHERE number = $1`,
     [clean]
   );
@@ -895,6 +918,7 @@ async function getPairingState(number) {
     pairingStatus: r.pairing_status,
     status: r.status,
     pairingOwnerId: r.pairing_owner_id,
+    pairingBotName: r.pairing_bot_name,
   };
 }
 
@@ -1102,6 +1126,7 @@ module.exports = {
   saveSessionCreds, getSessionCreds, deleteSessionCreds,
   requestPairing, setPairingCode, getPairingState, getPendingPairingRequests, markPairingFailed,
   markPairingInProgress, resetPairingRequest, clearPairingRequest, clearStalePairingRequests,
+  isNumberInLinkedNumbers,
   getSiteSetting, setSiteSetting,
   countAdmins,
   sendChatMessage, getChatMessages, markChatMessagesRead, getChatUnreadCounts, getActiveChatUsers,

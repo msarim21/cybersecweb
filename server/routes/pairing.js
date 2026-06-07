@@ -111,7 +111,7 @@ function startPairingInBackground(clean) {
 
 // ── POST /api/pairing/request — start pairing, return immediately ─────────────
 router.post('/request', protect, pairingRequestLimiter, async (req, res) => {
-  const { phoneNumber } = req.body;
+  const { phoneNumber, botName } = req.body;
   if (!phoneNumber) return res.status(400).json({ error: 'Phone number required.' });
 
   const user = await findUserById(req.user.id);
@@ -125,7 +125,7 @@ router.post('/request', protect, pairingRequestLimiter, async (req, res) => {
   }
 
   try {
-    await requestPairing(clean, req.user.id);
+    await requestPairing(clean, req.user.id, botName || 'CYBER-BOT');
 
     if (shouldQueueToWorker()) {
       // Worker dyno owns session wipe + pair.js — web filesystem is not shared on Heroku
