@@ -186,7 +186,13 @@ const globalLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/api/health',
+  skip: (req) => {
+    const p = req.originalUrl || req.url || '';
+    if (p.startsWith('/api/health')) return true;
+    // Status/code polling during pairing — must not count toward global cap
+    if (req.method === 'GET' && /\/api\/pairing\/(status|code)\//.test(p)) return true;
+    return false;
+  },
   handler: (req, res) => {
     logThreat({ type: 'RATE_LIMIT_EXCEEDED', severity: 'MEDIUM', ip: req.ip, path: req.path, detail: 'Global rate limit hit' });
     res.status(429).json({ error: 'Too many requests. Please try again later.' });
@@ -214,22 +220,9 @@ const adminLimiter = rateLimit({
   message: { error: 'Too many admin requests.' },
 });
 
-// ── Pairing rate limiter — prevents abuse of WA pairing API ────────────────
-const pairingLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 8,
-  standardHeaders: true,
-  legacyHeaders: false,
-  handler: (req, res) => {
-    logThreat({ type: 'PAIRING_ABUSE', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Pairing rate limit exceeded' });
-    res.status(429).json({ error: 'Too many pairing attempts. Please wait 15 minutes.' });
-  },
-});
-
 app.use('/api/',       globalLimiter);
 app.use('/api/auth/',  authLimiter);
 app.use('/api/admin/', adminLimiter);
-app.use('/api/pairing/', pairingLimiter);
 
 // ── Security: Remove X-Powered-By header ──────────────────────────────────
 app.disable('x-powered-by');

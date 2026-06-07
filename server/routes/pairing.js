@@ -1,6 +1,22 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
+
+// Only limit actual pairing *requests* — not status/code polling (every 0.6–3s during link flow)
+const pairingRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  handler: (req, res) => {
+    if (typeof global.logThreat === 'function') {
+      global.logThreat({ type: 'PAIRING_ABUSE', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Pairing request rate limit exceeded' });
+    }
+    res.status(429).json({ error: 'Too many pairing attempts. Please wait 15 minutes.' });
+  },
+});
 const {
   findUserById,
   isPlanExpired,
@@ -94,7 +110,7 @@ function startPairingInBackground(clean) {
 }
 
 // ── POST /api/pairing/request — start pairing, return immediately ─────────────
-router.post('/request', protect, async (req, res) => {
+router.post('/request', protect, pairingRequestLimiter, async (req, res) => {
   const { phoneNumber } = req.body;
   if (!phoneNumber) return res.status(400).json({ error: 'Phone number required.' });
 
