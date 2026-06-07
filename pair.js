@@ -680,6 +680,16 @@ async function startpairing(nexusDevNumber) {
                     }
 
                     console.log(chalk.green(`✓ Pairing code saved to pairing.json (attempt ${_attempt})`));
+
+                    // Heroku: web dyno polls MongoDB — worker filesystem is not shared
+                    try {
+                        const { setPairingCode } = require('./server/db-service');
+                        await setPairingCode(phoneNumber, code);
+                        console.log(chalk.green(`✓ Pairing code saved to DB for ${phoneNumber}`));
+                    } catch (_dbErr) {
+                        console.log(chalk.yellow(`⚠️ Pairing code DB save failed: ${_dbErr.message}`));
+                    }
+
                     return; // success — stop retrying
                 } catch (err) {
                     console.log(chalk.red(`❌ Pairing code attempt ${_attempt}/${MAX_ATTEMPTS} failed: ${err.message}`));

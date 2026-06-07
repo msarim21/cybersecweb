@@ -171,6 +171,7 @@ async function handlePairingRequest(clean) {
     if (!global._pairingInFlight) global._pairingInFlight = new Set();
     if (global._pairingInFlight.has(num)) return;
     global._pairingInFlight.add(num);
+    console.log(chalk.cyan(`[Supervisor] 🔗 Pairing request for +${num} — spawning isolated pairing process`));
 
     try {
         const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
@@ -195,12 +196,19 @@ async function handlePairingRequest(clean) {
         ensureBotWorkspace(num);
         spawnBot(num, { pairing: true, force: true, noRestart: false });
 
-        const { getPairingState } = require('../server/db-service');
-        const deadline = Date.now() + 90_000;
+        const { getPairingState, resetPairingRequest } = require('../server/db-service');
+        const deadline = Date.now() + 120_000;
+        let gotCode = false;
         while (Date.now() < deadline) {
             const st = await getPairingState(num).catch(() => null);
-            if (st?.code) break;
+            if (st?.code) { gotCode = true; break; }
             await new Promise((r) => setTimeout(r, 400));
+        }
+        if (!gotCode) {
+            console.log(chalk.red(`[Supervisor] Pairing timeout for +${num} — no code in DB`));
+            await resetPairingRequest(num).catch(() => {});
+        } else {
+            console.log(chalk.green(`[Supervisor] Pairing code ready for +${num}`));
         }
     } finally {
         global._pairingInFlight.delete(num);

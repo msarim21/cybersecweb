@@ -125,14 +125,14 @@ router.post('/request', protect, pairingRequestLimiter, async (req, res) => {
   }
 
   try {
-    await prepareFreshPairing(clean);
     await requestPairing(clean, req.user.id);
 
     if (shouldQueueToWorker()) {
-      // Worker pairing-processor picks up DB queue within ~2s
+      // Worker dyno owns session wipe + pair.js — web filesystem is not shared on Heroku
       return res.json({ status: 'queued', number: clean });
     }
 
+    await prepareFreshPairing(clean);
     startPairingInBackground(clean);
     return res.json({ status: 'started', number: clean });
   } catch (err) {

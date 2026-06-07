@@ -315,7 +315,7 @@ const LinkModal = ({ onClose, onAdd }) => {
     try {
       await axios.post('/api/pairing/request', { phoneNumber: form.number });
 
-      const deadline = Date.now() + 90_000;
+      const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {
         const { data } = await axios.get(`/api/pairing/code/${clean}`);
         if (data.code) {
@@ -324,9 +324,12 @@ const LinkModal = ({ onClose, onAdd }) => {
           setStep(3);
           return;
         }
-        await new Promise(r => setTimeout(r, 600));
+        if (data.status === 'failed') {
+          throw new Error('Pairing failed on server — dubara try karein.');
+        }
+        await new Promise(r => setTimeout(r, 800));
       }
-      throw new Error('Pairing code timeout — worker dyno check karein aur dubara try karein.');
+      throw new Error('Pairing code timeout (2 min) — page refresh karke dubara try karein.');
     } catch (err) {
       setStep(1);
       const errCode = err.response?.data?.error;

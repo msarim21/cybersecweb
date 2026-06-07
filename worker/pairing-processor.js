@@ -40,8 +40,6 @@ async function processPairingQueue() {
             const claimed = await markPairingInProgress(clean).catch(() => false);
             if (!claimed) continue;
 
-            global._pairingInFlight.add(clean);
-
             (async () => {
                 try {
                     // Isolated mode: supervisor spawns a dedicated pairing child
@@ -50,6 +48,8 @@ async function processPairingQueue() {
                         await handlePairingRequest(clean);
                         return;
                     }
+
+                    global._pairingInFlight.add(clean);
 
                     const jid = `${clean}@s.whatsapp.net`;
                     const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
