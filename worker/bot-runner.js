@@ -74,15 +74,10 @@ function hasValidCreds(sessionPath) {
 }
 
 async function restoreSessionIfNeeded(jid) {
-    const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', jid);
-    const altPath = path.join(__dirname, '..', 'nexstore', 'pairing', BOT_NUMBER);
-    if (hasValidCreds(sessionPath) || hasValidCreds(altPath)) return true;
-
     try {
-        const { restoreCredsFromDb } = require('../session-db');
-        console.log(chalk.cyan(`[BotRunner:${BOT_NUMBER}] Restoring session from DB...`));
-        let ok = await restoreCredsFromDb(BOT_NUMBER, sessionPath);
-        if (!ok) ok = await restoreCredsFromDb(BOT_NUMBER, altPath);
+        const { ensureSessionRestored } = require('../session-db');
+        const ok = await ensureSessionRestored(BOT_NUMBER);
+        if (ok) console.log(chalk.green(`[BotRunner:${BOT_NUMBER}] ✅ Session ready (local or restored from DB)`));
         return ok;
     } catch (e) {
         console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Restore failed: ${e.message}`));
@@ -129,11 +124,8 @@ async function runBot() {
     if (!isPairing) {
         const restored = await restoreSessionIfNeeded(jid);
         if (!restored) {
-            const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', jid);
-            if (!hasValidCreds(sessionPath)) {
-                console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] No session — waiting for pairing`));
-                process.exit(0);
-            }
+            console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] No saved session in DB — pair once via website`));
+            process.exit(0);
         }
     }
 
@@ -162,6 +154,12 @@ async function shutdown() {
     if (_shuttingDown) return;
     _shuttingDown = true;
     console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Shutting down...`));
+    try {
+        const { backupSessionFolder } = require('../session-db');
+        const jid = `${BOT_NUMBER}@s.whatsapp.net`;
+        const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', jid);
+        await backupSessionFolder(BOT_NUMBER, sessionPath).catch(() => {});
+    } catch (_) {}
     try {
         const pairMod = require('../pair');
         if (typeof pairMod.stopBot === 'function') pairMod.stopBot(BOT_NUMBER);

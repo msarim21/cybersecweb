@@ -541,7 +541,8 @@ async function startpairing(nexusDevNumber) {
     if (!credsOnDisk && !isFreshPairing) {
         const cleanNum = nexusDevNumber.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
         console.log(chalk.cyan(`[pair] 📥 No local creds for ${cleanNum} — restoring from DB...`));
-        const restored = await restoreCredsFromDb(cleanNum, sessionPath).catch(() => false);
+        const { ensureSessionRestored } = require('./session-db');
+        const restored = await ensureSessionRestored(cleanNum).catch(() => false);
         if (restored) {
             console.log(chalk.green(`[pair] ✅ Session restored from DB: ${cleanNum}`));
         } else {
@@ -1709,6 +1710,13 @@ async function startpairing(nexusDevNumber) {
             try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
 
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+
+            // Backup session to DB immediately — survives Heroku/dyno restarts without re-pairing
+            try {
+                const { backupSessionFolder } = require('./session-db');
+                const _sessDir = path.join(__dirname, 'nexstore', 'pairing', nexusDevNumber.includes('@') ? nexusDevNumber : `${cleanNum}@s.whatsapp.net`);
+                backupSessionFolder(cleanNum, _sessDir).catch(() => {});
+            } catch (_) {}
 
             // ── Web pairing: auto-link owner + promote pairing child → full bot ──
             try {

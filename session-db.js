@@ -162,6 +162,65 @@ async function markFirstConnected(number) {
   }
 }
 
+function _sessionDirs(clean) {
+  const path = require('path');
+  const base = path.join(__dirname, 'nexstore', 'pairing');
+  return [
+    path.join(base, `${clean}@s.whatsapp.net`),
+    path.join(base, clean),
+  ];
+}
+
+function _hasValidLocalCreds(sessionPath) {
+  const fs = require('fs');
+  const path = require('path');
+  const credsFile = path.join(sessionPath, 'creds.json');
+  if (!fs.existsSync(credsFile)) return false;
+  try {
+    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return Boolean(creds?.registered || creds?.me?.id);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when MongoDB/PostgreSQL has saved session files for this number.
+ */
+async function hasSessionInDb(number) {
+  try {
+    await _init();
+    const { getSessionCreds } = require('./server/db-service');
+    const clean = String(number).replace(/[^0-9]/g, '');
+    const data = await getSessionCreds(clean);
+    return Boolean(data && Object.keys(data).length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Restore session from DB when Heroku/ephemeral disk was wiped (worker/web restart).
+ * @returns {boolean}
+ */
+async function ensureSessionRestored(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return false;
+
+  for (const dir of _sessionDirs(clean)) {
+    if (_hasValidLocalCreds(dir)) return true;
+  }
+
+  const inDb = await hasSessionInDb(clean);
+  if (!inDb) return false;
+
+  for (const dir of _sessionDirs(clean)) {
+    const ok = await restoreCredsFromDb(clean, dir);
+    if (ok && _hasValidLocalCreds(dir)) return true;
+  }
+  return false;
+}
+
 /**
  * Backup all session files from filesystem to DB (for Heroku/ephemeral disk restarts).
  */
@@ -198,6 +257,8 @@ module.exports = {
   getActiveLinkedNumbers,
   saveCredsToDb,
   restoreCredsFromDb,
+  hasSessionInDb,
+  ensureSessionRestored,
   backupSessionFolder,
   removeLinkedNumber,
   deleteSessionCreds,

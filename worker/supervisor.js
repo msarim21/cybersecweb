@@ -121,7 +121,8 @@ function _scheduleRestart(clean) {
             if (!global._supervisorRestarts) global._supervisorRestarts = {};
             global._supervisorRestarts[clean] = [...recent, Date.now()];
 
-            spawnBot(clean);
+            const ready = await _ensureBotSessionReady(clean);
+            if (ready) spawnBot(clean);
         } catch (e) {
             console.log(chalk.yellow(`[Supervisor] Restart check failed for +${clean}: ${e.message}`));
         }
@@ -135,10 +136,26 @@ function _hasRegisteredCreds(clean) {
         try {
             if (!fs.existsSync(p)) continue;
             const creds = JSON.parse(fs.readFileSync(p, 'utf8'));
-            if (creds?.registered) return true;
+            if (creds?.registered || creds?.me?.id) return true;
         } catch (_) {}
     }
     return false;
+}
+
+/** Local creds OR restore from MongoDB/PostgreSQL after dyno restart */
+async function _ensureBotSessionReady(clean) {
+    if (_hasRegisteredCreds(clean)) return true;
+    try {
+        const { ensureSessionRestored } = require('../session-db');
+        const ok = await ensureSessionRestored(clean);
+        if (ok) {
+            console.log(chalk.cyan(`[Supervisor] 📥 Restored +${clean} session from DB for auto-reconnect`));
+        }
+        return ok;
+    } catch (e) {
+        console.log(chalk.yellow(`[Supervisor] Session restore failed for +${clean}: ${e.message}`));
+        return false;
+    }
 }
 
 function markBotPromoted(botNum) {
@@ -190,14 +207,12 @@ async function syncBots() {
         }
     }
 
-    // Start bots that should be running
+    // Start bots that should be running (restore DB session after Heroku/dyno restart)
     for (const clean of linkedSet) {
         if (global._pairingInFlight?.has(clean)) continue;
         if (!children.has(clean)) {
-            const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', `${clean}@s.whatsapp.net`, 'creds.json');
-            const altPath = path.join(__dirname, '..', 'nexstore', 'pairing', clean, 'creds.json');
-            const hasCreds = fs.existsSync(sessionPath) || fs.existsSync(altPath);
-            if (hasCreds) spawnBot(clean);
+            const ready = await _ensureBotSessionReady(clean);
+            if (ready) spawnBot(clean);
         }
     }
 
@@ -284,8 +299,13 @@ function startSupervisor() {
     console.log(chalk.cyan('║  BOT SUPERVISOR — One Process Per Number  ║'));
     console.log(chalk.cyan('╚══════════════════════════════════════════╝\n'));
 
-    syncBots().catch(() => {});
-    _syncTimer = setInterval(() => syncBots().catch(() => {}), SYNC_INTERVAL_MS);
+    const runSync = () => syncBots().catch((e) => {
+        console.log(chalk.yellow(`[Supervisor] syncBots: ${e.message}`));
+    });
+    runSync();
+    // Fast reconnect sweep after worker/dyno restart (ephemeral disk is empty)
+    [3000, 8000, 20000, 45000].forEach((ms) => setTimeout(runSync, ms));
+    _syncTimer = setInterval(runSync, SYNC_INTERVAL_MS);
 
     // Patch pair.js stopBot so web/worker cleanup kills child processes
     try {
