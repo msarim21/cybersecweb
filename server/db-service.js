@@ -949,6 +949,24 @@ async function resetPairingRequest(number) {
   );
 }
 
+async function markPairingFailed(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate(
+      { number: clean },
+      { pairingStatus: 'failed', pairingCode: null, lastActive: new Date() }
+    );
+    return;
+  }
+  await ensurePgBotSessionColumns();
+  await pg().query(
+    `UPDATE bot_sessions SET pairing_status = 'failed', pairing_code = NULL, last_active = NOW() WHERE number = $1`,
+    [clean]
+  );
+}
+
 async function clearPairingRequest(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return;
@@ -1082,7 +1100,7 @@ module.exports = {
   getAllActiveLinkedNumbers,
   getActiveLinkedNumbers: getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds, deleteSessionCreds,
-  requestPairing, setPairingCode, getPairingState, getPendingPairingRequests,
+  requestPairing, setPairingCode, getPairingState, getPendingPairingRequests, markPairingFailed,
   markPairingInProgress, resetPairingRequest, clearPairingRequest, clearStalePairingRequests,
   getSiteSetting, setSiteSetting,
   countAdmins,

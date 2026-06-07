@@ -148,8 +148,10 @@ async function syncBots() {
         }
     }
 
-    // Stop bots no longer linked or stopped
-    for (const [clean] of children) {
+    // Stop bots no longer linked or stopped (never kill active pairing children)
+    for (const [clean, entry] of children) {
+        if (entry?.pairing) continue;
+        if (global._pairingInFlight?.has(clean)) continue;
         if (!linkedSet.has(clean)) killBot(clean);
     }
 }
@@ -194,9 +196,9 @@ async function handlePairingRequest(clean) {
         } catch (_) {}
 
         ensureBotWorkspace(num);
-        spawnBot(num, { pairing: true, force: true, noRestart: false });
+        spawnBot(num, { pairing: true, force: true, noRestart: true });
 
-        const { getPairingState, resetPairingRequest } = require('../server/db-service');
+        const { getPairingState, markPairingFailed } = require('../server/db-service');
         const deadline = Date.now() + 120_000;
         let gotCode = false;
         while (Date.now() < deadline) {
@@ -206,7 +208,8 @@ async function handlePairingRequest(clean) {
         }
         if (!gotCode) {
             console.log(chalk.red(`[Supervisor] Pairing timeout for +${num} — no code in DB`));
-            await resetPairingRequest(num).catch(() => {});
+            await markPairingFailed(num).catch(() => {});
+            killBot(num, 'SIGTERM');
         } else {
             console.log(chalk.green(`[Supervisor] Pairing code ready for +${num}`));
         }
@@ -236,6 +239,12 @@ function startSupervisor() {
         const pairMod = require('../pair');
         const origStop = pairMod.stopBot?.bind(pairMod);
         pairMod.stopBot = function patchedStopBot(number) {
+            const clean = cleanBotNum(number);
+            const entry = children.get(clean);
+            if (entry?.pairing || global._pairingInFlight?.has(clean)) {
+                console.log(chalk.yellow(`[Supervisor] stopBot ignored during pairing for +${clean}`));
+                return;
+            }
             stopBotExternal(number);
             if (typeof origStop === 'function') origStop(number);
         };

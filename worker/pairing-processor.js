@@ -26,6 +26,7 @@ async function processPairingQueue() {
             getPendingPairingRequests,
             markPairingInProgress,
             resetPairingRequest,
+            markPairingFailed,
             getPairingState,
         } = require('../server/db-service');
 
@@ -92,7 +93,7 @@ async function processPairingQueue() {
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
                     try {
-                        await resetPairingRequest(clean);
+                        await markPairingFailed(clean);
                     } catch (_) {}
                 } finally {
                     global._pairingInFlight.delete(clean);

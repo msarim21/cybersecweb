@@ -52,6 +52,8 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
   });
   
 // Define sleep function directly here to avoid import issues
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // Per-bot private chat list path (isolated bots use database/bots/<num>/private_chats.json)
 function _privateChatsFile() {
     if (isBotIsolated()) return getBotConfigPaths().privateChats;
@@ -695,6 +697,10 @@ async function startpairing(nexusDevNumber) {
                     console.log(chalk.red(`❌ Pairing code attempt ${_attempt}/${MAX_ATTEMPTS} failed: ${err.message}`));
                     if (_attempt === MAX_ATTEMPTS) {
                         console.log(chalk.red(`❌ All ${MAX_ATTEMPTS} pairing code attempts failed for ${nexusDevNumber}`));
+                        try {
+                            const { markPairingFailed } = require('./server/db-service');
+                            await markPairingFailed(phoneNumber);
+                        } catch (_) {}
                     }
                 }
             }
