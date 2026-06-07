@@ -792,11 +792,14 @@ async function startpairing(nexusDevNumber) {
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
 
-        // ── Dedup: skip if this message ID was already processed (WA retransmission guard) ──
+        // ── Dedup: skip if this message ID was already processed by THIS bot number ──
+        // Key includes bot number so multiple bots in same process don't skip each other's messages
         const _msgId = nexusboijid.key?.id;
+        const _dedupBotNum = (nexus.user?.id || '').split(':')[0].split('@')[0];
         if (_msgId) {
-            if (global._processedMsgIds.has(_msgId)) return;
-            global._processedMsgIds.set(_msgId, Date.now());
+            const _dedupKey = _dedupBotNum ? `${_dedupBotNum}::${_msgId}` : _msgId;
+            if (global._processedMsgIds.has(_dedupKey)) return;
+            global._processedMsgIds.set(_dedupKey, Date.now());
         }
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             // SPEED FIX: use cached botNumber — no async call on every message
