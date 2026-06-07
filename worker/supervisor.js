@@ -202,7 +202,7 @@ async function handlePairingRequest(clean) {
         while (Date.now() < deadline) {
             const st = await getPairingState(num).catch(() => null);
             if (st?.code) { gotCode = true; break; }
-            await new Promise((r) => setTimeout(r, 400));
+            await new Promise((r) => setTimeout(r, 200));
         }
         if (!gotCode) {
             console.log(chalk.red(`[Supervisor] Pairing timeout for +${num} — no code in DB`));

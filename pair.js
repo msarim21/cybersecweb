@@ -535,7 +535,8 @@ async function startpairing(nexusDevNumber) {
     if (fsSync.existsSync(credsFile)) {
         try { JSON.parse(fsSync.readFileSync(credsFile, 'utf8')); credsOnDisk = true; } catch { /* corrupt */ }
     }
-    if (!credsOnDisk) {
+    const isFreshPairing = process.env.BOT_PAIRING === '1';
+    if (!credsOnDisk && !isFreshPairing) {
         const cleanNum = nexusDevNumber.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
         console.log(chalk.cyan(`[pair] 📥 No local creds for ${cleanNum} — restoring from DB...`));
         const restored = await restoreCredsFromDb(cleanNum, sessionPath).catch(() => false);
@@ -569,8 +570,8 @@ async function startpairing(nexusDevNumber) {
         },
         shouldSyncHistoryMessage: msg => !!msg.syncType, // SPEED: removed noisy log
         msgRetryCounterCache,
-        connectTimeoutMs: 30000,        // SPEED: 60s→30s — faster fail on bad connection
-        defaultQueryTimeoutMs: 30000,   // SPEED: 60s→30s
+        connectTimeoutMs: isFreshPairing ? 15000 : 30000,
+        defaultQueryTimeoutMs: isFreshPairing ? 15000 : 30000,
         keepAliveIntervalMs: 30000, // FIX: 10s→30s — 10s WS pings look like spam to WA servers → disconnect
         emitOwnEvents: false,
         fireInitQueries: false,
@@ -651,13 +652,12 @@ async function startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
-        // Wait 3s then request pairing code with up to 5 retries
+        // Fast pairing: ~600ms first try, then quick retries (target 5–10s total)
         const _requestCode = async () => {
             const MAX_ATTEMPTS = 5;
-            const RETRY_DELAY = 3000;
             for (let _attempt = 1; _attempt <= MAX_ATTEMPTS; _attempt++) {
                 try {
-                    await sleep(RETRY_DELAY);
+                    await sleep(_attempt === 1 ? 600 : 1200);
                     let code = await nexus.requestPairingCode(phoneNumber);
                     if (!code) throw new Error('Empty pairing code returned');
                     code = code?.match(/.{1,4}/g)?.join("-") || code;

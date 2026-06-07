@@ -128,7 +128,7 @@ async function startWorker() {
     console.log(chalk.green('\n🟢 Supervisor running — har bot apne process mein chalega'));
 
     const { startPairingProcessor } = require('./worker/pairing-processor');
-    startPairingProcessor(400);
+    startPairingProcessor(150);
 
     const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
@@ -166,7 +166,7 @@ async function startWorker() {
   console.log(chalk.green('\n🟢 Worker is running — bot will stay alive 24/7'));
 
   const { startPairingProcessor } = require('./worker/pairing-processor');
-  startPairingProcessor(400);
+  startPairingProcessor(150);
 
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);

@@ -106,13 +106,13 @@ async function processPairingQueue() {
     }
 }
 
-function startPairingProcessor(intervalMs = 400) {
+function startPairingProcessor(intervalMs = 150) {
     if (process.env.WHATSAPP_WORKER !== '1') return null;
 
     const tick = async () => {
         const hadWork = await processPairingQueue().catch(() => false);
         if (hadWork) {
-            setTimeout(tick, 200);
+            setTimeout(tick, 80);
         }
     };
 

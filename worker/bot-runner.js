@@ -100,18 +100,23 @@ async function runBot() {
     require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
     require('../setting/config');
 
-    await ensureDbReady();
+    const isPairing = process.env.BOT_PAIRING === '1';
 
-    // Load command handler AFTER BOT_NUMBER env is set (uses per-bot config paths)
-    try {
-        require('../case');
-        console.log(chalk.green(`[BotRunner:${BOT_NUMBER}] ✅ Command handler loaded`));
-    } catch (e) {
-        console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] case.js warning: ${e.message}`));
+    await ensureDbReady(isPairing ? 15000 : 60000);
+
+    // Skip heavy case.js during pairing — only pair.js needed (~3–5s faster)
+    if (!isPairing) {
+        try {
+            require('../case');
+            console.log(chalk.green(`[BotRunner:${BOT_NUMBER}] ✅ Command handler loaded`));
+        } catch (e) {
+            console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] case.js warning: ${e.message}`));
+        }
+    } else {
+        console.log(chalk.cyan(`[BotRunner:${BOT_NUMBER}] ⚡ Pairing mode — skipping case.js for speed`));
     }
 
     const jid = `${BOT_NUMBER}@s.whatsapp.net`;
-    const isPairing = process.env.BOT_PAIRING === '1';
 
     if (!isPairing) {
         const { readStopped } = require('../allfunc/stopped-bots');

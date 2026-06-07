@@ -327,7 +327,7 @@ const LinkModal = ({ onClose, onAdd }) => {
         if (data.status === 'failed') {
           throw new Error('Pairing failed on server — dubara try karein.');
         }
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 350));
       }
       throw new Error('Pairing code timeout (2 min) — page refresh karke dubara try karein.');
     } catch (err) {
