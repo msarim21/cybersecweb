@@ -1,16 +1,28 @@
 const fs = require('fs');
-const SETTINGS_PATH = './setting.json';
+const path = require('path');
+const { isBotIsolated, getBotConfigPaths } = require('../allfunc/bot-workspace');
+
+function getSettingsPath() {
+  if (isBotIsolated()) {
+    return getBotConfigPaths().setting;
+  }
+  return './setting.json';
+}
+
+const SETTINGS_PATH = getSettingsPath();
 
 let settings = {};
 try {
   if (fs.existsSync(SETTINGS_PATH)) {
     settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}');
   } else {
+    const dir = path.dirname(SETTINGS_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify({}, null, 2));
     settings = {};
   }
 } catch (e) {
-  console.error('Failed to load settings.json', e);
+  console.error('Failed to load settings', e);
   settings = {};
 }
 
@@ -61,4 +73,3 @@ function setSetting(jid, key, value) {
 }
 
 module.exports = { getSetting, setSetting, flushSettings };
-

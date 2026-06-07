@@ -43,8 +43,15 @@ async function processPairingQueue() {
             global._pairingInFlight.add(clean);
 
             (async () => {
-                const jid = `${clean}@s.whatsapp.net`;
                 try {
+                    // Isolated mode: supervisor spawns a dedicated pairing child
+                    const { isSupervisorActive, handlePairingRequest } = require('./supervisor');
+                    if (isSupervisorActive()) {
+                        await handlePairingRequest(clean);
+                        return;
+                    }
+
+                    const jid = `${clean}@s.whatsapp.net`;
                     const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
                     removeFromStoppedBots(clean);
 

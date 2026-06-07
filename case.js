@@ -84,9 +84,12 @@ requiredDirs.forEach(dir => {
 // ⚡ FAST IN-MEMORY CONFIG CACHE — ek baar load, memory se serve
 //    Disk pe async mein likho → event loop NEVER block nahi hoga
 // ══════════════════════════════════════════════════════════════════
-const MUTED_FILE      = './database/muted.json';
-const SUDO_FILE       = './database/sudo.json';
-const PREFIX_FILE     = './database/prefixes.json';
+const { isBotIsolated, getBotConfigPaths } = require('./allfunc/bot-workspace');
+const _botPaths = isBotIsolated() ? getBotConfigPaths() : null;
+
+const MUTED_FILE      = _botPaths ? _botPaths.muted : './database/muted.json';
+const SUDO_FILE       = _botPaths ? _botPaths.sudo : './database/sudo.json';
+const PREFIX_FILE     = _botPaths ? _botPaths.prefixes : './database/prefixes.json';
 
 function _readJson(file, def) {
   try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch(_e) {}
@@ -104,16 +107,17 @@ if (!global._cfgCache) {
     muted:              _readJson(MUTED_FILE,      {}),
     sudo:               _readJson(SUDO_FILE,       []),
     prefixes:           _readJson(PREFIX_FILE,     {}),
-    antilink:           _readJson('./database/antilink_settings.json', {}),
-    anticallCfg:        _readJson('./database/anticall_config.json', { mode: 'off' }),
-    anticallMsg:        _readJson('./database/anticall_msg.json', { msg: null }),
-    stickerCmds:        _readJson('./database/stickercmds.json', {}),
-    warnLimit:          _readJson('./database/warnlimit.json', {}),
-    lockSettings:       _readJson('./database/lock_settings.json', { locked: false }),
-    antigroupmention:   _readJson('./database/antigroupmention.json', {}),
-    bcSettings:         _readJson(path.join(__dirname, 'axis_storage', 'broadcast_settings.json'), {}),
+    antilink:           _readJson(_botPaths ? _botPaths.antilink : './database/antilink_settings.json', {}),
+    anticallCfg:        _readJson(_botPaths ? _botPaths.anticall : './database/anticall_config.json', { mode: 'off' }),
+    anticallMsg:        _readJson(_botPaths ? _botPaths.anticallMsg : './database/anticall_msg.json', { msg: null }),
+    stickerCmds:        _readJson(_botPaths ? _botPaths.stickerCmds : './database/stickercmds.json', {}),
+    warnLimit:          _readJson(_botPaths ? _botPaths.warnLimit : './database/warnlimit.json', {}),
+    lockSettings:       _readJson(_botPaths ? _botPaths.lockSettings : './database/lock_settings.json', { locked: false }),
+    antigroupmention:   _readJson(_botPaths ? _botPaths.antigroupmention : './database/antigroupmention.json', {}),
+    bcSettings:         _readJson(_botPaths ? _botPaths.broadcastSettings : path.join(__dirname, 'axis_storage', 'broadcast_settings.json'), {}),
   };
-  console.log('[Cache] ✅ Config loaded into memory — disk reads eliminated');
+  const _cfgLabel = _botPaths ? `bot +${process.env.BOT_NUMBER}` : 'global';
+  console.log(`[Cache] ✅ Config loaded into memory (${_cfgLabel}) — disk reads eliminated`);
 }
 
 // ============ MUTED FUNCTIONS (memory) ============
@@ -233,16 +237,18 @@ if (!global._antideleteSweepStarted) {
 if (!global._antieditConfig) global._antieditConfig = { mode: 'off' };
 if (!global._antideleteConfig) global._antideleteConfig = { mode: 'off' };
 
-const ANTIEDIT_CONFIG_FILE = './database/antiedit_config.json';
-const ANTIDELETE_CONFIG_FILE = './database/antidelete_config.json';
-const ANTIDELETE_TEMP_DIR = './tmp/antidelete_media';
-const ANTIDELETE_DISK_STORE = './database/antidelete_store.json';
-const ANTICALL_CONFIG_FILE = './database/anticall_config.json';
-const STICKERCMD_FILE = './database/stickercmds.json';
-const WARNLIMIT_FILE = './database/warnlimit.json';
-const LOCK_SETTINGS_FILE = './database/lock_settings.json';
-const ANTIGROUPMENTION_FILE = './database/antigroupmention.json';
-const ANTICALL_MSG_FILE = './database/anticall_msg.json';
+const ANTIEDIT_CONFIG_FILE = _botPaths ? _botPaths.antiedit : './database/antiedit_config.json';
+const ANTIDELETE_CONFIG_FILE = _botPaths ? _botPaths.antidelete : './database/antidelete_config.json';
+const ANTIDELETE_TEMP_DIR = _botPaths
+    ? `./tmp/antidelete_media/${process.env.BOT_NUMBER}`
+    : './tmp/antidelete_media';
+const ANTIDELETE_DISK_STORE = _botPaths ? _botPaths.antideleteStore : './database/antidelete_store.json';
+const ANTICALL_CONFIG_FILE = _botPaths ? _botPaths.anticall : './database/anticall_config.json';
+const STICKERCMD_FILE = _botPaths ? _botPaths.stickerCmds : './database/stickercmds.json';
+const WARNLIMIT_FILE = _botPaths ? _botPaths.warnLimit : './database/warnlimit.json';
+const LOCK_SETTINGS_FILE = _botPaths ? _botPaths.lockSettings : './database/lock_settings.json';
+const ANTIGROUPMENTION_FILE = _botPaths ? _botPaths.antigroupmention : './database/antigroupmention.json';
+const ANTICALL_MSG_FILE = _botPaths ? _botPaths.anticallMsg : './database/anticall_msg.json';
 
 function getBotJid(sock) {
     // Try sock.user first (set when connected), fall back to authState.creds.me if available
@@ -448,7 +454,7 @@ const { getSetting, setSetting } = require("./setting/Settings.js");
 const groupCache = new Map();
 
 // ============ ANTI-LINK SETTINGS (memory) ============
-const ANTILINK_FILE = './database/antilink_settings.json';
+const ANTILINK_FILE = _botPaths ? _botPaths.antilink : './database/antilink_settings.json';
 
 function loadAntilinkSettings()          { return global._cfgCache.antilink; }
 function saveAntilinkSettings(settings)  {
@@ -517,7 +523,10 @@ function getBcSettings(senderJid) {
 function setBcSettings(senderJid, enabled) {
     const cleanNum = String(senderJid || '').replace(/[^0-9]/g, '');
     global._cfgCache.bcSettings[cleanNum] = { enabled };
-    _writeJsonAsync(path.join(__dirname, 'axis_storage', 'broadcast_settings.json'), global._cfgCache.bcSettings);
+    _writeJsonAsync(
+        _botPaths ? _botPaths.broadcastSettings : path.join(__dirname, 'axis_storage', 'broadcast_settings.json'),
+        global._cfgCache.bcSettings
+    );
 }
 
 // ── Background chat scanner: silently fetch all chats on connect ─────

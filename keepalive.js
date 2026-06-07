@@ -92,6 +92,15 @@ function cleanupBotMemory() {
 async function refreshBotSessions() {
     if (!isWhatsAppWorker()) return;
     try {
+        // Isolated supervisor mode: sync child processes instead of autoload
+        try {
+            const { isSupervisorActive, syncBots } = require('./worker/supervisor');
+            if (isSupervisorActive()) {
+                await syncBots();
+                return;
+            }
+        } catch (_) {}
+
         const pairMod = require('./pair');
         const { getActiveLinkedNumbers } = require('./session-db');
         const nums = await getActiveLinkedNumbers().catch(() => []);

@@ -26,7 +26,7 @@ module.exports = {
       autorestart: true,
       max_memory_restart: "800M",
       node_args: "--max-old-space-size=700",
-      env: { NODE_ENV: "production", WHATSAPP_WORKER: "1", RESTART_COUNT: "0" },
+      env: { NODE_ENV: "production", WHATSAPP_WORKER: "1", BOT_ISOLATION: "1", RESTART_COUNT: "0" },
       error_file: "./logs/error.log",
       out_file: "./logs/output.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss",

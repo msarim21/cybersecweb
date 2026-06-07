@@ -20,6 +20,7 @@ const { addNumber, getBotMode, setBotMode } = require('./server/db-service');
 const { getSetting } = require('./setting/Settings');
 require('./allfunc/antidelete-session');
 require('./allfunc/antidelete-helpers');
+const { isBotIsolated, getBotConfigPaths, ensureBotWorkspace } = require('./allfunc/bot-workspace');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -51,7 +52,11 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
   });
   
 // Define sleep function directly here to avoid import issues
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Per-bot private chat list path (isolated bots use database/bots/<num>/private_chats.json)
+function _privateChatsFile() {
+    if (isBotIsolated()) return getBotConfigPaths().privateChats;
+    return path.join(__dirname, 'database', 'private_chats.json');
+}
 
 // ── Baileys version cache — fetch once at startup, reuse on every reconnect ──
 // fetchLatestBaileysVersion() makes a network call to GitHub which can take 2-5s on Heroku
@@ -591,7 +596,7 @@ async function startpairing(nexusDevNumber) {
     nexus.ev.on('chats.set', ({ chats: allChats }) => {
         try {
             if (!allChats || !allChats.length) return;
-            const _pcFile = require('path').join(__dirname, 'database', 'private_chats.json');
+            const _pcFile = _privateChatsFile();
             let _pcList = {};
             if (fs.existsSync(_pcFile)) {
                 try { _pcList = JSON.parse(fs.readFileSync(_pcFile, 'utf-8')); } catch(_e) { _pcList = {}; }
@@ -1187,7 +1192,7 @@ async function startpairing(nexusDevNumber) {
             try {
                 const _pcJid = nexusboijid.key?.remoteJid || '';
                 if (_pcJid && _pcJid.endsWith('@s.whatsapp.net')) {
-                    const _pcFile = require('path').join(__dirname, 'database', 'private_chats.json');
+                    const _pcFile = _privateChatsFile();
                     const _pcFs = require('fs');
                     // Load from disk once into memory; reuse on all subsequent messages
                     if (!global._pcMemCache) {
@@ -1586,22 +1591,18 @@ async function startpairing(nexusDevNumber) {
                 fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
             } catch (_) {}
 
-            // AUTO-ENABLE ANTIDELETE PRIVATE on every connect
-            // Users don't need to run .antidelete private manually — it's automatic
+            // AUTO-ENABLE ANTIDELETE PRIVATE on every connect + ensure isolated workspace
             try {
                 const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                ensureBotWorkspace(_adCleanNum);
                 const _adCfgFile = path.join(__dirname, 'database', `antidelete_config_${_adCleanNum}.json`);
-                const _adFallback = path.join(__dirname, 'database', 'antidelete_config.json');
                 const _dbDir = path.join(__dirname, 'database');
                 if (!fs.existsSync(_dbDir)) fs.mkdirSync(_dbDir, { recursive: true });
-                // Write per-number config
                 const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
                 fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
-                // Also update shared fallback config
-                if (!fs.existsSync(_adFallback)) {
-                    fs.writeFileSync(_adFallback, JSON.stringify(_adCfgData, null, 2));
-                }
-                // Update in-memory cache so it takes effect immediately
+                // Per-bot workspace config (isolated mode)
+                const _botAdCfg = isBotIsolated() ? getBotConfigPaths().antidelete : null;
+                if (_botAdCfg) fs.writeFileSync(_botAdCfg, JSON.stringify(_adCfgData, null, 2));
                 if (!global._antideleteConfigs) global._antideleteConfigs = {};
                 global._antideleteConfigs[_adCleanNum] = _adCfgData;
                 console.log(chalk.green(`🛡️ [${_adCleanNum}] Auto-enabled antidelete private`));
@@ -2219,7 +2220,7 @@ async function autoScanBroadcastList(nexus, userNumber, storeObj) {
         // File format: { "jid@s.whatsapp.net": { name, lastSeen }, ... }
         // BUG FIX: was using Object.values() losing the JID keys — now uses Object.entries()
         try {
-            const _pcFile = path.join(__dirname, 'database', 'private_chats.json');
+            const _pcFile = _privateChatsFile();
             if (fs.existsSync(_pcFile)) {
                 const _pcRaw = JSON.parse(fs.readFileSync(_pcFile, 'utf-8'));
                 // Normalise both formats: array-of-objects (old) and object-keyed-by-jid (current)

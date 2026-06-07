@@ -115,6 +115,39 @@ async function startWorker() {
     console.log(chalk.yellow('[Worker] clearStalePairingRequests:', e.message));
   }
 
+  // ── Per-bot isolation: one Node process per linked number ─────────────────
+  // Set BOT_ISOLATION=0 to fall back to legacy single-process multi-bot mode.
+  const useIsolation = process.env.BOT_ISOLATION !== '0';
+
+  if (useIsolation) {
+    console.log(chalk.magenta('🔒 Isolated mode: har number ka alag process + alag config folder'));
+    const { startSupervisor } = require('./worker/supervisor');
+    startSupervisor();
+
+    startKeepAlive();
+    console.log(chalk.green('\n🟢 Supervisor running — har bot apne process mein chalega'));
+
+    const { startPairingProcessor } = require('./worker/pairing-processor');
+    startPairingProcessor(400);
+
+    const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
+    startOrphanDisconnectJob(30_000);
+
+    // Supervisor sync sweep first 15 min
+    let sweepCount = 0;
+    const startupSweep = setInterval(async () => {
+      sweepCount += 1;
+      if (sweepCount > 8) { clearInterval(startupSweep); return; }
+      try {
+        const { syncBots } = require('./worker/supervisor');
+        await syncBots();
+      } catch (_) {}
+    }, 2 * 60 * 1000);
+
+    return;
+  }
+
+  // ── Legacy: all bots in one process ───────────────────────────────────────
   try {
     require('./case');
     console.log(chalk.green('✅ WhatsApp command handler loaded'));
