@@ -845,7 +845,16 @@ let body = (
     m.mtype === "protocolMessage" ? "[Pesan telah dihapus]" :
     m.body || ""  // ultimate fallback for any unrecognized message type
 );
-
+if (typeof body !== 'string') {
+    body = typeof m.body === 'string' ? m.body
+        : typeof m.text === 'string' ? m.text
+        : '';
+}
+if (body === '[object Object]') {
+    body = typeof m.body === 'string' ? m.body
+        : typeof m.text === 'string' ? m.text
+        : '';
+}
 
 // ============ COMMAND DETECTION (PER-USER PREFIX) ============
 // PERF FIX: cache owner/premium in memory — avoids 2x sync disk reads on every message
@@ -4020,13 +4029,13 @@ _Auto-saved via status antidelete_`;
     return;
 }
 
-// ── Store messages for antidelete recovery (ALL messages incl. fromMe / self-chat) ──
-if (typeof global._cacheMessageForAntidelete === 'function') {
+// ── Store messages for antidelete recovery (skip bot commands — instant cmd response) ──
+if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
     try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
 }
 
 // Legacy detailed store disabled — unified session cache handles all message types
-(async () => {
+if (!isCmd) (async () => {
     try {
         if (false && m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage) {
             const _adMsgId2 = m.key.id;
@@ -4636,8 +4645,8 @@ async function nexusLoading() {
 
 // NOTE: Newsletter auto-react is now handled inline above (no nested listener)
 
-if (m.message) {
-    console.log(chalk.hex('#3498db')(`message " ${m.message} "  from ${pushname} id ${m.isGroup ? `group ${groupMetadata.subject}` : 'private chat'}`));
+if (m.message && isCmd) {
+    console.log(chalk.hex('#3498db')(`cmd "${body}" from ${pushname} (${m.isGroup ? 'group' : 'private'})`));
 }
 
 // ============ NEWSLETTER AUTO-REACT (inline, no nested listener) ============
@@ -4721,20 +4730,20 @@ function formatRam(total, free) {
     return `${used.toFixed(1)}GB / ${totalGb.toFixed(1)}GB (${percent}%)`;
 }
 
+let _cachedCommandCount = null;
 function countCommands() {
+    if (_cachedCommandCount !== null) return _cachedCommandCount;
     try {
         if (!global._caseFileContent) global._caseFileContent = fs.readFileSync(__filename).toString();
-      const caseFileContent = global._caseFileContent;
-        // Count all unique case statements
         const commandRegex = /case ['"]([^'"]+)['"]:/g;
-        const matches = [...caseFileContent.matchAll(commandRegex)];
-        const uniqueCommands = new Set(matches.map(match => match[1]));
-        const count = uniqueCommands.size;
-        console.log(`📊 Total commands detected: ${count}`);
-        return count;
+        const matches = [...global._caseFileContent.matchAll(commandRegex)];
+        _cachedCommandCount = new Set(matches.map((match) => match[1])).size;
+        console.log(`📊 Total commands detected: ${_cachedCommandCount}`);
+        return _cachedCommandCount;
     } catch (e) {
         console.error('Error counting commands:', e);
-        return 4; // Your actual command count
+        _cachedCommandCount = 4;
+        return _cachedCommandCount;
     }
 }
 

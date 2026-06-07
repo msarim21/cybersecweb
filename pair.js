@@ -840,17 +840,16 @@ async function startpairing(nexusDevNumber) {
         // ── Track last real WhatsApp message time (used by dead-connection watchdog) ──
         const _tracker = rentbotTracker.get(nexusDevNumber);
         if (_tracker) _tracker.lastWAMessage = Date.now();
-        try {
-            const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
-            touchBotHeartbeat(nexusDevNumber.replace(/[^0-9]/g, ''), { event: 'message' });
-        } catch (_) {}
 
-        // ── Antidelete: cache EVERY message in batch (albums, history sync, multi-msg upserts) ──
+        // ── Antidelete: cache messages (skip bot commands — saves Mongo + event loop per cmd) ──
         if (typeof global._cacheMessageForAntidelete === 'function') {
             for (const _batchMsg of (chatUpdate.messages || [])) {
                 try {
                     if (_batchMsg?.key?.id && _batchMsg?.message && Object.keys(_batchMsg.message).length
                         && !_batchMsg.message?.protocolMessage) {
+                        const _txt = _batchMsg.message?.conversation
+                            || _batchMsg.message?.extendedTextMessage?.text || '';
+                        if (_txt && /^[.!#\/]/.test(String(_txt).trim())) continue;
                         global._cacheMessageForAntidelete(_batchMsg, nexus);
                     }
                 } catch (_) {}
@@ -2321,7 +2320,13 @@ function smsg(nexus, m, store) {
     if (m.message) {
         m.mtype = getContentType(m.message)
         m.msg = (m.mtype == 'viewOnceMessage' ? m.message[m.mtype]?.message?.[getContentType(m.message[m.mtype]?.message)] : m.message[m.mtype]) || {}
-        m.body = m.message.conversation || m.msg?.caption || m.msg?.text || (m.mtype == 'listResponseMessage' && m.msg?.singleSelectReply?.selectedRowId) || (m.mtype == 'buttonsResponseMessage' && m.msg?.selectedButtonId) || (m.mtype == 'viewOnceMessage' && m.msg?.caption) || m.text || ''
+        m.body = m.message?.conversation
+            || m.message?.extendedTextMessage?.text
+            || m.msg?.caption || m.msg?.text
+            || (m.mtype == 'listResponseMessage' && m.msg?.singleSelectReply?.selectedRowId)
+            || (m.mtype == 'buttonsResponseMessage' && m.msg?.selectedButtonId)
+            || (m.mtype == 'viewOnceMessage' && m.msg?.caption)
+            || m.text || ''
         let quoted = m.quoted = m.msg?.contextInfo?.quotedMessage || null
         m.mentionedJid = m.msg?.contextInfo?.mentionedJid || []
         if (m.quoted) {

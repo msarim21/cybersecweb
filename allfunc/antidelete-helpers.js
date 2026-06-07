@@ -301,11 +301,52 @@ function _adMediaTypeFromMsg(msg) {
     return '';
 }
 
+const _adMongoSaveQueue = new Map();
+let _adMongoFlushTimer = null;
+
+async function _adEnsureMongoReady() {
+    const { isMongoMode, isDbReady, initDb } = require('../server/db');
+    if (!isMongoMode()) return false;
+    if (!isDbReady()) await initDb().catch(() => {});
+    return isDbReady();
+}
+
+async function _adFlushMongoSaves() {
+    _adMongoFlushTimer = null;
+    if (!(await _adEnsureMongoReady())) return;
+    const batch = [..._adMongoSaveQueue.values()];
+    _adMongoSaveQueue.clear();
+    if (!batch.length) return;
+    try {
+        const AntideleteCache = require('../server/models/AntideleteCache');
+        const ops = batch.map(({ botNum, chatId, msgId, entry, key }) =>
+            AntideleteCache.findOneAndUpdate(
+                { botNum, chatId, msgId },
+                {
+                    key,
+                    botNum,
+                    chatId: String(chatId || ''),
+                    msgId: String(msgId || ''),
+                    data: _adSanitizeEntryForPersistence(entry),
+                    expiresAt: new Date(Date.now() + ANTIDELETE_MONGO_TTL_MS),
+                },
+                { upsert: true }
+            )
+        );
+        await Promise.allSettled(ops);
+    } catch (_) {}
+}
+
+function _adScheduleMongoFlush() {
+    if (_adMongoFlushTimer) return;
+    _adMongoFlushTimer = setTimeout(() => {
+        _adFlushMongoSaves().catch(() => {});
+    }, 2500);
+}
+
 async function _adMongoGet(botNum, chatId, msgId) {
     try {
-        const { isMongoMode, initDb } = require('../server/db');
-        if (!isMongoMode()) return null;
-        await initDb();
+        if (!(await _adEnsureMongoReady())) return null;
         const AntideleteCache = require('../server/models/AntideleteCache');
         const clean = cleanBotNum(botNum);
         let doc = await AntideleteCache.findOne({ botNum: clean, chatId, msgId }).lean();
@@ -319,38 +360,21 @@ async function _adMongoGet(botNum, chatId, msgId) {
 function _adMongoSave(botNum, chatId, msgId, entry) {
     const clean = cleanBotNum(botNum);
     if (!clean) return;
-    (async () => {
-        try {
-            const { isMongoMode, initDb } = require('../server/db');
-            if (!isMongoMode()) return;
-            await initDb();
-            const AntideleteCache = require('../server/models/AntideleteCache');
-            const session = getAntideleteSession(clean);
-            const key = session ? session.mongoKey(chatId, msgId) : `${clean}::${chatId}::${msgId}`;
-            await AntideleteCache.findOneAndUpdate(
-                { botNum: clean, chatId, msgId },
-                {
-                    key,
-                    botNum: clean,
-                    chatId: String(chatId || ''),
-                    msgId: String(msgId || ''),
-                    data: _adSanitizeEntryForPersistence(entry),
-                    expiresAt: new Date(Date.now() + ANTIDELETE_MONGO_TTL_MS),
-                },
-                { upsert: true }
-            );
-        } catch (_) {}
-    })();
+    const session = getAntideleteSession(clean);
+    const key = session ? session.mongoKey(chatId, msgId) : `${clean}::${chatId}::${msgId}`;
+    _adMongoSaveQueue.set(key, { botNum: clean, chatId, msgId, entry, key });
+    _adScheduleMongoFlush();
 }
 
 function _adMongoDelete(botNum, chatId, msgId) {
     const clean = cleanBotNum(botNum);
     if (!clean) return;
+    const session = getAntideleteSession(clean);
+    const key = session ? session.mongoKey(chatId, msgId) : `${clean}::${chatId}::${msgId}`;
+    _adMongoSaveQueue.delete(key);
     setImmediate(async () => {
         try {
-            const { isMongoMode, initDb } = require('../server/db');
-            if (!isMongoMode()) return;
-            await initDb();
+            if (!(await _adEnsureMongoReady())) return;
             const AntideleteCache = require('../server/models/AntideleteCache');
             await AntideleteCache.deleteOne({ botNum: clean, chatId, msgId });
         } catch (_) {}

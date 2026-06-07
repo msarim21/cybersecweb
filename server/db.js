@@ -10,43 +10,59 @@ const PG_URL    = process.env.DATABASE_URL ||
 let _pool      = null;
 let _mongoMode = false;
 let _dbReady   = false;
+let _initPromise = null;
+let _mongoHandlersAttached = false;
 
 const isMongoMode = () => _mongoMode;
 const getPool     = () => _pool;
 const isDbReady   = () => _dbReady;
 
+const MONGO_OPTS = {
+  serverSelectionTimeoutMS: 15000,
+  socketTimeoutMS:          60000,
+  connectTimeoutMS:         20000,
+  heartbeatFrequencyMS:     10000,
+  retryWrites:              true,
+  retryReads:               true,
+  maxPoolSize:              20,
+  minPoolSize:              2,
+};
+
+function _attachMongoHandlers() {
+  if (_mongoHandlersAttached || !MONGO_URL) return;
+  _mongoHandlersAttached = true;
+  mongoose.connection.on('disconnected', () => {
+    console.warn('⚠️  MongoDB disconnected — auto-reconnecting...');
+    _dbReady = false;
+    setTimeout(() => {
+      mongoose.connect(MONGO_URL, MONGO_OPTS).catch((err) => {
+        console.error('MongoDB reconnect failed:', err.message);
+      });
+    }, 3000);
+  });
+  mongoose.connection.on('error', (err) => {
+    console.error('MongoDB error:', err.message);
+  });
+  mongoose.connection.on('reconnected', () => {
+    _dbReady = true;
+    console.log('✅ MongoDB reconnected');
+  });
+}
+
 const initDb = async () => {
+  if (_dbReady) return;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
   if (MONGO_URL) {
     _mongoMode = true;
-    await mongoose.connect(MONGO_URL, {
-      serverSelectionTimeoutMS: 15000,
-      socketTimeoutMS:          60000,
-      connectTimeoutMS:         20000,
-      heartbeatFrequencyMS:     10000,
-      retryWrites:              true,
-      retryReads:               true,
-      maxPoolSize:              10,
-    });
-    // Auto-reconnect event handlers
-    mongoose.connection.on('disconnected', () => {
-      console.warn('⚠️  MongoDB disconnected — auto-reconnecting...');
-      setTimeout(() => {
-        mongoose.connect(MONGO_URL, {
-          serverSelectionTimeoutMS: 15000,
-          socketTimeoutMS:          60000,
-          heartbeatFrequencyMS:     10000,
-          retryWrites:              true,
-          retryReads:               true,
-          maxPoolSize:              10,
-        }).catch(err => console.error('MongoDB reconnect failed:', err.message));
-      }, 3000);
-    });
-    mongoose.connection.on('error', err => {
-      console.error('MongoDB error:', err.message);
-    });
-    mongoose.connection.on('reconnected', () => {
-      console.log('✅ MongoDB reconnected');
-    });
+    if (mongoose.connection.readyState === 1) {
+      _attachMongoHandlers();
+      _dbReady = true;
+      return;
+    }
+    await mongoose.connect(MONGO_URL, MONGO_OPTS);
+    _attachMongoHandlers();
     _dbReady = true;
     console.log('✅ MongoDB connected');
     return;
@@ -152,6 +168,14 @@ const initDb = async () => {
     console.log('✅ PostgreSQL tables ready');
   } finally {
     client.release();
+  }
+  })();
+
+  try {
+    await _initPromise;
+  } catch (err) {
+    _initPromise = null;
+    throw err;
   }
 };
 

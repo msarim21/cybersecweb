@@ -5,6 +5,10 @@ const path = require('path');
 const { cleanBotNum } = require('./bot-workspace');
 
 const DEFAULT_MAX_AGE_MS = 6 * 60 * 1000;
+const DB_UPSERT_MIN_MS = 3 * 60 * 1000;
+
+const _lastFileWrite = new Map();
+const _lastDbUpsert = new Map();
 
 function _heartbeatPath(botNum) {
     const clean = cleanBotNum(botNum);
@@ -14,24 +18,35 @@ function _heartbeatPath(botNum) {
 function touchBotHeartbeat(botNum, extra = {}) {
     const clean = cleanBotNum(botNum);
     if (!clean) return;
-    const file = _heartbeatPath(clean);
-    try {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
+
+    const now = Date.now();
+    const lastFile = _lastFileWrite.get(clean) || 0;
+    if (now - lastFile >= 30_000) {
+        _lastFileWrite.set(clean, now);
+        const file = _heartbeatPath(clean);
         const payload = {
             botNum: clean,
-            ts: Date.now(),
+            ts: now,
             pid: process.pid,
             dyno: process.env.DYNO || '',
             ...extra,
         };
-        fs.writeFileSync(file, JSON.stringify(payload));
-    } catch (_) {}
-    (async () => {
+        try {
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.promises.writeFile(file, JSON.stringify(payload)).catch(() => {});
+        } catch (_) {}
+    }
+
+    const lastDb = _lastDbUpsert.get(clean) || 0;
+    if (now - lastDb < DB_UPSERT_MIN_MS) return;
+    _lastDbUpsert.set(clean, now);
+
+    setImmediate(async () => {
         try {
             const { upsertBotSession } = require('../server/db-service');
             await upsertBotSession(clean, 'active');
         } catch (_) {}
-    })();
+    });
 }
 
 function readBotHeartbeat(botNum) {
