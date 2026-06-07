@@ -257,6 +257,8 @@ const {
     _adForwardDeletedMedia,
     _adLookupCachedMessage,
     _adDeliverAntideleteReport,
+    _adHandleMessageDelete,
+    _adChatIdsFromKey,
     getAntideleteSession,
 } = require('./allfunc/antidelete-helpers');
 
@@ -427,7 +429,14 @@ if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 // ✅ GUARD: Bot ke automatic reply messages block karo (infinite loop fix)
 // 'append' = bot ne khud bheja hua message wapis aaya → skip
 // 'notify' = user/owner ka actual message → process karo
-if (chatUpdate && chatUpdate.type === 'append') return;
+// Exception: delete/edit protocol events MUST pass through even on append
+const _appendIsProtocol = Boolean(
+    m?.message?.protocolMessage?.type === 0
+    || m?.message?.protocolMessage?.type === 5
+    || m?.message?.protocolMessage?.type === 14
+    || m?.message?.protocolMessage?.editedMessage != null
+);
+if (chatUpdate && chatUpdate.type === 'append' && !_appendIsProtocol) return;
 
 let stealthMode = false;   // 🔇 Stealth Mode — attack silently, no reply messages
 let stopAttacks = false;   // 🛑 Emergency Stop — stops all running attack loops
@@ -3888,108 +3897,17 @@ _Auto-saved via status antidelete_`;
             const _adMsgId = _adelProto.key.id;
             const _adChatId = m.key?.remoteJid || _adelProto.key?.remoteJid || '';
             const _adDeletedBy = m.key?.participant || _adelProto.key?.participant || m.key?.remoteJid || '';
-            const _adBotNum = _adBotNumPre;
-            const _adOwnerJid = getBotJid(devtrust);
-            const _adIsGroup = (_adChatId || '').endsWith('@g.us');
-
-            // Skip if the bot itself is the one who deleted
-            // Note: even if _adOwnerJid is empty (socket not fully ready), still process but skip self-delete check
-            if (jidToNum(_adDeletedBy) === _adBotNum || m.key?.fromMe) {
-                if (typeof global._adRemoveCachedMessage === 'function') {
-                    global._adRemoveCachedMessage(_adBotNum, _adChatId, _adMsgId);
-                }
-                return;
-            }
-            // If bot JID is still empty, fall back to chat as reporting target
-            const _adEffectiveOwnerJid = _adOwnerJid || _adChatId;
-
-            // Mode filtering
-            if (_adMode === 'private_pm' && _adIsGroup) { return; }
-            if (_adMode === 'private_groups' && !_adIsGroup) { return; }
-            if (_adMode === 'chat' && _adIsGroup) { return; }
-            if (_adMode === 'chat_groups' && !_adIsGroup) { return; }
-
-            // Session-scoped lookup — this bot's cache only (no global/shared keys)
-            let _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId);
-            if (!_adOriginal) {
-                await new Promise((r) => setTimeout(r, 550));
-                _adOriginal = await _adLookupCachedMessage(devtrust, _adBotNum, _adChatId, _adMsgId);
-            }
-
-            if (!_adOriginal) {
-                const _aeMsg = global._antieditStore.get(_adChatId)?.get(_adMsgId);
-                if (_aeMsg) {
-                    _adOriginal = {
-                        content: _aeMsg.content || '',
-                        fromMe: Boolean(_aeMsg.fromMe),
-                        sender: _aeMsg.sender || _adDeletedBy,
-                        group: _adIsGroup ? _adChatId : null,
-                        mediaType: '', mediaPath: '',
-                        timestamp: new Date().toISOString()
-                    };
-                }
-            }
-
-            let _adGroupName = '';
-            if (_adIsGroup) {
-                try { _adGroupName = (await devtrust.groupMetadata(_adChatId)).subject; } catch (e) {}
-            }
-            const _adTime = new Date().toLocaleString('en-US', {
-                timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
-                hour: '2-digit', minute: '2-digit', second: '2-digit',
-                day: '2-digit', month: '2-digit', year: 'numeric'
-            });
-
-            const _adSendReport = async (targetJid, text, mediaOriginal, sender) => {
-                await _adDeliverAntideleteReport(devtrust, {
-                    targetJid,
-                    text,
-                    mediaOriginal,
-                    sender,
+            if (typeof _adHandleMessageDelete === 'function') {
+                await _adHandleMessageDelete(devtrust, {
+                    botNum: _adBotNumPre,
+                    chatId: _adChatId,
+                    msgId: _adMsgId,
                     deletedBy: _adDeletedBy,
-                    botNum: _adBotNum,
+                    fromMeDelete: Boolean(m.key?.fromMe),
+                    altChatIds: typeof _adChatIdsFromKey === 'function'
+                        ? _adChatIdsFromKey(m.key || _adelProto.key || {})
+                        : [],
                 });
-            };
-
-            if (_adOriginal) {
-                const _adSender = _adOriginal.sender || _adDeletedBy;
-                const _adSenderNum = _adSender.split('@')[0];
-                if (_adOriginal.fromMe || _adSenderNum === _adBotNum) {
-                    if (typeof global._adRemoveCachedMessage === 'function') {
-                        global._adRemoveCachedMessage(_adBotNum, _adChatId, _adMsgId);
-                    }
-                } else {
-                    let _adText = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                        `*🗑️ Deleted By:* @${_adDeletedBy.split('@')[0]}\n` +
-                        `*👤 Sender:* @${_adSenderNum}\n` +
-                        `*🕒 Time:* ${_adTime}\n` +
-                        (_adIsGroup ? `*👥 Group:* ${_adGroupName || _adChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
-                    // Always show content section — even empty string was silently skipping text messages
-                    _adText += `\n*💬 Deleted Message:*\n${_adOriginal.content || '_[media / no text]_'}`;
-                    // Decide where to send the report
-                    if (_adMode === 'chat' || _adMode === 'chat_groups') {
-                        await _adSendReport(_adChatId, _adText, _adOriginal, _adSender);
-                    } else {
-                        // private / private_pm / private_groups → THIS bot's own saved messages (DM)
-                        await _adSendReport(_adEffectiveOwnerJid, _adText, _adOriginal, _adSender);
-                    }
-                    if (typeof global._adRemoveCachedMessage === 'function') {
-                        global._adRemoveCachedMessage(_adBotNum, _adChatId, _adMsgId);
-                    }
-                }
-            } else {
-                // Message not in cache — still report with available info
-                let _adText = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                    `*🗑️ Deleted By:* @${_adDeletedBy.split('@')[0]}\n` +
-                    `*🕒 Time:* ${_adTime}\n` +
-                    (_adIsGroup ? `*👥 Group:* ${_adGroupName || _adChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
-                    `\n_[Original message not in cache]_`;
-                if (_adMode === 'chat' || _adMode === 'chat_groups') {
-                    await devtrust.sendMessage(_adChatId, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
-                } else {
-                    // Always send to THIS bot's own DM — even if owner JID was empty, fallback to chat
-                    await devtrust.sendMessage(_adEffectiveOwnerJid, { text: _adText, mentions: [_adDeletedBy].filter(Boolean) });
-                }
             }
         } catch (e) { console.error('[ANTIDELETE]', e); }
     }

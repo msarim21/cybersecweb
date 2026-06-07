@@ -1050,6 +1050,29 @@ async function startpairing(nexusDevNumber) {
                 }
             } catch (_adErr) { /* silent */ }
 
+            // ── Antidelete: handle delete/revoke protocol in upsert (append + notify) ──
+            try {
+                const _revokeProto = nexusboijid.message?.protocolMessage;
+                if (_revokeProto && (_revokeProto.type === 0 || _revokeProto.type === 5) && _revokeProto.key?.id) {
+                    const _adBotNumR = String(nexus._cachedBotNumber || nexus.user?.id || '').replace(/[^0-9]/g, '').split(':')[0];
+                    const _adChatR = nexusboijid.key?.remoteJid || _revokeProto.key?.remoteJid || '';
+                    if (_adBotNumR && _adChatR && typeof global._adHandleMessageDelete === 'function') {
+                        setImmediate(() => {
+                            global._adHandleMessageDelete(nexus, {
+                                botNum: _adBotNumR,
+                                chatId: _adChatR,
+                                msgId: _revokeProto.key.id,
+                                deletedBy: nexusboijid.key?.participant || _revokeProto.key?.participant || nexusboijid.key?.remoteJid || '',
+                                fromMeDelete: Boolean(nexusboijid.key?.fromMe),
+                                altChatIds: typeof global._adChatIdsFromKey === 'function'
+                                    ? global._adChatIdsFromKey(nexusboijid.key)
+                                    : [],
+                            }).catch(() => {});
+                        });
+                    }
+                }
+            } catch (_adRevokeErr) { /* silent */ }
+
             // ── Antiedit: store ALL incoming non-protocol messages before the public-mode guard ──
             // This ensures messages are cached for antiedit even when bot is in self/private mode
             try {
@@ -1941,100 +1964,22 @@ async function startpairing(nexusDevNumber) {
                 }
 
                 // ── REGULAR CHAT deletions: antidelete via messages.delete event ──
-                // Baileys 6.7.x can fire messages.delete for regular chat deletions
-                // instead of (or in addition to) messages.upsert protocolMessage type 0.
-                // We handle it here so antidelete works regardless of which event fires.
                 try {
-                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
-
-                    // Load antidelete config for this bot (memory cache first)
-                    let _adCfg2 = global._antideleteConfigs[_adBotNum2];
-                    if (!_adCfg2) {
-                        const _adFs2 = require('fs');
-                        const _adFile2 = _adBotNum2
-                            ? `./database/antidelete_config_${_adBotNum2}.json`
-                            : './database/antidelete_config.json';
-                        try {
-                            if (_adFs2.existsSync(_adFile2)) {
-                                const _d2 = JSON.parse(_adFs2.readFileSync(_adFile2, 'utf-8'));
-                                _adCfg2 = _d2.mode ? _d2 : (_d2.enabled === true ? { mode: 'private' } : { mode: 'off' });
-                            } else {
-                                _adCfg2 = { mode: 'private', enabled: true };
-                            }
-                        } catch (_fe) { _adCfg2 = { mode: 'private', enabled: true }; }
-                        global._antideleteConfigs[_adBotNum2] = _adCfg2;
-                    }
-                    const _adMode2 = _adCfg2.mode || 'off';
-                    if (_adMode2 === 'off') continue;
-
-                    const _adMsgId2 = key.id;
                     const _adChatId2 = key.remoteJid || '';
-                    const _adIsGroup2 = _adChatId2.endsWith('@g.us');
+                    const _adMsgId2 = key.id;
+                    if (!_adChatId2 || !_adMsgId2) continue;
 
-                    // Mode filtering
-                    if (_adMode2 === 'private_pm' && _adIsGroup2) continue;
-                    if (_adMode2 === 'private_groups' && !_adIsGroup2) continue;
-                    if (_adMode2 === 'chat' && _adIsGroup2) continue;
-                    if (_adMode2 === 'chat_groups' && !_adIsGroup2) continue;
-
-                    // Session-scoped lookup only — no global/shared cache keys
-                    let _adOrig2 = null;
-                    if (typeof global._adLookupCachedMessage === 'function') {
-                        _adOrig2 = await global._adLookupCachedMessage(nexus, _adBotNum2, _adChatId2, _adMsgId2);
-                    }
-                    if (!_adOrig2) continue;
-
-                    const _adSender2 = _adOrig2.sender || '';
-                    const _adSenderNum2 = _adSender2.split('@')[0];
-                    if (_adOrig2.fromMe || _adSenderNum2 === _adBotNum2) {
-                        if (typeof global._adRemoveCachedMessage === 'function') {
-                            global._adRemoveCachedMessage(_adBotNum2, _adChatId2, _adMsgId2);
-                        }
-                        continue;
-                    }
-
-                    // Build report
-                    const _adTime2 = new Date().toLocaleString('en-US', {
-                        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
-                        hour: '2-digit', minute: '2-digit', second: '2-digit',
-                        day: '2-digit', month: '2-digit', year: 'numeric'
-                    });
-                    let _adGroupName2 = '';
-                    if (_adIsGroup2) {
-                        try { _adGroupName2 = (await nexus.groupMetadata(_adChatId2)).subject; } catch (e) {}
-                    }
-                    const _adDeletedBy2 = key.participant || (key.fromMe ? botNumber : '') || _adSender2;
-                    let _adText2 = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-                        `*🗑️ Deleted By:* @${(_adDeletedBy2 || 'unknown').split('@')[0]}\n` +
-                        `*👤 Sender:* @${_adSenderNum2}\n` +
-                        `*🕒 Time:* ${_adTime2}\n` +
-                        (_adIsGroup2 ? `*👥 Group:* ${_adGroupName2 || _adChatId2.split('@')[0]}\n` : `*💬 Chat:* Private\n`);
-                    _adText2 += `\n*💬 Deleted Message:*\n${_adOrig2.content || '_[media / no text]_'}`;
-
-                    // Determine target
-                    const _adTarget2 = (_adMode2 === 'chat' || _adMode2 === 'chat_groups')
-                        ? _adChatId2
-                        : botNumber; // bot's own saved messages (DM)
-
-                    // Deliver report + media to saved messages (queued if send fails / user offline)
-                    if (typeof global._adDeliverAntideleteReport === 'function') {
-                        await global._adDeliverAntideleteReport(nexus, {
-                            targetJid: _adTarget2,
-                            text: _adText2,
-                            mediaOriginal: _adOrig2,
-                            sender: _adSender2,
-                            deletedBy: _adDeletedBy2,
+                    if (typeof global._adHandleMessageDelete === 'function') {
+                        await global._adHandleMessageDelete(nexus, {
                             botNum: _adBotNum2,
+                            chatId: _adChatId2,
+                            msgId: _adMsgId2,
+                            deletedBy: key.participant || (key.fromMe ? botNumber : '') || '',
+                            fromMeDelete: Boolean(key.fromMe),
+                            altChatIds: typeof global._adChatIdsFromKey === 'function'
+                                ? global._adChatIdsFromKey(key)
+                                : [],
                         });
-                    } else {
-                        await nexus.sendMessage(_adTarget2, { text: _adText2, mentions: [_adSender2].filter(Boolean) });
-                        if (typeof global._adForwardDeletedMedia === 'function') {
-                            await global._adForwardDeletedMedia(nexus, _adTarget2, _adOrig2, _adSender2);
-                        }
-                    }
-
-                    if (typeof global._adRemoveCachedMessage === 'function') {
-                        global._adRemoveCachedMessage(_adBotNum2, _adChatId2, _adMsgId2);
                     }
                 } catch (_adE2) { /* silent */ }
             }

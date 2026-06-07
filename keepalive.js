@@ -78,8 +78,7 @@ function cleanupBotMemory() {
         if (global._processedMsgIds?.clear) global._processedMsgIds.clear();
         global._lastViewOnce = {};
         global._pcMemCache = null;
-        global._antideleteConfigs = {};
-        global._antieditConfigs = {};
+        // Keep antidelete/antiedit configs — reloaded from disk on next use
         if (typeof global.gc === 'function') global.gc();
         console.log('[AutoRestart] 🧹 Memory caches cleared — fresh start');
     } catch (e) {

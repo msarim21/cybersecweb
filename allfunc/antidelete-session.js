@@ -30,6 +30,8 @@ class AntideleteSessionStore {
         if (!this.botNum) throw new Error('AntideleteSessionStore requires botNum');
         /** @type {Map<string, object>} chatId::msgId → entry */
         this.memory = new Map();
+        /** msgId → primary chatId (fallback when JID format differs, e.g. @lid vs @s.whatsapp.net) */
+        this.msgIdIndex = new Map();
         this.diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
         this.mediaDir = path.join('tmp', 'antidelete_media', this.botNum);
         this._diskTimer = null;
@@ -74,13 +76,56 @@ class AntideleteSessionStore {
         return this.memory.get(this.cacheKey(chatId, msgId)) || null;
     }
 
-    set(chatId, msgId, entry) {
+    set(chatId, msgId, entry, aliasChatIds = []) {
         this.loadFromDisk();
         this.memory.set(this.cacheKey(chatId, msgId), entry);
+        this.msgIdIndex.set(String(msgId), String(chatId));
+        for (const alt of aliasChatIds) {
+            if (!alt || alt === chatId) continue;
+            this.memory.set(this.cacheKey(alt, msgId), entry);
+        }
+        // Keep RAM bounded — trim oldest when over limit
+        if (this.memory.size > ANTIDELETE_MAX_ENTRIES * 1.5) {
+            const sorted = [...this.memory.entries()]
+                .sort((a, b) => (a[1]?._ts || 0) - (b[1]?._ts || 0));
+            const drop = sorted.slice(0, Math.floor(ANTIDELETE_MAX_ENTRIES * 0.25));
+            for (const [k, v] of drop) {
+                this.memory.delete(k);
+                const mid = k.split('::').slice(1).join('::');
+                if (mid && this.msgIdIndex.get(mid) === k.split('::')[0]) {
+                    this.msgIdIndex.delete(mid);
+                }
+                void v;
+            }
+        }
     }
 
     delete(chatId, msgId) {
-        this.memory.delete(this.cacheKey(chatId, msgId));
+        const key = this.cacheKey(chatId, msgId);
+        this.memory.delete(key);
+        if (this.msgIdIndex.get(String(msgId)) === String(chatId)) {
+            this.msgIdIndex.delete(String(msgId));
+        }
+        // Remove alias keys for same msgId
+        for (const [k] of this.memory) {
+            if (k.endsWith(`::${msgId}`)) this.memory.delete(k);
+        }
+    }
+
+    findByMsgId(msgId) {
+        this.loadFromDisk();
+        const primaryChat = this.msgIdIndex.get(String(msgId));
+        if (primaryChat) {
+            const hit = this.memory.get(this.cacheKey(primaryChat, msgId));
+            if (hit) return { chatId: primaryChat, entry: hit };
+        }
+        for (const [k, v] of this.memory) {
+            if (k.endsWith(`::${msgId}`)) {
+                const chatId = k.slice(0, -(String(msgId).length + 2));
+                return { chatId, entry: v };
+            }
+        }
+        return null;
     }
 
     readDiskEntry(chatId, msgId) {
@@ -110,8 +155,26 @@ class AntideleteSessionStore {
         try {
             this.ensureDirs();
             const entries = [];
+            const B64_MAX = 8 * 1024 * 1024;
             for (const [key, val] of this.memory.entries()) {
-                entries.push([key, val]);
+                const row = {
+                    content: val?.content || '',
+                    rawMediaMsg: val?.rawMediaMsg || null,
+                    mediaType: val?.mediaType || '',
+                    mediaPath: val?.mediaPath || '',
+                    mediaBufferB64: val?.mediaBufferB64 || null,
+                    isPtt: Boolean(val?.isPtt),
+                    fromMe: Boolean(val?.fromMe),
+                    sender: val?.sender || '',
+                    group: val?.group || null,
+                    timestamp: val?.timestamp || new Date().toISOString(),
+                    _ts: val?._ts || Date.now(),
+                    botNum: val?.botNum || this.botNum,
+                };
+                if (row.mediaBufferB64 && row.mediaBufferB64.length > B64_MAX * 1.4) {
+                    delete row.mediaBufferB64;
+                }
+                entries.push([key, row]);
             }
             fs.writeFileSync(this.diskPath, JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES)), 'utf-8');
         } catch (_) {}
