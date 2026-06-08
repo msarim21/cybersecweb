@@ -61,18 +61,11 @@ async function processPairingQueue() {
 
                     global._pairingInFlight.add(clean);
 
+                    const { fork } = require('child_process');
+                    const runner = path.join(__dirname, 'bot-runner.js');
                     const jid = `${clean}@s.whatsapp.net`;
                     const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
                     removeFromStoppedBots(clean);
-
-                    const pairMod = require('../pair');
-                    if (typeof pairMod.stopBot === 'function') {
-                        pairMod.stopBot(jid);
-                        pairMod.stopBot(clean);
-                    }
-                    if (typeof pairMod.clearSession === 'function') {
-                        pairMod.clearSession(clean);
-                    }
 
                     const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', jid);
                     if (fs.existsSync(sessionPath)) {
@@ -89,8 +82,16 @@ async function processPairingQueue() {
                         if (fs.existsSync(pairingJson)) fs.unlinkSync(pairingJson);
                     } catch (_) {}
 
-                    pairMod(jid).catch((err) => {
-                        console.error(`[PairingQueue] pair() error for ${clean}:`, err.message);
+                    fork(runner, [clean], {
+                        env: {
+                            ...process.env,
+                            WHATSAPP_WORKER: '1',
+                            BOT_ISOLATION: '1',
+                            BOT_NUMBER: clean,
+                            BOT_PAIRING: '1',
+                        },
+                        stdio: 'inherit',
+                        cwd: path.join(__dirname, '..'),
                     });
 
                     const deadline = Date.now() + 90_000;

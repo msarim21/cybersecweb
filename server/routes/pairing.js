@@ -27,17 +27,21 @@ const {
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
+const { fork } = require('child_process');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const PAIRING_JSON  = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE   = path.join(__dirname, '../../pair');
 const SESSION_DB    = path.join(__dirname, '../../session-db');
 
-/** Queue pairing only when WhatsApp host runs on another dyno (legacy worker-only setup). */
-function shouldQueueToWorker() {
+/**
+ * Pairing must run in a child with BOT_PAIRING=1 (pair.js reads that at load time).
+ * On Heroku / supervisor hosts, pairing-processor + supervisor own that path.
+ */
+function shouldDelegatePairing() {
   try {
     const { shouldRunWhatsAppSupervisor } = require('../../allfunc/whatsapp-host');
-    if (shouldRunWhatsAppSupervisor()) return false;
+    if (shouldRunWhatsAppSupervisor()) return true;
   } catch (_) {}
   if (process.env.DYNO) return true;
   if (process.env.RENDER === 'true') return true;
@@ -98,18 +102,27 @@ async function prepareFreshPairing(clean) {
   ensureDir(sessionPath);
 }
 
-function startPairingInBackground(clean) {
-  const jid = `${clean}@s.whatsapp.net`;
-  setImmediate(() => {
-    try {
-      const startpairing = require(PAIR_MODULE);
-      startpairing(jid).catch((err) => {
-        console.error(`[Pairing/bg] startpairing error for ${clean}:`, err.message);
-      });
-    } catch (err) {
-      console.error(`[Pairing/bg] failed to load pair.js for ${clean}:`, err.message);
-    }
+/** Local dev fallback: fork isolated child so pair.js loads with BOT_PAIRING=1. */
+function spawnPairingChild(clean) {
+  const runner = path.join(__dirname, '../../worker/bot-runner.js');
+  fork(runner, [clean], {
+    env: {
+      ...process.env,
+      WHATSAPP_WORKER: '1',
+      BOT_ISOLATION: '1',
+      BOT_NUMBER: clean,
+      BOT_PAIRING: '1',
+    },
+    stdio: 'inherit',
+    cwd: path.join(__dirname, '../..'),
   });
+}
+
+function nudgePairingProcessor() {
+  try {
+    const { processPairingQueue } = require('../../worker/pairing-processor');
+    processPairingQueue().catch(() => {});
+  } catch (_) {}
 }
 
 // ── POST /api/pairing/request — start pairing, return immediately ─────────────
@@ -130,13 +143,14 @@ router.post('/request', protect, pairingRequestLimiter, async (req, res) => {
   try {
     await requestPairing(clean, req.user.id, botName || 'CYBER-BOT');
 
-    if (shouldQueueToWorker()) {
-      // Worker dyno owns session wipe + pair.js — web filesystem is not shared on Heroku
+    if (shouldDelegatePairing()) {
+      // Supervisor spawns BOT_PAIRING=1 child — never call pair() in this web process
+      nudgePairingProcessor();
       return res.json({ status: 'queued', number: clean });
     }
 
     await prepareFreshPairing(clean);
-    startPairingInBackground(clean);
+    spawnPairingChild(clean);
     return res.json({ status: 'started', number: clean });
   } catch (err) {
     console.error('[Pairing/request]', err.message);
