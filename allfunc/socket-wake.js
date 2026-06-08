@@ -45,10 +45,10 @@ async function ensureWhatsAppSocketHot(nexus, tracker, opts = {}) {
             const session = getAntideleteSession(botNum);
             if (session?.refreshFromDisk) session.refreshFromDisk();
 
-            if (typeof global._adFlushMongoSavesNow === 'function') {
+            if (force && typeof global._adFlushMongoSavesNow === 'function') {
                 await global._adFlushMongoSavesNow().catch(() => {});
             }
-            if (typeof global._adFlushPendingReports === 'function') {
+            if (force && typeof global._adFlushPendingReports === 'function') {
                 const jid = nexus._cachedBotNumber || `${botNum}@s.whatsapp.net`;
                 await global._adFlushPendingReports(nexus, botNum, jid).catch(() => {});
             }

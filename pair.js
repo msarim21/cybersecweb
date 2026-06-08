@@ -834,7 +834,7 @@ async function startpairing(nexusDevNumber) {
             if (_silentMs >= 2 * 60 * 1000) {
                 try {
                     const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-                    await ensureWhatsAppSocketHot(nexus, _tracker).catch(() => {});
+                    void ensureWhatsAppSocketHot(nexus, _tracker).catch(() => {});
                 } catch (_) {}
             }
             _tracker.lastWAMessage = Date.now();
@@ -902,8 +902,8 @@ async function startpairing(nexusDevNumber) {
             }
 
 
-            // ✅ Status-Reply-to-DM — when ANYONE replies to a status,
-            //    auto-download & send that status to the replier's own DM (no command needed)
+            // Status-reply + view-once reply handlers — deferred so commands are not blocked
+            setImmediate(async () => {
             try {
                 const _srMsgContent   = nexusboijid.message;
                 const _srInnerMsg     = _srMsgContent?.extendedTextMessage
@@ -1092,13 +1092,7 @@ async function startpairing(nexusDevNumber) {
             } catch (voErr) {
                 console.log('[ViewOnce] handler error:', voErr?.message);
             }
-
-            // ── Antidelete: cache ALL messages (incl. fromMe/self-chat) before public-mode guard ──
-            try {
-                if (typeof global._cacheMessageForAntidelete === 'function') {
-                    global._cacheMessageForAntidelete(nexusboijid, nexus);
-                }
-            } catch (_adErr) { /* silent */ }
+            }); // end deferred status-reply / view-once handlers
 
             // ── Antidelete: handle delete/revoke protocol in upsert (append + notify) ──
             try {
@@ -1824,15 +1818,14 @@ async function startpairing(nexusDevNumber) {
             try {
                 const _modeNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 const dbMode = await getBotMode(_modeNum).catch(() => null);
-                if (dbMode === 'public') {
-                    nexus.public = true;
+                if (dbMode === 'public' || dbMode === 'self') {
+                    nexus.public = dbMode === 'public';
                 } else {
-                    nexus.public = false;
-                    if (!dbMode) await setBotMode(_modeNum, 'self');
+                    nexus.public = true;
                 }
                 console.log(chalk.cyan(`[pair] 📋 Mode for ${_modeNum}: ${nexus.public ? 'PUBLIC' : 'SELF (private)'}`));
             } catch (_) {
-                nexus.public = false;
+                nexus.public = true;
             }
 
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
@@ -2240,27 +2233,19 @@ async function startpairing(nexusDevNumber) {
         const _idleWakeMs = 5 * 60 * 1000;
 
         if (wsState === 1) {
-            // Idle but socket open — wake before user sends a command (prevents slow first reply)
-            if (_silentMs >= _idleWakeMs) {
-                try {
-                    await Promise.race([
-                        nexus.sendPresenceUpdate('available'),
-                        new Promise((_, rej) => setTimeout(() => rej(new Error('wake timeout')), 12000)),
-                    ]);
-                    tracker.lastActivity = Date.now();
-                } catch (_) {
-                    tracker._probeFailures = (tracker._probeFailures || 0) + 1;
-                }
-            }
-
-            // WebSocket appears open — probe with presence update (12s timeout)
             let probeOk = false;
+            const _didIdleWake = _silentMs >= _idleWakeMs;
+
+            // Idle but socket open — single presence probe (avoid double 12s stall)
             try {
                 await Promise.race([
                     nexus.sendPresenceUpdate('available').then(() => { probeOk = true; }),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 12000))
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 8000)),
                 ]);
-            } catch (_) { probeOk = false; }
+                if (probeOk) tracker.lastActivity = Date.now();
+            } catch (_) {
+                if (_didIdleWake) tracker._probeFailures = (tracker._probeFailures || 0) + 1;
+            }
 
             if (!probeOk) {
                 tracker._probeFailures = (tracker._probeFailures || 0) + 1;

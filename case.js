@@ -4238,7 +4238,7 @@ if (!devtrust.public) {
     // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
     const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
     const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!isCreator && !_isCreatorFromChannel) return
+    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
 }
 
 const example = (teks) => {
@@ -4541,7 +4541,7 @@ if (m.isGroup && body && !isAdmins && !isCreator) {
         const startsWithPrefix = botPrefixes.some(prefix => body.startsWith(prefix));
         
         // Check if sender ID looks like a bot
-        const isBotJid = m.sender.includes('bot') || m.sender.includes('lid') || m.sender.includes('broadcast');
+        const isBotJid = m.sender.includes('@bot') || m.sender.includes('broadcast');
         
         // ONLY trigger if BOTH conditions are true
         if (startsWithPrefix && isBotJid) {
@@ -4875,7 +4875,7 @@ switch(command) {
 case 'allmenu':
 case 'CYBERall':
 case 'commandlist': {
-  autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
+  setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
@@ -5607,7 +5607,7 @@ break;
 
 case 'menu':
 case 'CYBER': {
-   autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
+   setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
     
     const menuImages = [
