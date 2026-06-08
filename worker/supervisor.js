@@ -303,6 +303,11 @@ async function handlePairingRequest(clean) {
             if (fs.existsSync(pairingJson)) fs.unlinkSync(pairingJson);
         } catch (_) {}
 
+        try {
+            const { removeConnectedFlag } = require('../allfunc/connected-flag');
+            removeConnectedFlag(num);
+        } catch (_) {}
+
         ensureBotWorkspace(num);
         spawnBot(num, { pairing: true, force: true, noRestart: true });
 

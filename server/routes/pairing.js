@@ -23,6 +23,7 @@ const {
   getNumbersByOwner,
   requestPairing,
   getPairingState,
+  isNumberInLinkedNumbers,
 } = require('../db-service');
 const path = require('path');
 const fs = require('fs').promises;
@@ -143,6 +144,11 @@ router.post('/request', protect, pairingRequestLimiter, async (req, res) => {
   try {
     await requestPairing(clean, req.user.id, botName || 'CYBER-BOT');
 
+    try {
+      const { removeConnectedFlag } = require('../../allfunc/connected-flag');
+      removeConnectedFlag(clean);
+    } catch (_) {}
+
     if (shouldDelegatePairing()) {
       // Supervisor spawns BOT_PAIRING=1 child — never call pair() in this web process
       nudgePairingProcessor();
@@ -182,37 +188,45 @@ router.get('/code/:number', protect, async (req, res) => {
   }
 });
 
+const PAIRING_IN_FLIGHT = new Set(['requested', 'pairing', 'code_ready']);
+
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
 router.get('/status/:number', protect, async (req, res) => {
   const clean = req.params.number.replace(/[^0-9]/g, '');
 
+  let pairingState = null;
+  try {
+    pairingState = await getPairingState(clean);
+  } catch (_) {}
+
   const owned = await getNumbersByOwner(req.user.id, null);
   const isOwner = owned.some((n) => String(n.number).replace(/[^0-9]/g, '') === clean);
-  if (!isOwner && req.user.role !== 'admin') {
+  const isPairingOwner = pairingState?.pairingOwnerId
+    && String(pairingState.pairingOwnerId) === String(req.user.id);
+  if (!isOwner && !isPairingOwner && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'You do not own this number.' });
   }
 
-  const { readConnectedFlag, isConnected } = require('../../allfunc/connected-flag');
-  if (isConnected(clean)) {
-    try {
-      const data = readConnectedFlag(clean);
-      if (data?.ts) return res.json({ connected: true, ts: data.ts });
-    } catch (_) {}
-    return res.json({ connected: true });
+  // Code generated but user has not entered it on WhatsApp yet
+  if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
+    return res.json({ connected: false, pairing: true, status: pairingState.pairingStatus });
   }
 
-  try {
-    const state = await getPairingState(clean);
-    if (state?.status === 'active') return res.json({ connected: true });
-  } catch (_) {}
+  const { readConnectedFlag } = require('../../allfunc/connected-flag');
+  const flag = readConnectedFlag(clean);
 
+  // Connected only after WA pairing completed and server linked the number
   try {
-    const svc = require('../db-service');
-    const activeSessions = await svc.getActiveBotSessions();
-    if (activeSessions.some(n => String(n).replace(/[^0-9]/g, '') === clean)) {
-      return res.json({ connected: true });
+    if (await isNumberInLinkedNumbers(clean)) {
+      if (isOwner || req.user.role === 'admin') {
+        return res.json({ connected: true, ts: flag?.ts || Date.now(), linked: true });
+      }
     }
   } catch (_) {}
+
+  if (flag?.linked) {
+    return res.json({ connected: true, ts: flag.ts || Date.now(), linked: true });
+  }
 
   res.json({ connected: false });
 });

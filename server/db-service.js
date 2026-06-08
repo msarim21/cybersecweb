@@ -814,9 +814,9 @@ async function requestPairing(number, ownerId = null, botName = null) {
       pairingCode: null,
       pairingOwnerId: owner,
       pairingBotName: name,
+      status: 'pending',
       lastActive: new Date(),
     };
-    if (!existing?.sessionData) update.status = 'pending';
     await BotSession.findOneAndUpdate({ number: clean }, update, { upsert: true });
     return;
   }
@@ -826,6 +826,7 @@ async function requestPairing(number, ownerId = null, botName = null) {
     `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, pairing_owner_id, pairing_bot_name, last_active)
      VALUES ($1, 'pending', 'requested', NULL, $2, $3, NOW())
      ON CONFLICT (number) DO UPDATE SET
+       status = 'pending',
        pairing_status = 'requested',
        pairing_code = NULL,
        pairing_owner_id = COALESCE(EXCLUDED.pairing_owner_id, bot_sessions.pairing_owner_id),

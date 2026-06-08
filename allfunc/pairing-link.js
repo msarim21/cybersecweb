@@ -30,14 +30,15 @@ async function linkNumberOnWebConnect(nexusDevNumber) {
         );
 
         if (saved) {
-            console.log(chalk.green(`[pair] ✅ Auto-saved +${cleanNum} to linked_numbers (${botName})`));
+            console.log(chalk.green(`[pair] ✅ Auto-saved +${cleanNum} to linked_numbers (${botName}) after phone pairing`));
             try {
                 const { writeConnectedFlag } = require('./connected-flag');
                 writeConnectedFlag(cleanNum, { connected: true, number: cleanNum, ts: Date.now(), linked: true });
             } catch (_) {}
             try {
-                const { clearPairingRequest } = require('../server/db-service');
+                const { clearPairingRequest, markFirstConnected } = require('../server/db-service');
                 await clearPairingRequest(cleanNum);
+                await markFirstConnected(cleanNum);
             } catch (_) {}
             return { linked: true, reason: 'saved', record: saved };
         }

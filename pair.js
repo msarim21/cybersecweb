@@ -1559,7 +1559,7 @@ async function startpairing(nexusDevNumber) {
 
     // Enhanced connection.update handler
     nexus.ev.on("connection.update", async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, isNewLogin } = update;
         const tracker = rentbotTracker.get(nexusDevNumber);
 
         if (connection === "close") {
@@ -1705,6 +1705,18 @@ async function startpairing(nexusDevNumber) {
             }
         } else if (connection === "open") {
           try {
+            if (!nexus.user?.id) return;
+
+            const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+            const credsRegistered = Boolean(state?.creds?.registered);
+            const awaitingPhonePair = (process.env.BOT_PAIRING === '1' || pairingCode)
+                && !credsRegistered && !isNewLogin;
+
+            if (awaitingPhonePair) {
+                console.log(chalk.cyan(`[pair] ⏳ +${cleanNum} socket ready — enter pairing code on phone to finish`));
+                return;
+            }
+
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             // SPEED FIX: Cache botNumber once — avoids decodeJid() call on EVERY message
             nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
@@ -1727,11 +1739,6 @@ async function startpairing(nexusDevNumber) {
 
             // SPEED FIX: removed unnecessary 2000ms sleep — bot is ready immediately after connect
 
-            // Persist active status to DB (awaited so web panel status poll works immediately)
-            try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
-
-            const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-
             // Backup session to DB immediately — survives Heroku/dyno restarts without re-pairing
             try {
                 const { backupSessionFolder } = require('./session-db');
@@ -1744,16 +1751,21 @@ async function startpairing(nexusDevNumber) {
                 touchBotHeartbeat(cleanNum, { event: 'connected', wsState: nexus.ws?.readyState ?? 1 });
             } catch (_) {}
 
-            // ── Web pairing: connect hote hi linked_numbers mein save ──
+            // ── Web pairing: save to dashboard only after user entered code on phone ──
+            let webLinked = false;
             try {
                 const { linkNumberOnWebConnect } = require('./allfunc/pairing-link');
                 const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
-                if (!linkResult.linked) {
+                webLinked = Boolean(linkResult.linked);
+                if (!webLinked) {
                     console.log(chalk.yellow(`[pair] ⚠️ +${cleanNum} connected but not in linked_numbers yet (${linkResult.reason}) — orphan wipe in 30 min if still unlinked`));
                 }
             } catch (_wpErr) {
                 console.log(chalk.yellow(`[pair] Web pairing post-connect: ${_wpErr.message}`));
             }
+
+            // Persist active status only after real WA authentication
+            try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
 
             if (process.env.BOT_PAIRING === '1') {
                 try {
@@ -1772,18 +1784,13 @@ async function startpairing(nexusDevNumber) {
                 process.env.BOT_PAIRING = '0';
             }
 
-            // ── Auto-register main bot in linked_numbers so website dashboard shows it ──
-            try {
-                await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
-                console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
-            } catch (_) {}
-
-            // Write connected flag so web panel can auto-save the number
-            try {
-                const flagDir  = path.join(__dirname, 'nexstore', 'pairing', cleanNum);
-                if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
-            } catch (_) {}
+            // Legacy CLI bots without web pairing owner still register under system
+            if (!webLinked) {
+                try {
+                    await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
+                    console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
+                } catch (_) {}
+            }
 
             // AUTO-ENABLE ANTIDELETE PRIVATE on every connect + ensure isolated workspace
             try {

@@ -267,7 +267,34 @@ const LinkModal = ({ onClose, onAdd }) => {
     return () => clearInterval(timerRef.current);
   }, [step]);
 
-  // Auto-detect WhatsApp pairing — poll /api/pairing/status every 3 s
+  const finishLinking = async () => {
+    if (autoSaved.current) return;
+    autoSaved.current = true;
+    clearInterval(pollRef.current);
+    setSaving(true);
+    try {
+      const listRes = await axios.get('/api/numbers');
+      const cleanNum = form.number.replace(/\D/g, '');
+      const existing = (listRes.data || []).find(
+        (n) => String(n.number).replace(/\D/g, '') === cleanNum
+      );
+      if (existing) {
+        onAdd(existing);
+      } else {
+        const res = await axios.post('/api/numbers', { number: form.number, botName: form.botName });
+        onAdd(res.data);
+      }
+      toast.success('✅ NUMBER LINKED SUCCESSFULLY');
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save number');
+      autoSaved.current = false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Auto-detect WhatsApp pairing — only after user enters code on phone
   useEffect(() => {
     if (step !== 3) { autoSaved.current = false; return; }
     const cleanNum = form.number.replace(/\D/g, '');
@@ -276,24 +303,12 @@ const LinkModal = ({ onClose, onAdd }) => {
       if (autoSaved.current) return;
       try {
         const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
-        if (data.connected) {
-          if (autoSaved.current) return;
-          autoSaved.current = true;
-          clearInterval(pollRef.current);
-          toast.success('📱 WhatsApp connected! Auto-saving…');
-          setSaving(true);
-          try {
-            const res = await axios.post('/api/numbers', { number: form.number, botName: form.botName });
-            onAdd(res.data);
-            toast.success('✅ NUMBER LINKED SUCCESSFULLY');
-            onClose();
-          } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to save number');
-            autoSaved.current = false;
-          } finally { setSaving(false); }
+        if (data.connected && data.linked) {
+          toast.success('📱 WhatsApp paired! Saving to dashboard…');
+          await finishLinking();
         }
       } catch (_) {}
-    }, 3000);
+    }, 2000);
     return () => clearInterval(pollRef.current);
   }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -342,19 +357,20 @@ const LinkModal = ({ onClose, onAdd }) => {
   };
 
   const handleConfirm = async () => {
-    if (autoSaved.current) return;
-    autoSaved.current = true;
-    clearInterval(pollRef.current);
+    const cleanNum = form.number.replace(/\D/g, '');
     setSaving(true);
     try {
-      const res = await axios.post('/api/numbers', { number: form.number, botName: form.botName });
-      onAdd(res.data);
-      toast.success('NUMBER LINKED SUCCESSFULLY');
-      onClose();
+      const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
+      if (!data.connected) {
+        toast.error('Pehle apne phone par WhatsApp mein code enter karein — abhi connect nahi hua.');
+        return;
+      }
+      await finishLinking();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to save number');
-      autoSaved.current = false;
-    } finally { setSaving(false); }
+      toast.error(err.response?.data?.error || 'Could not verify WhatsApp connection');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -447,7 +463,7 @@ const LinkModal = ({ onClose, onAdd }) => {
                     onClick={handleConfirm} disabled={saving || timer === 0}
                     className="flex-1 py-3 rounded-xl font-display text-xs tracking-widest text-white"
                     style={{ background: 'linear-gradient(135deg,rgba(0,255,136,0.3),rgba(0,245,255,0.2))', border: '1px solid rgba(0,255,136,0.4)' }}>
-                    {saving ? '⟳ AUTO-SAVING...' : '✓ I ENTERED THE CODE — SAVE'}
+                    {saving ? '⟳ CHECKING...' : '✓ I ENTERED THE CODE — VERIFY'}
                   </motion.button>
                 </div>
               </motion.div>
