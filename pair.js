@@ -829,7 +829,16 @@ async function startpairing(nexusDevNumber) {
 
         // ── Track last real WhatsApp message time (used by dead-connection watchdog) ──
         const _tracker = rentbotTracker.get(nexusDevNumber);
-        if (_tracker) _tracker.lastWAMessage = Date.now();
+        if (_tracker) {
+            const _silentMs = Date.now() - (_tracker.lastWAMessage || _tracker.lastActivity || 0);
+            if (_silentMs >= 2 * 60 * 1000) {
+                try {
+                    const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
+                    await ensureWhatsAppSocketHot(nexus, _tracker).catch(() => {});
+                } catch (_) {}
+            }
+            _tracker.lastWAMessage = Date.now();
+        }
 
         // ── Antidelete: cache EVERY message (first priority — incl. commands) ──
         if (typeof global._cacheMessageForAntidelete === 'function') {
@@ -1110,6 +1119,7 @@ async function startpairing(nexusDevNumber) {
                                 altChatIds: typeof global._adChatIdsFromKey === 'function'
                                     ? global._adChatIdsFromKey(nexusboijid.key)
                                     : [],
+                                tracker: rentbotTracker.get(nexusDevNumber),
                             }).catch(() => {});
                         });
                     }
@@ -2001,7 +2011,12 @@ async function startpairing(nexusDevNumber) {
     nexus.ev.on('messages.delete', async (item) => {
         try {
             if (!nexus.user) return;
-            const botNumber = await nexus.decodeJid(nexus.user.id);
+            const _delTracker = rentbotTracker.get(nexusDevNumber);
+            try {
+                const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
+                await ensureWhatsAppSocketHot(nexus, _delTracker, { force: true });
+            } catch (_) {}
+            const botNumber = nexus._cachedBotNumber || nexus.decodeJid(nexus.user.id);
             const _adBotNum2 = typeof global._adResolveBotNum === 'function'
                 ? global._adResolveBotNum(nexus)
                 : String(nexus._sessionPhoneNumber || nexus.user?.id || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
@@ -2068,6 +2083,7 @@ async function startpairing(nexusDevNumber) {
                             altChatIds: typeof global._adChatIdsFromKey === 'function'
                                 ? global._adChatIdsFromKey(key)
                                 : [],
+                            tracker: _delTracker,
                         });
                     }
                 } catch (_adE2) { /* silent */ }

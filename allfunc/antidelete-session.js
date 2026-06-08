@@ -59,6 +59,11 @@ class AntideleteSessionStore {
         if (!fs.existsSync(this.mediaDir)) fs.mkdirSync(this.mediaDir, { recursive: true });
     }
 
+    refreshFromDisk() {
+        this._loaded = false;
+        this.loadFromDisk();
+    }
+
     loadFromDisk() {
         if (this._loaded) return;
         this._loaded = true;
@@ -267,6 +272,7 @@ if (!global._antideleteSessionSweepStarted) {
 migrateLegacyAntideleteStore();
 
 module.exports = {
+    refreshFromDisk: (botNum) => getAntideleteSession(botNum)?.refreshFromDisk(),
     AntideleteSessionStore,
     getAntideleteSession,
     cleanBotNum,

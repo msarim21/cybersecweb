@@ -92,19 +92,26 @@ function _adSanitizeEntryForPersistence(entry) {
     return out;
 }
 
-function _adWasDeleteProcessed(botNum, chatId, msgId) {
+function _adDeleteDedupKey(botNum, chatId, msgId) {
+    return `${cleanBotNum(botNum)}::${chatId}::${msgId}`;
+}
+
+function _adCheckDeleteProcessed(botNum, chatId, msgId) {
+    if (!global._adDeleteDedup) return false;
+    const prev = global._adDeleteDedup.get(_adDeleteDedupKey(botNum, chatId, msgId));
+    return Boolean(prev && Date.now() - prev < ANTIDELETE_DELETE_DEDUP_MS);
+}
+
+function _adMarkDeleteProcessed(botNum, chatId, msgId) {
     if (!global._adDeleteDedup) global._adDeleteDedup = new Map();
-    const k = `${cleanBotNum(botNum)}::${chatId}::${msgId}`;
+    const k = _adDeleteDedupKey(botNum, chatId, msgId);
     const now = Date.now();
-    const prev = global._adDeleteDedup.get(k);
-    if (prev && now - prev < ANTIDELETE_DELETE_DEDUP_MS) return true;
     global._adDeleteDedup.set(k, now);
     if (global._adDeleteDedup.size > 8000) {
         for (const [dk, ts] of global._adDeleteDedup) {
             if (now - ts > ANTIDELETE_DELETE_DEDUP_MS) global._adDeleteDedup.delete(dk);
         }
     }
-    return false;
 }
 
 function loadAntideleteCfg(botNum) {
@@ -309,6 +316,14 @@ async function _adEnsureMongoReady() {
     if (!isMongoMode()) return false;
     if (!isDbReady()) await initDb().catch(() => {});
     return isDbReady();
+}
+
+async function _adFlushMongoSavesNow() {
+    if (_adMongoFlushTimer) {
+        clearTimeout(_adMongoFlushTimer);
+        _adMongoFlushTimer = null;
+    }
+    await _adFlushMongoSaves();
 }
 
 async function _adFlushMongoSaves() {
@@ -894,6 +909,16 @@ async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
     }
 }
 
+async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
+    let orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+    if (orig) return orig;
+    await _adFlushMongoSavesNow().catch(() => {});
+    orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+    if (orig) return orig;
+    await new Promise((r) => setTimeout(r, 350));
+    return _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+}
+
 async function _adHandleMessageDelete(sock, opts = {}) {
     const {
         botNum,
@@ -902,10 +927,24 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         deletedBy = '',
         fromMeDelete = false,
         altChatIds = [],
+        tracker = null,
     } = opts;
     const clean = _adResolveBotNum(sock, botNum);
     if (!sock || !clean || !chatId || !msgId) return false;
-    if (_adWasDeleteProcessed(clean, chatId, msgId)) return false;
+    if (_adCheckDeleteProcessed(clean, chatId, msgId)) return false;
+
+    let _tracker = tracker;
+    if (!_tracker) {
+        try {
+            const pairMod = require('../pair');
+            const jid = `${clean}@s.whatsapp.net`;
+            _tracker = pairMod._getTracker?.()?.get(jid) || pairMod._getTracker?.()?.get(clean);
+        } catch (_) {}
+    }
+    try {
+        const { ensureWhatsAppSocketHot } = require('./socket-wake');
+        await ensureWhatsAppSocketHot(sock, _tracker, { force: true });
+    } catch (_) {}
 
     const cfg = loadAntideleteCfg(clean);
     const mode = cfg.mode || 'off';
@@ -924,15 +963,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
 
     const altIds = [...new Set(altChatIds.filter(Boolean))];
-    let orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    if (!orig) {
-        await new Promise((r) => setTimeout(r, 600));
-        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    }
-    if (!orig) {
-        await new Promise((r) => setTimeout(r, 1200));
-        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    }
+    const orig = await _adLookupWithRetry(sock, clean, chatId, msgId, altIds);
 
     const ownerJid = `${clean}@s.whatsapp.net`;
     const timeStr = new Date().toLocaleString('en-US', {
@@ -954,12 +985,16 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             `*🕒 Time:* ${timeStr}\n` +
             (isGroup ? `*👥 Group:* ${groupName || chatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
             `\n_[Original message not in cache]_`;
-        try {
-            await sock.sendMessage(target, { text, mentions: [deletedBy].filter(Boolean) });
-        } catch (e) {
-            console.error(`[ANTIDELETE][${clean}] cache-miss report failed:`, e.message);
-        }
-        return true;
+        const sent = await _adDeliverAntideleteReport(sock, {
+            targetJid: target,
+            text,
+            mediaOriginal: null,
+            sender: deletedBy,
+            deletedBy,
+            botNum: clean,
+        });
+        if (sent) _adMarkDeleteProcessed(clean, chatId, msgId);
+        return sent;
     }
 
     const sender = orig.sender || deletedBy || chatId;
@@ -990,7 +1025,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         (isGroup ? `*👥 Group:* ${groupName || chatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
         `\n*💬 Deleted Message:*\n${orig.content || '_[media / no text]_'}`;
 
-    await _adDeliverAntideleteReport(sock, {
+    const sent = await _adDeliverAntideleteReport(sock, {
         targetJid: target,
         text,
         mediaOriginal: hasMedia ? orig : null,
@@ -998,8 +1033,11 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         deletedBy,
         botNum: clean,
     });
-    _adRemoveCachedMessage(clean, chatId, msgId);
-    return true;
+    if (sent) {
+        _adMarkDeleteProcessed(clean, chatId, msgId);
+        _adRemoveCachedMessage(clean, chatId, msgId);
+    }
+    return sent;
 }
 
 global._serializeRawMedia = _serializeRawMedia;
@@ -1013,6 +1051,7 @@ global._adForwardDeletedMedia = _adForwardDeletedMedia;
 global._adLookupCachedMessage = _adLookupCachedMessage;
 global._adDeliverAntideleteReport = _adDeliverAntideleteReport;
 global._adFlushPendingReports = _adFlushPendingReports;
+global._adFlushMongoSavesNow = _adFlushMongoSavesNow;
 global._adQueuePendingReport = _adQueuePendingReport;
 global._cacheMessageForAntidelete = cacheMessageForAntidelete;
 global._adRemoveCachedMessage = _adRemoveCachedMessage;
