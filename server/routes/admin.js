@@ -452,12 +452,8 @@ router.get('/expired-users', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Audio Management — stored in DATABASE (not disk) ────────────────────────
-// Audio is gzip-compressed then base64-encoded before DB save.
-// SIMPLIFIED: Synchronous upload — gzip+DB write takes < 1s for typical files,
-// well within any proxy timeout. No background jobs, no polling needed.
-
-const zlib = require('zlib');
+// ── Audio Management — stored in DATABASE (survives Heroku restart) ───────────
+const audioStore = require('../audio-store');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -491,20 +487,8 @@ router.post('/audio', (req, res, next) => {
   const originalname = req.file.originalname;
 
   try {
-    // Gzip compress → base64 (fast: < 500ms even for 20MB files)
-    const compressed = await new Promise((resolve, reject) =>
-      zlib.gzip(fileBuffer, { level: 6 }, (err, buf) => err ? reject(err) : resolve(buf))
-    );
-    const base64 = compressed.toString('base64');
-
-    await Promise.all([
-      setSiteSetting('site_audio_data',       base64),
-      setSiteSetting('site_audio_mimetype',   mimetype),
-      setSiteSetting('site_audio_original',   originalname),
-      setSiteSetting('site_audio_compressed', 'true'),
-    ]);
-
-    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${Math.round(base64.length/1024)}KB)`);
+    await audioStore.saveAudio(fileBuffer, mimetype, originalname);
+    console.log(`[Audio Upload] ✅ ${originalname} saved to DB (${Math.round(fileBuffer.length / 1024)}KB)`);
     res.json({ status: 'done', original: originalname, filename: 'db' });
   } catch (err) {
     console.error(`[Audio Upload] ❌ ${err.message}`);
@@ -515,32 +499,17 @@ router.post('/audio', (req, res, next) => {
 // DELETE /api/admin/audio — remove from DB
 router.delete('/audio', async (req, res) => {
   try {
-    await Promise.all([
-      setSiteSetting('site_audio_data',       ''),
-      setSiteSetting('site_audio_mimetype',   ''),
-      setSiteSetting('site_audio_original',   ''),
-      setSiteSetting('site_audio_compressed', ''),
-    ]);
+    await audioStore.deleteAudio();
     res.json({ message: 'Audio removed.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/admin/audio — return metadata only
-// Retries once after 1.5s if DB returns null (handles server wake-up / pool warm-up)
 router.get('/audio', async (req, res) => {
-  const readAudioMeta = async () => {
-    const [data, original] = await Promise.all([
-      getSiteSetting('site_audio_data'),
-      getSiteSetting('site_audio_original'),
-    ]);
-    return { filename: data ? 'db' : '', original: original || '' };
-  };
   try {
-    let meta = await readAudioMeta();
-    // If DB returned empty, wait 1.5s and retry once (server may be waking up)
+    let meta = await audioStore.getAudioMeta();
     if (!meta.filename) {
-      await new Promise(r => setTimeout(r, 1500));
-      meta = await readAudioMeta();
+      await new Promise((r) => setTimeout(r, 1500));
+      meta = await audioStore.getAudioMeta();
     }
     res.json(meta);
   } catch (err) {

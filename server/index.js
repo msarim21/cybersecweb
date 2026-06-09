@@ -262,111 +262,34 @@ const requireDb = (req, res, next) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AUDIO SYSTEM — filesystem-based, NO DB dependency, no 503 ever
-// Audio file saved to uploads/site-audio-<timestamp>.ext
-// Meta (filename, original name, mimetype) saved to uploads/audio-meta.json
+// AUDIO SYSTEM — PostgreSQL/MongoDB (survives Heroku dyno restart & refresh)
+// Admin upload: POST /api/admin/audio via server/routes/admin.js
 // ══════════════════════════════════════════════════════════════════════════════
+const audioStore = require('./audio-store');
 
-const multer = require('multer');
-const AUDIO_META_FILE  = path.join(UPLOADS_DIR, 'audio-meta.json');
-
-// Admin audio routes — valid JWT + admin role required (no requireDb — avoids 503 on audio upload)
-const protectAdminAudio = [protectAuth, adminOnly];
-
-// Disk storage — save file directly, no base64, no compression
-const audioStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-  filename: (req, file, cb) => {
-    // Delete previous audio file before saving new one
-    try {
-      const prev = JSON.parse(fs.readFileSync(AUDIO_META_FILE, 'utf8'));
-      const oldPath = path.join(UPLOADS_DIR, prev.filename);
-      if (prev.filename && fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-    } catch {}
-    const ext = path.extname(file.originalname).toLowerCase() || '.mp3';
-    cb(null, `site-audio-${Date.now()}${ext}`);
-  },
-});
-const audioUploadMw = multer({
-  storage: audioStorage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
-  fileFilter: (req, file, cb) => {
-    const allowed = ['.mp3','.ogg','.wav','.m4a','.aac','.flac','.opus','.webm','.amr','.3gp'];
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    if (file.mimetype.startsWith('audio/') || file.mimetype === 'video/webm') return cb(null, true);
-    if (allowed.includes(ext)) return cb(null, true);
-    cb(new Error('Sirf audio files allowed hain: mp3, ogg, wav, m4a, aac, flac, opus, webm'));
-  },
-});
-
-const readAudioMeta  = () => { try { return JSON.parse(fs.readFileSync(AUDIO_META_FILE, 'utf8')); } catch { return null; } };
-const writeAudioMeta = (d)  => { try { fs.writeFileSync(AUDIO_META_FILE, JSON.stringify(d)); } catch {} };
-const clearAudioMeta = ()   => {
+app.get('/api/site/audio', async (req, res) => {
   try {
-    const m = readAudioMeta();
-    if (m?.filename) { const p = path.join(UPLOADS_DIR, m.filename); if (fs.existsSync(p)) fs.unlinkSync(p); }
-    if (fs.existsSync(AUDIO_META_FILE)) fs.unlinkSync(AUDIO_META_FILE);
-  } catch {}
-};
-
-// ── Public: audio info (no auth, no DB) ─────────────────────────────────────
-app.get('/api/site/audio', (req, res) => {
-  const m = readAudioMeta();
-  res.json({ filename: m?.filename || '', original: m?.original || '' });
-});
-
-// ── Public: stream audio file with Range support (no auth, no DB) ───────────
-app.get('/api/site/audio/file', (req, res) => {
-  const m = readAudioMeta();
-  if (!m?.filename) return res.status(404).json({ error: 'No audio uploaded.' });
-  const filePath = path.join(UPLOADS_DIR, m.filename);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Audio file not found.' });
-
-  const total = fs.statSync(filePath).size;
-  const contentType = m.mimetype || 'audio/mpeg';
-  const range = req.headers.range;
-
-  if (range) {
-    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(startStr, 10);
-    const end   = endStr ? parseInt(endStr, 10) : total - 1;
-    res.status(206);
-    res.set({ 'Content-Range': `bytes ${start}-${end}/${total}`, 'Accept-Ranges': 'bytes',
-               'Content-Length': end - start + 1, 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
-  } else {
-    res.set({ 'Content-Type': contentType, 'Content-Length': total,
-               'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
-    fs.createReadStream(filePath).pipe(res);
+    if (!isDbReady()) return res.json({ filename: '', original: '' });
+    const meta = await audioStore.getAudioMeta();
+    res.json(meta);
+  } catch {
+    res.json({ filename: '', original: '' });
   }
 });
 
-// ── Admin: upload audio (JWT-only auth — NO requireDb, no 503) ───────────────
-app.post('/api/admin/audio', ...protectAdminAudio, (req, res, next) => {
-  audioUploadMw.single('audio')(req, res, (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Max 20MB allowed.' });
-      return res.status(400).json({ error: err.message || 'Upload failed.' });
-    }
-    next();
-  });
-}, (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No audio file provided.' });
-  writeAudioMeta({ filename: req.file.filename, original: req.file.originalname, mimetype: req.file.mimetype });
-  console.log(`[Audio] ✅ Uploaded: ${req.file.originalname} (${Math.round(req.file.size / 1024)}KB)`);
-  res.json({ status: 'done', original: req.file.originalname, filename: req.file.filename });
-});
-
-// ── Admin: get audio info (JWT-only, no DB) ──────────────────────────────────
-app.get('/api/admin/audio', ...protectAdminAudio, (req, res) => {
-  const m = readAudioMeta();
-  res.json({ filename: m?.filename || '', original: m?.original || '' });
-});
-
-// ── Admin: delete audio (JWT-only, no DB) ───────────────────────────────────
-app.delete('/api/admin/audio', ...protectAdminAudio, (req, res) => {
-  clearAudioMeta();
-  res.json({ message: 'Audio removed.' });
+app.get('/api/site/audio/file', async (req, res) => {
+  try {
+    if (!isDbReady()) return res.status(404).json({ error: 'No audio uploaded.' });
+    const meta = await audioStore.getAudioMeta();
+    if (!meta?.filename) return res.status(404).json({ error: 'No audio uploaded.' });
+    const buffer = await audioStore.loadAudioBuffer();
+    if (!buffer?.length) return res.status(404).json({ error: 'Audio file not found.' });
+    const contentType = await audioStore.getAudioMimetype();
+    audioStore.streamAudioBuffer(res, buffer, contentType, req.headers.range);
+  } catch (err) {
+    console.error('[Audio] stream error:', err.message);
+    res.status(500).json({ error: 'Audio playback failed.' });
+  }
 });
 
 // ── Public Broadcast Message ─────────────────────────────────────────────────

@@ -405,7 +405,10 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
         : mtype === 'document' ? 'bin'
         : 'jpg';
     const filePath = session.mediaFilePath(msgId, ext);
-    setImmediate(async () => {
+    const prefetchKey = `${botNum}::${msgId}`;
+    if (!global._adPrefetchPromises) global._adPrefetchPromises = new Map();
+
+    const job = (async () => {
         try {
             const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
             const stream = await downloadContentFromMessage(mediaContent, mtype);
@@ -424,10 +427,15 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
                 session.set(primaryChat, msgId, ex);
                 _adMongoSave(botNum, primaryChat, msgId, ex);
             }
-            session.scheduleDiskSave();
+            session.saveDiskNow();
         } catch (e) {
             console.error(`[ANTIDELETE][${botNum}] prefetch ${mtype}:`, e.message);
         }
+    })();
+
+    global._adPrefetchPromises.set(prefetchKey, job);
+    job.finally(() => {
+        setTimeout(() => global._adPrefetchPromises?.delete(prefetchKey), 60_000);
     });
 }
 
@@ -739,12 +747,13 @@ function _serializeRawMedia(msg) {
 
 function _adResolveMediaInfo(mediaOriginal) {
     if (!mediaOriginal) return null;
-    if (mediaOriginal.rawMediaMsg?.mediaKey) {
+    const _rawCached = mediaOriginal.rawMediaMsg;
+    if (_rawCached && (_rawCached.mediaKey || _rawCached.url || _rawCached.directPath)) {
         return {
-            raw: mediaOriginal.rawMediaMsg,
-            mtype: mediaOriginal.rawMediaMsg.type,
-            mediaType: mediaOriginal.mediaType || mediaOriginal.rawMediaMsg.type,
-            isPtt: Boolean(mediaOriginal.isPtt || mediaOriginal.rawMediaMsg.ptt),
+            raw: _rawCached,
+            mtype: _rawCached.type || mediaOriginal.mediaType,
+            mediaType: mediaOriginal.mediaType || _rawCached.type,
+            isPtt: Boolean(mediaOriginal.isPtt || _rawCached.ptt),
         };
     }
     const _rawMsg = mediaOriginal.rawMsg;
@@ -783,7 +792,7 @@ function _adResolveMediaInfo(mediaOriginal) {
 }
 
 async function _adRedownloadMedia(raw, mtype, protoMsg) {
-    if (!raw?.mediaKey && !protoMsg) return null;
+    if (!raw?.mediaKey && !protoMsg && !raw?.url && !raw?.directPath) return null;
     try {
         const { downloadContentFromMessage: _dlcR } = require('@whiskeysockets/baileys');
         const _rc = protoMsg || {
@@ -910,19 +919,46 @@ async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
     }
 }
 
+function _adMediaNeedsWait(entry) {
+    if (!entry?.mediaType) return false;
+    const hasFile = entry.mediaPath && entry.mediaPath !== '__redownload__'
+        && fs.existsSync(entry.mediaPath);
+    const hasB64 = Boolean(entry.mediaBufferB64);
+    const hasRaw = Boolean(entry.rawMediaMsg?.mediaKey || entry.rawMediaMsg?.url || entry.rawMediaMsg?.directPath);
+    return entry.mediaPath === '__redownload__' && !hasFile && !hasB64 && !hasRaw;
+}
+
 async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
     try {
         const session = getAntideleteSession(clean);
         session?.refreshFromDisk();
     } catch (_) {}
 
-    let orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    if (orig) return orig;
-    await _adFlushMongoSavesNow().catch(() => {});
-    orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    if (orig) return orig;
-    await new Promise((r) => setTimeout(r, 350));
-    return _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+    const prefetchKey = `${clean}::${msgId}`;
+    const prefetch = global._adPrefetchPromises?.get(prefetchKey);
+    if (prefetch) {
+        await Promise.race([prefetch, new Promise((r) => setTimeout(r, 2000))]);
+    }
+
+    const deadline = Date.now() + 2800;
+    let orig = null;
+    while (Date.now() < deadline) {
+        try {
+            const session = getAntideleteSession(clean);
+            session?.saveDiskNow();
+        } catch (_) {}
+
+        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+        if (orig && !_adMediaNeedsWait(orig)) return orig;
+
+        await _adFlushMongoSavesNow().catch(() => {});
+        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+        if (orig && !_adMediaNeedsWait(orig)) return orig;
+
+        await new Promise((r) => setTimeout(r, 350));
+    }
+
+    return orig || _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
 }
 
 async function _adHandleMessageDelete(sock, opts = {}) {
@@ -991,7 +1027,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             `*🕒 Time:* ${timeStr}\n` +
             (isGroup ? `*👥 Group:* ${groupName || chatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
             `\n_[Original message not in cache]_`;
-        const sent = await _adDeliverAntideleteReport(sock, {
+        await _adDeliverAntideleteReport(sock, {
             targetJid: target,
             text,
             mediaOriginal: null,
@@ -999,8 +1035,8 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             deletedBy,
             botNum: clean,
         });
-        if (sent) _adMarkDeleteProcessed(clean, chatId, msgId);
-        return sent;
+        // Do NOT mark dedup on cache miss — messages.delete handler may retry with warm socket
+        return false;
     }
 
     const sender = orig.sender || deletedBy || chatId;

@@ -25,6 +25,17 @@ async function ensureWhatsAppSocketHot(nexus, tracker, opts = {}) {
         ]);
     } catch (_) {}
 
+    // Always refresh antidelete disk cache — even if presence probe failed after idle
+    try {
+        const botNumEarly = typeof global._adResolveBotNum === 'function'
+            ? global._adResolveBotNum(nexus)
+            : String(nexus._sessionPhoneNumber || '').replace(/[^0-9]/g, '');
+        if (botNumEarly) {
+            const { getAntideleteSession } = require('./antidelete-session');
+            getAntideleteSession(botNumEarly)?.refreshFromDisk();
+        }
+    } catch (_) {}
+
     if (!woke) return false;
     if (tracker) tracker.lastActivity = Date.now();
 

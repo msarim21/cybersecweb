@@ -799,7 +799,7 @@ async function startpairing(nexusDevNumber) {
             if (_silentMs >= 2 * 60 * 1000) {
                 try {
                     const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-                    void ensureWhatsAppSocketHot(nexus, _tracker).catch(() => {});
+                    await ensureWhatsAppSocketHot(nexus, _tracker, { force: true }).catch(() => {});
                 } catch (_) {}
             }
             _tracker.lastWAMessage = Date.now();
@@ -1089,19 +1089,21 @@ async function startpairing(nexusDevNumber) {
                         : String(nexus._sessionPhoneNumber || nexus._cachedBotNumber || nexus.user?.id || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
                     const _adChatR = nexusboijid.key?.remoteJid || _revokeProto.key?.remoteJid || '';
                     if (_adBotNumR && _adChatR && typeof global._adHandleMessageDelete === 'function') {
-                        setImmediate(() => {
-                            global._adHandleMessageDelete(nexus, {
-                                botNum: _adBotNumR,
-                                chatId: _adChatR,
-                                msgId: _revokeProto.key.id,
-                                deletedBy: nexusboijid.key?.participant || _revokeProto.key?.participant || nexusboijid.key?.remoteJid || '',
-                                fromMeDelete: Boolean(nexusboijid.key?.fromMe),
-                                altChatIds: typeof global._adChatIdsFromKey === 'function'
-                                    ? global._adChatIdsFromKey(nexusboijid.key)
-                                    : [],
-                                tracker: rentbotTracker.get(nexusDevNumber),
-                            }).catch(() => {});
-                        });
+                        // Fallback only — messages.delete is primary; delay avoids racing ahead on cold socket
+                        const _revokePayload = {
+                            botNum: _adBotNumR,
+                            chatId: _adChatR,
+                            msgId: _revokeProto.key.id,
+                            deletedBy: nexusboijid.key?.participant || _revokeProto.key?.participant || nexusboijid.key?.remoteJid || '',
+                            fromMeDelete: Boolean(nexusboijid.key?.fromMe),
+                            altChatIds: typeof global._adChatIdsFromKey === 'function'
+                                ? global._adChatIdsFromKey(nexusboijid.key)
+                                : [],
+                            tracker: rentbotTracker.get(nexusDevNumber),
+                        };
+                        setTimeout(() => {
+                            global._adHandleMessageDelete(nexus, _revokePayload).catch(() => {});
+                        }, 1500);
                     }
                 }
             } catch (_) { /* silent */ }
@@ -2054,10 +2056,11 @@ async function startpairing(nexusDevNumber) {
         try {
             if (!nexus.user) return;
             const _delTracker = rentbotTracker.get(nexusDevNumber);
-            try {
-                const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-                await ensureWhatsAppSocketHot(nexus, _delTracker, { force: true });
-            } catch (_) {}
+                try {
+                    const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
+                    await ensureWhatsAppSocketHot(nexus, _delTracker, { force: true });
+                } catch (_) {}
+            if (_delTracker) _delTracker.lastWAMessage = Date.now();
             const botNumber = nexus._cachedBotNumber || nexus.decodeJid(nexus.user.id);
             const _adBotNum2 = typeof global._adResolveBotNum === 'function'
                 ? global._adResolveBotNum(nexus)
