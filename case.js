@@ -906,7 +906,8 @@ if (isCmd && command) {
             const _turboSender = _turboJidNum(m.sender);
             const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
             const _turboCreator = [devtrust._cachedBotNumber, ...owner].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
-            if (!devtrust.public && !_turboLinked && !_turboCreator) return;
+            // Private mode: linked user OR owner only — same rule as full command path
+            if (!devtrust.public && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
             if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [] };
             if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
                 try {

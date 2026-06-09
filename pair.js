@@ -799,7 +799,8 @@ async function startpairing(nexusDevNumber) {
             if (_silentMs >= 2 * 60 * 1000) {
                 try {
                     const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-                    await ensureWhatsAppSocketHot(nexus, _tracker, { force: true }).catch(() => {});
+                    // NEVER await here — blocks every command/message for up to 10s
+                    void ensureWhatsAppSocketHot(nexus, _tracker, { force: true }).catch(() => {});
                 } catch (_) {}
             }
             _tracker.lastWAMessage = Date.now();
@@ -837,27 +838,6 @@ async function startpairing(nexusDevNumber) {
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             // SPEED FIX: use cached botNumber — no async call on every message
             const botNumber = nexus._cachedBotNumber || nexus.decodeJid(nexus.user.id);
-
-            const _bodyTurbo = nexusboijid.message?.conversation
-                || nexusboijid.message?.extendedTextMessage?.text
-                || nexusboijid.message?.imageMessage?.caption || '';
-            const _isTurboCmd = /^[.!#\/\$%&*]/.test(String(_bodyTurbo).trim());
-
-            if (_isTurboCmd) {
-                const _isRevokeTurbo = Boolean(
-                    nexusboijid.message?.protocolMessage?.type === 0
-                    || nexusboijid.message?.protocolMessage?.type === 5
-                    || nexusboijid.message?.protocolMessage?.type === 14
-                    || nexusboijid.message?.protocolMessage?.editedMessage != null
-                );
-                const _isNewsletterTurbo = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
-                if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterTurbo && chatUpdate.type === 'notify' && !_isRevokeTurbo) return;
-                if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
-                const mekTurbo = smsg(nexus, nexusboijid, store);
-                require('./case')(nexus, mekTurbo, chatUpdate, store)
-                    .catch((err) => console.error('[case.js/turbo]', err?.message || err));
-                return;
-            }
 
             // ✅ FIX: autoViewStatus now reads from settings.json (same source as case.js)
             let autoViewStatus = getSetting(botNumber, 'autoViewStatus', false)
@@ -2325,40 +2305,34 @@ async function startpairing(nexusDevNumber) {
 
     tracker.proactiveReconnectTimer = null;
 
-    // WARM PING — every 3 min: presence + antidelete disk/Mongo refresh (idle bot still catches deletes)
-    tracker.warmPingInterval = setInterval(async () => {
+    // WARM PING — every 3 min keep WA session hot (non-blocking — must not stall commands)
+    tracker.warmPingInterval = setInterval(() => {
         if (tracker.disconnected) {
             clearInterval(tracker.warmPingInterval);
             tracker.warmPingInterval = null;
             return;
         }
-        try {
-            const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-            await ensureWhatsAppSocketHot(nexus, tracker, { force: true });
-        } catch (_) {
+        void (async () => {
             try {
                 await nexus.sendPresenceUpdate('available');
                 tracker.lastActivity = Date.now();
             } catch (_) {}
-        }
+        })();
     }, 3 * 60 * 1000);
 
-    // Backup presence ping every 8 min (if warm ping missed)
-    tracker.phantomKeepaliveTimer = setInterval(async () => {
+    // Backup presence ping every 8 min
+    tracker.phantomKeepaliveTimer = setInterval(() => {
         if (tracker.disconnected) {
             clearInterval(tracker.phantomKeepaliveTimer);
             tracker.phantomKeepaliveTimer = null;
             return;
         }
-        try {
-            const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-            await ensureWhatsAppSocketHot(nexus, tracker, { force: true });
-        } catch (_) {
+        void (async () => {
             try {
                 await nexus.sendPresenceUpdate('available');
                 tracker.lastActivity = Date.now();
             } catch (_) {}
-        }
+        })();
     }, 8 * 60 * 1000);
 
     return nexus;
