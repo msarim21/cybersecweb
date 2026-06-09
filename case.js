@@ -228,8 +228,9 @@ if (!global._antieditSweepStarted) {
 }
 if (!global._antideleteSweepStarted) {
     global._antideleteSweepStarted = true;
+    const { getRetentionCutoffTs } = require('./allfunc/antidelete-retention');
     setInterval(() => {
-        const _adcut = Date.now() - 24 * 60 * 60 * 1000; // FIX: 24h instead of 2h
+        const _adcut = getRetentionCutoffTs();
         for (const [_k, _v] of global._antideleteStore) {
             if (_v?._ts && _v._ts < _adcut) global._antideleteStore.delete(_k);
         }
@@ -273,7 +274,7 @@ function antiStoreKey(chatId, msgId) {
 }
 
 // ── Persistent antidelete disk store helpers ──
-const ANTIDELETE_MAX_ENTRIES = 2000;
+const { ANTIDELETE_MAX_ENTRIES, ANTIDELETE_RETENTION_MS, isEntryExpired } = require('./allfunc/antidelete-retention');
 
 let _saveDiskDebounce = null;
 function _saveDiskStore() {
@@ -302,9 +303,7 @@ function _loadDiskStore() {
             if (Array.isArray(entries)) {
                 const now = Date.now();
                 for (const [key, val] of entries) {
-                    // Skip entries older than 24 hours
-                    const _entryAge = val?.timestamp ? now - new Date(val.timestamp).getTime() : 0;
-                    if (_entryAge > 24 * 60 * 60 * 1000) continue; // FIX: 24h instead of 2h
+                    if (isEntryExpired(val, now)) continue;
                     // Add _ts so periodic sweep can expire this entry correctly
                     if (!val._ts) val._ts = val.timestamp ? new Date(val.timestamp).getTime() : now;
                     global._antideleteStore.set(key, val);
@@ -347,7 +346,7 @@ if (!global._antideleteTempSweepStarted) {
         try {
             if (!fs.existsSync(ANTIDELETE_TEMP_DIR)) return;
             const _now = Date.now();
-            const _cut = _now - 24 * 60 * 60 * 1000;
+            const _cut = _now - ANTIDELETE_RETENTION_MS;
             const _files = await fs.promises.readdir(ANTIDELETE_TEMP_DIR);
             let _removed = 0;
             for (const _f of _files) {

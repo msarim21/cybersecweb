@@ -15,8 +15,12 @@
 
 const fs = require('fs');
 const path = require('path');
-
-const ANTIDELETE_MAX_ENTRIES = 2000;
+const {
+    ANTIDELETE_MAX_ENTRIES,
+    ANTIDELETE_RETENTION_MS,
+    getRetentionCutoffTs,
+    isEntryExpired,
+} = require('./antidelete-retention');
 const LEGACY_DISK_STORE = './database/antidelete_store.json';
 const DISK_DEBOUNCE_MS = 550;
 
@@ -74,8 +78,7 @@ class AntideleteSessionStore {
             if (!Array.isArray(entries)) return;
             const now = Date.now();
             for (const [key, val] of entries) {
-                const age = val?.timestamp ? now - new Date(val.timestamp).getTime() : 0;
-                if (age > 24 * 60 * 60 * 1000) continue;
+                if (isEntryExpired(val, now)) continue;
                 if (!val._ts) val._ts = val.timestamp ? new Date(val.timestamp).getTime() : now;
                 this.memory.set(key, val);
             }
@@ -203,6 +206,19 @@ class AntideleteSessionStore {
             if (v?._ts && v._ts < cutoffTs) this.memory.delete(k);
         }
     }
+
+    sweepMediaFiles(cutoffTs) {
+        try {
+            if (!fs.existsSync(this.mediaDir)) return;
+            for (const name of fs.readdirSync(this.mediaDir)) {
+                const p = path.join(this.mediaDir, name);
+                try {
+                    const st = fs.statSync(p);
+                    if (st.isFile() && st.mtimeMs < cutoffTs) fs.unlinkSync(p);
+                } catch (_) {}
+            }
+        } catch (_) {}
+    }
 }
 
 /** botNum → AntideleteSessionStore */
@@ -262,14 +278,34 @@ function migrateLegacyAntideleteStore() {
 if (!global._antideleteSessionSweepStarted) {
     global._antideleteSessionSweepStarted = true;
     setInterval(() => {
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        const cutoff = getRetentionCutoffTs();
         for (const session of (global._antideleteSessions?.values() || [])) {
             session.sweep(cutoff);
+            session.sweepMediaFiles(cutoff);
         }
     }, 30 * 60 * 1000);
 }
 
+// Media temp sweep on boot + every 6h (per-bot dirs)
+if (!global._antideleteMediaSweepStarted) {
+    global._antideleteMediaSweepStarted = true;
+    const _sweepAllMedia = () => {
+        const cutoff = getRetentionCutoffTs();
+        for (const session of (global._antideleteSessions?.values() || [])) {
+            session.sweepMediaFiles(cutoff);
+        }
+    };
+    setTimeout(_sweepAllMedia, 90 * 1000);
+    setInterval(_sweepAllMedia, 6 * 60 * 60 * 1000);
+}
+
 migrateLegacyAntideleteStore();
+
+if (!global._antideleteRetentionLogged) {
+    global._antideleteRetentionLogged = true;
+    const days = Math.round(ANTIDELETE_RETENTION_MS / (24 * 60 * 60 * 1000));
+    console.log(`[ANTIDELETE] Cache retention: ${days} days | max ${ANTIDELETE_MAX_ENTRIES} entries per bot`);
+}
 
 module.exports = {
     refreshFromDisk: (botNum) => getAntideleteSession(botNum)?.refreshFromDisk(),
@@ -278,4 +314,6 @@ module.exports = {
     cleanBotNum,
     migrateLegacyAntideleteStore,
     DISK_DEBOUNCE_MS,
+    ANTIDELETE_MAX_ENTRIES,
+    ANTIDELETE_RETENTION_MS,
 };

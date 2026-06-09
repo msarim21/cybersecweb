@@ -75,6 +75,27 @@ function isWhatsAppWorker() {
 
 const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 3 * 60 * 1000;
 
+/** Persist antidelete RAM → disk → Mongo so dyno restarts don't lose cache */
+async function backupAntideleteSessions() {
+    try {
+        const trackerMap = global._rentbotTracker;
+        if (!trackerMap?.size) return;
+        const { getAntideleteSession } = require('./allfunc/antidelete-session');
+        for (const [key, tracker] of trackerMap.entries()) {
+            if (!tracker || tracker.disconnected) continue;
+            const nexus = tracker.connection;
+            if (!nexus?.user) continue;
+            const clean = String(key).replace(/[^0-9]/g, '');
+            if (!clean) continue;
+            const session = getAntideleteSession(clean);
+            session?.saveDiskNow();
+        }
+        if (typeof global._adFlushMongoSavesNow === 'function') {
+            await global._adFlushMongoSavesNow().catch(() => {});
+        }
+    } catch (_) {}
+}
+
 /** Wake idle WhatsApp sockets so first command/delete after silence is instant */
 async function sweepStaleWhatsAppSockets() {
     const trackerMap = global._rentbotTracker;
@@ -110,17 +131,21 @@ async function sweepStaleWhatsAppSockets() {
             continue;
         }
 
-        if (wsState !== 1 || silentMs < WA_STALE_MS) continue;
+        if (wsState !== 1) continue;
 
-        const woke = await ensureHot(nexus, tracker, { force: true }).catch(() => false);
-        if (!woke) {
-            console.log(`[SocketKeepAlive] 💀 ${clean} idle socket dead — reconnecting`);
-            try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
-            await new Promise((r) => setTimeout(r, 2000));
-            try {
-                if (typeof pairMod.stopBot === 'function') pairMod.stopBot(jid);
-            } catch (_) {}
-            pairMod(jid).catch(() => {});
+        // Long silence (hours/days): always probe + refresh antidelete cache from disk/Mongo
+        if (silentMs >= WA_STALE_MS) {
+            const woke = await ensureHot(nexus, tracker, { force: true }).catch(() => false);
+            if (!woke) {
+                console.log(`[SocketKeepAlive] 💀 ${clean} idle socket dead — reconnecting`);
+                try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
+                await new Promise((r) => setTimeout(r, 2000));
+                try {
+                    if (typeof pairMod.stopBot === 'function') pairMod.stopBot(jid);
+                } catch (_) {}
+                pairMod(jid).catch(() => {});
+            }
+            continue;
         }
     }
 }
@@ -258,6 +283,14 @@ function scheduleAutoRestart() {
     console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
 }
 
+/** Proactive antidelete wake — every 4 min even when bot is totally silent (7-day idle safe) */
+async function proactiveAntideleteWake() {
+    try {
+        const { wakeAllAntideleteSockets } = require('./allfunc/socket-wake');
+        await wakeAllAntideleteSockets(global._rentbotTracker);
+    } catch (_) {}
+}
+
 /** Isolated bot child — wake idle WA socket + event loop (no dyno auto-restart) */
 function startBotChildKeepAlive() {
     if (_started) return;
@@ -265,6 +298,8 @@ function startBotChildKeepAlive() {
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
     setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 20_000);
     setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 90 * 1000);
+    setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
+    setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
 }
 
 function startKeepAlive() {
@@ -279,6 +314,14 @@ function startKeepAlive() {
         await sweepStaleWhatsAppSockets().catch(() => {});
         await refreshBotSessions().catch(() => {});
     }, 90 * 1000);
+
+    // Every 4 min: proactive wake — antidelete reliable after multi-day silence
+    setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
+
+    // Every 10 min: flush antidelete cache to disk + Mongo (survives dyno restart)
+    if (isWhatsAppWorker()) {
+        setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
+    }
 
     // Every 5 min: backup all connected sessions to DB (survives dyno restart)
     if (isWhatsAppWorker()) {
@@ -328,4 +371,11 @@ function stopKeepAlive() {
     console.log('[KeepAlive] ⛔ Stopped.');
 }
 
-module.exports = { startKeepAlive, startBotChildKeepAlive, stopKeepAlive, sweepStaleWhatsAppSockets };
+module.exports = {
+    startKeepAlive,
+    startBotChildKeepAlive,
+    stopKeepAlive,
+    sweepStaleWhatsAppSockets,
+    backupAntideleteSessions,
+    proactiveAntideleteWake,
+};

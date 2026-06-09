@@ -2,11 +2,12 @@
 
 /**
  * Wake stale WhatsApp sockets after idle — fixes:
- * - first antidelete alert missing after ~1h silence
+ * - first antidelete alert missing after ~1h silence (and multi-day silence)
  * - first command taking ~1 minute
  */
 
 const IDLE_WARM_MS = Number(process.env.WA_IDLE_WARM_MS) || 60 * 1000;
+const LONG_IDLE_LOG_MS = 60 * 60 * 1000;
 
 async function ensureWhatsAppSocketHot(nexus, tracker, opts = {}) {
     if (!nexus?.user) return false;
@@ -55,11 +56,31 @@ async function ensureWhatsAppSocketHot(nexus, tracker, opts = {}) {
         }
     } catch (_) {}
 
-    if (silentMs >= 10 * 60 * 1000) {
+    if (silentMs >= LONG_IDLE_LOG_MS) {
         const clean = String(nexus._sessionPhoneNumber || '').replace(/[^0-9]/g, '') || '?';
-        console.log(`[SocketWake] ✅ Hot after ${Math.round(silentMs / 60000)}m idle (+${clean})`);
+        const unit = silentMs >= 24 * 60 * 60 * 1000 ? 'd' : 'h';
+        const val = unit === 'd'
+            ? Math.round(silentMs / (24 * 60 * 60 * 1000))
+            : Math.round(silentMs / (60 * 60 * 1000));
+        console.log(`[SocketWake] ✅ Hot after ${val}${unit} idle (+${clean})`);
     }
     return true;
 }
 
-module.exports = { ensureWhatsAppSocketHot, IDLE_WARM_MS };
+/** Proactive wake for all connected bots — keeps delete events flowing during long silence. */
+async function wakeAllAntideleteSockets(trackerMap) {
+    if (!trackerMap?.size) return 0;
+    let n = 0;
+    for (const [, tracker] of trackerMap.entries()) {
+        if (!tracker || tracker.disconnected) continue;
+        const nexus = tracker.connection;
+        if (!nexus?.user) continue;
+        const wsState = nexus.ws?.readyState ?? -1;
+        if (wsState !== 1) continue;
+        const ok = await ensureWhatsAppSocketHot(nexus, tracker, { force: true }).catch(() => false);
+        if (ok) n++;
+    }
+    return n;
+}
+
+module.exports = { ensureWhatsAppSocketHot, wakeAllAntideleteSockets, IDLE_WARM_MS };

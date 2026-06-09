@@ -1,10 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { getAntideleteSession, cleanBotNum } = require('./antidelete-session');
+const { ANTIDELETE_RETENTION_MS } = require('./antidelete-retention');
 
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
-const ANTIDELETE_MONGO_TTL_MS = 48 * 60 * 60 * 1000;
+const ANTIDELETE_MONGO_TTL_MS = ANTIDELETE_RETENTION_MS;
 const ANTIDELETE_MEDIA_B64_MAX = 8 * 1024 * 1024; // 8MB — store inline for reliable recovery
 const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
 
@@ -910,6 +911,11 @@ async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
 }
 
 async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
+    try {
+        const session = getAntideleteSession(clean);
+        session?.refreshFromDisk();
+    } catch (_) {}
+
     let orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
     if (orig) return orig;
     await _adFlushMongoSavesNow().catch(() => {});

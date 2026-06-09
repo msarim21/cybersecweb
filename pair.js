@@ -2174,17 +2174,22 @@ async function startpairing(nexusDevNumber) {
 
                   const _aeBotJid = _aeBotNum ? `${_aeBotNum}@s.whatsapp.net` : _aeChatId;
 
-                  // ── Update _antideleteStore with NEW edited content (fix: delete after edit shows new text) ──
-                  if (_aeNewText && _aeOrigId && _aeChatId && global._antideleteStore) {
-                      const _adK1 = `${_aeBotNum}::${_aeChatId}::${_aeOrigId}`;
-                      const _adK2 = `${_aeChatId}::${_aeOrigId}`;
-                      for (const _k of [_adK1, _adK2, _aeOrigId]) {
-                          if (global._antideleteStore.has(_k)) {
-                              const _adEx = global._antideleteStore.get(_k);
-                              _adEx.content = _aeNewText;
-                              global._antideleteStore.set(_k, _adEx);
+                  // ── Update per-bot antidelete session with edited text (delete-after-edit shows latest) ──
+                  if (_aeNewText && _aeOrigId && _aeChatId && _aeBotNum) {
+                      try {
+                          const { getAntideleteSession } = require('./allfunc/antidelete-session');
+                          const _adSession = getAntideleteSession(_aeBotNum);
+                          if (_adSession) {
+                              const _adHit = _adSession.findByMsgId(_aeOrigId);
+                              const _adChat = _adHit?.chatId || _aeChatId;
+                              const _adEx = _adHit?.entry || _adSession.get(_adChat, _aeOrigId);
+                              if (_adEx) {
+                                  _adEx.content = _aeNewText;
+                                  _adSession.set(_adChat, _aeOrigId, _adEx);
+                                  _adSession.scheduleDiskSave();
+                              }
                           }
-                      }
+                      } catch (_) {}
                   }
                   // ── Update _antieditStore entry too ──
                   if (_aeNewText && _aeOrigId && _aeChatId) {
@@ -2261,7 +2266,7 @@ async function startpairing(nexusDevNumber) {
 
     tracker.proactiveReconnectTimer = null;
 
-    // WARM PING — every 3 min keep WA session hot (no real messages → no case.js spam)
+    // WARM PING — every 3 min: presence + antidelete disk/Mongo refresh (7-day idle safe)
     tracker.warmPingInterval = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.warmPingInterval);
@@ -2269,9 +2274,14 @@ async function startpairing(nexusDevNumber) {
             return;
         }
         try {
-            await nexus.sendPresenceUpdate('available');
-            tracker.lastActivity = Date.now();
-        } catch (_) {}
+            const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
+            await ensureWhatsAppSocketHot(nexus, tracker, { force: true });
+        } catch (_) {
+            try {
+                await nexus.sendPresenceUpdate('available');
+                tracker.lastActivity = Date.now();
+            } catch (_) {}
+        }
     }, 3 * 60 * 1000);
 
     // Backup presence ping every 8 min (if warm ping missed)
@@ -2282,9 +2292,14 @@ async function startpairing(nexusDevNumber) {
             return;
         }
         try {
-            await nexus.sendPresenceUpdate('available');
-            tracker.lastActivity = Date.now();
-        } catch (_) {}
+            const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
+            await ensureWhatsAppSocketHot(nexus, tracker, { force: true });
+        } catch (_) {
+            try {
+                await nexus.sendPresenceUpdate('available');
+                tracker.lastActivity = Date.now();
+            } catch (_) {}
+        }
     }, 8 * 60 * 1000);
 
     return nexus;
