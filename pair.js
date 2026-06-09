@@ -775,6 +775,31 @@ async function startpairing(nexusDevNumber) {
         }, 10 * 60 * 1000); // every 10 minutes
     }
 
+    // View-once buffer prune on timer — was O(n) sort on every incoming message
+    if (!global._viewOncePruneTimer) {
+        global._viewOncePruneTimer = setInterval(() => {
+            try {
+                if (!global._viewOnceBufferMap) return;
+                const _voCut = Date.now() - 30 * 60 * 1000;
+                for (const [_k, _v] of global._viewOnceBufferMap) {
+                    if (!_v || _v.ts < _voCut) global._viewOnceBufferMap.delete(_k);
+                }
+                if (global._viewOnceBufferMap.size > 200) {
+                    const _vs = [...global._viewOnceBufferMap.entries()].sort((a, b) => (a[1]?.ts || 0) - (b[1]?.ts || 0));
+                    for (const [_dk] of _vs.slice(0, _vs.length - 200)) global._viewOnceBufferMap.delete(_dk);
+                }
+            } catch (_) {}
+        }, 10 * 60 * 1000);
+    }
+
+    const _pairLooksLikeCommand = (msg) => {
+        const body = msg?.message?.conversation
+            || msg?.message?.extendedTextMessage?.text
+            || msg?.message?.imageMessage?.caption
+            || msg?.message?.videoMessage?.caption || '';
+        return typeof body === 'string' && /^[.!#/]/.test(body.trim());
+    };
+
     // ── Global message-ID dedup cache — prevents double-reply on WA retransmission ──
     if (!global._processedMsgIds) {
         global._processedMsgIds = new Map(); // msgId → timestamp
@@ -806,9 +831,11 @@ async function startpairing(nexusDevNumber) {
             _tracker.lastWAMessage = Date.now();
         }
 
-        // ── Antidelete: cache EVERY message (first priority — incl. commands) ──
-        if (typeof global._cacheMessageForAntidelete === 'function') {
-            for (const _batchMsg of (chatUpdate.messages || [])) {
+        // ── Antidelete: cache messages — defer on commands so replies are not delayed ──
+        const _batchMsgs = chatUpdate.messages || [];
+        const _cacheForAntidelete = () => {
+            if (typeof global._cacheMessageForAntidelete !== 'function') return;
+            for (const _batchMsg of _batchMsgs) {
                 try {
                     if (_batchMsg?.key?.id && _batchMsg?.message && Object.keys(_batchMsg.message).length
                         && !_batchMsg.message?.protocolMessage) {
@@ -816,7 +843,10 @@ async function startpairing(nexusDevNumber) {
                     }
                 } catch (_) {}
             }
-        }
+        };
+        const _cmdLikely = _batchMsgs[0] && _pairLooksLikeCommand(_batchMsgs[0]);
+        if (_cmdLikely) setImmediate(_cacheForAntidelete);
+        else _cacheForAntidelete();
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
@@ -1088,6 +1118,8 @@ async function startpairing(nexusDevNumber) {
                 }
             } catch (_) { /* silent */ }
 
+            // ── Antiedit / view-once store — skip for commands (fast path to case.js) ──
+            if (!_cmdLikely) {
             // ── Antiedit: store ALL incoming non-protocol messages before the public-mode guard ──
             // This ensures messages are cached for antiedit even when bot is in self/private mode
             try {
@@ -1229,21 +1261,10 @@ async function startpairing(nexusDevNumber) {
                             }
                         })();
 
-                        // TTL prune — sirf 30 min purani entries rakho, max 200
-                        try {
-                            const _voCut = Date.now() - 30 * 60 * 1000;
-                            for (const [_k, _v] of global._viewOnceBufferMap) {
-                                if (!_v || _v.ts < _voCut) global._viewOnceBufferMap.delete(_k);
-                            }
-                            if (global._viewOnceBufferMap.size > 200) {
-                                const _vs = [...global._viewOnceBufferMap.entries()].sort((a, b) => (a[1]?.ts || 0) - (b[1]?.ts || 0));
-                                const _del = _vs.slice(0, _vs.length - 200);
-                                for (const [_dk] of _del) global._viewOnceBufferMap.delete(_dk);
-                            }
-                        } catch (_pErr) { /* silent */ }
                     }
                 }
             } catch (_vsErr) { /* silent */ }
+            } // end !_cmdLikely (antiedit / view-once eager store)
 
             // ── Allow protocolMessages (delete/revoke/edit events) to pass through even in self mode ──
             const _isRevoke = Boolean(
@@ -1252,10 +1273,19 @@ async function startpairing(nexusDevNumber) {
                 nexusboijid.message?.protocolMessage?.type === 14 || // edit (so antiedit fires in private mode)
                 nexusboijid.message?.protocolMessage?.editedMessage != null // edit with editedMessage field
             );
-            // In private mode, skip non-owner messages EXCEPT channel/newsletter
-            // (channels allow bot to respond when user is admin)
+            // In private mode, allow linked user + owner (not only fromMe — owner may use another device)
             const _isNewsletterMsg = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
-            if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
+            const _pmSender = String(nexusboijid.key?.participant || nexusboijid.key?.remoteJid || '')
+                .split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+            const _pmBot = String(botNumber || '').replace(/[^0-9]/g, '');
+            const _pmLinked = Boolean(nexusboijid.key.fromMe || (_pmSender && _pmSender === _pmBot));
+            if (!global._ownerCache) {
+                try { global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json', 'utf8')); }
+                catch (_e) { global._ownerCache = []; }
+            }
+            const _pmOwner = Array.isArray(global._ownerCache)
+                && global._ownerCache.some((o) => String(o).replace(/[^0-9]/g, '') === _pmSender);
+            if (!nexus.public && !_pmLinked && !_pmOwner && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);

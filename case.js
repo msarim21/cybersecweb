@@ -81,6 +81,19 @@ requiredDirs.forEach(dir => {
 });
 // ====================================================
 
+// PERF: cache once — was rebuilt on every message (4001-char string + 700KB regex)
+const _READ_MORE = String.fromCharCode(8206).repeat(4001);
+let _caseListStats = null;
+function _getCaseListStats() {
+    if (_caseListStats) return _caseListStats;
+    if (!global._caseFileContent) global._caseFileContent = fs.readFileSync(__filename, 'utf8');
+    const raw = global._caseFileContent.match(/case '[^']+'/g) || [];
+    const names = raw.map((m) => m.match(/case '([^']+)'/)[1]);
+    _caseListStats = { count: names.length, names };
+    return _caseListStats;
+}
+setImmediate(() => { try { _getCaseListStats(); } catch (_) {} });
+
 // ══════════════════════════════════════════════════════════════════
 // ⚡ FAST IN-MEMORY CONFIG CACHE — ek baar load, memory se serve
 //    Disk pe async mein likho → event loop NEVER block nahi hoga
@@ -3955,8 +3968,7 @@ if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true }
 if (!fs.existsSync(PAIRING_DIR)) fs.mkdirSync(PAIRING_DIR, { recursive: true });
 
 // ============ GLOBAL VARIABLES ============
-const more = String.fromCharCode(8206);
-const readMore = more.repeat(4001);
+const readMore = _READ_MORE;
 const Richie = "GAME CHANGER 🥶";
 
 global.packname = "CYBER";
@@ -3964,7 +3976,8 @@ global.author = "GAME CHANGER";
 
 // ============ ANTIEDIT / ANTIDELETE MESSAGE INTERCEPTOR ============
 // Store only other people's messages for antiedit/antidelete recovery
-if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessage(m, devtrust)) {
+// Owner/linked commands skip this — was blocking fast command replies
+if (!(isCmd && _cmdFastPath) && m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && !isOwnMessage(m, devtrust)) {
     const _chatId = m.key.remoteJid;
     const _msgId = m.key.id;
     try {
@@ -4345,6 +4358,9 @@ if (!devtrust.public) {
     if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
 }
 
+// Linked-user / owner commands — skip auto-react, status hooks, group moderation
+const _ownerFastLane = Boolean(_cmdFastPath && isCmd && command);
+
 const example = (teks) => {
     return `Usage : *${prefix+command}* ${teks}`
 }
@@ -4358,7 +4374,20 @@ if (isCmd && !_cmdFastPath) {
     console.log(chalk.black(chalk.bgWhite('[ CYBER ]')), chalk.black(chalk.bgGreen(new Date)), chalk.black(chalk.bgBlue(body || m.mtype)) + '\n' + chalk.magenta('=> From'), chalk.green(pushname), chalk.yellow(m.sender) + '\n' + chalk.blueBright('=>In'), chalk.green(m.isGroup ? pushname : 'Private Chat', m.chat))
 }
 
-if (!isCmd && getSetting(m.chat, "autoReact", false)) {
+// ======================[ BANNED USERS CHECK ]======================
+if (getSetting(m.sender, "banned", false)) {
+    await reply(`⛔ You are banned from using this bot, @${m.sender.split('@')[0]}`, [m.sender])
+    return
+}
+
+// Owner/linked-user commands — skip slow group fetch + anti-moderation (instant reply)
+if (m.isGroup && !_cmdFastPath) {
+  await ensureGroupContext();
+} else if (m.isGroup && _cmdFastPath) {
+  _groupContextLoaded = true;
+}
+
+if (!_ownerFastLane && !isCmd && getSetting(m.chat, "autoReact", false)) {
     const emojis = [
         "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
         "😍", "😘", "😎", "🤩", "🤔", "😏", "😣", "😥", "😮", "🤐",
@@ -4378,6 +4407,7 @@ if (!isCmd && getSetting(m.chat, "autoReact", false)) {
     }).catch(() => {});
 }
 
+if (!_ownerFastLane) {
 if (getSetting(m.chat, "autoTyping", false)) {
     devtrust.sendPresenceUpdate('composing', from)
 }
@@ -4436,19 +4466,7 @@ if (m.key.remoteJid === "status@broadcast") {
 if (getSetting(m.sender, "autoread", false)) {
    devtrust.readMessages([m.key]).catch(e => {});
 }
-
-// ======================[ BANNED USERS CHECK ]======================
-if (getSetting(m.sender, "banned", false)) {
-    await reply(`⛔ You are banned from using this bot, @${m.sender.split('@')[0]}`, [m.sender])
-    return
-}
-
-// Owner/linked-user commands — skip slow group fetch + anti-moderation (instant reply)
-if (m.isGroup && !_cmdFastPath) {
-  await ensureGroupContext();
-} else if (m.isGroup && _cmdFastPath) {
-  _groupContextLoaded = true;
-}
+} // end !_ownerFastLane (auto-react / status / presence hooks)
 
 // ======================[ 🔇 MUTED USERS CHECK ]======================
 if (!_cmdFastPath && m.isGroup && global.muted?.[m.chat]?.includes(m.sender) && !isAdmins && !isCreator) {
@@ -4709,6 +4727,7 @@ if (m.isGroup && body && !isAdmins && !isCreator) {
     }
 }
 
+if (!_ownerFastLane) {
 if (getSetting(m.chat, "feature.autoreply", false)) {
    const autoReplyList = { 
        "hi": "Hello 👋", 
@@ -4739,6 +4758,7 @@ if (getSetting(m.chat, "feature.antibot", false)) {
       }
    }
 }
+} // end !_ownerFastLane (autoreply / antibadword / antibot)
 
 //LOADING FUNCTION
 async function nexusLoading() {
@@ -4888,12 +4908,10 @@ function getLagosTime() {
     }
 }
 
-// FIXED: Changed variable name from "penis" to avoid issues
-if (!global._caseFileContent) global._caseFileContent = fs.readFileSync(__filename).toString();
-const caseFileContent = global._caseFileContent;
-const matches = caseFileContent.match(/case '[^']+'(?!.*case '[^']+')/g) || [];
-const caseCount = matches.length;
-const caseNames = matches.map(match => match.match(/case '([^']+)'/)[1]);
+// PERF: cached at module load — regex on 700KB file was running on every message
+const _caseStats = _getCaseListStats();
+const caseCount = _caseStats.count;
+const caseNames = _caseStats.names;
 let totalCases = caseCount;
 let listCases = caseNames.join('\n⭔ '); 
 
