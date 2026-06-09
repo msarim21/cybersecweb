@@ -29,7 +29,7 @@ const SecurityGuard = {
             bucket.tokens--;
             return { allowed: true, delay: 0 };
         }
-        return { allowed: true, delay: 200 + Math.floor(Math.random() * 400) };
+        return { allowed: true, delay: 150 + Math.floor(Math.random() * 250) };
     },
 
     jitterDelay(baseMs) {

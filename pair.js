@@ -838,6 +838,27 @@ async function startpairing(nexusDevNumber) {
             // SPEED FIX: use cached botNumber — no async call on every message
             const botNumber = nexus._cachedBotNumber || nexus.decodeJid(nexus.user.id);
 
+            const _bodyTurbo = nexusboijid.message?.conversation
+                || nexusboijid.message?.extendedTextMessage?.text
+                || nexusboijid.message?.imageMessage?.caption || '';
+            const _isTurboCmd = /^[.!#\/\$%&*]/.test(String(_bodyTurbo).trim());
+
+            if (_isTurboCmd) {
+                const _isRevokeTurbo = Boolean(
+                    nexusboijid.message?.protocolMessage?.type === 0
+                    || nexusboijid.message?.protocolMessage?.type === 5
+                    || nexusboijid.message?.protocolMessage?.type === 14
+                    || nexusboijid.message?.protocolMessage?.editedMessage != null
+                );
+                const _isNewsletterTurbo = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
+                if (!nexus.public && !nexusboijid.key.fromMe && !_isNewsletterTurbo && chatUpdate.type === 'notify' && !_isRevokeTurbo) return;
+                if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
+                const mekTurbo = smsg(nexus, nexusboijid, store);
+                require('./case')(nexus, mekTurbo, chatUpdate, store)
+                    .catch((err) => console.error('[case.js/turbo]', err?.message || err));
+                return;
+            }
+
             // ✅ FIX: autoViewStatus now reads from settings.json (same source as case.js)
             let autoViewStatus = getSetting(botNumber, 'autoViewStatus', false)
                 || getSetting(botNumber, 'antiswview', false);

@@ -894,6 +894,43 @@ if (isCmd) {
     text = args.join(' ');
 }
 
+// ⚡ Sub-1s turbo path — skip ~4000 lines of per-message setup for hot commands
+if (isCmd && command) {
+    try {
+        const { isTurboCommand, tryTurboCommand } = require('./allfunc/turbo-cmd');
+        if (isTurboCommand(command)) {
+            if (!devtrust._cachedBotNumber) {
+                devtrust._cachedBotNumber = devtrust.decodeJid(devtrust.user.id);
+            }
+            const _turboJidNum = (j) => String(j || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+            const _turboBot = _turboJidNum(devtrust._cachedBotNumber);
+            const _turboSender = _turboJidNum(m.sender);
+            const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
+            const _turboCreator = [devtrust._cachedBotNumber, ...owner].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
+            if (!devtrust.public && !_turboLinked && !_turboCreator) return;
+            if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [] };
+            if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
+                try {
+                    global._flagCache.botDisabled = fs.existsSync('./database/bot_disabled.json')
+                        ? JSON.parse(fs.readFileSync('./database/bot_disabled.json', 'utf8')) : [];
+                } catch (_) { global._flagCache.botDisabled = []; }
+                global._flagCache.ts = Date.now();
+            }
+            if (global._flagCache.botDisabled.some((id) => String(id).replace(/[^0-9]/g, '') === _turboBot)) return;
+            const handled = await tryTurboCommand(devtrust, m, {
+                command,
+                prefix,
+                pushname: m.pushName || 'User',
+                botMode: devtrust.public ? 'PUBLIC' : 'PRIVATE',
+                totalCommands: global._cachedCommandCount,
+            });
+            if (handled) return;
+        }
+    } catch (_turboErr) {
+        console.error('[turbo-cmd]', _turboErr?.message);
+    }
+}
+
 // VIEW-ONCE EMOJI TRIGGER: Allow emoji replies/reactions WITHOUT prefix
 // These emojis trigger view-once pic/video download when replied to a view-once message
 if (!command && body && m.quoted) {
@@ -928,7 +965,7 @@ const sender = (m.isGroup || m.isNewsletter) ? (m.key.participant ? m.key.partic
 const userMovieSessions = {};
 // ── Cache botNumber per-connection (unchanged until reconnect) ──
 if (!devtrust._cachedBotNumber) {
-  devtrust._cachedBotNumber = await devtrust.decodeJid(devtrust.user.id);
+  devtrust._cachedBotNumber = devtrust.decodeJid(devtrust.user.id);
 }
 const botNumber = devtrust._cachedBotNumber;
 
@@ -4057,7 +4094,7 @@ _Auto-saved via status antidelete_`;
 }
 
 // ── Store messages for antidelete recovery (ALL messages — antidelete first priority) ──
-if (typeof global._cacheMessageForAntidelete === 'function') {
+if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
     try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
 }
 
@@ -4277,11 +4314,11 @@ if (!global.banned) global.banned = {} // stores banned users JIDs
 
 // autobio feature permanently removed — caused WhatsApp rate-limiting & 2min command delay
 
-if (isCmd) {
+if (isCmd && !_cmdFastPath) {
     console.log(chalk.black(chalk.bgWhite('[ CYBER ]')), chalk.black(chalk.bgGreen(new Date)), chalk.black(chalk.bgBlue(body || m.mtype)) + '\n' + chalk.magenta('=> From'), chalk.green(pushname), chalk.yellow(m.sender) + '\n' + chalk.blueBright('=>In'), chalk.green(m.isGroup ? pushname : 'Private Chat', m.chat))
 }
 
-if (getSetting(m.chat, "autoReact", false)) {
+if (!isCmd && getSetting(m.chat, "autoReact", false)) {
     const emojis = [
         "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
         "😍", "😘", "😎", "🤩", "🤔", "😏", "😣", "😥", "😮", "🤐",
@@ -5643,14 +5680,8 @@ break;
 case 'menu':
 case 'CYBER': {
    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
-    
-    const menuImages = [
-        'https://files.catbox.moe/smv12k.jpeg',
-        'https://files.catbox.moe/smv12k.jpeg'
-    ];
-    
-    const randomImage = menuImages[Math.floor(Math.random() * menuImages.length)];
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
+
     const uptime = formatUptime(process.uptime());
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
@@ -5716,27 +5747,7 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
 `;
 
-    // TRY-CATCH for image sending with fallback to text only
-    // AUTO-DELETE: .menu command + bot response dono 2 second baad delete
-    let _menuSent;
-    try {
-        _menuSent = await devtrust.sendMessage(from, 
-            addNewsletterContext({
-                image: { url: randomImage },
-                caption: menuText
-            }), 
-            { quoted: m }
-        );
-    } catch (imageError) {
-        console.log('❌ Menu image failed, sending text only:', imageError.message);
-        _menuSent = await devtrust.sendMessage(from, 
-            addNewsletterContext({
-                text: menuText
-            }), 
-            { quoted: m }
-        );
-    }
-  
+    await reply(menuText);
 }
 break;
 

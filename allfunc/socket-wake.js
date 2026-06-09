@@ -6,7 +6,7 @@
  * - first command taking ~1 minute
  */
 
-const IDLE_WARM_MS = Number(process.env.WA_IDLE_WARM_MS) || 90 * 1000;
+const IDLE_WARM_MS = Number(process.env.WA_IDLE_WARM_MS) || 60 * 1000;
 
 async function ensureWhatsAppSocketHot(nexus, tracker, opts = {}) {
     if (!nexus?.user) return false;
