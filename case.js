@@ -521,6 +521,22 @@ const messageKontol = {
 };
 // ========================================
 
+function ensureFlagCache() {
+    if (!global._flagCache) global._flagCache = { ts: 0 };
+    const fc = global._flagCache;
+    if (!Array.isArray(fc.botDisabled)) fc.botDisabled = [];
+    if (!Array.isArray(fc.adult)) fc.adult = [];
+    if (!Array.isArray(fc.adultUnlocked)) fc.adultUnlocked = fc.adult;
+    if (!Array.isArray(fc.adultBanned)) fc.adultBanned = [];
+    if (!Array.isArray(fc.bug)) fc.bug = [];
+    if (!Array.isArray(fc.bugUnlocked)) fc.bugUnlocked = fc.bug;
+    if (!Array.isArray(fc.bugBanned)) fc.bugBanned = [];
+    if (!Array.isArray(fc.akBanned)) fc.akBanned = [];
+    if (!Array.isArray(fc.akUnlocked)) fc.akUnlocked = [];
+    if (typeof fc.akSecret !== 'string') fc.akSecret = '';
+    if (typeof fc.ts !== 'number') fc.ts = 0;
+}
+
 module.exports = devtrust = async (devtrust, m, chatUpdate, store) => {
 try {
 
@@ -905,10 +921,10 @@ if (isCmd && command) {
             const _turboBot = _turboJidNum(devtrust._cachedBotNumber);
             const _turboSender = _turboJidNum(m.sender);
             const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
-            const _turboCreator = [devtrust._cachedBotNumber, ...owner].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
+            const _turboCreator = [devtrust._cachedBotNumber, ...(Array.isArray(owner) ? owner : [])].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
             // Private mode: linked user OR owner only — same rule as full command path
             if (!devtrust.public && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
-            if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [] };
+            ensureFlagCache();
             if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
                 try {
                     global._flagCache.botDisabled = fs.existsSync('./database/bot_disabled.json')
@@ -969,6 +985,32 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
+// ── EARLY delete protocol — before flagCache/command switch (prevents .some() crash + spam errors)
+const _earlyDelProto = m.message?.protocolMessage;
+if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto?.key?.id) {
+    try {
+        const _adBotNumEarly = jidToNum(getBotJid(devtrust));
+        const _adCfgEarly = loadAntideleteCfg(_adBotNumEarly);
+        if ((_adCfgEarly.mode || 'off') !== 'off') {
+            const _adChatEarly = m.key?.remoteJid || _earlyDelProto.key?.remoteJid || '';
+            const _adDelByEarly = m.key?.participant || _earlyDelProto.key?.participant || m.key?.remoteJid || '';
+            if (typeof global._adHandleMessageDelete === 'function') {
+                await global._adHandleMessageDelete(devtrust, {
+                    botNum: _adBotNumEarly,
+                    chatId: _adChatEarly,
+                    msgId: _earlyDelProto.key.id,
+                    deletedBy: _adDelByEarly,
+                    fromMeDelete: Boolean(m.key?.fromMe),
+                    altChatIds: typeof global._adChatIdsFromKey === 'function'
+                        ? global._adChatIdsFromKey(m.key || _earlyDelProto.key || {})
+                        : [],
+                });
+            }
+        }
+    } catch (e) { console.error('[ANTIDELETE-EARLY]', e?.message || e); }
+    return;
+}
+
 // Linked WhatsApp account user (paired number) — used for self/private mode
 const _botNumClean = String(botNumber || '').replace(/[^0-9]/g, '');
 if (!global._attackState) global._attackState = {};
@@ -1011,11 +1053,22 @@ async function ensureGroupContext() {
 }
 
 // ── Per-message flag cache (5min TTL) — all DB list reads cached here ──
-// FIX: Added bugBanned, bugUnlocked, adultBanned, adultUnlocked, akBanned, akUnlocked, akSecret
-// Previously these were read from disk on EVERY command call (18+ times for bug, 10+ for adult)
-if (!global._flagCache) global._flagCache = { ts: 0, botDisabled: [], adult: [], bug: [],
-    bugBanned: [], bugUnlocked: [], adultBanned: [], adultUnlocked: [],
-    akBanned: [], akUnlocked: [], akSecret: '' };
+function ensureFlagCache() {
+    if (!global._flagCache) global._flagCache = { ts: 0 };
+    const fc = global._flagCache;
+    if (!Array.isArray(fc.botDisabled)) fc.botDisabled = [];
+    if (!Array.isArray(fc.adult)) fc.adult = [];
+    if (!Array.isArray(fc.adultUnlocked)) fc.adultUnlocked = fc.adult;
+    if (!Array.isArray(fc.adultBanned)) fc.adultBanned = [];
+    if (!Array.isArray(fc.bug)) fc.bug = [];
+    if (!Array.isArray(fc.bugUnlocked)) fc.bugUnlocked = fc.bug;
+    if (!Array.isArray(fc.bugBanned)) fc.bugBanned = [];
+    if (!Array.isArray(fc.akBanned)) fc.akBanned = [];
+    if (!Array.isArray(fc.akUnlocked)) fc.akUnlocked = [];
+    if (typeof fc.akSecret !== 'string') fc.akSecret = '';
+    if (typeof fc.ts !== 'number') fc.ts = 0;
+}
+ensureFlagCache();
 const _flagNow = Date.now();
 if (_flagNow - global._flagCache.ts > 30 * 60 * 1000) { // SPEED: 15min→30min (halves disk read frequency)
     const _p = path; // already required at top — no extra require() needed
@@ -1047,10 +1100,12 @@ if (_botDisabled) return;
 
 const _jidNum = (j) => String(j || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
 const _senderNum = _jidNum(m.sender);
-const isCreator = [botNumber, ...owner].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
-const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
+const _ownerList = Array.isArray(owner) ? owner : [];
+const _premiumList = Array.isArray(Premium) ? Premium : [];
+const isCreator = [botNumber, ..._ownerList].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
+const isDev = _ownerList.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
 const isOwner = isCreator;
-const isPremium = [botNumber, ...Premium].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
+const isPremium = [botNumber, ..._premiumList].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
 const _cmdFastPath = Boolean(isCmd && (_isBotLinkedUser() || isCreator || m.key?.fromMe));
 const isSudo = loadSudoList().includes(m.sender);
 // 18+ unlock status for this sender (cached)
@@ -18897,8 +18952,13 @@ default:
 }
 
 } catch (err) {
+      const _protoType = m.message?.protocolMessage?.type;
+      if (_protoType === 0 || _protoType === 5) {
+          console.error('[ANTIDELETE-ERR]', err?.message || err);
+          return;
+      }
       console.error('[CMD-ERR]', err?.message || err);
-      try { await m.reply(`❌ Error: ${err?.message || 'Unknown error'}`); } catch(_) {}
+      try { await m.reply(`❌ Error: ${err?.message || 'Unknown error'}`); } catch (_) {}
   }
 }
 
