@@ -24,6 +24,7 @@ const {
   requestPairing,
   getPairingState,
   isNumberInLinkedNumbers,
+  clearPairingRequest,
 } = require('../db-service');
 const path = require('path');
 const fs = require('fs').promises;
@@ -207,25 +208,44 @@ router.get('/status/:number', protect, async (req, res) => {
     return res.status(403).json({ error: 'You do not own this number.' });
   }
 
-  // Code generated but user has not entered it on WhatsApp yet
-  if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
-    return res.json({ connected: false, pairing: true, status: pairingState.pairingStatus });
-  }
-
+  const canView = isOwner || isPairingOwner || req.user.role === 'admin';
   const { readConnectedFlag } = require('../../allfunc/connected-flag');
   const flag = readConnectedFlag(clean);
 
-  // Connected only after WA pairing completed and server linked the number
+  // Already saved to dashboard — clear stale code_ready / requested flags
   try {
     if (await isNumberInLinkedNumbers(clean)) {
-      if (isOwner || req.user.role === 'admin') {
+      if (canView) {
+        if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
+          await clearPairingRequest(clean).catch(() => {});
+        }
         return res.json({ connected: true, ts: flag?.ts || Date.now(), linked: true });
       }
     }
   } catch (_) {}
 
-  if (flag?.linked) {
+  // Phone paired (session active) but dashboard save may still be pending
+  if (pairingState?.status === 'active' && canView) {
+    let linked = false;
+    try { linked = await isNumberInLinkedNumbers(clean); } catch (_) {}
+    if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
+      await clearPairingRequest(clean).catch(() => {});
+    }
+    return res.json({
+      connected: true,
+      linked: Boolean(linked),
+      ts: flag?.ts || Date.now(),
+      status: 'active',
+    });
+  }
+
+  if (flag?.linked && canView) {
     return res.json({ connected: true, ts: flag.ts || Date.now(), linked: true });
+  }
+
+  // Code generated but user has not entered it on WhatsApp yet
+  if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
+    return res.json({ connected: false, pairing: true, status: pairingState.pairingStatus });
   }
 
   res.json({ connected: false });

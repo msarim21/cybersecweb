@@ -303,8 +303,8 @@ const LinkModal = ({ onClose, onAdd }) => {
       if (autoSaved.current) return;
       try {
         const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
-        if (data.connected && data.linked) {
-          toast.success('📱 WhatsApp paired! Saving to dashboard…');
+        if (data.connected) {
+          toast.success(data.linked ? '📱 WhatsApp paired! Saving to dashboard…' : '📱 WhatsApp connected! Saving to dashboard…');
           await finishLinking();
         }
       } catch (_) {}

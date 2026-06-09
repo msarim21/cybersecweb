@@ -1537,6 +1537,59 @@ async function startpairing(nexusDevNumber) {
     }
     // =================================================
 
+    /** Web pairing: phone code auth often completes via creds.update, not a second "open" event */
+    async function tryCompleteWebPairingFromCreds() {
+        if (tracker._pairingLinkAttempted) return false;
+        const inPairing = process.env.BOT_PAIRING === '1' || pairingCode;
+        if (!inPairing) return false;
+        const registered = Boolean(state?.creds?.registered || state?.creds?.me?.id);
+        if (!registered || !nexus.user?.id) return false;
+
+        tracker._pairingLinkAttempted = true;
+        const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+        nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
+        tracker.lastActivity = Date.now();
+
+        let webLinked = false;
+        try {
+            const { linkNumberOnWebConnect } = require('./allfunc/pairing-link');
+            const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
+            webLinked = Boolean(linkResult.linked);
+            if (webLinked) {
+                console.log(chalk.green(`[pair] ✅ Web dashboard linked +${cleanNum} (creds.update after phone code)`));
+            } else {
+                console.log(chalk.yellow(`[pair] ⚠️ Phone paired but dashboard link pending (+${cleanNum}): ${linkResult.reason}`));
+            }
+        } catch (e) {
+            console.log(chalk.yellow(`[pair] tryCompleteWebPairingFromCreds: ${e.message}`));
+        }
+
+        try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+
+        if (process.env.BOT_PAIRING === '1') {
+            try {
+                if (!global.__caseLoadedForPairing) {
+                    require('./case');
+                    global.__caseLoadedForPairing = true;
+                }
+            } catch (_) {}
+            try {
+                const { markBotPromoted, isSupervisorActive } = require('./worker/supervisor');
+                if (isSupervisorActive()) markBotPromoted(cleanNum);
+            } catch (_) {}
+            process.env.BOT_PAIRING = '0';
+        }
+
+        if (!webLinked) {
+            try {
+                await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
+            } catch (_) {}
+        }
+
+        tracker._webPairingLinked = webLinked;
+        return webLinked;
+    }
+
     // Enhanced connection.update handler
     nexus.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect, isNewLogin } = update;
@@ -1688,7 +1741,7 @@ async function startpairing(nexusDevNumber) {
             if (!nexus.user?.id) return;
 
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-            const credsRegistered = Boolean(state?.creds?.registered);
+            const credsRegistered = Boolean(state?.creds?.registered || state?.creds?.me?.id);
             const awaitingPhonePair = (process.env.BOT_PAIRING === '1' || pairingCode)
                 && !credsRegistered && !isNewLogin;
 
@@ -1906,6 +1959,9 @@ async function startpairing(nexusDevNumber) {
 
     nexus.ev.on('creds.update', async () => {
         saveCreds();
+        try {
+            await tryCompleteWebPairingFromCreds();
+        } catch (_) {}
         // Backup session files to MongoDB — debounced to avoid per-message sync reads
         // FIX: Previously read ALL session files synchronously on EVERY creds.update.
         // creds.update fires on EVERY received message → blocked event loop constantly.

@@ -874,7 +874,7 @@ async function setPairingCode(number, code) {
     const { BotSession } = M();
     await BotSession.findOneAndUpdate(
       { number: clean },
-      { pairingCode: code, pairingStatus: 'code_ready', lastActive: new Date() },
+      { $set: { pairingCode: code, pairingStatus: 'code_ready', lastActive: new Date() } },
       { upsert: true }
     );
     return;

@@ -14,6 +14,10 @@ async function linkNumberOnWebConnect(nexusDevNumber) {
         const pst = await getPairingState(cleanNum).catch(() => null);
 
         if (await isNumberInLinkedNumbers(cleanNum)) {
+            try {
+                const { clearPairingRequest } = require('../server/db-service');
+                await clearPairingRequest(cleanNum);
+            } catch (_) {}
             return { linked: true, reason: 'already_linked' };
         }
 
