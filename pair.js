@@ -79,50 +79,8 @@ async function getCachedBaileysVersion() {
 // ────────────────────────────────────────────────────────
 // 🛡️  MILITARY SECURITY GUARD  — Anti-Restriction / Anti-Detection Layer
 // ────────────────────────────────────────────────────────
-const SecurityGuard = {
-    // Per-chat message buckets (tokens replenish over time)
-    _buckets: new Map(),
-    _pending: new Map(), // queued messages per chat
-    _processing: new Set(),
-
-    // Rate limits: max messages per window per chat
-    MAX_BURST: 8,       // allow quick burst of replies
-    WINDOW_MS: 60000,   // 1 minute window
-    REFILL_RATE: 8000,  // 1 msg per 8 seconds refill
-
-    // Check if sending is allowed (fast path — no delay for commands)
-    canSend(chatId) {
-        const now = Date.now();
-        let bucket = this._buckets.get(chatId);
-        if (!bucket) {
-            bucket = { tokens: this.MAX_BURST, lastRefill: now };
-            this._buckets.set(chatId, bucket);
-        }
-        // Refill tokens based on time elapsed
-        const elapsed = now - bucket.lastRefill;
-        const refill = Math.floor(elapsed / this.REFILL_RATE);
-        if (refill > 0) {
-            bucket.tokens = Math.min(this.MAX_BURST, bucket.tokens + refill);
-            bucket.lastRefill = now;
-        }
-        if (bucket.tokens > 0) {
-            bucket.tokens--;
-            return { allowed: true, delay: 0 };
-        }
-        // Over limit: tiny jitter delay (invisible to user, but spaces out WA traffic)
-        const jitter = 300 + Math.floor(Math.random() * 700);
-        return { allowed: true, delay: jitter };
-    },
-
-    // Queue a message for rate-limited sending (non-blocking)
-    async sendWithGuard(nexus, chatId, payload, options = {}) {
-        const { allowed, delay } = this.canSend(chatId);
-        if (delay > 0) {
-            await sleep(delay);
-        }
-        return nexus.sendMessage(chatId, payload, options);
-    },
-
+const { SecurityGuard } = require('./allfunc/security-guard');
+Object.assign(SecurityGuard, {
     // Keep session awake — stay "available" so WA delivers messages instantly after idle.
     // Old cycle sent unavailable + 2–4h gaps → bot felt asleep until user waited minutes.
     startPresenceCycle(nexus, botJid) {
@@ -148,12 +106,6 @@ const SecurityGuard = {
         if (global._presenceCycles) delete global._presenceCycles[numKey];
     },
 
-    // Jitter for reconnect delays (prevents predictable patterns)
-    jitterDelay(baseMs) {
-        const jitter = Math.floor(Math.random() * baseMs * 0.3);
-        return baseMs + jitter;
-    },
-
     // Random device status update (looks like real WhatsApp Web)
     async sendDeviceStatus(nexus) {
         try {
@@ -161,8 +113,14 @@ const SecurityGuard = {
             const status = statuses[Math.floor(Math.random() * statuses.length)];
             await nexus.sendPresenceUpdate(status);
         } catch (e) { /* silent */ }
-    }
-};
+    },
+
+    async sendWithGuard(nexus, chatId, payload, options = {}) {
+        const { delay } = SecurityGuard.canSend(chatId, Boolean(options.priority));
+        if (delay > 0) await sleep(delay);
+        return nexus.sendMessage(chatId, payload, options);
+    },
+});
 // ────────────────────────────────────────────────────────
 
 // ============ PAKISTANI PROXY AGENT (avoids "Ashburn, VA" warning) ============
@@ -604,6 +562,13 @@ async function startpairing(nexusDevNumber) {
     // Cache bot-sent messages (emitOwnEvents:false skips upsert for outbound sends)
     const _origSendMessage = nexus.sendMessage.bind(nexus);
     nexus.sendMessage = async function _sendWithAntideleteCache(jid, content, ...rest) {
+        const last = rest[rest.length - 1];
+        const opts = last && typeof last === 'object' && !Buffer.isBuffer(last) ? last : {};
+        const priority = Boolean(opts.priority || opts._cmdReply);
+        if (!priority) {
+            const { delay } = SecurityGuard.canSend(String(jid || ''), false);
+            if (delay > 0) await sleep(Math.min(delay, 400));
+        }
         const sent = await _origSendMessage(jid, content, ...rest);
         try {
             if (sent?.key?.id && sent?.message && typeof global._cacheMessageForAntidelete === 'function') {

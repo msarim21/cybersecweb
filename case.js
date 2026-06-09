@@ -799,10 +799,21 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 
 const reply = async (text, mentions = []) => {
   try {
-    return await replyWithNewsletter(m.chat, text, m, mentions);
+    if (m.chat?.endsWith('@newsletter')) {
+      return await devtrust.sendMessage(m.chat, { text, mentions }, { priority: true });
+    }
+    return await devtrust.sendMessage(
+      m.chat,
+      addNewsletterContext({ text, mentions }),
+      { quoted: m, priority: true }
+    );
   } catch (error) {
     console.error('Reply failed:', error);
-    return null;
+    try {
+      return await devtrust.sendMessage(m.chat, { text, mentions }, { priority: true });
+    } catch (_) {
+      return null;
+    }
   }
 };
 
@@ -938,12 +949,17 @@ const _isBotLinkedUser = () => {
 if (!global._groupMetaCache) global._groupMetaCache = new Map();
 if (!global._groupMetaPending) global._groupMetaPending = new Map();
 let groupMetadata = null;
-if (m.isGroup) {
+let participants = [];
+let groupAdmins = m.isNewsletter ? [botNumber, m.sender] : [];
+let _groupContextLoaded = false;
+
+async function ensureGroupContext() {
+  if (_groupContextLoaded || !m.isGroup) return;
+  _groupContextLoaded = true;
   const _gmc = global._groupMetaCache.get(from);
   if (_gmc && (Date.now() - _gmc.ts) < 30 * 60 * 1000) {
     groupMetadata = _gmc.data;
   } else if (global._groupMetaPending.has(from)) {
-    // Another fetch already in-flight — wait for it instead of duplicate call
     groupMetadata = await global._groupMetaPending.get(from).catch(() => null);
   } else {
     const _fetchPromise = devtrust.groupMetadata(from).catch(() => null);
@@ -952,9 +968,10 @@ if (m.isGroup) {
     global._groupMetaPending.delete(from);
     if (groupMetadata) global._groupMetaCache.set(from, { data: groupMetadata, ts: Date.now() });
   }
+  participants = groupMetadata?.participants || [];
+  groupAdmins = await getGroupAdmins(participants);
+  _syncGroupFlags();
 }
-const participants = m.isGroup ? groupMetadata?.participants || [] : [];
-const groupAdmins = m.isGroup ? await getGroupAdmins(participants) : (m.isNewsletter ? [botNumber, m.sender] : []);
 
 // ── Per-message flag cache (5min TTL) — all DB list reads cached here ──
 // FIX: Added bugBanned, bugUnlocked, adultBanned, adultUnlocked, akBanned, akUnlocked, akSecret
@@ -991,10 +1008,13 @@ const _cleanBotNum = botNumber.replace(/[^0-9]/g, '');
 const _botDisabled = global._flagCache.botDisabled.some(id => String(id).replace(/[^0-9]/g, '') === _cleanBotNum || String(id) === botNumber);
 if (_botDisabled) return;
 
-const isCreator = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
+const _jidNum = (j) => String(j || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+const _senderNum = _jidNum(m.sender);
+const isCreator = [botNumber, ...owner].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
 const isDev = owner.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
-const isOwner = [botNumber, ...owner].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
-const isPremium = [botNumber, ...Premium].map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
+const isOwner = isCreator;
+const isPremium = [botNumber, ...Premium].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
+const _cmdFastPath = Boolean(isCmd && (_isBotLinkedUser() || isCreator || m.key?.fromMe));
 const isSudo = loadSudoList().includes(m.sender);
 // 18+ unlock status for this sender (cached)
 const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
@@ -1087,9 +1107,16 @@ const _runBugBarrage = async (target, profile = 'standard') => {
         await sleep(8 + Math.floor(Math.random() * 22));
     }
 };
-const isBotAdmins = m.isGroup ? groupAdmins.includes(botNumber) : (m.isNewsletter ? true : false);
-const isAdmins = m.isGroup ? groupAdmins.includes(m.sender) : (m.isNewsletter ? true : false);
-const groupName = m.isGroup ? groupMetadata?.subject || "" : "";
+let isBotAdmins = m.isNewsletter ? true : false;
+let isAdmins = m.isNewsletter ? true : false;
+let groupName = '';
+
+function _syncGroupFlags() {
+  if (!m.isGroup) return;
+  isBotAdmins = groupAdmins.includes(botNumber);
+  isAdmins = groupAdmins.includes(m.sender);
+  groupName = groupMetadata?.subject || '';
+}
 
 
 const pushname = m.pushName || "No Name";
@@ -4339,8 +4366,15 @@ if (getSetting(m.sender, "banned", false)) {
     return
 }
 
+// Owner/linked-user commands — skip slow group fetch + anti-moderation (instant reply)
+if (m.isGroup && !_cmdFastPath) {
+  await ensureGroupContext();
+} else if (m.isGroup && _cmdFastPath) {
+  _groupContextLoaded = true;
+}
+
 // ======================[ 🔇 MUTED USERS CHECK ]======================
-if (m.isGroup && global.muted?.[m.chat]?.includes(m.sender) && !isAdmins && !isCreator) {
+if (!_cmdFastPath && m.isGroup && global.muted?.[m.chat]?.includes(m.sender) && !isAdmins && !isCreator) {
     await devtrust.sendMessage(m.chat, { delete: m.key });
     return;
 }
@@ -4348,7 +4382,7 @@ if (m.isGroup && global.muted?.[m.chat]?.includes(m.sender) && !isAdmins && !isC
 // ======================[ 🛡️ ANTI FEATURES DETECTION - FIXED ]======================
 
 // ANTILINK CHECK
-if (m.isGroup && body && !isAdmins && !isCreator) {
+if (!_cmdFastPath && m.isGroup && body && !isAdmins && !isCreator) {
     const groupSettings = antilinkSettings[m.chat];
     if (groupSettings && groupSettings.enabled) {
         const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-zA-Z0-9]+\.(com|net|org|io|gov|edu|xyz|tk|ml|ga|cf|gq|me|tv|cc|ws|club|online|site|tech|store|blog|xyz))(\/[^\s]*)?/i;
@@ -4394,7 +4428,7 @@ if (m.isGroup && body && !isAdmins && !isCreator) {
 }
 
 // ANTI-TAG CHECK (full mode: delete / kick / warn / adminonly / adminonly+warn)
-if (m.isGroup && m.mentionedJid && m.mentionedJid.length > 0 && !isAdmins && !isCreator) {
+if (!_cmdFastPath && m.isGroup && m.mentionedJid && m.mentionedJid.length > 0 && !isAdmins && !isCreator) {
     const config = getSetting(m.chat, "antitag", { enabled: false, action: 'delete' });
     if (config.enabled) {
         const isAdminTag = config.adminOnly && groupAdmins && m.mentionedJid.some(j => groupAdmins.includes(j));
@@ -4428,7 +4462,7 @@ if (m.isGroup && m.mentionedJid && m.mentionedJid.length > 0 && !isAdmins && !is
 }
 
 // ANTI-GROUP-MENTION CHECK (group status / @all / @everyone mentions)
-if (m.isGroup && !isAdmins && !isCreator) {
+if (!_cmdFastPath && m.isGroup && !isAdmins && !isCreator) {
     const _agmSettings = antigroupmentionSettings[m.chat];
     if (_agmSettings && _agmSettings.enabled) {
         const hasGroupMention = m.message?.extendedTextMessage?.contextInfo?.groupMentions?.length > 0
@@ -4474,7 +4508,7 @@ if (!global._spamCleanupTimer) {
     }, 10 * 60 * 1000);
 }
 
-if (m.isGroup && !isAdmins && !isCreator) {
+if (!_cmdFastPath && m.isGroup && !isAdmins && !isCreator) {
     const config = getSetting(m.chat, "antispam", { enabled: false, action: 'delete' });
     if (config.enabled) {
         const uid = m.sender;
@@ -4533,7 +4567,7 @@ if (m.isGroup && !isAdmins && !isCreator) {
 // ═════════════════════════════════════════════════════════════════════
 
 // ANTI-BOT CHECK - FIXED
-if (m.isGroup && body && !isAdmins && !isCreator) {
+if (!_cmdFastPath && m.isGroup && body && !isAdmins && !isCreator) {
     const config = getSetting(m.chat, "antibot", { enabled: false, action: 'delete' });
     if (config.enabled) {
         // Check if message starts with common bot prefixes
@@ -4746,6 +4780,7 @@ function countCommands() {
         return _cachedCommandCount;
     }
 }
+setImmediate(() => { try { countCommands(); } catch (_) {} });
 
 function getMoodEmoji() {
     const hour = getLagosTime().getHours();
