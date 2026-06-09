@@ -115,6 +115,15 @@ function _adMarkDeleteProcessed(botNum, chatId, msgId) {
     }
 }
 
+function _adClaimMissReport(botNum, chatId, msgId) {
+    if (!global._adMissReportDedup) global._adMissReportDedup = new Map();
+    const k = _adDeleteDedupKey(botNum, chatId, msgId);
+    const prev = global._adMissReportDedup.get(k);
+    if (prev && Date.now() - prev < 60 * 1000) return false;
+    global._adMissReportDedup.set(k, Date.now());
+    return true;
+}
+
 function loadAntideleteCfg(botNum) {
     const clean = cleanBotNum(botNum);
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
@@ -940,7 +949,7 @@ async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
         await Promise.race([prefetch, new Promise((r) => setTimeout(r, 2000))]);
     }
 
-    const deadline = Date.now() + 2800;
+    const deadline = Date.now() + 5000;
     let orig = null;
     while (Date.now() < deadline) {
         try {
@@ -970,6 +979,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         fromMeDelete = false,
         altChatIds = [],
         tracker = null,
+        reportMiss = true,
     } = opts;
     const clean = _adResolveBotNum(sock, botNum);
     if (!sock || !clean || !chatId || !msgId) return false;
@@ -1022,6 +1032,9 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
 
     if (!orig) {
+        if (reportMiss === false || !_adClaimMissReport(clean, chatId, msgId)) {
+            return false;
+        }
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
             `*🕒 Time:* ${timeStr}\n` +
@@ -1035,7 +1048,6 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             deletedBy,
             botNum: clean,
         });
-        // Do NOT mark dedup on cache miss — messages.delete handler may retry with warm socket
         return false;
     }
 

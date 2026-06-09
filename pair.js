@@ -845,8 +845,8 @@ async function startpairing(nexusDevNumber) {
             }
         };
         const _cmdLikely = _batchMsgs[0] && _pairLooksLikeCommand(_batchMsgs[0]);
-        if (_cmdLikely) setImmediate(_cacheForAntidelete);
-        else _cacheForAntidelete();
+        // Antidelete cache always sync — deferred cache caused "not in cache" on fast delete-for-everyone
+        _cacheForAntidelete();
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
@@ -1112,8 +1112,8 @@ async function startpairing(nexusDevNumber) {
                             tracker: rentbotTracker.get(nexusDevNumber),
                         };
                         setTimeout(() => {
-                            global._adHandleMessageDelete(nexus, _revokePayload).catch(() => {});
-                        }, 1500);
+                            global._adHandleMessageDelete(nexus, { ..._revokePayload, reportMiss: false }).catch(() => {});
+                        }, 2500);
                     }
                 }
             } catch (_) { /* silent */ }
@@ -1554,8 +1554,8 @@ async function startpairing(nexusDevNumber) {
         if (tracker._pairingLinkAttempted) return false;
         const inPairing = process.env.BOT_PAIRING === '1' || pairingCode;
         if (!inPairing) return false;
-        const registered = Boolean(state?.creds?.registered || state?.creds?.me?.id);
-        if (!registered || !nexus.user?.id) return false;
+        // Baileys sets creds.me.id when code is *generated* — only registered=true means user entered code
+        if (!state?.creds?.registered || !nexus.user?.id) return false;
 
         tracker._pairingLinkAttempted = true;
         const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
@@ -1753,9 +1753,9 @@ async function startpairing(nexusDevNumber) {
             if (!nexus.user?.id) return;
 
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-            const credsRegistered = Boolean(state?.creds?.registered || state?.creds?.me?.id);
-            const awaitingPhonePair = (process.env.BOT_PAIRING === '1' || pairingCode)
-                && !credsRegistered && !isNewLogin;
+            const credsRegistered = Boolean(state?.creds?.registered);
+            const inPairingFlow = process.env.BOT_PAIRING === '1' || pairingCode;
+            const awaitingPhonePair = inPairingFlow && !credsRegistered;
 
             if (awaitingPhonePair) {
                 console.log(chalk.cyan(`[pair] ⏳ +${cleanNum} socket ready — enter pairing code on phone to finish`));
@@ -1798,19 +1798,21 @@ async function startpairing(nexusDevNumber) {
 
             // ── Web pairing: save to dashboard only after user entered code on phone ──
             let webLinked = false;
-            try {
-                const { linkNumberOnWebConnect } = require('./allfunc/pairing-link');
-                const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
-                webLinked = Boolean(linkResult.linked);
-                if (!webLinked) {
-                    console.log(chalk.yellow(`[pair] ⚠️ +${cleanNum} connected but not in linked_numbers yet (${linkResult.reason}) — orphan wipe in 30 min if still unlinked`));
+            if (!inPairingFlow || credsRegistered) {
+                try {
+                    const { linkNumberOnWebConnect } = require('./allfunc/pairing-link');
+                    const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
+                    webLinked = Boolean(linkResult.linked);
+                    if (!webLinked && inPairingFlow) {
+                        console.log(chalk.yellow(`[pair] ⚠️ +${cleanNum} connected but not in linked_numbers yet (${linkResult.reason}) — orphan wipe in 30 min if still unlinked`));
+                    }
+                } catch (_wpErr) {
+                    console.log(chalk.yellow(`[pair] Web pairing post-connect: ${_wpErr.message}`));
                 }
-            } catch (_wpErr) {
-                console.log(chalk.yellow(`[pair] Web pairing post-connect: ${_wpErr.message}`));
-            }
 
-            // Persist active status only after real WA authentication
-            try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+                // Persist active status only after real WA authentication
+                try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+            }
 
             if (process.env.BOT_PAIRING === '1') {
                 try {
@@ -2129,16 +2131,21 @@ async function startpairing(nexusDevNumber) {
                     if (!_adChatId2 || !_adMsgId2) continue;
 
                     if (typeof global._adHandleMessageDelete === 'function') {
+                        const _delAltIds = typeof global._adChatIdsFromKey === 'function'
+                            ? global._adChatIdsFromKey(key)
+                            : [];
+                        const _delChatIds = typeof global._adExpandChatIds === 'function'
+                            ? global._adExpandChatIds(nexus, _adChatId2, _delAltIds)
+                            : _delAltIds;
                         await global._adHandleMessageDelete(nexus, {
                             botNum: _adBotNum2,
                             chatId: _adChatId2,
                             msgId: _adMsgId2,
                             deletedBy: key.participant || (key.fromMe ? botNumber : '') || '',
                             fromMeDelete: Boolean(key.fromMe),
-                            altChatIds: typeof global._adChatIdsFromKey === 'function'
-                                ? global._adChatIdsFromKey(key)
-                                : [],
+                            altChatIds: _delChatIds,
                             tracker: _delTracker,
+                            reportMiss: true,
                         });
                     }
                 } catch (_adE2) { /* silent */ }

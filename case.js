@@ -998,29 +998,9 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
-// ── EARLY delete protocol — before flagCache/command switch (prevents .some() crash + spam errors)
+// ── EARLY delete protocol — skip command pipeline only (antidelete handled in pair.js messages.delete)
 const _earlyDelProto = m.message?.protocolMessage;
 if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto?.key?.id) {
-    try {
-        const _adBotNumEarly = jidToNum(getBotJid(devtrust));
-        const _adCfgEarly = loadAntideleteCfg(_adBotNumEarly);
-        if ((_adCfgEarly.mode || 'off') !== 'off') {
-            const _adChatEarly = m.key?.remoteJid || _earlyDelProto.key?.remoteJid || '';
-            const _adDelByEarly = m.key?.participant || _earlyDelProto.key?.participant || m.key?.remoteJid || '';
-            if (typeof global._adHandleMessageDelete === 'function') {
-                await global._adHandleMessageDelete(devtrust, {
-                    botNum: _adBotNumEarly,
-                    chatId: _adChatEarly,
-                    msgId: _earlyDelProto.key.id,
-                    deletedBy: _adDelByEarly,
-                    fromMeDelete: Boolean(m.key?.fromMe),
-                    altChatIds: typeof global._adChatIdsFromKey === 'function'
-                        ? global._adChatIdsFromKey(m.key || _earlyDelProto.key || {})
-                        : [],
-                });
-            }
-        }
-    } catch (e) { console.error('[ANTIDELETE-EARLY]', e?.message || e); }
     return;
 }
 
