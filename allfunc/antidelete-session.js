@@ -303,8 +303,9 @@ migrateLegacyAntideleteStore();
 
 if (!global._antideleteRetentionLogged) {
     global._antideleteRetentionLogged = true;
-    const days = Math.round(ANTIDELETE_RETENTION_MS / (24 * 60 * 60 * 1000));
-    console.log(`[ANTIDELETE] Cache retention: ${days} days | max ${ANTIDELETE_MAX_ENTRIES} entries per bot`);
+    const days = ANTIDELETE_RETENTION_MS / (24 * 60 * 60 * 1000);
+    const retentionLabel = days === 1 ? '24h' : `${Math.round(days)} days`;
+    console.log(`[ANTIDELETE] Cache retention: ${retentionLabel} | max ${ANTIDELETE_MAX_ENTRIES} entries per bot`);
 }
 
 module.exports = {

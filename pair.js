@@ -2266,7 +2266,7 @@ async function startpairing(nexusDevNumber) {
 
     tracker.proactiveReconnectTimer = null;
 
-    // WARM PING — every 3 min: presence + antidelete disk/Mongo refresh (7-day idle safe)
+    // WARM PING — every 3 min: presence + antidelete disk/Mongo refresh (idle bot still catches deletes)
     tracker.warmPingInterval = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.warmPingInterval);

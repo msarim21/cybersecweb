@@ -283,7 +283,7 @@ function scheduleAutoRestart() {
     console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
 }
 
-/** Proactive antidelete wake — every 4 min even when bot is totally silent (7-day idle safe) */
+/** Proactive antidelete wake — every 4 min even when nobody uses the bot */
 async function proactiveAntideleteWake() {
     try {
         const { wakeAllAntideleteSockets } = require('./allfunc/socket-wake');
@@ -315,7 +315,7 @@ function startKeepAlive() {
         await refreshBotSessions().catch(() => {});
     }, 90 * 1000);
 
-    // Every 4 min: proactive wake — antidelete reliable after multi-day silence
+    // Every 4 min: proactive wake — antidelete works even when bot is unused/idle
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
 
     // Every 10 min: flush antidelete cache to disk + Mongo (survives dyno restart)

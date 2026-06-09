@@ -1,16 +1,16 @@
 'use strict';
 
-/** How long cached messages survive (memory, disk load, Mongo TTL, media files). Default: 7 days. */
+/** Message cache TTL on disk/memory/Mongo/media. Default: 24 hours only. */
 const ANTIDELETE_RETENTION_DAYS = Math.max(
     1,
-    Number(process.env.ANTIDELETE_RETENTION_DAYS) || 7
+    Number(process.env.ANTIDELETE_RETENTION_DAYS) || 1
 );
 const ANTIDELETE_RETENTION_MS = ANTIDELETE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-/** LRU cap — busy groups may evict oldest before TTL; raise for long silence windows. */
+/** LRU cap per bot — oldest dropped when full (independent of idle socket wake). */
 const ANTIDELETE_MAX_ENTRIES = Math.max(
     500,
-    Number(process.env.ANTIDELETE_MAX_ENTRIES) || 5000
+    Number(process.env.ANTIDELETE_MAX_ENTRIES) || 2000
 );
 
 function getRetentionCutoffTs(now = Date.now()) {
