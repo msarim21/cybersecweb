@@ -114,29 +114,42 @@ function _adBotUserSelfJid(sock, clean) {
     return clean ? `${clean}@s.whatsapp.net` : '';
 }
 
-/** JID fallbacks for Message Yourself — bot user only */
-function _adMessageYourselfTargets(sock, clean) {
-    const targets = [];
-    const add = (j) => {
-        const s = j ? String(j) : '';
-        if (s.includes('@') && !targets.includes(s)) targets.push(s);
-    };
+/** One canonical Message Yourself JID — never @lid (opens "Unknown user" chat) */
+function _adCanonicalSelfJid(sock, clean) {
+    const candidates = [];
+    const add = (j) => { if (j && String(j).includes('@')) candidates.push(String(j)); };
     add(sock?._cachedBotNumber);
+    add(_adBotUserSelfJid(sock, clean));
     try {
         const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
         if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
     } catch (_) {}
-    add(_adBotUserSelfJid(sock, clean));
-    add(_adNormJid(_adBotUserSelfJid(sock, clean)));
     if (clean) {
         add(`${clean}@s.whatsapp.net`);
-        add(`${clean}@lid`);
         try {
             const { jidNormalizedUser } = require('@whiskeysockets/baileys');
             add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
         } catch (_) {}
     }
-    return targets;
+    const deduped = _adCollectJidsByNum(candidates);
+    if (deduped.size) return [...deduped.values()][0];
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+/** Retry list if canonical self send fails — still one number, no @lid */
+function _adSelfJidFallbacks(sock, clean) {
+    const raw = [];
+    if (sock?._cachedBotNumber) raw.push(String(sock._cachedBotNumber));
+    const self = _adBotUserSelfJid(sock, clean);
+    if (self) raw.push(self);
+    if (clean) raw.push(`${clean}@s.whatsapp.net`);
+    return [..._adCollectJidsByNum(raw).values()];
+}
+
+/** Bot user Message Yourself — exactly one JID */
+function _adMessageYourselfTargets(sock, clean) {
+    const primary = _adCanonicalSelfJid(sock, clean);
+    return primary ? [primary] : [];
 }
 
 function _adLoadPlatformOwners() {
@@ -187,9 +200,9 @@ function _adOwnerPhoneSet(cleanBotUserNum) {
 function _adTargetsForOwnerNums(ownerNums) {
     const jids = [];
     for (const num of ownerNums) {
-        jids.push(`${num}@s.whatsapp.net`, `${num}@lid`);
+        jids.push(`${num}@s.whatsapp.net`);
         for (const j of _adLoadPlatformOwners()) {
-            if (_adJidToNum(j) === num) jids.push(j);
+            if (_adJidToNum(j) === num && !String(j).includes('@lid')) jids.push(j);
         }
     }
     return [..._adCollectJidsByNum(jids).values()];
@@ -234,10 +247,11 @@ async function _adPrivateReportTargets(sock, clean, chatId) {
     const isGroup = String(chatId || '').endsWith('@g.us');
 
     if (route.ownerChat && isGroup && route.ownerNums.length) {
-        const targets = [..._adCollectJidsByNum([
+        const byNum = _adCollectJidsByNum([
             ..._adMessageYourselfTargets(sock, clean),
             ..._adTargetsForOwnerNums(route.ownerNums),
-        ]).values()];
+        ]);
+        const targets = [...byNum.values()];
         console.log(`[ANTIDELETE][${clean}] owner-group route (user+owner) → ${targets.join(', ')}`);
         return targets;
     }
@@ -882,21 +896,36 @@ async function _adDeliverAntideleteReport(sock, {
         : (targetJid ? [String(targetJid)] : []);
     if (!candidates.length) return false;
 
+    const selfFallbacks = useMessageYourself ? _adSelfJidFallbacks(sock, clean) : [];
     let sentAny = false;
-    const lastIdx = candidates.length - 1;
+    const deliveredNums = new Set();
+
     for (let i = 0; i < candidates.length; i++) {
-        const jid = candidates[i];
-        try {
-            await sock.sendMessage(jid, { text, mentions }, sendOpts);
-            if (mediaOriginal) {
-                await _adForwardDeletedMedia(sock, jid, mediaOriginal, sender, botNum, { keepFile: i < lastIdx });
-                await _adForwardDeletedExtras(sock, jid, mediaOriginal, sender);
+        const primary = candidates[i];
+        const num = _adJidToNum(primary);
+        if (num && deliveredNums.has(num)) continue;
+
+        const tries = [primary, ...selfFallbacks.filter((j) => j && j !== primary && _adJidToNum(j) === num)];
+        let deliveredJid = null;
+        for (const jid of tries) {
+            try {
+                await sock.sendMessage(jid, { text, mentions }, sendOpts);
+                deliveredJid = jid;
+                break;
+            } catch (e) {
+                console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
             }
-            console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
-            sentAny = true;
-        } catch (e) {
-            console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
         }
+        if (!deliveredJid) continue;
+
+        if (num) deliveredNums.add(num);
+        if (mediaOriginal) {
+            const keepFile = i < candidates.length - 1;
+            await _adForwardDeletedMedia(sock, deliveredJid, mediaOriginal, sender, botNum, { keepFile });
+            await _adForwardDeletedExtras(sock, deliveredJid, mediaOriginal, sender);
+        }
+        console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${deliveredJid}`);
+        sentAny = true;
     }
 
     if (!sentAny) {
