@@ -13244,7 +13244,7 @@ case 'adel': {
             `*🔰 ANTIDELETE SETTINGS 🔰*\n\n` +
             `*Current Mode:* ${_adModeLabel[_adCurrentMode] || _adCurrentMode}\n\n` +
             `*Delivery to saved messages (Message Yourself):*\n` +
-            `_User chats → bot user only. Owner DM/group → owner only._\n\n` +
+            `_User chats → bot user only. Owner DM → owner only. Owner group → bot user + owner._\n\n` +
             `• \`${prefix}antidelete private\` — ALL deletions → saved messages\n` +
             `• \`${prefix}antidelete private_pm\` — PM deletions → saved messages\n` +
             `• \`${prefix}antidelete private_groups\` — Group deletions → saved messages\n\n` +
