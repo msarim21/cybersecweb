@@ -22,7 +22,7 @@ const {
     isEntryExpired,
 } = require('./antidelete-retention');
 const LEGACY_DISK_STORE = './database/antidelete_store.json';
-const DISK_DEBOUNCE_MS = 550;
+const DISK_DEBOUNCE_MS = 400;
 
 function cleanBotNum(value) {
     const raw = String(value || '');
@@ -34,15 +34,35 @@ function cleanBotNum(value) {
     return raw.replace(/[^0-9]/g, '');
 }
 
+function resolveAntideleteDiskPath(botNum) {
+    const clean = cleanBotNum(botNum);
+    const wsPath = path.join('database', 'bots', clean, 'antidelete_store.json');
+    const globalPath = path.join('database', `antidelete_store_${clean}.json`);
+    if (fs.existsSync(path.dirname(wsPath))) return wsPath;
+    return globalPath;
+}
+
+function migrateGlobalStoreToWorkspace(botNum) {
+    const clean = cleanBotNum(botNum);
+    const wsPath = path.join('database', 'bots', clean, 'antidelete_store.json');
+    const globalPath = path.join('database', `antidelete_store_${clean}.json`);
+    if (fs.existsSync(wsPath) || !fs.existsSync(globalPath)) return;
+    try {
+        fs.mkdirSync(path.dirname(wsPath), { recursive: true });
+        fs.copyFileSync(globalPath, wsPath);
+    } catch (_) {}
+}
+
 class AntideleteSessionStore {
     constructor(botNum) {
         this.botNum = cleanBotNum(botNum);
         if (!this.botNum) throw new Error('AntideleteSessionStore requires botNum');
+        migrateGlobalStoreToWorkspace(this.botNum);
         /** @type {Map<string, object>} chatId::msgId → entry */
         this.memory = new Map();
         /** msgId → primary chatId (fallback when JID format differs, e.g. @lid vs @s.whatsapp.net) */
         this.msgIdIndex = new Map();
-        this.diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
+        this.diskPath = resolveAntideleteDiskPath(this.botNum);
         this.mediaDir = path.join('tmp', 'antidelete_media', this.botNum);
         this._diskTimer = null;
         this._loaded = false;

@@ -6,6 +6,10 @@ const { ANTIDELETE_RETENTION_MS } = require('./antidelete-retention');
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
 const ANTIDELETE_MONGO_TTL_MS = ANTIDELETE_RETENTION_MS;
+/** Bot message cache in Mongo fills Atlas quota — disk/RAM only unless ANTIDELETE_MONGO=1 */
+function _adMongoEnabled() {
+    return String(process.env.ANTIDELETE_MONGO || '0').trim() === '1';
+}
 const ANTIDELETE_MEDIA_B64_MAX = 8 * 1024 * 1024; // 8MB — store inline for reliable recovery
 const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
 
@@ -38,12 +42,30 @@ function _adResolveBotNum(sock, hint = '') {
     return '';
 }
 
+function _adNormJid(jid) {
+    if (!jid) return '';
+    const s = String(jid);
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        return jidNormalizedUser(s);
+    } catch (_) {
+        return s;
+    }
+}
+
 function _adChatIdsFromKey(key) {
     const ids = new Set();
-    if (key?.remoteJid) ids.add(String(key.remoteJid));
-    if (key?.remoteJidAlt) ids.add(String(key.remoteJidAlt));
+    if (key?.remoteJid) {
+        ids.add(String(key.remoteJid));
+        ids.add(_adNormJid(key.remoteJid));
+    }
+    if (key?.remoteJidAlt) {
+        ids.add(String(key.remoteJidAlt));
+        ids.add(_adNormJid(key.remoteJidAlt));
+    }
     if (key?.participant && !String(key.remoteJid || '').endsWith('@g.us')) {
         ids.add(String(key.participant));
+        ids.add(_adNormJid(key.participant));
     }
     return [...ids].filter(Boolean);
 }
@@ -124,18 +146,95 @@ function _adClaimMissReport(botNum, chatId, msgId) {
     return true;
 }
 
+function _adCfgPaths(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return ['./database/antidelete_config.json'];
+    return [
+        `./database/antidelete_config_${clean}.json`,
+        `./database/bots/${clean}/antidelete_config.json`,
+    ];
+}
+
+function _adPendingFile(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return ANTIDELETE_PENDING_FILE;
+    const ws = path.join('database', 'bots', clean, 'antidelete_pending.json');
+    if (fs.existsSync(path.dirname(ws))) return ws;
+    return path.join('database', `antidelete_pending_${clean}.json`);
+}
+
+function _adOwnerJid(sock, clean) {
+    const cached = sock?._cachedBotNumber;
+    if (cached && String(cached).includes('@')) return String(cached);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') {
+            const decoded = sock.decodeJid(raw);
+            if (decoded?.includes('@')) return decoded;
+        }
+    } catch (_) {}
+    const raw = String(sock?.user?.id || sock?.authState?.creds?.me?.id || '');
+    if (raw.includes('@')) {
+        const head = raw.split(':')[0];
+        const domain = raw.split('@').slice(1).join('@') || 's.whatsapp.net';
+        return `${head}@${domain}`;
+    }
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+function _adOwnerTargetJids(sock, clean) {
+    const targets = [];
+    const add = (j) => {
+        const s = j ? String(j) : '';
+        if (s.includes('@') && !targets.includes(s)) targets.push(s);
+    };
+    add(sock?._cachedBotNumber);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
+    } catch (_) {}
+    add(_adOwnerJid(sock, clean));
+    add(_adNormJid(_adOwnerJid(sock, clean)));
+    if (clean) {
+        add(`${clean}@s.whatsapp.net`);
+        try {
+            const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+            add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
+        } catch (_) {}
+    }
+    return targets;
+}
+
+function _adValidMentions(...jids) {
+    return [...new Set(jids.filter((j) => j && String(j).includes('@')))];
+}
+
+function _adFindTracker(clean) {
+    try {
+        const pairMod = require('../pair');
+        const tmap = pairMod._getTracker?.();
+        if (!tmap || !clean) return null;
+        const jid = `${clean}@s.whatsapp.net`;
+        if (tmap.has(jid)) return tmap.get(jid);
+        if (tmap.has(clean)) return tmap.get(clean);
+        for (const [key, tracker] of tmap.entries()) {
+            if (cleanBotNum(key) === clean) return tracker;
+        }
+    } catch (_) {}
+    return null;
+}
+
 function loadAntideleteCfg(botNum) {
     const clean = cleanBotNum(botNum);
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
     if (clean && global._antideleteConfigs[clean]) return global._antideleteConfigs[clean];
-    const paths = clean
-        ? [`./database/antidelete_config_${clean}.json`, './database/antidelete_config.json']
-        : ['./database/antidelete_config.json'];
-    for (const p of paths) {
+    for (const p of _adCfgPaths(clean)) {
         try {
             if (fs.existsSync(p)) {
                 const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
+                const result = d.mode
+                    ? d
+                    : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
                 if (clean) global._antideleteConfigs[clean] = result;
                 return result;
             }
@@ -329,6 +428,7 @@ async function _adEnsureMongoReady() {
 }
 
 async function _adFlushMongoSavesNow() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) {
         clearTimeout(_adMongoFlushTimer);
         _adMongoFlushTimer = null;
@@ -338,6 +438,7 @@ async function _adFlushMongoSavesNow() {
 
 async function _adFlushMongoSaves() {
     _adMongoFlushTimer = null;
+    if (!_adMongoEnabled()) return;
     if (!(await _adEnsureMongoReady())) return;
     const batch = [..._adMongoSaveQueue.values()];
     _adMongoSaveQueue.clear();
@@ -363,6 +464,7 @@ async function _adFlushMongoSaves() {
 }
 
 function _adScheduleMongoFlush() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) return;
     _adMongoFlushTimer = setTimeout(() => {
         _adFlushMongoSaves().catch(() => {});
@@ -370,6 +472,7 @@ function _adScheduleMongoFlush() {
 }
 
 async function _adMongoGet(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return null;
     try {
         if (!(await _adEnsureMongoReady())) return null;
         const AntideleteCache = require('../server/models/AntideleteCache');
@@ -383,6 +486,7 @@ async function _adMongoGet(botNum, chatId, msgId) {
 }
 
 function _adMongoSave(botNum, chatId, msgId, entry) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -392,6 +496,7 @@ function _adMongoSave(botNum, chatId, msgId, entry) {
 }
 
 function _adMongoDelete(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -535,7 +640,12 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             botNum,
         };
 
-        session.set(chatId, msgId, entry, aliasChatIds);
+        const allAliases = [...new Set([
+            ...aliasChatIds,
+            _adNormJid(chatId),
+            ...aliasChatIds.map(_adNormJid),
+        ].filter(Boolean))];
+        session.set(chatId, msgId, entry, allAliases);
         _adMongoSave(botNum, chatId, msgId, entry);
         session.scheduleDiskSave();
     } catch (e) {
@@ -645,9 +755,10 @@ function _adSerializeForPending(mediaOriginal) {
 function _adQueuePendingReport(botNum, report) {
     try {
         _adEnsureDbDir();
+        const pendingFile = _adPendingFile(botNum);
         let pending = [];
-        if (fs.existsSync(ANTIDELETE_PENDING_FILE)) {
-            try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { pending = []; }
+        if (fs.existsSync(pendingFile)) {
+            try { pending = JSON.parse(fs.readFileSync(pendingFile, 'utf-8')); } catch (_) { pending = []; }
         }
         if (!Array.isArray(pending)) pending = [];
         pending.push({
@@ -662,36 +773,56 @@ function _adQueuePendingReport(botNum, report) {
             attempts: 0,
         });
         if (pending.length > ANTIDELETE_PENDING_MAX) pending = pending.slice(-ANTIDELETE_PENDING_MAX);
-        fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(pending, null, 2));
+        fs.writeFileSync(pendingFile, JSON.stringify(pending, null, 2));
         console.log(`[ANTIDELETE] Queued offline report for bot ${botNum}`);
     } catch (e) {
         console.error('[ANTIDELETE] pending queue error:', e.message);
     }
 }
 
-async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal, sender, deletedBy, botNum }) {
-    if (!sock || !targetJid || !text) return false;
-    const mentions = [deletedBy, sender].filter(Boolean);
-    try {
-        await sock.sendMessage(targetJid, { text, mentions });
-        if (mediaOriginal) {
-            await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
-            await _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender);
+async function _adDeliverAntideleteReport(sock, {
+    targetJid, text, mediaOriginal, sender, deletedBy, botNum, toOwner = false,
+}) {
+    if (!sock || !text) return false;
+    const clean = cleanBotNum(botNum);
+    const mentions = _adValidMentions(deletedBy, sender);
+    const sendOpts = { priority: true, _cmdReply: true };
+    const candidates = [];
+    if (targetJid) candidates.push(String(targetJid));
+    if (toOwner) {
+        for (const j of _adOwnerTargetJids(sock, clean)) {
+            if (!candidates.includes(j)) candidates.push(j);
         }
-        return true;
-    } catch (e) {
-        console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
-        if (botNum) {
-            _adQueuePendingReport(botNum, { targetJid, text, mediaOriginal, sender, deletedBy });
-        }
-        return false;
     }
+    if (!candidates.length) return false;
+
+    for (const jid of candidates) {
+        try {
+            await sock.sendMessage(jid, { text, mentions }, sendOpts);
+            if (mediaOriginal) {
+                await _adForwardDeletedMedia(sock, jid, mediaOriginal, sender, botNum);
+                await _adForwardDeletedExtras(sock, jid, mediaOriginal, sender);
+            }
+            console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
+            return true;
+        } catch (e) {
+            console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
+        }
+    }
+
+    const fallbackJid = candidates[0];
+    console.error(`[ANTIDELETE][${clean || '?'}] all deliver targets failed, queuing`);
+    if (botNum) {
+        _adQueuePendingReport(botNum, { targetJid: fallbackJid, text, mediaOriginal, sender, deletedBy });
+    }
+    return false;
 }
 
 async function _adFlushPendingReports(sock, botNum, botJid) {
-    if (!sock || !botNum || !fs.existsSync(ANTIDELETE_PENDING_FILE)) return;
+    const pendingFile = _adPendingFile(botNum);
+    if (!sock || !botNum || !fs.existsSync(pendingFile)) return;
     let pending = [];
-    try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { return; }
+    try { pending = JSON.parse(fs.readFileSync(pendingFile, 'utf-8')); } catch (_) { return; }
     if (!Array.isArray(pending) || !pending.length) return;
 
     const clean = cleanBotNum(botNum);
@@ -705,8 +836,8 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
         const target = item.targetJid || botJid;
         if (!target) continue;
         try {
-            const mentions = [item.deletedBy, item.sender].filter(Boolean);
-            await sock.sendMessage(target, { text: item.text, mentions });
+            const mentions = _adValidMentions(item.deletedBy, item.sender);
+            await sock.sendMessage(target, { text: item.text, mentions }, { priority: true, _cmdReply: true });
             if (item.mediaOriginal) {
                 await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
                 await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
@@ -720,7 +851,7 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
 
     try {
         _adEnsureDbDir();
-        fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(remaining.slice(-ANTIDELETE_PENDING_MAX), null, 2));
+        fs.writeFileSync(pendingFile, JSON.stringify(remaining.slice(-ANTIDELETE_PENDING_MAX), null, 2));
         if (flushed > 0) console.log(`[ANTIDELETE][${clean}] Flushed ${flushed} pending report(s)`);
     } catch (_) {}
 }
@@ -985,14 +1116,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     if (!sock || !clean || !chatId || !msgId) return false;
     if (_adCheckDeleteProcessed(clean, chatId, msgId)) return false;
 
-    let _tracker = tracker;
-    if (!_tracker) {
-        try {
-            const pairMod = require('../pair');
-            const jid = `${clean}@s.whatsapp.net`;
-            _tracker = pairMod._getTracker?.()?.get(jid) || pairMod._getTracker?.()?.get(clean);
-        } catch (_) {}
-    }
+    let _tracker = tracker || _adFindTracker(clean);
     try {
         const { ensureWhatsAppSocketHot } = require('./socket-wake');
         await ensureWhatsAppSocketHot(sock, _tracker, { force: true, light: true });
@@ -1017,7 +1141,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     const altIds = [...new Set(altChatIds.filter(Boolean))];
     const orig = await _adLookupWithRetry(sock, clean, chatId, msgId, altIds);
 
-    const ownerJid = `${clean}@s.whatsapp.net`;
+    const ownerJid = _adOwnerJid(sock, clean);
     const timeStr = new Date().toLocaleString('en-US', {
         timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
         hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -1029,12 +1153,14 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         try { groupName = (await sock.groupMetadata(chatId)).subject; } catch (_) {}
     }
 
-    const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
+    const toOwner = !(mode === 'chat' || mode === 'chat_groups');
+    const target = toOwner ? ownerJid : chatId;
 
     if (!orig) {
         if (reportMiss === false || !_adClaimMissReport(clean, chatId, msgId)) {
             return false;
         }
+        _adMarkDeleteProcessed(clean, chatId, msgId);
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
             `*🕒 Time:* ${timeStr}\n` +
@@ -1047,6 +1173,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             sender: deletedBy,
             deletedBy,
             botNum: clean,
+            toOwner,
         });
         return false;
     }
@@ -1086,6 +1213,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         sender,
         deletedBy,
         botNum: clean,
+        toOwner,
     });
     if (sent) {
         _adMarkDeleteProcessed(clean, chatId, msgId);

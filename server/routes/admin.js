@@ -813,4 +813,16 @@ router.put('/chats/:userId/read', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/admin/db-cleanup — purge bot WhatsApp message cache from MongoDB
+router.post('/db-cleanup', async (req, res) => {
+  try {
+    const { purgeBotMessageData } = require('../db-cleanup');
+    const result = await purgeBotMessageData();
+    res.json({
+      message: 'Bot message data purged from database.',
+      result,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

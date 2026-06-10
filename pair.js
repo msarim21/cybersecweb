@@ -486,6 +486,16 @@ async function startpairing(nexusDevNumber) {
     tracker.disconnected = false;
     tracker.lastActivity = Date.now();
 
+    // Tear down previous socket so messages.delete handlers don't stack on reconnect
+    if (tracker.connection) {
+        try {
+            tracker.connection.ev?.removeAllListeners?.();
+            tracker.connection.end?.();
+            tracker.connection.ws?.close?.();
+        } catch (_) {}
+        tracker.connection = null;
+    }
+
     const { version, isLatest } = await getCachedBaileysVersion();
     
     // Ensure session directory exists
@@ -1119,9 +1129,16 @@ async function startpairing(nexusDevNumber) {
                                 : [],
                             tracker: rentbotTracker.get(nexusDevNumber),
                         };
+                        const _revokeAlt = typeof global._adExpandChatIds === 'function'
+                            ? global._adExpandChatIds(nexus, _adChatR, _revokePayload.altChatIds)
+                            : _revokePayload.altChatIds;
                         setTimeout(() => {
-                            global._adHandleMessageDelete(nexus, { ..._revokePayload, reportMiss: false }).catch(() => {});
-                        }, 2500);
+                            global._adHandleMessageDelete(nexus, {
+                                ..._revokePayload,
+                                altChatIds: _revokeAlt,
+                                reportMiss: false,
+                            }).catch(() => {});
+                        }, 800);
                     }
                 }
             } catch (_) { /* silent */ }
@@ -1885,21 +1902,28 @@ async function startpairing(nexusDevNumber) {
                 } catch (_) {}
             }
 
-            // AUTO-ENABLE ANTIDELETE PRIVATE on every connect + ensure isolated workspace
+            // Ensure antidelete workspace exists — never overwrite user's saved mode
             try {
                 const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 ensureBotWorkspace(_adCleanNum);
-                const _adCfgFile = path.join(__dirname, 'database', `antidelete_config_${_adCleanNum}.json`);
                 const _dbDir = path.join(__dirname, 'database');
                 if (!fs.existsSync(_dbDir)) fs.mkdirSync(_dbDir, { recursive: true });
-                const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
-                fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
-                // Per-bot workspace config (isolated mode)
-                const _botAdCfg = isBotIsolated() ? getBotConfigPaths().antidelete : null;
-                if (_botAdCfg) fs.writeFileSync(_botAdCfg, JSON.stringify(_adCfgData, null, 2));
+                const _adCfgFile = path.join(_dbDir, `antidelete_config_${_adCleanNum}.json`);
+                const _botAdCfg = path.join(_dbDir, 'bots', _adCleanNum, 'antidelete_config.json');
+                const _defaultAd = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+                if (!fs.existsSync(_adCfgFile)) {
+                    fs.writeFileSync(_adCfgFile, JSON.stringify(_defaultAd, null, 2));
+                }
+                if (!fs.existsSync(_botAdCfg)) {
+                    fs.mkdirSync(path.dirname(_botAdCfg), { recursive: true });
+                    fs.writeFileSync(_botAdCfg, JSON.stringify(_defaultAd, null, 2));
+                }
+                const _loadedAd = typeof global.loadAntideleteCfg === 'function'
+                    ? global.loadAntideleteCfg(_adCleanNum)
+                    : _defaultAd;
                 if (!global._antideleteConfigs) global._antideleteConfigs = {};
-                global._antideleteConfigs[_adCleanNum] = _adCfgData;
-                console.log(chalk.green(`🛡️ [${_adCleanNum}] Auto-enabled antidelete private`));
+                global._antideleteConfigs[_adCleanNum] = _loadedAd;
+                console.log(chalk.green(`🛡️ [${_adCleanNum}] Antidelete ready (mode: ${_loadedAd.mode || 'private'})`));
             } catch (_adErr) {
                 console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
             }
