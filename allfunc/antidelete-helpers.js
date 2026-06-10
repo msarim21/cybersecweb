@@ -995,7 +995,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
     try {
         const { ensureWhatsAppSocketHot } = require('./socket-wake');
-        await ensureWhatsAppSocketHot(sock, _tracker, { force: true });
+        await ensureWhatsAppSocketHot(sock, _tracker, { force: true, light: true });
     } catch (_) {}
 
     const cfg = loadAntideleteCfg(clean);

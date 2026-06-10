@@ -73,7 +73,8 @@ function isWhatsAppWorker() {
     return false;
 }
 
-const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 3 * 60 * 1000;
+const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 2 * 60 * 1000;
+const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 45 * 60 * 1000;
 
 /** Persist antidelete RAM → disk → Mongo so dyno restarts don't lose cache */
 async function backupAntideleteSessions() {
@@ -133,11 +134,20 @@ async function sweepStaleWhatsAppSockets() {
 
         if (wsState !== 1) continue;
 
-        // Long silence (hours/days): always probe + refresh antidelete cache from disk/Mongo
+        // Stale socket — light wake first; reconnect only if zombie (45min+ silence) or wake fails twice
         if (silentMs >= WA_STALE_MS) {
-            const woke = await ensureHot(nexus, tracker, { force: true }).catch(() => false);
+            const { lightWakeSocket } = require('./allfunc/socket-wake');
+            const woke = await lightWakeSocket(nexus, tracker).catch(() => false);
             if (!woke) {
-                console.log(`[SocketKeepAlive] 💀 ${clean} idle socket dead — reconnecting`);
+                tracker._staleWakeFails = (tracker._staleWakeFails || 0) + 1;
+            } else {
+                tracker._staleWakeFails = 0;
+            }
+            const zombie = silentMs >= WA_ZOMBIE_MS;
+            const failLimit = zombie ? 1 : 2;
+            if (!woke && (tracker._staleWakeFails || 0) >= failLimit) {
+                console.log(`[SocketKeepAlive] 💀 ${clean} zombie socket (${Math.round(silentMs / 60000)}m idle) — reconnecting`);
+                tracker._staleWakeFails = 0;
                 try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
                 await new Promise((r) => setTimeout(r, 2000));
                 try {
@@ -283,7 +293,15 @@ function scheduleAutoRestart() {
     console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
 }
 
-/** Proactive antidelete wake — every 4 min even when nobody uses the bot */
+/** Light presence wake — every 60s so first command after hours of silence is instant */
+async function proactiveSocketLightWake() {
+    try {
+        const { wakeAllSocketsLight } = require('./allfunc/socket-wake');
+        await wakeAllSocketsLight(global._rentbotTracker);
+    } catch (_) {}
+}
+
+/** Heavy antidelete disk/mongo refresh — every 4 min */
 async function proactiveAntideleteWake() {
     try {
         const { wakeAllAntideleteSockets } = require('./allfunc/socket-wake');
@@ -298,6 +316,7 @@ function startBotChildKeepAlive() {
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
     setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 20_000);
     setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 90 * 1000);
+    setInterval(() => proactiveSocketLightWake().catch(() => {}), 60 * 1000);
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
     setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
 }
@@ -315,7 +334,10 @@ function startKeepAlive() {
         await refreshBotSessions().catch(() => {});
     }, 90 * 1000);
 
-    // Every 4 min: proactive wake — antidelete works even when bot is unused/idle
+    // Every 60s: light presence — prevents 1–2 min delay on first command after idle
+    setInterval(() => proactiveSocketLightWake().catch(() => {}), 60 * 1000);
+
+    // Every 4 min: heavy wake — antidelete disk/mongo refresh during long silence
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
 
     // Every 10 min: flush antidelete cache to disk + Mongo (survives dyno restart)

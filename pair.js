@@ -94,10 +94,10 @@ Object.assign(SecurityGuard, {
             try {
                 await nexus.sendPresenceUpdate('available');
             } catch (_) { /* healthCheck / socket sweep will reconnect */ }
-            const next = 3 * 60 * 1000 + Math.floor(Math.random() * 90 * 1000);
+            const next = 2 * 60 * 1000 + Math.floor(Math.random() * 60 * 1000);
             setTimeout(keepAwake, next);
         };
-        setTimeout(keepAwake, 30_000 + Math.floor(Math.random() * 30_000));
+        setTimeout(keepAwake, 20_000 + Math.floor(Math.random() * 20_000));
     },
 
     // Stop the presence cycle for a number (call on disconnect/cleanup)
@@ -538,7 +538,7 @@ async function startpairing(nexusDevNumber) {
         msgRetryCounterCache,
         connectTimeoutMs: isFreshPairing ? 15000 : 30000,
         defaultQueryTimeoutMs: isFreshPairing ? 15000 : 30000,
-        keepAliveIntervalMs: 30000, // FIX: 10s→30s — 10s WS pings look like spam to WA servers → disconnect
+        keepAliveIntervalMs: 20000, // 20s WS ping — prevents zombie open socket after 1–2h idle
         emitOwnEvents: false,
         fireInitQueries: false,
         generateHighQualityLinkPreview: false,
@@ -800,6 +800,14 @@ async function startpairing(nexusDevNumber) {
         return typeof body === 'string' && /^[.!#/]/.test(body.trim());
     };
 
+    const _pairGetUserPrefix = (senderJid) => {
+        if (!global._cfgCachePrefixes) {
+            try { global._cfgCachePrefixes = JSON.parse(fs.readFileSync('./database/prefixes.json', 'utf8')); }
+            catch (_e) { global._cfgCachePrefixes = {}; }
+        }
+        return global._cfgCachePrefixes[senderJid] || '.';
+    };
+
     // ── Global message-ID dedup cache — prevents double-reply on WA retransmission ──
     if (!global._processedMsgIds) {
         global._processedMsgIds = new Map(); // msgId → timestamp
@@ -825,7 +833,7 @@ async function startpairing(nexusDevNumber) {
                 try {
                     const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
                     // NEVER await here — blocks every command/message for up to 10s
-                    void ensureWhatsAppSocketHot(nexus, _tracker, { force: true }).catch(() => {});
+                    void ensureWhatsAppSocketHot(nexus, _tracker, { force: true, light: true }).catch(() => {});
                 } catch (_) {}
             }
             _tracker.lastWAMessage = Date.now();
@@ -1347,6 +1355,44 @@ async function startpairing(nexusDevNumber) {
                     }
                 }
             } catch (_pcErr) {}
+
+            // ⚡ Turbo commands — instant reply after idle (skip 19k-line case.js load)
+            if (_cmdLikely) {
+                try {
+                    const _tbBody = nexusboijid.message?.conversation
+                        || nexusboijid.message?.extendedTextMessage?.text || '';
+                    const _tbSender = mek.sender || nexus.decodeJid(
+                        nexusboijid.key?.participant || nexusboijid.key?.remoteJid || ''
+                    );
+                    const _tbPfx = _pairGetUserPrefix(_tbSender);
+                    if (_tbBody.startsWith(_tbPfx)) {
+                        const _tbCmd = _tbBody.slice(_tbPfx.length).trim().split(/\s+/)[0]?.toLowerCase();
+                        const { isTurboCommand, tryTurboCommand } = require('./allfunc/turbo-cmd');
+                        if (_tbCmd && isTurboCommand(_tbCmd)) {
+                            const _tbBot = String(botNumber).replace(/[^0-9]/g, '');
+                            const _tbSenderNum = String(_tbSender).replace(/[^0-9]/g, '');
+                            const _tbLinked = Boolean(nexusboijid.key.fromMe || (_tbSenderNum && _tbSenderNum === _tbBot));
+                            if (!global._ownerCache) {
+                                try { global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json', 'utf8')); }
+                                catch (_e) { global._ownerCache = []; }
+                            }
+                            const _tbOwner = Array.isArray(global._ownerCache)
+                                && global._ownerCache.some((o) => String(o).replace(/[^0-9]/g, '') === _tbSenderNum);
+                            if (nexus.public || _tbLinked || _tbOwner || nexusboijid.key.fromMe) {
+                                const handled = await tryTurboCommand(nexus, mek, {
+                                    command: _tbCmd,
+                                    prefix: _tbPfx,
+                                    pushname: nexusboijid.pushName || 'User',
+                                    botMode: nexus.public ? 'PUBLIC' : 'PRIVATE',
+                                });
+                                if (handled) return;
+                            }
+                        }
+                    }
+                } catch (_tbErr) {
+                    console.error('[pair-turbo]', _tbErr?.message);
+                }
+            }
 
             // ISOLATION FIX: fire-and-forget — one user's slow/stuck command
             // does NOT block any other user's bot. Each message runs independently.
@@ -2287,62 +2333,55 @@ async function startpairing(nexusDevNumber) {
     // Previously one failed presence probe (e.g. brief WA rate-limit) caused instant
     // force-disconnect. "Silent" checks (30-min silence) removed — too many false positives.
     tracker._probeFailures = 0;
-    tracker.healthCheckInterval = setInterval(async () => {
+    tracker.healthCheckInterval = setInterval(() => {
         if (tracker.disconnected) {
             clearInterval(tracker.healthCheckInterval);
             tracker.healthCheckInterval = null;
             return;
         }
 
-        const wsState = nexus.ws?.readyState;
+        void (async () => {
+            const wsState = nexus.ws?.readyState;
+            const _silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
+            const _zombieMs = 45 * 60 * 1000;
+            const _failLimit = _silentMs >= _zombieMs ? 1 : 2;
 
-        const _silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
-        const _idleWakeMs = 5 * 60 * 1000;
+            if (wsState === 1) {
+                let probeOk = false;
+                try {
+                    const { lightWakeSocket } = require('./allfunc/socket-wake');
+                    probeOk = await lightWakeSocket(nexus, tracker).catch(() => false);
+                } catch (_) {}
 
-        if (wsState === 1) {
-            let probeOk = false;
-            const _didIdleWake = _silentMs >= _idleWakeMs;
+                if (!probeOk) {
+                    tracker._probeFailures = (tracker._probeFailures || 0) + 1;
+                    const fails = tracker._probeFailures;
+                    console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Probe failed (${fails}/${_failLimit}). ${fails < _failLimit ? 'Waiting...' : 'Force reconnecting.'}`));
+                    if (fails < _failLimit) return;
+                    console.log(chalk.red(`💀 [${nexusDevNumber}] Zombie/dead socket after ${Math.round(_silentMs / 60000)}m idle — reconnecting`));
+                    clearInterval(tracker.healthCheckInterval);
+                    tracker.healthCheckInterval = null;
+                    try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
+                    await sleep(3000);
+                    queuePairing(nexusDevNumber);
+                    return;
+                }
+                tracker._probeFailures = 0;
 
-            // Idle but socket open — single presence probe (avoid double 12s stall)
-            try {
-                await Promise.race([
-                    nexus.sendPresenceUpdate('available').then(() => { probeOk = true; }),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 8000)),
-                ]);
-                if (probeOk) tracker.lastActivity = Date.now();
-            } catch (_) {
-                if (_didIdleWake) tracker._probeFailures = (tracker._probeFailures || 0) + 1;
-            }
-
-            if (!probeOk) {
-                tracker._probeFailures = (tracker._probeFailures || 0) + 1;
-                console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Probe failed (${tracker._probeFailures}/2). ${tracker._probeFailures < 2 ? 'Waiting for next check...' : 'Force reconnecting.'}`));
-                if (tracker._probeFailures < 2) return; // tolerate 1 failure — only act on 2nd
-                // 2 consecutive failures → truly dead
-                console.log(chalk.red(`💀 [${nexusDevNumber}] 2 consecutive probe failures. Force reconnecting...`));
+            } else if (wsState !== undefined && wsState !== 0) {
+                console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
                 try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
                 await sleep(3000);
                 queuePairing(nexusDevNumber);
-                return;
             }
-            tracker._probeFailures = 0; // reset on success
-
-        } else if (wsState !== undefined && wsState !== 0) {
-            // Not connecting and not open — dead connection, force reconnect
-            console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
-            clearInterval(tracker.healthCheckInterval);
-            tracker.healthCheckInterval = null;
-            try { nexus.ws?.terminate?.() || nexus.ws?.close(); } catch (_) {}
-            await sleep(3000);
-            queuePairing(nexusDevNumber);
-        }
-    }, 90 * 1000); // every 90s — faster dead-socket detection after idle
+        })();
+    }, 60 * 1000); // every 60s — catch zombie sockets before user sends a command
 
     tracker.proactiveReconnectTimer = null;
 
-    // WARM PING — every 3 min keep WA session hot (non-blocking — must not stall commands)
+    // WARM PING — every 90s keep WA session hot (non-blocking)
     tracker.warmPingInterval = setInterval(() => {
         if (tracker.disconnected) {
             clearInterval(tracker.warmPingInterval);
@@ -2351,13 +2390,13 @@ async function startpairing(nexusDevNumber) {
         }
         void (async () => {
             try {
-                await nexus.sendPresenceUpdate('available');
-                tracker.lastActivity = Date.now();
+                const { lightWakeSocket } = require('./allfunc/socket-wake');
+                await lightWakeSocket(nexus, tracker);
             } catch (_) {}
         })();
-    }, 3 * 60 * 1000);
+    }, 90 * 1000);
 
-    // Backup presence ping every 8 min
+    // Backup presence ping every 4 min
     tracker.phantomKeepaliveTimer = setInterval(() => {
         if (tracker.disconnected) {
             clearInterval(tracker.phantomKeepaliveTimer);
@@ -2366,11 +2405,11 @@ async function startpairing(nexusDevNumber) {
         }
         void (async () => {
             try {
-                await nexus.sendPresenceUpdate('available');
-                tracker.lastActivity = Date.now();
+                const { lightWakeSocket } = require('./allfunc/socket-wake');
+                await lightWakeSocket(nexus, tracker);
             } catch (_) {}
         })();
-    }, 8 * 60 * 1000);
+    }, 4 * 60 * 1000);
 
     return nexus;
 }
