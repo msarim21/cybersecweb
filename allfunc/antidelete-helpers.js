@@ -6,6 +6,10 @@ const { ANTIDELETE_RETENTION_MS } = require('./antidelete-retention');
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
 const ANTIDELETE_MONGO_TTL_MS = ANTIDELETE_RETENTION_MS;
+/** Bot message cache in Mongo fills Atlas quota — disk/RAM only unless ANTIDELETE_MONGO=1 */
+function _adMongoEnabled() {
+    return String(process.env.ANTIDELETE_MONGO || '0').trim() === '1';
+}
 const ANTIDELETE_MEDIA_B64_MAX = 8 * 1024 * 1024; // 8MB — store inline for reliable recovery
 const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
 
@@ -329,6 +333,7 @@ async function _adEnsureMongoReady() {
 }
 
 async function _adFlushMongoSavesNow() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) {
         clearTimeout(_adMongoFlushTimer);
         _adMongoFlushTimer = null;
@@ -338,6 +343,7 @@ async function _adFlushMongoSavesNow() {
 
 async function _adFlushMongoSaves() {
     _adMongoFlushTimer = null;
+    if (!_adMongoEnabled()) return;
     if (!(await _adEnsureMongoReady())) return;
     const batch = [..._adMongoSaveQueue.values()];
     _adMongoSaveQueue.clear();
@@ -363,6 +369,7 @@ async function _adFlushMongoSaves() {
 }
 
 function _adScheduleMongoFlush() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) return;
     _adMongoFlushTimer = setTimeout(() => {
         _adFlushMongoSaves().catch(() => {});
@@ -370,6 +377,7 @@ function _adScheduleMongoFlush() {
 }
 
 async function _adMongoGet(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return null;
     try {
         if (!(await _adEnsureMongoReady())) return null;
         const AntideleteCache = require('../server/models/AntideleteCache');
@@ -383,6 +391,7 @@ async function _adMongoGet(botNum, chatId, msgId) {
 }
 
 function _adMongoSave(botNum, chatId, msgId, entry) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -392,6 +401,7 @@ function _adMongoSave(botNum, chatId, msgId, entry) {
 }
 
 function _adMongoDelete(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
