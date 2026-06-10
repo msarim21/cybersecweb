@@ -412,8 +412,15 @@ function saveAntieditCfg(cfg, botNum) {
     } catch (e) { console.error('[ANTIEDIT] Config save error:', e); }
 }
 function _antideleteCfgFile(botNum) {
-    if (botNum) return `./database/antidelete_config_${botNum}.json`;
-    return ANTIDELETE_CONFIG_FILE;
+    if (!botNum) return ANTIDELETE_CONFIG_FILE;
+    try {
+        const { isBotIsolated, getBotConfigPaths } = require('./allfunc/bot-workspace');
+        if (isBotIsolated()) {
+            const p = getBotConfigPaths(botNum);
+            if (p?.antidelete) return p.antidelete;
+        }
+    } catch (_) {}
+    return `./database/antidelete_config_${botNum}.json`;
 }
 function loadAntideleteCfg(botNum) {
     const fromHelpers = require('./allfunc/antidelete-helpers').loadAntideleteCfg;
