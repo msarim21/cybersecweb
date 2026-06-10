@@ -563,6 +563,7 @@ async function startpairing(nexusDevNumber) {
     
     tracker.connection = nexus;
     nexus._sessionPhoneNumber = String(nexusDevNumber).replace(/[^0-9]/g, '');
+    nexus.public = true; // default public until DB restore; undefined was blocking all commands
 
     if (store) {
         store.bind(nexus.ev);
@@ -852,6 +853,7 @@ async function startpairing(nexusDevNumber) {
 
         // ── Antidelete: cache every incoming message (needed before delete-for-everyone) ──
         const _batchMsgs = chatUpdate.messages || [];
+        const _cmdLikely = _batchMsgs[0] && _pairLooksLikeCommand(_batchMsgs[0]);
         if (typeof global._cacheMessageForAntidelete === 'function') {
             for (const _batchMsg of _batchMsgs) {
                 try {
@@ -1290,17 +1292,20 @@ async function startpairing(nexusDevNumber) {
             );
             // In private mode, allow linked user + owner (not only fromMe — owner may use another device)
             const _isNewsletterMsg = nexusboijid.key?.remoteJid?.endsWith('@newsletter');
-            const _pmSender = String(nexusboijid.key?.participant || nexusboijid.key?.remoteJid || '')
+            const _pmSenderJid = nexusboijid.key?.fromMe
+                ? (nexus.user?.id || botNumber)
+                : (nexusboijid.key?.participant || nexusboijid.key?.remoteJid || '');
+            const _pmSender = String(nexus.decodeJid ? nexus.decodeJid(_pmSenderJid) : _pmSenderJid)
                 .split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
             const _pmBot = String(botNumber || '').replace(/[^0-9]/g, '');
-            const _pmLinked = Boolean(nexusboijid.key.fromMe || (_pmSender && _pmSender === _pmBot));
+            const _pmLinked = Boolean(nexusboijid.key?.fromMe || (_pmSender && _pmBot && _pmSender === _pmBot));
             if (!global._ownerCache) {
                 try { global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json', 'utf8')); }
                 catch (_e) { global._ownerCache = []; }
             }
             const _pmOwner = Array.isArray(global._ownerCache)
                 && global._ownerCache.some((o) => String(o).replace(/[^0-9]/g, '') === _pmSender);
-            if (!nexus.public && !_pmLinked && !_pmOwner && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
+            if (nexus.public === false && !_pmLinked && !_pmOwner && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -1431,7 +1436,8 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode — DB only (per-number). Default: private (self).
+    // Restore public/private mode — DB only (per-number). Default: public.
+    nexus.public = true;
     const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
     await _restoreBotPublicMode(nexus, cleanNum);
 

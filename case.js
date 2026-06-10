@@ -936,7 +936,7 @@ if (isCmd && command) {
             const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
             const _turboCreator = [devtrust._cachedBotNumber, ...(Array.isArray(owner) ? owner : [])].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
             // Private mode: linked user OR owner only — same rule as full command path
-            if (!devtrust.public && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
+            if (devtrust.public === false && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
             ensureFlagCache();
             if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
                 try {
@@ -4329,7 +4329,7 @@ if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
 
-if (!devtrust.public) {
+if (devtrust.public === false) {
     // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
     const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
     // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
