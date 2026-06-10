@@ -412,14 +412,14 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
     }
 }
 
-/** Restore public/private bot mode from DB — default private (self) after restart */
+/** Restore public/private from DB — default PUBLIC; only .private / .public locks preference */
 async function _restoreBotPublicMode(nexus, cleanNum) {
     try {
-        const dbMode = await getBotMode(cleanNum).catch(() => 'self');
-        nexus.public = dbMode === 'public';
+        const dbMode = await getBotMode(cleanNum).catch(() => null);
+        nexus.public = dbMode !== 'self';
         console.log(chalk.cyan(`[pair] 📋 Mode for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE (self)'}`));
     } catch (_) {
-        nexus.public = false;
+        nexus.public = true;
     }
 }
 

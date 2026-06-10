@@ -16,8 +16,9 @@ const botSessionSchema = new mongoose.Schema({
   firstConnectedAt: { type: Date },
   lastActive:       { type: Date, default: Date.now },
   createdAt:        { type: Date, default: Date.now },
-  /** public = everyone can use bot; self (default) = owner + linked number only */
-  botMode:          { type: String, enum: ['public', 'self'], default: 'self' },
+  /** public = everyone; self = owner + linked number only — set only via .public / .private */
+  botMode:          { type: String, enum: ['public', 'self'] },
+  botModeLocked:    { type: Boolean, default: false },
 });
 
 module.exports = mongoose.model('BotSession', botSessionSchema);

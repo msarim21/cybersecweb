@@ -610,7 +610,7 @@ async function setBotMode(number, mode) {
     const { BotSession } = M();
     await BotSession.findOneAndUpdate(
       { number: clean },
-      { $set: { botMode: mode } },
+      { $set: { botMode: mode, botModeLocked: true } },
       { upsert: true }
     );
     return;
@@ -619,10 +619,13 @@ async function setBotMode(number, mode) {
   try {
     await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'self'`);
   } catch (_) {}
+  try {
+    await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`);
+  } catch (_) {}
   await pg().query(
-    `INSERT INTO bot_sessions (number, bot_mode, status, last_active)
-     VALUES ($1, $2, 'active', NOW())
-     ON CONFLICT (number) DO UPDATE SET bot_mode = $2, last_active = NOW()`,
+    `INSERT INTO bot_sessions (number, bot_mode, bot_mode_locked, status, last_active)
+     VALUES ($1, $2, true, 'active', NOW())
+     ON CONFLICT (number) DO UPDATE SET bot_mode = $2, bot_mode_locked = true, last_active = NOW()`,
     [clean, mode]
   ).catch(() => {});
 }
@@ -633,15 +636,20 @@ async function getBotMode(number) {
     if (isMongoMode()) {
       const { BotSession } = M();
       const doc = await BotSession.findOne({ number: clean }).lean();
-      return (doc && doc.botMode) ? doc.botMode : 'self';
+      if (!doc?.botModeLocked) return null;
+      return doc.botMode || null;
     }
+    try {
+      await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`);
+    } catch (_) {}
     const { rows } = await pg().query(
-      `SELECT bot_mode FROM bot_sessions WHERE number = $1`,
+      `SELECT bot_mode, bot_mode_locked FROM bot_sessions WHERE number = $1`,
       [clean]
     );
-    return (rows.length && rows[0].bot_mode) ? rows[0].bot_mode : 'self';
+    if (!rows.length || !rows[0].bot_mode_locked) return null;
+    return rows[0].bot_mode || null;
   } catch (_) {
-    return 'self';
+    return null;
   }
 }
 

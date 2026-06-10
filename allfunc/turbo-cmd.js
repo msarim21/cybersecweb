@@ -85,7 +85,7 @@ async function tryTurboCommand(devtrust, m, ctx) {
         const h = Math.floor(up / 3600);
         const min = Math.floor((up % 3600) / 60);
         const sec = Math.floor(up % 60);
-        await send({ text: `✅ *CYBER BOT ALIVE*\n\n⏱ Uptime: ${h}h ${min}m ${sec}s\n🤖 Mode: ${ctx.botMode || 'PRIVATE'}` });
+        await send({ text: `✅ *CYBER BOT ALIVE*\n\n⏱ Uptime: ${h}h ${min}m ${sec}s\n🤖 Mode: ${ctx.botMode || 'PUBLIC'}` });
         return true;
     }
 
@@ -94,7 +94,7 @@ async function tryTurboCommand(devtrust, m, ctx) {
             pushname: ctx.pushname || m.pushName || 'User',
             prefix: ctx.prefix || '.',
             sender: m.sender,
-            botMode: ctx.botMode || 'PRIVATE',
+            botMode: ctx.botMode || 'PUBLIC',
             totalCommands: ctx.totalCommands,
         });
         await send({ text });
