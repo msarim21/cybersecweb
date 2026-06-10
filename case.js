@@ -250,7 +250,7 @@ if (!global._antideleteSweepStarted) {
     }, 30 * 60 * 1000);
 }
 if (!global._antieditConfig) global._antieditConfig = { mode: 'off' };
-if (!global._antideleteConfig) global._antideleteConfig = { mode: 'off' };
+if (!global._antideleteConfig) global._antideleteConfig = { mode: 'private' };
 
 const ANTIEDIT_CONFIG_FILE = _botPaths ? _botPaths.antiedit : './database/antiedit_config.json';
 const ANTIDELETE_CONFIG_FILE = _botPaths ? _botPaths.antidelete : './database/antidelete_config.json';

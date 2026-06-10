@@ -412,6 +412,17 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
     }
 }
 
+/** Restore public/private bot mode from DB — default private (self) after restart */
+async function _restoreBotPublicMode(nexus, cleanNum) {
+    try {
+        const dbMode = await getBotMode(cleanNum).catch(() => 'self');
+        nexus.public = dbMode === 'public';
+        console.log(chalk.cyan(`[pair] 📋 Mode for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE (self)'}`));
+    } catch (_) {
+        nexus.public = false;
+    }
+}
+
 function canOpenWhatsAppSocket() {
     if (global.__ISOLATED_BOT) return true;
     if (process.env.BOT_PAIRING === '1') return true;
@@ -1420,21 +1431,9 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode — DB only (per-number, session-isolated)
-    // NO shared file fallback — each session is fully independent
-    try {
-        const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-        const dbMode = await getBotMode(cleanNum).catch(() => null);
-        if (dbMode) {
-            nexus.public = dbMode !== 'self';
-        } else {
-            // No DB record yet → default to public for this session only
-            nexus.public = true;
-        }
-        console.log(chalk.cyan(`[pair] 📋 Mode restored for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE'}`));
-    } catch (e) {
-        nexus.public = true;
-    }
+    // Restore public/private mode — DB only (per-number). Default: private (self).
+    const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+    await _restoreBotPublicMode(nexus, cleanNum);
 
     nexus.sendText = (jid, text, quoted = '', options) => nexus.sendMessage(jid, { text: text, ...options }, { quoted })
 
@@ -1881,21 +1880,23 @@ async function startpairing(nexusDevNumber) {
                 } catch (_) {}
             }
 
-            // AUTO-ENABLE ANTIDELETE PRIVATE on every connect + ensure isolated workspace
+            // Default antidelete private for new bots only — keep user's mode after restart
             try {
                 const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 ensureBotWorkspace(_adCleanNum);
                 const _adCfgFile = path.join(__dirname, 'database', `antidelete_config_${_adCleanNum}.json`);
                 const _dbDir = path.join(__dirname, 'database');
                 if (!fs.existsSync(_dbDir)) fs.mkdirSync(_dbDir, { recursive: true });
-                const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
-                fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
-                // Per-bot workspace config (isolated mode)
                 const _botAdCfg = isBotIsolated() ? getBotConfigPaths().antidelete : null;
-                if (_botAdCfg) fs.writeFileSync(_botAdCfg, JSON.stringify(_adCfgData, null, 2));
-                if (!global._antideleteConfigs) global._antideleteConfigs = {};
-                global._antideleteConfigs[_adCleanNum] = _adCfgData;
-                console.log(chalk.green(`🛡️ [${_adCleanNum}] Auto-enabled antidelete private`));
+                const _adCfgExists = fs.existsSync(_adCfgFile) || (_botAdCfg && fs.existsSync(_botAdCfg));
+                if (!_adCfgExists) {
+                    const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+                    fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
+                    if (_botAdCfg) fs.writeFileSync(_botAdCfg, JSON.stringify(_adCfgData, null, 2));
+                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+                    global._antideleteConfigs[_adCleanNum] = _adCfgData;
+                    console.log(chalk.green(`🛡️ [${_adCleanNum}] Default antidelete: private`));
+                }
             } catch (_adErr) {
                 console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
             }
@@ -1909,19 +1910,8 @@ async function startpairing(nexusDevNumber) {
                 }
             } catch (_) {}
 
-            // Restore saved bot mode on reconnect (.public persists across restarts)
-            try {
-                const _modeNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                const dbMode = await getBotMode(_modeNum).catch(() => null);
-                if (dbMode === 'public' || dbMode === 'self') {
-                    nexus.public = dbMode === 'public';
-                } else {
-                    nexus.public = true;
-                }
-                console.log(chalk.cyan(`[pair] 📋 Mode for ${_modeNum}: ${nexus.public ? 'PUBLIC' : 'SELF (private)'}`));
-            } catch (_) {
-                nexus.public = true;
-            }
+            // Restore saved bot mode on reconnect (.public / .private persist across restarts)
+            await _restoreBotPublicMode(nexus, nexusDevNumber.replace(/[^0-9]/g, ''));
 
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
