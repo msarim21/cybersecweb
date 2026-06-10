@@ -839,10 +839,9 @@ async function startpairing(nexusDevNumber) {
             _tracker.lastWAMessage = Date.now();
         }
 
-        // ── Antidelete: cache messages — defer on commands so replies are not delayed ──
+        // ── Antidelete: cache every incoming message (needed before delete-for-everyone) ──
         const _batchMsgs = chatUpdate.messages || [];
-        const _cacheForAntidelete = () => {
-            if (typeof global._cacheMessageForAntidelete !== 'function') return;
+        if (typeof global._cacheMessageForAntidelete === 'function') {
             for (const _batchMsg of _batchMsgs) {
                 try {
                     if (_batchMsg?.key?.id && _batchMsg?.message && Object.keys(_batchMsg.message).length
@@ -851,10 +850,7 @@ async function startpairing(nexusDevNumber) {
                     }
                 } catch (_) {}
             }
-        };
-        const _cmdLikely = _batchMsgs[0] && _pairLooksLikeCommand(_batchMsgs[0]);
-        // Antidelete cache always sync — deferred cache caused "not in cache" on fast delete-for-everyone
-        _cacheForAntidelete();
+        }
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
