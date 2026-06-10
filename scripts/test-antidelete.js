@@ -100,12 +100,25 @@ async function run() {
         assert.ok(targets[0].includes(TEST_BOT));
     });
 
-    await ok('_adPrivateReportTargets: owner DM → owner only (not bot user)', async () => {
+    await ok('_adPrivateReportTargets: owner DM → bot user Message Yourself', async () => {
         const sock = mockSock();
         const targets = await helpers._adPrivateReportTargets(sock, TEST_BOT, OWNER_JID);
-        assert.ok(targets.length >= 1);
-        assert.ok(targets.every((t) => t.includes(OWNER_NUM)));
-        assert.ok(!targets.some((t) => t.includes(TEST_BOT)));
+        assert.strictEqual(targets.length, 1);
+        assert.ok(targets[0].includes(TEST_BOT));
+    });
+
+    await ok('cacheMessageForAntidelete: remoteJidAlt-only messages cached', () => {
+        cleanup();
+        helpers.ensureAntideletePrivateDefault(TEST_BOT);
+        const session = helpers.getAntideleteSession(TEST_BOT);
+        const sock = mockSock();
+        helpers.cacheMessageForAntidelete({
+            key: { id: 'LIDMSG1', remoteJidAlt: '923008888888@lid' },
+            message: { conversation: 'lid era hello' },
+        }, sock);
+        const hit = session.get('923008888888@lid', 'LIDMSG1');
+        assert.ok(hit);
+        assert.strictEqual(hit.content, 'lid era hello');
     });
 
     await ok('_adPrivateReportTargets: owner group → bot user + owner', async () => {

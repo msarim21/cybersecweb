@@ -42,7 +42,15 @@ class AntideleteSessionStore {
         this.memory = new Map();
         /** msgId → primary chatId (fallback when JID format differs, e.g. @lid vs @s.whatsapp.net) */
         this.msgIdIndex = new Map();
-        this.diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
+        let diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
+        try {
+            const { isBotIsolated, getBotConfigPaths } = require('./bot-workspace');
+            if (isBotIsolated()) {
+                const isolated = getBotConfigPaths(this.botNum);
+                if (isolated?.antideleteStore) diskPath = isolated.antideleteStore;
+            }
+        } catch (_) {}
+        this.diskPath = diskPath;
         this.mediaDir = path.join('tmp', 'antidelete_media', this.botNum);
         this._diskTimer = null;
         this._loaded = false;

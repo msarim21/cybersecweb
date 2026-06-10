@@ -1114,7 +1114,10 @@ async function startpairing(nexusDevNumber) {
                     const _adBotNumR = typeof global._adResolveBotNum === 'function'
                         ? global._adResolveBotNum(nexus)
                         : String(nexus._sessionPhoneNumber || nexus._cachedBotNumber || nexus.user?.id || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
-                    const _adChatR = nexusboijid.key?.remoteJid || _revokeProto.key?.remoteJid || '';
+                    const _adChatR = typeof global._adChatIdFromKey === 'function'
+                        ? (global._adChatIdFromKey(_revokeProto.key) || global._adChatIdFromKey(nexusboijid.key))
+                        : (nexusboijid.key?.remoteJid || nexusboijid.key?.remoteJidAlt
+                            || _revokeProto.key?.remoteJid || _revokeProto.key?.remoteJidAlt || '');
                     if (_adBotNumR && _adChatR && typeof global._adInvokeDeleteHandler === 'function') {
                         void global._adInvokeDeleteHandler(nexus, {
                             key: nexusboijid.key,
@@ -1125,7 +1128,9 @@ async function startpairing(nexusDevNumber) {
                         }).catch((e) => console.error('[ANTIDELETE] revoke:', e?.message));
                     }
                 }
-            } catch (_) { /* silent */ }
+            } catch (_revokeErr) {
+                console.error('[ANTIDELETE] revoke upsert error:', _revokeErr?.message);
+            }
 
             // ── Antiedit / view-once store — skip for commands (fast path to case.js) ──
             if (!_cmdLikely) {
@@ -2148,7 +2153,9 @@ async function startpairing(nexusDevNumber) {
 
                 // ── REGULAR CHAT deletions: antidelete via messages.delete event ──
                 try {
-                    const _adChatId2 = key.remoteJid || '';
+                    const _adChatId2 = typeof global._adChatIdFromKey === 'function'
+                        ? global._adChatIdFromKey(key)
+                        : (key.remoteJid || key.remoteJidAlt || '');
                     const _adMsgId2 = key.id;
                     if (!_adChatId2 || !_adMsgId2) continue;
 
@@ -2160,7 +2167,9 @@ async function startpairing(nexusDevNumber) {
                             reportMiss: true,
                         });
                     }
-                } catch (_adE2) { /* silent */ }
+                } catch (_adE2) {
+                    console.error('[ANTIDELETE] messages.delete error:', _adE2?.message);
+                }
             }
         } catch (_de) {
             // Silent fail
