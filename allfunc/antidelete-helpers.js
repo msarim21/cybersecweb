@@ -209,6 +209,58 @@ function _adValidMentions(...jids) {
     return [...new Set(jids.filter((j) => j && String(j).includes('@')))];
 }
 
+function _adLoadPlatformOwners() {
+    try {
+        if (!global._ownerCache) {
+            global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json', 'utf-8'));
+        }
+        return Array.isArray(global._ownerCache) ? global._ownerCache : [];
+    } catch (_) { return []; }
+}
+
+function _adLoadBotSudoList(clean) {
+    const paths = [
+        path.join('database', 'bots', clean, 'sudo.json'),
+        './database/sudo.json',
+    ];
+    for (const p of paths) {
+        try {
+            if (fs.existsSync(p)) {
+                const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
+                if (Array.isArray(d)) return d;
+            }
+        } catch (_) {}
+    }
+    return [];
+}
+
+/** Private-mode alert targets: bot user (saved msgs) + platform owners + sudo users */
+function _adPrivateAlertRecipients(sock, clean) {
+    const byNum = new Map();
+    const add = (jid) => {
+        const s = jid ? String(jid).trim() : '';
+        let full = s;
+        if (s && !s.includes('@')) {
+            const digits = cleanBotNum(s);
+            if (!digits) return;
+            full = `${digits}@s.whatsapp.net`;
+        }
+        if (!full.includes('@')) return;
+        const num = cleanBotNum(full);
+        if (!num) return;
+        const prev = byNum.get(num);
+        if (!prev || (full.includes('@s.whatsapp.net') && prev.includes('@lid'))) {
+            byNum.set(num, full);
+        }
+    };
+
+    for (const j of _adOwnerTargetJids(sock, clean)) add(j);
+    for (const j of _adLoadPlatformOwners()) add(j);
+    for (const j of _adLoadBotSudoList(clean)) add(j);
+
+    return [...byNum.values()];
+}
+
 function _adFindTracker(clean) {
     try {
         const pairMod = require('../pair');
@@ -787,15 +839,12 @@ async function _adDeliverAntideleteReport(sock, {
     const clean = cleanBotNum(botNum);
     const mentions = _adValidMentions(deletedBy, sender);
     const sendOpts = { priority: true, _cmdReply: true };
-    const candidates = [];
-    if (targetJid) candidates.push(String(targetJid));
-    if (toOwner) {
-        for (const j of _adOwnerTargetJids(sock, clean)) {
-            if (!candidates.includes(j)) candidates.push(j);
-        }
-    }
+    const candidates = toOwner
+        ? _adPrivateAlertRecipients(sock, clean)
+        : (targetJid ? [String(targetJid)] : []);
     if (!candidates.length) return false;
 
+    let sentAny = false;
     for (const jid of candidates) {
         try {
             await sock.sendMessage(jid, { text, mentions }, sendOpts);
@@ -804,18 +853,19 @@ async function _adDeliverAntideleteReport(sock, {
                 await _adForwardDeletedExtras(sock, jid, mediaOriginal, sender);
             }
             console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
-            return true;
+            sentAny = true;
         } catch (e) {
             console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
         }
     }
 
-    const fallbackJid = candidates[0];
-    console.error(`[ANTIDELETE][${clean || '?'}] all deliver targets failed, queuing`);
-    if (botNum) {
-        _adQueuePendingReport(botNum, { targetJid: fallbackJid, text, mediaOriginal, sender, deletedBy });
+    if (!sentAny) {
+        console.error(`[ANTIDELETE][${clean || '?'}] all deliver targets failed, queuing`);
+        if (botNum) {
+            _adQueuePendingReport(botNum, { targetJid: candidates[0], text, mediaOriginal, sender, deletedBy });
+        }
     }
-    return false;
+    return sentAny;
 }
 
 async function _adFlushPendingReports(sock, botNum, botJid) {
