@@ -387,10 +387,19 @@ async function getStats() {
 // LINKED NUMBER METHODS
 // ════════════════════════════════════════════════════════════════════════════
 
+function _mongoOwnerId(userId) {
+  const mongoose = require('mongoose');
+  const id = String(userId || '');
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    return new mongoose.Types.ObjectId(id);
+  }
+  return userId;
+}
+
 async function getNumbersByOwner(userId, search) {
   if (isMongoMode()) {
     const { LinkedNumber } = M();
-    const filter = { ownerId: userId };
+    const filter = { ownerId: _mongoOwnerId(userId) };
     if (search) filter.$or = [
       { number:  { $regex: search, $options: 'i' } },
       { botName: { $regex: search, $options: 'i' } },
@@ -412,7 +421,7 @@ async function getNumbersByOwner(userId, search) {
 async function countNumbersByOwner(userId) {
   if (isMongoMode()) {
     const { LinkedNumber } = M();
-    return LinkedNumber.countDocuments({ ownerId: userId });
+    return LinkedNumber.countDocuments({ ownerId: _mongoOwnerId(userId) });
   }
   const { rows } = await pg().query('SELECT COUNT(*) FROM linked_numbers WHERE owner_id=$1', [userId]);
   return parseInt(rows[0].count);

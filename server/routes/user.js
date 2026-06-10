@@ -25,6 +25,7 @@ function getPlanLimit(plan) {
 router.get('/profile', protect, async (req, res) => {
   try {
     const user = await findUserById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
     const linkedCount = await getUserLinkedCount(user.id);
     res.json({
       id:               user.id,
@@ -68,6 +69,7 @@ router.get('/stats', protect, async (req, res) => {
   try {
     const userId = req.user.id;
     const user   = await findUserById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
     const plan   = user.subscription_plan;
     const limit  = getPlanLimit(plan);
 

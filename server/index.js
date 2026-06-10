@@ -252,10 +252,18 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 // ── DB ready check middleware for API routes ─────────────────────────────────
-const requireDb = (req, res, next) => {
+const requireDb = async (req, res, next) => {
+  if (!isDbReady()) {
+    try {
+      await initDb();
+    } catch (err) {
+      console.error('[requireDb] initDb failed:', err.message);
+    }
+  }
   if (!isDbReady()) {
     return res.status(503).json({
-      error: 'Database not connected. Please set MONGO_URL or DATABASE_URL in Heroku config vars.',
+      error: 'Database temporarily unavailable. Retrying in a moment…',
+      retry: true,
     });
   }
   next();

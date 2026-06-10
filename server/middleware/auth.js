@@ -26,7 +26,7 @@ const protect = async (req, res, next) => {
       return res.status(403).json({ error: 'Plan expired. Contact admin to renew.' });
     }
 
-    await updateUserLastActive(decoded.id);
+    try { await updateUserLastActive(decoded.id); } catch (_) { /* non-fatal */ }
     req.user = user;
     next();
   } catch {

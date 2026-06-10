@@ -15,7 +15,13 @@ let _mongoHandlersAttached = false;
 
 const isMongoMode = () => _mongoMode;
 const getPool     = () => _pool;
-const isDbReady   = () => _dbReady;
+
+function _connectionLive() {
+  if (_mongoMode) return mongoose.connection.readyState === 1;
+  return Boolean(_pool);
+}
+
+const isDbReady = () => _dbReady && _connectionLive();
 
 const MONGO_OPTS = {
   serverSelectionTimeoutMS: 15000,
@@ -34,11 +40,12 @@ function _attachMongoHandlers() {
   mongoose.connection.on('disconnected', () => {
     console.warn('⚠️  MongoDB disconnected — auto-reconnecting...');
     _dbReady = false;
+    _initPromise = null; // allow initDb() to run again after blip
     setTimeout(() => {
-      mongoose.connect(MONGO_URL, MONGO_OPTS).catch((err) => {
+      initDb().catch((err) => {
         console.error('MongoDB reconnect failed:', err.message);
       });
-    }, 3000);
+    }, 2000);
   });
   mongoose.connection.on('error', (err) => {
     console.error('MongoDB error:', err.message);
@@ -50,13 +57,34 @@ function _attachMongoHandlers() {
 }
 
 const initDb = async () => {
-  if (_dbReady) return;
+  if (MONGO_URL && mongoose.connection.readyState === 1) {
+    _mongoMode = true;
+    _attachMongoHandlers();
+    _dbReady = true;
+    return;
+  }
+  if (_dbReady && _connectionLive()) return;
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
   if (MONGO_URL) {
     _mongoMode = true;
     if (mongoose.connection.readyState === 1) {
+      _attachMongoHandlers();
+      _dbReady = true;
+      return;
+    }
+    if (mongoose.connection.readyState === 2) {
+      await new Promise((resolve, reject) => {
+        const onConnected = () => { cleanup(); resolve(); };
+        const onError = (err) => { cleanup(); reject(err); };
+        const cleanup = () => {
+          mongoose.connection.off('connected', onConnected);
+          mongoose.connection.off('error', onError);
+        };
+        mongoose.connection.once('connected', onConnected);
+        mongoose.connection.once('error', onError);
+      });
       _attachMongoHandlers();
       _dbReady = true;
       return;

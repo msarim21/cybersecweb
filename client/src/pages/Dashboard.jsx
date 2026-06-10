@@ -532,20 +532,35 @@ export default function Dashboard() {
     };
   }, []);
 
-  const fetchData = async (silent = false) => {
+  const fetchData = async (silent = false, attempt = 0) => {
     if (!silent) setLoading(true);
     try {
       const [nRes, sRes, pRes] = await Promise.all([
         axios.get('/api/numbers'),
         axios.get('/api/user/stats'),
-        axios.get('/api/user/profile')
+        axios.get('/api/user/profile'),
       ]);
-      setNumbers(nRes.data);
-      setStats(sRes.data);
-      // License key from profile (always shows - even if null)
-      setLicenseKey(pRes.data.licenseKey || null);
-    } catch { if (!silent) toast.error('Failed to load data'); }
-    finally { if (!silent) setLoading(false); }
+      setNumbers(Array.isArray(nRes.data) ? nRes.data : []);
+      setStats(sRes.data || null);
+      setLicenseKey(pRes.data?.licenseKey || null);
+    } catch (err) {
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.error;
+      const shouldRetry = attempt < 3 && (status === 503 || status === 502 || !err?.response);
+      if (shouldRetry) {
+        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        return fetchData(silent, attempt + 1);
+      }
+      if (!silent) {
+        toast.error(
+          status === 403 ? (msg || 'Access denied — plan may have expired.')
+            : status === 401 ? 'Session expired — please login again.'
+            : (msg || 'Failed to load data')
+        );
+      }
+    } finally {
+      if (!silent) setLoading(false);
+    }
   };
 
   const fetchAudio = async (silent = false) => {
