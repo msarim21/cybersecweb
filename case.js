@@ -13232,9 +13232,9 @@ case 'adel': {
     const _adCurrentMode = _adCfgNow.mode || 'off';
     const _adAction = args[0]?.toLowerCase();
     const _adModeLabel = {
-        'private': '🔒 private — ALL deletions → saved messages (bot user + owner)',
-        'private_pm': '🔒 private_pm — PM deletions → saved messages (bot user + owner)',
-        'private_groups': '🔒 private_groups — Group deletions → saved messages (bot user + owner)',
+        'private': '🔒 private — user chats → user saved msgs; owner chats → owner saved msgs',
+        'private_pm': '🔒 private_pm — PM deletions → routed by chat (user vs owner)',
+        'private_groups': '🔒 private_groups — group deletions → routed by chat (user vs owner)',
         'chat': '💬 chat — ALL deletions → reposted in same chat',
         'chat_groups': '💬 chat_groups — Group deletions only → reposted in chat',
         'off': '❌ off — Disabled'
@@ -13243,7 +13243,8 @@ case 'adel': {
         return reply(
             `*🔰 ANTIDELETE SETTINGS 🔰*\n\n` +
             `*Current Mode:* ${_adModeLabel[_adCurrentMode] || _adCurrentMode}\n\n` +
-            `*Delivery to saved messages (Message Yourself — bot user + owner):*\n` +
+            `*Delivery to saved messages (Message Yourself):*\n` +
+            `_User chats → bot user only. Owner DM/group → owner only._\n\n` +
             `• \`${prefix}antidelete private\` — ALL deletions → saved messages\n` +
             `• \`${prefix}antidelete private_pm\` — PM deletions → saved messages\n` +
             `• \`${prefix}antidelete private_groups\` — Group deletions → saved messages\n\n` +

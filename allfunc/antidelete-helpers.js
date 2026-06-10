@@ -148,8 +148,11 @@ function _adLoadPlatformOwners() {
     } catch (_) { return []; }
 }
 
-/** Private-mode delivery: bot user + platform owners → each one's saved messages */
-function _adPrivateReportTargets(sock, clean) {
+function _adJidToNum(jid) {
+    return cleanBotNum(String(jid || '').split(':')[0].split('@')[0]);
+}
+
+function _adCollectJidsByNum(jids) {
     const byNum = new Map();
     const add = (jid) => {
         const s = jid ? String(jid).trim() : '';
@@ -167,9 +170,74 @@ function _adPrivateReportTargets(sock, clean) {
             byNum.set(num, full);
         }
     };
-    for (const j of _adMessageYourselfTargets(sock, clean)) add(j);
-    for (const j of _adLoadPlatformOwners()) add(j);
-    return [...byNum.values()];
+    for (const j of jids) add(j);
+    return byNum;
+}
+
+/** Owner numbers from owner.json (exclude paired bot user) */
+function _adOwnerPhoneSet(cleanBotUserNum) {
+    const set = new Set();
+    for (const j of _adLoadPlatformOwners()) {
+        const num = _adJidToNum(j);
+        if (num && num !== cleanBotUserNum) set.add(num);
+    }
+    return set;
+}
+
+function _adTargetsForOwnerNums(ownerNums) {
+    const jids = [];
+    for (const num of ownerNums) {
+        jids.push(`${num}@s.whatsapp.net`, `${num}@lid`);
+        for (const j of _adLoadPlatformOwners()) {
+            if (_adJidToNum(j) === num) jids.push(j);
+        }
+    }
+    return [..._adCollectJidsByNum(jids).values()];
+}
+
+/** Owner DM or group where owner is a member */
+async function _adIsOwnerInvolvedChat(sock, chatId, clean) {
+    const owners = _adOwnerPhoneSet(clean);
+    if (!owners.size || !chatId) return { ownerChat: false, ownerNums: [] };
+
+    const isGroup = String(chatId).endsWith('@g.us');
+    if (!isGroup) {
+        const chatNum = _adJidToNum(chatId);
+        if (owners.has(chatNum)) {
+            return { ownerChat: true, ownerNums: [chatNum] };
+        }
+        return { ownerChat: false, ownerNums: [] };
+    }
+
+    try {
+        const meta = await sock.groupMetadata(chatId);
+        const found = [];
+        for (const p of meta?.participants || []) {
+            const pNum = _adJidToNum(p.id || p.jid || p);
+            if (owners.has(pNum)) found.push(pNum);
+        }
+        if (found.length) {
+            return { ownerChat: true, ownerNums: [...new Set(found)] };
+        }
+    } catch (_) {}
+    return { ownerChat: false, ownerNums: [] };
+}
+
+/**
+ * Private-mode routing:
+ * - User chats → bot user Message Yourself only
+ * - Owner chats (DM with owner / group with owner) → owner Message Yourself only
+ */
+async function _adPrivateReportTargets(sock, clean, chatId) {
+    const route = await _adIsOwnerInvolvedChat(sock, chatId, clean);
+    if (route.ownerChat && route.ownerNums.length) {
+        const targets = _adTargetsForOwnerNums(route.ownerNums);
+        console.log(`[ANTIDELETE][${clean}] owner-chat route → ${targets.join(', ')}`);
+        return targets;
+    }
+    const targets = _adMessageYourselfTargets(sock, clean);
+    console.log(`[ANTIDELETE][${clean}] user-chat route → ${targets[0] || '?'}`);
+    return targets;
 }
 
 function _adDeliveryTarget(mode, chatId, sock, clean) {
@@ -790,23 +858,25 @@ function _adQueuePendingReport(botNum, report) {
 }
 
 async function _adDeliverAntideleteReport(sock, {
-    targetJid, text, mediaOriginal, sender, deletedBy, botNum, useMessageYourself = false,
+    targetJid, text, mediaOriginal, sender, deletedBy, botNum, useMessageYourself = false, chatId = '',
 }) {
     if (!sock || !text) return false;
     const clean = cleanBotNum(botNum);
     const mentions = _adValidMentions(deletedBy, sender);
     const sendOpts = { priority: true, _cmdReply: true };
     const candidates = useMessageYourself
-        ? _adPrivateReportTargets(sock, clean)
+        ? await _adPrivateReportTargets(sock, clean, chatId || targetJid)
         : (targetJid ? [String(targetJid)] : []);
     if (!candidates.length) return false;
 
     let sentAny = false;
-    for (const jid of candidates) {
+    const lastIdx = candidates.length - 1;
+    for (let i = 0; i < candidates.length; i++) {
+        const jid = candidates[i];
         try {
             await sock.sendMessage(jid, { text, mentions }, sendOpts);
             if (mediaOriginal) {
-                await _adForwardDeletedMedia(sock, jid, mediaOriginal, sender, botNum);
+                await _adForwardDeletedMedia(sock, jid, mediaOriginal, sender, botNum, { keepFile: i < lastIdx });
                 await _adForwardDeletedExtras(sock, jid, mediaOriginal, sender);
             }
             console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
@@ -1036,7 +1106,7 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
     } catch (e) {
         console.error(`[ANTIDELETE][${botNum || '?'}] media send error:`, e.message);
     }
-    if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
+    if (_hasFile && !opts.keepFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
 }
 
 async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
@@ -1187,6 +1257,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             deletedBy,
             botNum: clean,
             useMessageYourself,
+            chatId,
         });
         return false;
     }
@@ -1227,6 +1298,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         deletedBy,
         botNum: clean,
         useMessageYourself,
+        chatId,
     });
     if (sent) {
         _adMarkDeleteProcessed(clean, chatId, msgId);
