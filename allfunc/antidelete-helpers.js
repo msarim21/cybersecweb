@@ -5,6 +5,10 @@ const { getAntideleteSession, cleanBotNum } = require('./antidelete-session');
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
 const ANTIDELETE_MONGO_TTL_MS = 48 * 60 * 60 * 1000;
+/** Bot message cache in Mongo fills Atlas quota — disk/RAM only unless ANTIDELETE_MONGO=1 */
+function _adMongoEnabled() {
+    return String(process.env.ANTIDELETE_MONGO || '0').trim() === '1';
+}
 const ANTIDELETE_MEDIA_B64_MAX = 8 * 1024 * 1024; // 8MB — store inline for reliable recovery
 const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
 
@@ -83,6 +87,60 @@ function _adExpandChatIds(sock, chatId, altChatIds = []) {
         if (domain !== 's.whatsapp.net') ids.add(`${head}@s.whatsapp.net`);
     }
     return [...ids].filter(Boolean);
+}
+
+function _adValidMentions(...jids) {
+    return [...new Set(jids.filter((j) => j && String(j).includes('@')))];
+}
+
+/** Bot user's own JID (Message Yourself / saved messages) */
+function _adBotUserSelfJid(sock, clean) {
+    const cached = sock?._cachedBotNumber;
+    if (cached && String(cached).includes('@')) return String(cached);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') {
+            const decoded = sock.decodeJid(raw);
+            if (decoded?.includes('@')) return decoded;
+        }
+    } catch (_) {}
+    const raw = String(sock?.user?.id || sock?.authState?.creds?.me?.id || '');
+    if (raw.includes('@')) {
+        const head = raw.split(':')[0];
+        const domain = raw.split('@').slice(1).join('@') || 's.whatsapp.net';
+        return `${head}@${domain}`;
+    }
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+/** JID fallbacks for Message Yourself — bot user only (not platform owner.json) */
+function _adMessageYourselfTargets(sock, clean) {
+    const targets = [];
+    const add = (j) => {
+        const s = j ? String(j) : '';
+        if (s.includes('@') && !targets.includes(s)) targets.push(s);
+    };
+    add(sock?._cachedBotNumber);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
+    } catch (_) {}
+    add(_adBotUserSelfJid(sock, clean));
+    add(_adNormJid(_adBotUserSelfJid(sock, clean)));
+    if (clean) {
+        add(`${clean}@s.whatsapp.net`);
+        add(`${clean}@lid`);
+        try {
+            const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+            add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
+        } catch (_) {}
+    }
+    return targets;
+}
+
+function _adDeliveryTarget(mode, chatId, sock, clean) {
+    if (mode === 'chat' || mode === 'chat_groups') return chatId;
+    return _adBotUserSelfJid(sock, clean) || `${clean}@s.whatsapp.net`;
 }
 
 function _adSanitizeEntryForPersistence(entry) {
@@ -331,6 +389,7 @@ async function _adEnsureMongoReady() {
 
 async function _adFlushMongoSaves() {
     _adMongoFlushTimer = null;
+    if (!_adMongoEnabled()) return;
     if (!(await _adEnsureMongoReady())) return;
     const batch = [..._adMongoSaveQueue.values()];
     _adMongoSaveQueue.clear();
@@ -356,6 +415,7 @@ async function _adFlushMongoSaves() {
 }
 
 function _adScheduleMongoFlush() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) return;
     _adMongoFlushTimer = setTimeout(() => {
         _adFlushMongoSaves().catch(() => {});
@@ -364,6 +424,7 @@ function _adScheduleMongoFlush() {
 
 async function _adMongoGet(botNum, chatId, msgId) {
     try {
+        if (!_adMongoEnabled()) return null;
         if (!(await _adEnsureMongoReady())) return null;
         const AntideleteCache = require('../server/models/AntideleteCache');
         const clean = cleanBotNum(botNum);
@@ -376,6 +437,7 @@ async function _adMongoGet(botNum, chatId, msgId) {
 }
 
 function _adMongoSave(botNum, chatId, msgId, entry) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -385,6 +447,7 @@ function _adMongoSave(botNum, chatId, msgId, entry) {
 }
 
 function _adMongoDelete(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -660,23 +723,41 @@ function _adQueuePendingReport(botNum, report) {
     }
 }
 
-async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal, sender, deletedBy, botNum }) {
-    if (!sock || !targetJid || !text) return false;
-    const mentions = [deletedBy, sender].filter(Boolean);
-    try {
-        await sock.sendMessage(targetJid, { text, mentions });
-        if (mediaOriginal) {
-            await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
-            await _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender);
+async function _adDeliverAntideleteReport(sock, {
+    targetJid, text, mediaOriginal, sender, deletedBy, botNum, useMessageYourself = false,
+}) {
+    if (!sock || !text) return false;
+    const clean = cleanBotNum(botNum);
+    const mentions = _adValidMentions(deletedBy, sender);
+    const sendOpts = { priority: true, _cmdReply: true };
+    const candidates = useMessageYourself
+        ? _adMessageYourselfTargets(sock, clean)
+        : (targetJid ? [String(targetJid)] : []);
+    if (!candidates.length) return false;
+
+    let sentAny = false;
+    for (const jid of candidates) {
+        try {
+            await sock.sendMessage(jid, { text, mentions }, sendOpts);
+            if (mediaOriginal) {
+                await _adForwardDeletedMedia(sock, jid, mediaOriginal, sender, botNum);
+                await _adForwardDeletedExtras(sock, jid, mediaOriginal, sender);
+            }
+            console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
+            sentAny = true;
+            break;
+        } catch (e) {
+            console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
         }
-        return true;
-    } catch (e) {
-        console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
-        if (botNum) {
-            _adQueuePendingReport(botNum, { targetJid, text, mediaOriginal, sender, deletedBy });
-        }
-        return false;
     }
+
+    if (!sentAny) {
+        console.error(`[ANTIDELETE][${clean || '?'}] all deliver targets failed, queuing`);
+        if (botNum) {
+            _adQueuePendingReport(botNum, { targetJid: candidates[0], text, mediaOriginal, sender, deletedBy });
+        }
+    }
+    return sentAny;
 }
 
 async function _adFlushPendingReports(sock, botNum, botJid) {
@@ -696,8 +777,8 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
         const target = item.targetJid || botJid;
         if (!target) continue;
         try {
-            const mentions = [item.deletedBy, item.sender].filter(Boolean);
-            await sock.sendMessage(target, { text: item.text, mentions });
+            const mentions = _adValidMentions(item.deletedBy, item.sender);
+            await sock.sendMessage(target, { text: item.text, mentions }, { priority: true, _cmdReply: true });
             if (item.mediaOriginal) {
                 await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
                 await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
@@ -962,8 +1043,8 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         await new Promise((r) => setTimeout(r, 400));
     }
 
-    // Deliver in same chat (user DM / group) — never forward to owner saved messages
-    const target = chatId;
+    const useMessageYourself = !(mode === 'chat' || mode === 'chat_groups');
+    const target = _adDeliveryTarget(mode, chatId, sock, clean);
     const timeStr = new Date().toLocaleString('en-US', {
         timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
         hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -981,11 +1062,15 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             `*🕒 Time:* ${timeStr}\n` +
             (isGroup ? `*👥 Group:* ${groupName || chatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
             `\n_[Original message not in cache]_`;
-        try {
-            await sock.sendMessage(target, { text, mentions: [deletedBy].filter(Boolean) });
-        } catch (e) {
-            console.error(`[ANTIDELETE][${clean}] cache-miss report failed:`, e.message);
-        }
+        await _adDeliverAntideleteReport(sock, {
+            targetJid: target,
+            text,
+            mediaOriginal: null,
+            sender: deletedBy,
+            deletedBy,
+            botNum: clean,
+            useMessageYourself,
+        });
         return true;
     }
 
@@ -1024,6 +1109,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         sender,
         deletedBy,
         botNum: clean,
+        useMessageYourself,
     });
     _adRemoveCachedMessage(clean, chatId, msgId);
     return true;
