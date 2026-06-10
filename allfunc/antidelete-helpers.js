@@ -37,12 +37,30 @@ function _adResolveBotNum(sock, hint = '') {
     return '';
 }
 
+function _adNormJid(jid) {
+    if (!jid) return '';
+    const s = String(jid);
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        return jidNormalizedUser(s);
+    } catch (_) {
+        return s;
+    }
+}
+
 function _adChatIdsFromKey(key) {
     const ids = new Set();
-    if (key?.remoteJid) ids.add(String(key.remoteJid));
-    if (key?.remoteJidAlt) ids.add(String(key.remoteJidAlt));
+    if (key?.remoteJid) {
+        ids.add(String(key.remoteJid));
+        ids.add(_adNormJid(key.remoteJid));
+    }
+    if (key?.remoteJidAlt) {
+        ids.add(String(key.remoteJidAlt));
+        ids.add(_adNormJid(key.remoteJidAlt));
+    }
     if (key?.participant && !String(key.remoteJid || '').endsWith('@g.us')) {
         ids.add(String(key.participant));
+        ids.add(_adNormJid(key.participant));
     }
     return [...ids].filter(Boolean);
 }
@@ -502,8 +520,14 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             botNum,
         };
 
-        session.set(chatId, msgId, entry, aliasChatIds);
+        const allAliases = [...new Set([
+            ...aliasChatIds,
+            _adNormJid(chatId),
+            ...aliasChatIds.map(_adNormJid),
+        ].filter(Boolean))];
+        session.set(chatId, msgId, entry, allAliases);
         _adMongoSave(botNum, chatId, msgId, entry);
+        session.saveDiskNow();
         session.scheduleDiskSave();
     } catch (e) {
         console.error('[ANTIDELETE] cache error:', e.message);
@@ -923,18 +947,23 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         return false;
     }
 
-    const altIds = [...new Set(altChatIds.filter(Boolean))];
-    let orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    if (!orig) {
-        await new Promise((r) => setTimeout(r, 600));
+    const altIds = [...new Set([
+        ...altChatIds.filter(Boolean),
+        ..._adExpandChatIds(sock, chatId, altChatIds),
+    ])];
+    let orig = null;
+    const lookupDeadline = Date.now() + 5000;
+    while (Date.now() < lookupDeadline) {
+        try {
+            getAntideleteSession(clean)?.refreshFromDisk();
+        } catch (_) {}
         orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
-    }
-    if (!orig) {
-        await new Promise((r) => setTimeout(r, 1200));
-        orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
+        if (orig) break;
+        await new Promise((r) => setTimeout(r, 400));
     }
 
-    const ownerJid = `${clean}@s.whatsapp.net`;
+    // Deliver in same chat (user DM / group) — never forward to owner saved messages
+    const target = chatId;
     const timeStr = new Date().toLocaleString('en-US', {
         timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
         hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -945,8 +974,6 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     if (isGroup) {
         try { groupName = (await sock.groupMetadata(chatId)).subject; } catch (_) {}
     }
-
-    const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
 
     if (!orig) {
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
