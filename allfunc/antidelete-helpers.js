@@ -226,15 +226,28 @@ async function _adIsOwnerInvolvedChat(sock, chatId, clean) {
 /**
  * Private-mode routing:
  * - User chats → bot user Message Yourself only
- * - Owner chats (DM with owner / group with owner) → owner Message Yourself only
+ * - Owner DM → owner Message Yourself only
+ * - Group with owner member → bot user + owner Message Yourself (both)
  */
 async function _adPrivateReportTargets(sock, clean, chatId) {
     const route = await _adIsOwnerInvolvedChat(sock, chatId, clean);
-    if (route.ownerChat && route.ownerNums.length) {
-        const targets = _adTargetsForOwnerNums(route.ownerNums);
-        console.log(`[ANTIDELETE][${clean}] owner-chat route → ${targets.join(', ')}`);
+    const isGroup = String(chatId || '').endsWith('@g.us');
+
+    if (route.ownerChat && isGroup && route.ownerNums.length) {
+        const targets = [..._adCollectJidsByNum([
+            ..._adMessageYourselfTargets(sock, clean),
+            ..._adTargetsForOwnerNums(route.ownerNums),
+        ]).values()];
+        console.log(`[ANTIDELETE][${clean}] owner-group route (user+owner) → ${targets.join(', ')}`);
         return targets;
     }
+
+    if (route.ownerChat && route.ownerNums.length) {
+        const targets = _adTargetsForOwnerNums(route.ownerNums);
+        console.log(`[ANTIDELETE][${clean}] owner-dm route → ${targets.join(', ')}`);
+        return targets;
+    }
+
     const targets = _adMessageYourselfTargets(sock, clean);
     console.log(`[ANTIDELETE][${clean}] user-chat route → ${targets[0] || '?'}`);
     return targets;
