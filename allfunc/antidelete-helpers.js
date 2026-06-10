@@ -42,12 +42,30 @@ function _adResolveBotNum(sock, hint = '') {
     return '';
 }
 
+function _adNormJid(jid) {
+    if (!jid) return '';
+    const s = String(jid);
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        return jidNormalizedUser(s);
+    } catch (_) {
+        return s;
+    }
+}
+
 function _adChatIdsFromKey(key) {
     const ids = new Set();
-    if (key?.remoteJid) ids.add(String(key.remoteJid));
-    if (key?.remoteJidAlt) ids.add(String(key.remoteJidAlt));
+    if (key?.remoteJid) {
+        ids.add(String(key.remoteJid));
+        ids.add(_adNormJid(key.remoteJid));
+    }
+    if (key?.remoteJidAlt) {
+        ids.add(String(key.remoteJidAlt));
+        ids.add(_adNormJid(key.remoteJidAlt));
+    }
     if (key?.participant && !String(key.remoteJid || '').endsWith('@g.us')) {
         ids.add(String(key.participant));
+        ids.add(_adNormJid(key.participant));
     }
     return [...ids].filter(Boolean);
 }
@@ -128,18 +146,61 @@ function _adClaimMissReport(botNum, chatId, msgId) {
     return true;
 }
 
+function _adCfgPaths(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return ['./database/antidelete_config.json'];
+    return [
+        `./database/antidelete_config_${clean}.json`,
+        `./database/bots/${clean}/antidelete_config.json`,
+    ];
+}
+
+function _adPendingFile(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return ANTIDELETE_PENDING_FILE;
+    const ws = path.join('database', 'bots', clean, 'antidelete_pending.json');
+    if (fs.existsSync(path.dirname(ws))) return ws;
+    return path.join('database', `antidelete_pending_${clean}.json`);
+}
+
+function _adOwnerJid(sock, clean) {
+    const cached = sock?._cachedBotNumber;
+    if (cached && String(cached).includes('@')) return String(cached);
+    const raw = String(sock?.user?.id || sock?.authState?.creds?.me?.id || '');
+    if (raw.includes('@')) {
+        const head = raw.split(':')[0];
+        const domain = raw.split('@').slice(1).join('@') || 's.whatsapp.net';
+        return `${head}@${domain}`;
+    }
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+function _adFindTracker(clean) {
+    try {
+        const pairMod = require('../pair');
+        const tmap = pairMod._getTracker?.();
+        if (!tmap || !clean) return null;
+        const jid = `${clean}@s.whatsapp.net`;
+        if (tmap.has(jid)) return tmap.get(jid);
+        if (tmap.has(clean)) return tmap.get(clean);
+        for (const [key, tracker] of tmap.entries()) {
+            if (cleanBotNum(key) === clean) return tracker;
+        }
+    } catch (_) {}
+    return null;
+}
+
 function loadAntideleteCfg(botNum) {
     const clean = cleanBotNum(botNum);
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
     if (clean && global._antideleteConfigs[clean]) return global._antideleteConfigs[clean];
-    const paths = clean
-        ? [`./database/antidelete_config_${clean}.json`, './database/antidelete_config.json']
-        : ['./database/antidelete_config.json'];
-    for (const p of paths) {
+    for (const p of _adCfgPaths(clean)) {
         try {
             if (fs.existsSync(p)) {
                 const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
+                const result = d.mode
+                    ? d
+                    : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
                 if (clean) global._antideleteConfigs[clean] = result;
                 return result;
             }
@@ -545,7 +606,12 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             botNum,
         };
 
-        session.set(chatId, msgId, entry, aliasChatIds);
+        const allAliases = [...new Set([
+            ...aliasChatIds,
+            _adNormJid(chatId),
+            ...aliasChatIds.map(_adNormJid),
+        ].filter(Boolean))];
+        session.set(chatId, msgId, entry, allAliases);
         _adMongoSave(botNum, chatId, msgId, entry);
         session.scheduleDiskSave();
     } catch (e) {
@@ -655,9 +721,10 @@ function _adSerializeForPending(mediaOriginal) {
 function _adQueuePendingReport(botNum, report) {
     try {
         _adEnsureDbDir();
+        const pendingFile = _adPendingFile(botNum);
         let pending = [];
-        if (fs.existsSync(ANTIDELETE_PENDING_FILE)) {
-            try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { pending = []; }
+        if (fs.existsSync(pendingFile)) {
+            try { pending = JSON.parse(fs.readFileSync(pendingFile, 'utf-8')); } catch (_) { pending = []; }
         }
         if (!Array.isArray(pending)) pending = [];
         pending.push({
@@ -672,7 +739,7 @@ function _adQueuePendingReport(botNum, report) {
             attempts: 0,
         });
         if (pending.length > ANTIDELETE_PENDING_MAX) pending = pending.slice(-ANTIDELETE_PENDING_MAX);
-        fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(pending, null, 2));
+        fs.writeFileSync(pendingFile, JSON.stringify(pending, null, 2));
         console.log(`[ANTIDELETE] Queued offline report for bot ${botNum}`);
     } catch (e) {
         console.error('[ANTIDELETE] pending queue error:', e.message);
@@ -699,9 +766,10 @@ async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal
 }
 
 async function _adFlushPendingReports(sock, botNum, botJid) {
-    if (!sock || !botNum || !fs.existsSync(ANTIDELETE_PENDING_FILE)) return;
+    const pendingFile = _adPendingFile(botNum);
+    if (!sock || !botNum || !fs.existsSync(pendingFile)) return;
     let pending = [];
-    try { pending = JSON.parse(fs.readFileSync(ANTIDELETE_PENDING_FILE, 'utf-8')); } catch (_) { return; }
+    try { pending = JSON.parse(fs.readFileSync(pendingFile, 'utf-8')); } catch (_) { return; }
     if (!Array.isArray(pending) || !pending.length) return;
 
     const clean = cleanBotNum(botNum);
@@ -730,7 +798,7 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
 
     try {
         _adEnsureDbDir();
-        fs.writeFileSync(ANTIDELETE_PENDING_FILE, JSON.stringify(remaining.slice(-ANTIDELETE_PENDING_MAX), null, 2));
+        fs.writeFileSync(pendingFile, JSON.stringify(remaining.slice(-ANTIDELETE_PENDING_MAX), null, 2));
         if (flushed > 0) console.log(`[ANTIDELETE][${clean}] Flushed ${flushed} pending report(s)`);
     } catch (_) {}
 }
@@ -995,14 +1063,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     if (!sock || !clean || !chatId || !msgId) return false;
     if (_adCheckDeleteProcessed(clean, chatId, msgId)) return false;
 
-    let _tracker = tracker;
-    if (!_tracker) {
-        try {
-            const pairMod = require('../pair');
-            const jid = `${clean}@s.whatsapp.net`;
-            _tracker = pairMod._getTracker?.()?.get(jid) || pairMod._getTracker?.()?.get(clean);
-        } catch (_) {}
-    }
+    let _tracker = tracker || _adFindTracker(clean);
     try {
         const { ensureWhatsAppSocketHot } = require('./socket-wake');
         await ensureWhatsAppSocketHot(sock, _tracker, { force: true, light: true });
@@ -1027,7 +1088,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     const altIds = [...new Set(altChatIds.filter(Boolean))];
     const orig = await _adLookupWithRetry(sock, clean, chatId, msgId, altIds);
 
-    const ownerJid = `${clean}@s.whatsapp.net`;
+    const ownerJid = _adOwnerJid(sock, clean);
     const timeStr = new Date().toLocaleString('en-US', {
         timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
         hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -1045,6 +1106,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         if (reportMiss === false || !_adClaimMissReport(clean, chatId, msgId)) {
             return false;
         }
+        _adMarkDeleteProcessed(clean, chatId, msgId);
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
             `*🕒 Time:* ${timeStr}\n` +

@@ -416,45 +416,28 @@ function _antideleteCfgFile(botNum) {
     return ANTIDELETE_CONFIG_FILE;
 }
 function loadAntideleteCfg(botNum) {
-    // 1. Check per-bot in-memory cache first (fastest)
+    if (typeof global.loadAntideleteCfg === 'function') {
+        try { return global.loadAntideleteCfg(botNum); } catch (_) {}
+    }
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
     if (botNum && global._antideleteConfigs[botNum]) return global._antideleteConfigs[botNum];
-
-    // 2. Read per-bot file only (NO global fallback — prevents cross-session contamination)
-    const filesToTry = botNum
-        ? [`./database/antidelete_config_${botNum}.json`]
-        : [ANTIDELETE_CONFIG_FILE]; // only used if botNum is empty (edge case)
-    for (const f of filesToTry) {
-        try {
-            if (fs.existsSync(f)) {
-                const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
-                // migrate old format { enabled: true/false }
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private' } : null);
-                if (result) {
-                    if (botNum) global._antideleteConfigs[botNum] = result; // cache it
-                    return result;
-                }
-            }
-        } catch (e) {}
-    }
-    // AUTO-ENABLE: default to 'private' instead of 'off' so antidelete works out-of-the-box.
-    // If user explicitly runs ".antidelete off", saveAntideleteCfg writes 'off' to disk+cache
-    // and that cached value is returned above — this default only fires when NO config exists at all.
     const _default = { mode: 'private' };
     if (botNum) global._antideleteConfigs[botNum] = _default;
     return _default;
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);
+    const wsFile = botNum ? `./database/bots/${botNum}/antidelete_config.json` : null;
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        // ISOLATION FIX: write ONLY per-bot file — do NOT write to global file
-        // Writing to global contaminates other sessions that haven't configured antidelete
         fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
-        // Update per-bot in-memory cache immediately
+        if (wsFile) {
+            fs.mkdirSync(path.dirname(wsFile), { recursive: true });
+            fs.writeFileSync(wsFile, JSON.stringify(cfg, null, 2));
+        }
         if (!global._antideleteConfigs) global._antideleteConfigs = {};
         if (botNum) global._antideleteConfigs[botNum] = cfg;
-        global._antideleteConfig = cfg; // keep global for backward compat (legacy paths)
+        global._antideleteConfig = cfg;
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
