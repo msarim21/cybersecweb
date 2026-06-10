@@ -312,11 +312,25 @@ function _adMarkDeleteProcessed(botNum, chatId, msgId) {
     const k = _adDeleteDedupKey(botNum, chatId, msgId);
     const now = Date.now();
     global._adDeleteDedup.set(k, now);
+    if (global._adDeleteInflight) global._adDeleteInflight.delete(k);
     if (global._adDeleteDedup.size > 8000) {
         for (const [dk, ts] of global._adDeleteDedup) {
             if (now - ts > ANTIDELETE_DELETE_DEDUP_MS) global._adDeleteDedup.delete(dk);
         }
     }
+}
+
+function _adTryClaimDelete(botNum, chatId, msgId) {
+    if (_adCheckDeleteProcessed(botNum, chatId, msgId)) return false;
+    if (!global._adDeleteInflight) global._adDeleteInflight = new Map();
+    const k = _adDeleteDedupKey(botNum, chatId, msgId);
+    if (global._adDeleteInflight.has(k)) return false;
+    global._adDeleteInflight.set(k, Date.now());
+    return true;
+}
+
+function _adReleaseDeleteClaim(botNum, chatId, msgId) {
+    global._adDeleteInflight?.delete(_adDeleteDedupKey(botNum, chatId, msgId));
 }
 
 function _adClaimMissReport(botNum, chatId, msgId) {
@@ -1258,6 +1272,40 @@ async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
     return orig || _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
 }
 
+/** Build delete context from upsert key + revoked message key (handles @lid / remoteJidAlt) */
+function _adResolveDeleteContext(sock, key = {}, protoKey = {}) {
+    const chatId = protoKey.remoteJid || key.remoteJid || '';
+    const msgId = protoKey.id || key.id || '';
+    const altBase = [
+        ..._adChatIdsFromKey(key),
+        ..._adChatIdsFromKey(protoKey),
+    ];
+    const altChatIds = _adExpandChatIds(sock, chatId, altBase);
+    return {
+        botNum: _adResolveBotNum(sock),
+        chatId,
+        msgId,
+        altChatIds,
+        deletedBy: key.participant || protoKey.participant || key.remoteJid || protoKey.remoteJid || '',
+        fromMeDelete: Boolean(key.fromMe ?? protoKey.fromMe),
+    };
+}
+
+/** Primary entry for delete/revoke — immediate + optional delayed retry */
+async function _adInvokeDeleteHandler(sock, opts = {}) {
+    const { key = {}, protoKey = {}, tracker = null, reportMiss = true, retryMs = 0 } = opts;
+    const ctx = _adResolveDeleteContext(sock, key, protoKey);
+    if (!sock || !ctx.chatId || !ctx.msgId) return false;
+
+    const run = () => _adHandleMessageDelete(sock, { ...ctx, tracker, reportMiss });
+    let result = await run();
+    if (!result && retryMs > 0) {
+        await new Promise((r) => setTimeout(r, retryMs));
+        result = await run();
+    }
+    return result;
+}
+
 async function _adHandleMessageDelete(sock, opts = {}) {
     const {
         botNum,
@@ -1271,7 +1319,8 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     } = opts;
     const clean = _adResolveBotNum(sock, botNum);
     if (!sock || !clean || !chatId || !msgId) return false;
-    if (_adCheckDeleteProcessed(clean, chatId, msgId)) return false;
+    if (!_adTryClaimDelete(clean, chatId, msgId)) return false;
+    console.log(`[ANTIDELETE][${clean}] delete event chat=${chatId.split('@')[0]} msg=${String(msgId).slice(0, 12)}`);
 
     let _tracker = tracker;
     if (!_tracker) {
@@ -1288,17 +1337,21 @@ async function _adHandleMessageDelete(sock, opts = {}) {
 
     const cfg = loadAntideleteCfg(clean);
     const mode = cfg.mode || 'off';
-    if (mode === 'off') return false;
+    if (mode === 'off') {
+        _adReleaseDeleteClaim(clean, chatId, msgId);
+        return false;
+    }
 
     const isGroup = String(chatId).endsWith('@g.us');
-    if (mode === 'private_pm' && isGroup) return false;
-    if (mode === 'private_groups' && !isGroup) return false;
-    if (mode === 'chat' && isGroup) return false;
-    if (mode === 'chat_groups' && !isGroup) return false;
+    if (mode === 'private_pm' && isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
+    if (mode === 'private_groups' && !isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
+    if (mode === 'chat' && isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
+    if (mode === 'chat_groups' && !isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
 
     const deletedByNum = cleanBotNum(String(deletedBy).split(':')[0].split('@')[0] || deletedBy);
     if (fromMeDelete && deletedByNum === clean) {
         _adRemoveCachedMessage(clean, chatId, msgId);
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
 
@@ -1323,6 +1376,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
 
     if (!orig) {
         if (reportMiss === false || !_adClaimMissReport(clean, chatId, msgId)) {
+            _adReleaseDeleteClaim(clean, chatId, msgId);
             return false;
         }
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
@@ -1340,6 +1394,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             useMessageYourself,
             chatId,
         });
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
 
@@ -1349,10 +1404,12 @@ async function _adHandleMessageDelete(sock, opts = {}) {
 
     if (orig.fromMe && fromMeDelete && deletedByNum === clean) {
         _adRemoveCachedMessage(clean, chatId, msgId);
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
     if (senderNumClean === clean && orig.fromMe) {
         _adRemoveCachedMessage(clean, chatId, msgId);
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
 
@@ -1384,12 +1441,15 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     if (sent) {
         _adMarkDeleteProcessed(clean, chatId, msgId);
         _adRemoveCachedMessage(clean, chatId, msgId);
+    } else {
+        _adReleaseDeleteClaim(clean, chatId, msgId);
     }
     return sent;
 }
 
 global._serializeRawMedia = _serializeRawMedia;
 global._adHandleMessageDelete = _adHandleMessageDelete;
+global._adInvokeDeleteHandler = _adInvokeDeleteHandler;
 global.loadAntideleteCfg = loadAntideleteCfg;
 global.ensureAntideletePrivateDefault = ensureAntideletePrivateDefault;
 global._adResolveBotNum = _adResolveBotNum;
@@ -1410,6 +1470,8 @@ global.getAntideleteSession = getAntideleteSession;
 
 module.exports = {
     _adHandleMessageDelete,
+    _adInvokeDeleteHandler,
+    _adResolveDeleteContext,
     loadAntideleteCfg,
     ensureAntideletePrivateDefault,
     _adNormalizeCfg,

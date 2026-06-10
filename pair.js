@@ -1115,22 +1115,14 @@ async function startpairing(nexusDevNumber) {
                         ? global._adResolveBotNum(nexus)
                         : String(nexus._sessionPhoneNumber || nexus._cachedBotNumber || nexus.user?.id || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
                     const _adChatR = nexusboijid.key?.remoteJid || _revokeProto.key?.remoteJid || '';
-                    if (_adBotNumR && _adChatR && typeof global._adHandleMessageDelete === 'function') {
-                        // Fallback only — messages.delete is primary; delay avoids racing ahead on cold socket
-                        const _revokePayload = {
-                            botNum: _adBotNumR,
-                            chatId: _adChatR,
-                            msgId: _revokeProto.key.id,
-                            deletedBy: nexusboijid.key?.participant || _revokeProto.key?.participant || nexusboijid.key?.remoteJid || '',
-                            fromMeDelete: Boolean(nexusboijid.key?.fromMe),
-                            altChatIds: typeof global._adChatIdsFromKey === 'function'
-                                ? global._adChatIdsFromKey(nexusboijid.key)
-                                : [],
+                    if (_adBotNumR && _adChatR && typeof global._adInvokeDeleteHandler === 'function') {
+                        void global._adInvokeDeleteHandler(nexus, {
+                            key: nexusboijid.key,
+                            protoKey: _revokeProto.key,
                             tracker: rentbotTracker.get(nexusDevNumber),
-                        };
-                        setTimeout(() => {
-                            global._adHandleMessageDelete(nexus, { ..._revokePayload, reportMiss: false }).catch(() => {});
-                        }, 2500);
+                            reportMiss: true,
+                            retryMs: 1500,
+                        }).catch((e) => console.error('[ANTIDELETE] revoke:', e?.message));
                     }
                 }
             } catch (_) { /* silent */ }
@@ -2160,20 +2152,10 @@ async function startpairing(nexusDevNumber) {
                     const _adMsgId2 = key.id;
                     if (!_adChatId2 || !_adMsgId2) continue;
 
-                    if (typeof global._adHandleMessageDelete === 'function') {
-                        const _delAltIds = typeof global._adChatIdsFromKey === 'function'
-                            ? global._adChatIdsFromKey(key)
-                            : [];
-                        const _delChatIds = typeof global._adExpandChatIds === 'function'
-                            ? global._adExpandChatIds(nexus, _adChatId2, _delAltIds)
-                            : _delAltIds;
-                        await global._adHandleMessageDelete(nexus, {
-                            botNum: _adBotNum2,
-                            chatId: _adChatId2,
-                            msgId: _adMsgId2,
-                            deletedBy: key.participant || (key.fromMe ? botNumber : '') || '',
-                            fromMeDelete: Boolean(key.fromMe),
-                            altChatIds: _delChatIds,
+                    if (typeof global._adInvokeDeleteHandler === 'function') {
+                        await global._adInvokeDeleteHandler(nexus, {
+                            key,
+                            protoKey: key,
                             tracker: _delTracker,
                             reportMiss: true,
                         });

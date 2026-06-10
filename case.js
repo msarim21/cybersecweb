@@ -973,9 +973,21 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
-// ── EARLY delete protocol — skip command pipeline only (antidelete handled in pair.js messages.delete)
+// ── Delete/revoke protocol — run antidelete immediately, then skip command pipeline
 const _earlyDelProto = m.message?.protocolMessage;
 if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto?.key?.id) {
+    const _adBotEarly = jidToNum(getBotJid(devtrust));
+    if (_adBotEarly && loadAntideleteCfg(_adBotEarly).mode !== 'off'
+        && typeof global._adInvokeDeleteHandler === 'function') {
+        try {
+            await global._adInvokeDeleteHandler(devtrust, {
+                key: m.key,
+                protoKey: _earlyDelProto.key,
+                reportMiss: true,
+                retryMs: 1500,
+            });
+        } catch (e) { console.error('[ANTIDELETE]', e); }
+    }
     return;
 }
 

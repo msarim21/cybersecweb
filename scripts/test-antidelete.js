@@ -142,6 +142,50 @@ async function run() {
         assert.ok(selfSends[0].endsWith('@s.whatsapp.net'));
     });
 
+    await ok('_adResolveDeleteContext: merges proto key + lid aliases', () => {
+        const sock = mockSock();
+        const ctx = helpers._adResolveDeleteContext(sock, {
+            remoteJid: '923008888888@lid',
+            id: 'MSG123',
+        }, {
+            remoteJid: '923008888888@s.whatsapp.net',
+            remoteJidAlt: '923008888888@lid',
+            id: 'MSG123',
+        });
+        assert.strictEqual(ctx.msgId, 'MSG123');
+        assert.ok(ctx.altChatIds.some((j) => j.includes('923008888888')));
+    });
+
+    await ok('_adInvokeDeleteHandler: retries when first lookup misses', async () => {
+        cleanup();
+        helpers.ensureAntideletePrivateDefault(TEST_BOT);
+        const chatId = '923008888888@s.whatsapp.net';
+        const msgId = 'RETRYMSG01';
+        const delivered = [];
+        const sock = mockSock({
+            sendMessage: async (jid, payload) => {
+                delivered.push({ jid, text: payload.text });
+                return {};
+            },
+        });
+        setTimeout(() => {
+            helpers.getAntideleteSession(TEST_BOT).set(chatId, msgId, {
+                content: 'late cache fill',
+                sender: chatId,
+                fromMe: false,
+                _ts: Date.now(),
+            });
+        }, 400);
+        const result = await helpers._adInvokeDeleteHandler(sock, {
+            key: { remoteJid: chatId, id: msgId },
+            protoKey: { remoteJid: chatId, id: msgId },
+            reportMiss: true,
+            retryMs: 800,
+        });
+        assert.strictEqual(result, true);
+        assert.ok(delivered.some((d) => d.text.includes('late cache fill')));
+    });
+
     await ok('_adHandleMessageDelete: private mode delivers to Message Yourself', async () => {
         cleanup();
         helpers.ensureAntideletePrivateDefault(TEST_BOT);
