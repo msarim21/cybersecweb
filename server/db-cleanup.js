@@ -11,11 +11,18 @@ async function purgeBotMessageData() {
   }
 
   const results = { antideleteCache: 0 };
+  const db = require('mongoose').connection.db;
 
   try {
-    const AntideleteCache = require('./models/AntideleteCache');
-    const res = await AntideleteCache.deleteMany({});
-    results.antideleteCache = res.deletedCount || 0;
+    const cols = await db.listCollections({ name: 'antideletecaches' }).toArray();
+    if (cols.length) {
+      await db.dropCollection('antideletecaches');
+      results.antideleteCache = -1; // dropped entire collection
+    } else {
+      const AntideleteCache = require('./models/AntideleteCache');
+      const res = await AntideleteCache.deleteMany({});
+      results.antideleteCache = res.deletedCount || 0;
+    }
   } catch (err) {
     results.antideleteError = err.message;
   }
