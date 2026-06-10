@@ -114,42 +114,40 @@ function _adBotUserSelfJid(sock, clean) {
     return clean ? `${clean}@s.whatsapp.net` : '';
 }
 
-/** One canonical Message Yourself JID — never @lid (opens "Unknown user" chat) */
-function _adCanonicalSelfJid(sock, clean) {
-    const candidates = [];
-    const add = (j) => { if (j && String(j).includes('@')) candidates.push(String(j)); };
+/**
+ * Ordered self-chat JIDs — try best first, @lid only as last resort.
+ * Sends only ONE message (first success), avoids duplicate Unknown user + You chats.
+ */
+function _adSelfJidOrderedTries(sock, clean) {
+    const ordered = [];
+    const seen = new Set();
+    const add = (j) => {
+        const s = j ? String(j).trim() : '';
+        if (!s.includes('@')) return;
+        const key = s.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        ordered.push(s);
+    };
+    if (clean) add(`${clean}@s.whatsapp.net`);
     add(sock?._cachedBotNumber);
     add(_adBotUserSelfJid(sock, clean));
     try {
         const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
         if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
     } catch (_) {}
-    if (clean) {
-        add(`${clean}@s.whatsapp.net`);
-        try {
-            const { jidNormalizedUser } = require('@whiskeysockets/baileys');
-            add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
-        } catch (_) {}
-    }
-    const deduped = _adCollectJidsByNum(candidates);
-    if (deduped.size) return [...deduped.values()][0];
-    return clean ? `${clean}@s.whatsapp.net` : '';
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        if (clean) add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
+    } catch (_) {}
+    if (clean) add(`${clean}@lid`);
+    return ordered;
 }
 
-/** Retry list if canonical self send fails — still one number, no @lid */
-function _adSelfJidFallbacks(sock, clean) {
-    const raw = [];
-    if (sock?._cachedBotNumber) raw.push(String(sock._cachedBotNumber));
-    const self = _adBotUserSelfJid(sock, clean);
-    if (self) raw.push(self);
-    if (clean) raw.push(`${clean}@s.whatsapp.net`);
-    return [..._adCollectJidsByNum(raw).values()];
-}
-
-/** Bot user Message Yourself — exactly one JID */
+/** Bot user Message Yourself — one delivery slot (fallbacks tried inside deliver) */
 function _adMessageYourselfTargets(sock, clean) {
-    const primary = _adCanonicalSelfJid(sock, clean);
-    return primary ? [primary] : [];
+    const tries = _adSelfJidOrderedTries(sock, clean);
+    return tries.length ? [tries[0]] : (clean ? [`${clean}@s.whatsapp.net`] : []);
 }
 
 function _adLoadPlatformOwners() {
@@ -896,7 +894,6 @@ async function _adDeliverAntideleteReport(sock, {
         : (targetJid ? [String(targetJid)] : []);
     if (!candidates.length) return false;
 
-    const selfFallbacks = useMessageYourself ? _adSelfJidFallbacks(sock, clean) : [];
     let sentAny = false;
     const deliveredNums = new Set();
 
@@ -905,7 +902,11 @@ async function _adDeliverAntideleteReport(sock, {
         const num = _adJidToNum(primary);
         if (num && deliveredNums.has(num)) continue;
 
-        const tries = [primary, ...selfFallbacks.filter((j) => j && j !== primary && _adJidToNum(j) === num)];
+        const isBotSelf = Boolean(clean && num === clean);
+        const tries = (useMessageYourself && isBotSelf)
+            ? _adSelfJidOrderedTries(sock, clean)
+            : [primary, `${num}@s.whatsapp.net`].filter((j, idx, arr) => j && j.includes('@') && arr.indexOf(j) === idx);
+
         let deliveredJid = null;
         for (const jid of tries) {
             try {
