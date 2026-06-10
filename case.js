@@ -416,45 +416,28 @@ function _antideleteCfgFile(botNum) {
     return ANTIDELETE_CONFIG_FILE;
 }
 function loadAntideleteCfg(botNum) {
-    // 1. Check per-bot in-memory cache first (fastest)
+    if (typeof global.loadAntideleteCfg === 'function') {
+        try { return global.loadAntideleteCfg(botNum); } catch (_) {}
+    }
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
     if (botNum && global._antideleteConfigs[botNum]) return global._antideleteConfigs[botNum];
-
-    // 2. Read per-bot file only (NO global fallback — prevents cross-session contamination)
-    const filesToTry = botNum
-        ? [`./database/antidelete_config_${botNum}.json`]
-        : [ANTIDELETE_CONFIG_FILE]; // only used if botNum is empty (edge case)
-    for (const f of filesToTry) {
-        try {
-            if (fs.existsSync(f)) {
-                const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
-                // migrate old format { enabled: true/false }
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private' } : null);
-                if (result) {
-                    if (botNum) global._antideleteConfigs[botNum] = result; // cache it
-                    return result;
-                }
-            }
-        } catch (e) {}
-    }
-    // AUTO-ENABLE: default to 'private' instead of 'off' so antidelete works out-of-the-box.
-    // If user explicitly runs ".antidelete off", saveAntideleteCfg writes 'off' to disk+cache
-    // and that cached value is returned above — this default only fires when NO config exists at all.
     const _default = { mode: 'private' };
     if (botNum) global._antideleteConfigs[botNum] = _default;
     return _default;
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);
+    const wsFile = botNum ? `./database/bots/${botNum}/antidelete_config.json` : null;
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
-        // ISOLATION FIX: write ONLY per-bot file — do NOT write to global file
-        // Writing to global contaminates other sessions that haven't configured antidelete
         fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
-        // Update per-bot in-memory cache immediately
+        if (wsFile) {
+            fs.mkdirSync(path.dirname(wsFile), { recursive: true });
+            fs.writeFileSync(wsFile, JSON.stringify(cfg, null, 2));
+        }
         if (!global._antideleteConfigs) global._antideleteConfigs = {};
         if (botNum) global._antideleteConfigs[botNum] = cfg;
-        global._antideleteConfig = cfg; // keep global for backward compat (legacy paths)
+        global._antideleteConfig = cfg;
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
@@ -998,9 +981,31 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
-// ── EARLY delete protocol — skip command pipeline only (antidelete handled in pair.js messages.delete)
+// ── Delete protocol: deliver ANTIDELETE REPORT to bot owner (saved messages) ──
 const _earlyDelProto = m.message?.protocolMessage;
 if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto?.key?.id) {
+    try {
+        const _adBotNumE = String(botNumber || '').replace(/[^0-9]/g, '') || jidToNum(getBotJid(devtrust));
+        const _adCfgE = loadAntideleteCfg(_adBotNumE);
+        if ((_adCfgE.mode || 'off') !== 'off' && typeof global._adHandleMessageDelete === 'function') {
+            const _adChatE = m.key?.remoteJid || _earlyDelProto.key?.remoteJid || '';
+            const _adAltE = typeof global._adChatIdsFromKey === 'function'
+                ? global._adChatIdsFromKey(m.key || _earlyDelProto.key || {})
+                : [];
+            const _adAltExp = typeof global._adExpandChatIds === 'function'
+                ? global._adExpandChatIds(devtrust, _adChatE, _adAltE)
+                : _adAltE;
+            await global._adHandleMessageDelete(devtrust, {
+                botNum: _adBotNumE,
+                chatId: _adChatE,
+                msgId: _earlyDelProto.key.id,
+                deletedBy: m.key?.participant || _earlyDelProto.key?.participant || m.key?.remoteJid || '',
+                fromMeDelete: Boolean(m.key?.fromMe),
+                altChatIds: _adAltExp,
+                reportMiss: true,
+            });
+        }
+    } catch (e) { console.error('[ANTIDELETE][case]', e?.message); }
     return;
 }
 
@@ -13232,9 +13237,9 @@ case 'adel': {
     const _adCurrentMode = _adCfgNow.mode || 'off';
     const _adAction = args[0]?.toLowerCase();
     const _adModeLabel = {
-        'private': '🔒 private — ALL deletions (groups + PMs) → saved messages',
-        'private_pm': '🔒 private_pm — PM/DM deletions only → saved messages',
-        'private_groups': '🔒 private_groups — Group deletions only → saved messages',
+        'private': '🔒 private — ALL deletions → bot user + owner alerted',
+        'private_pm': '🔒 private_pm — PM/DM deletions → bot user + owner alerted',
+        'private_groups': '🔒 private_groups — Group deletions → bot user + owner alerted',
         'chat': '💬 chat — ALL deletions → reposted in same chat',
         'chat_groups': '💬 chat_groups — Group deletions only → reposted in chat',
         'off': '❌ off — Disabled'
@@ -13243,10 +13248,10 @@ case 'adel': {
         return reply(
             `*🔰 ANTIDELETE SETTINGS 🔰*\n\n` +
             `*Current Mode:* ${_adModeLabel[_adCurrentMode] || _adCurrentMode}\n\n` +
-            `*Delivery to saved messages (message myself):*\n` +
-            `• \`${prefix}antidelete private\` — ALL deletions (groups + PMs) → saved messages\n` +
-            `• \`${prefix}antidelete private_pm\` — PM/DM deletions only → saved messages\n` +
-            `• \`${prefix}antidelete private_groups\` — Group deletions only → saved messages\n\n` +
+            `*Alert bot user + owner (saved messages + owner/sudo DMs):*\n` +
+            `• \`${prefix}antidelete private\` — ALL deletions → bot user & owner alerted\n` +
+            `• \`${prefix}antidelete private_pm\` — PM/DM deletions only → bot user & owner alerted\n` +
+            `• \`${prefix}antidelete private_groups\` — Group deletions only → bot user & owner alerted\n\n` +
             `*Delivery back into chat:*\n` +
             `• \`${prefix}antidelete chat\` — ALL deletions → reposted in same chat\n` +
             `• \`${prefix}antidelete chat_groups\` — Group deletions only → reposted in chat\n\n` +

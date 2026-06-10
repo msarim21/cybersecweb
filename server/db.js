@@ -93,6 +93,18 @@ const initDb = async () => {
     _attachMongoHandlers();
     _dbReady = true;
     console.log('✅ MongoDB connected');
+    try {
+      const { purgeBotMessageData } = require('./db-cleanup');
+      const cleaned = await purgeBotMessageData();
+      if (!cleaned.skipped && cleaned.antideleteCache !== 0) {
+        const msg = cleaned.antideleteCache === -1
+          ? 'dropped antideletecaches collection'
+          : `removed ${cleaned.antideleteCache} antidelete cache docs`;
+        console.log(`🧹 MongoDB cleanup: ${msg}`);
+      }
+    } catch (err) {
+      console.warn('MongoDB bot-data cleanup skipped:', err.message);
+    }
     return;
   }
 

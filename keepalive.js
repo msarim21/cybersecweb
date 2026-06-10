@@ -134,6 +134,10 @@ async function sweepStaleWhatsAppSockets() {
 
         if (wsState !== 1) continue;
 
+        const connectGraceMs = 10 * 60 * 1000;
+        const sinceConnect = Date.now() - (tracker.connectedAt || 0);
+        if (sinceConnect > 0 && sinceConnect < connectGraceMs) continue;
+
         // Stale socket — light wake first; reconnect only if zombie (45min+ silence) or wake fails twice
         if (silentMs >= WA_STALE_MS) {
             const { lightWakeSocket } = require('./allfunc/socket-wake');
@@ -340,10 +344,8 @@ function startKeepAlive() {
     // Every 4 min: heavy wake — antidelete disk/mongo refresh during long silence
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
 
-    // Every 10 min: flush antidelete cache to disk + Mongo (survives dyno restart)
-    if (isWhatsAppWorker()) {
-        setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
-    }
+    // Every 10 min: flush antidelete cache to disk (all dynos with active bots)
+    setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
 
     // Every 5 min: backup all connected sessions to DB (survives dyno restart)
     if (isWhatsAppWorker()) {
