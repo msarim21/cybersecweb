@@ -1886,22 +1886,14 @@ async function startpairing(nexusDevNumber) {
                 } catch (_) {}
             }
 
-            // Default antidelete private for new bots only — keep user's mode after restart
+            // Antidelete: default private on connect (respects saved mode: off)
             try {
                 const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 ensureBotWorkspace(_adCleanNum);
-                const _adCfgFile = path.join(__dirname, 'database', `antidelete_config_${_adCleanNum}.json`);
-                const _dbDir = path.join(__dirname, 'database');
-                if (!fs.existsSync(_dbDir)) fs.mkdirSync(_dbDir, { recursive: true });
-                const _botAdCfg = isBotIsolated() ? getBotConfigPaths().antidelete : null;
-                const _adCfgExists = fs.existsSync(_adCfgFile) || (_botAdCfg && fs.existsSync(_botAdCfg));
-                if (!_adCfgExists) {
-                    const _adCfgData = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
-                    fs.writeFileSync(_adCfgFile, JSON.stringify(_adCfgData, null, 2));
-                    if (_botAdCfg) fs.writeFileSync(_botAdCfg, JSON.stringify(_adCfgData, null, 2));
-                    if (!global._antideleteConfigs) global._antideleteConfigs = {};
-                    global._antideleteConfigs[_adCleanNum] = _adCfgData;
-                    console.log(chalk.green(`🛡️ [${_adCleanNum}] Default antidelete: private`));
+                const ensureFn = global.ensureAntideletePrivateDefault;
+                if (typeof ensureFn === 'function') {
+                    const _adCfg = ensureFn(_adCleanNum);
+                    console.log(chalk.green(`🛡️ [${_adCleanNum}] Antidelete: ${_adCfg.mode || 'private'}`));
                 }
             } catch (_adErr) {
                 console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));

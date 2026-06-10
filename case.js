@@ -416,33 +416,8 @@ function _antideleteCfgFile(botNum) {
     return ANTIDELETE_CONFIG_FILE;
 }
 function loadAntideleteCfg(botNum) {
-    // 1. Check per-bot in-memory cache first (fastest)
-    if (!global._antideleteConfigs) global._antideleteConfigs = {};
-    if (botNum && global._antideleteConfigs[botNum]) return global._antideleteConfigs[botNum];
-
-    // 2. Read per-bot file only (NO global fallback — prevents cross-session contamination)
-    const filesToTry = botNum
-        ? [`./database/antidelete_config_${botNum}.json`]
-        : [ANTIDELETE_CONFIG_FILE]; // only used if botNum is empty (edge case)
-    for (const f of filesToTry) {
-        try {
-            if (fs.existsSync(f)) {
-                const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
-                // migrate old format { enabled: true/false }
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private' } : null);
-                if (result) {
-                    if (botNum) global._antideleteConfigs[botNum] = result; // cache it
-                    return result;
-                }
-            }
-        } catch (e) {}
-    }
-    // AUTO-ENABLE: default to 'private' instead of 'off' so antidelete works out-of-the-box.
-    // If user explicitly runs ".antidelete off", saveAntideleteCfg writes 'off' to disk+cache
-    // and that cached value is returned above — this default only fires when NO config exists at all.
-    const _default = { mode: 'private' };
-    if (botNum) global._antideleteConfigs[botNum] = _default;
-    return _default;
+    const fromHelpers = require('./allfunc/antidelete-helpers').loadAntideleteCfg;
+    return fromHelpers(botNum);
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);

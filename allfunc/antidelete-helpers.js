@@ -129,16 +129,18 @@ function _adSelfJidOrderedTries(sock, clean) {
         seen.add(key);
         ordered.push(s);
     };
-    if (clean) add(`${clean}@s.whatsapp.net`);
     add(sock?._cachedBotNumber);
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw) add(jidNormalizedUser(raw));
+        if (clean) add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
+    } catch (_) {}
+    if (clean) add(`${clean}@s.whatsapp.net`);
     add(_adBotUserSelfJid(sock, clean));
     try {
         const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
         if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
-    } catch (_) {}
-    try {
-        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
-        if (clean) add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
     } catch (_) {}
     if (clean) add(`${clean}@lid`);
     return ordered;
@@ -254,7 +256,7 @@ async function _adPrivateReportTargets(sock, clean, chatId) {
         return targets;
     }
 
-    if (route.ownerChat && route.ownerNums.length) {
+    if (route.ownerChat && !isGroup && route.ownerNums.length) {
         const targets = _adTargetsForOwnerNums(route.ownerNums);
         console.log(`[ANTIDELETE][${clean}] owner-dm route → ${targets.join(', ')}`);
         return targets;
@@ -326,6 +328,40 @@ function _adClaimMissReport(botNum, chatId, msgId) {
     return true;
 }
 
+function _adNormalizeCfg(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    if (raw.mode === 'off') return { mode: 'off', enabled: false };
+    const valid = ['private', 'private_pm', 'private_groups', 'chat', 'chat_groups', 'off'];
+    if (raw.mode && valid.includes(raw.mode)) {
+        return { ...raw, mode: raw.mode, enabled: raw.enabled !== false };
+    }
+    if (raw.enabled === true || raw.enabled === undefined) {
+        return { mode: 'private', enabled: true, autoEnabled: true };
+    }
+    return { mode: 'private', enabled: true, autoEnabled: true };
+}
+
+/** Ensure per-bot antidelete defaults to private unless user saved mode: off */
+function ensureAntideletePrivateDefault(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return { mode: 'private', enabled: true };
+    const cfgFile = `./database/antidelete_config_${clean}.json`;
+    let cfg = null;
+    if (fs.existsSync(cfgFile)) {
+        try {
+            cfg = _adNormalizeCfg(JSON.parse(fs.readFileSync(cfgFile, 'utf-8')));
+        } catch (_) {}
+    }
+    if (!cfg) {
+        cfg = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+        _adEnsureDbDir();
+        fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
+    }
+    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+    global._antideleteConfigs[clean] = cfg;
+    return cfg;
+}
+
 function loadAntideleteCfg(botNum) {
     const clean = cleanBotNum(botNum);
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
@@ -336,14 +372,15 @@ function loadAntideleteCfg(botNum) {
     for (const p of paths) {
         try {
             if (fs.existsSync(p)) {
-                const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
-                if (clean) global._antideleteConfigs[clean] = result;
-                return result;
+                const result = _adNormalizeCfg(JSON.parse(fs.readFileSync(p, 'utf-8')));
+                if (result) {
+                    if (clean) global._antideleteConfigs[clean] = result;
+                    return result;
+                }
             }
         } catch (_) {}
     }
-    const _default = { mode: 'private', enabled: true };
+    const _default = { mode: 'private', enabled: true, autoEnabled: true };
     if (clean) global._antideleteConfigs[clean] = _default;
     return _default;
 }
@@ -896,14 +933,15 @@ async function _adDeliverAntideleteReport(sock, {
 
     let sentAny = false;
     const deliveredNums = new Set();
+    const botSelfNums = new Set([clean, _adJidToNum(sock?._cachedBotNumber), _adJidToNum(sock?.user?.id)].filter(Boolean));
 
     for (let i = 0; i < candidates.length; i++) {
         const primary = candidates[i];
         const num = _adJidToNum(primary);
         if (num && deliveredNums.has(num)) continue;
 
-        const isBotSelf = Boolean(clean && num === clean);
-        const tries = (useMessageYourself && isBotSelf)
+        const isBotSelf = Boolean(useMessageYourself && num && botSelfNums.has(num));
+        const tries = isBotSelf
             ? _adSelfJidOrderedTries(sock, clean)
             : [primary, `${num}@s.whatsapp.net`].filter((j, idx, arr) => j && j.includes('@') && arr.indexOf(j) === idx);
 
@@ -1353,6 +1391,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
 global._serializeRawMedia = _serializeRawMedia;
 global._adHandleMessageDelete = _adHandleMessageDelete;
 global.loadAntideleteCfg = loadAntideleteCfg;
+global.ensureAntideletePrivateDefault = ensureAntideletePrivateDefault;
 global._adResolveBotNum = _adResolveBotNum;
 global._adExpandChatIds = _adExpandChatIds;
 global._adChatIdsFromKey = _adChatIdsFromKey;
@@ -1372,6 +1411,11 @@ global.getAntideleteSession = getAntideleteSession;
 module.exports = {
     _adHandleMessageDelete,
     loadAntideleteCfg,
+    ensureAntideletePrivateDefault,
+    _adNormalizeCfg,
+    _adPrivateReportTargets,
+    _adSelfJidOrderedTries,
+    _adDeliverAntideleteReport,
     _adResolveBotNum,
     _adExpandChatIds,
     _adChatIdsFromKey,
@@ -1379,7 +1423,6 @@ module.exports = {
     _adResolveMediaInfo,
     _adForwardDeletedMedia,
     _adLookupCachedMessage,
-    _adDeliverAntideleteReport,
     _adFlushPendingReports,
     _adQueuePendingReport,
     cacheMessageForAntidelete,
