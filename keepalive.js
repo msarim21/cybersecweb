@@ -340,10 +340,8 @@ function startKeepAlive() {
     // Every 4 min: heavy wake — antidelete disk/mongo refresh during long silence
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
 
-    // Every 10 min: flush antidelete cache to disk + Mongo (survives dyno restart)
-    if (isWhatsAppWorker()) {
-        setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
-    }
+    // Every 10 min: flush antidelete cache to disk (all dynos with active bots)
+    setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
 
     // Every 5 min: backup all connected sessions to DB (survives dyno restart)
     if (isWhatsAppWorker()) {
