@@ -224,13 +224,14 @@ async function syncBots() {
 
     const { isConnected } = require('../allfunc/connected-flag');
 
-    // Backup: restart pairing-only child as full bot once linked + registered (stuck state)
+    // Pairing complete: mark as normal bot — keep same child process (no kill/restart)
     for (const [clean, entry] of [...children]) {
         if (!entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
         if (!linkedSet.has(clean)) continue;
         if (_hasRegisteredCreds(clean) && isConnected(clean)) {
-            promotePairingToNormal(clean);
+            markBotPromoted(clean);
+            console.log(chalk.green(`[Supervisor] ✅ +${clean} pairing done — keeping live process`));
         }
     }
 
@@ -256,11 +257,17 @@ async function syncBots() {
         }
     }
 
-    // Stop bots no longer linked or stopped (never kill active pairing children)
+    // Stop bots no longer linked (never kill pairing children or fresh connects)
     for (const [clean, entry] of children) {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
-        if (!linkedSet.has(clean)) killBot(clean);
+        if (linkedSet.has(clean)) continue;
+        const linkGraceMs = 15 * 60 * 1000;
+        const age = Date.now() - (entry.spawnedAt || 0);
+        if (age < linkGraceMs && _hasRegisteredCreds(clean) && isConnected(clean)) {
+            continue; // dashboard link may still be saving
+        }
+        killBot(clean);
     }
 }
 

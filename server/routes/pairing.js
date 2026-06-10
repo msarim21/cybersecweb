@@ -212,19 +212,22 @@ router.get('/status/:number', protect, async (req, res) => {
   const { readConnectedFlag } = require('../../allfunc/connected-flag');
   const flag = readConnectedFlag(clean);
 
-  // Code generated but user has not entered it on WhatsApp yet — must win over stale linked flags
-  if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
-    return res.json({ connected: false, pairing: true, status: pairingState.pairingStatus });
-  }
-
-  // Already saved to dashboard
+  // Already saved to dashboard — connected even if pairing_status still says code_ready
   try {
     if (await isNumberInLinkedNumbers(clean)) {
       if (canView) {
+        if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
+          await clearPairingRequest(clean).catch(() => {});
+        }
         return res.json({ connected: true, ts: flag?.ts || Date.now(), linked: true });
       }
     }
   } catch (_) {}
+
+  // Code generated but user has not entered it on WhatsApp yet
+  if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
+    return res.json({ connected: false, pairing: true, status: pairingState.pairingStatus });
+  }
 
   // Phone paired (session active) but dashboard save may still be pending
   if (pairingState?.status === 'active' && canView) {

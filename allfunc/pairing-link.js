@@ -27,11 +27,20 @@ async function linkNumberOnWebConnect(nexusDevNumber) {
         }
 
         const botName = pst?.pairingBotName || 'CYBER-BOT';
-        const saved = await addNumber(
+        let saved = await addNumber(
             nexusDevNumber.includes('@') ? nexusDevNumber : `${cleanNum}@s.whatsapp.net`,
             botName,
             ownerId
         );
+
+        if (!saved) {
+            await new Promise((r) => setTimeout(r, 800));
+            saved = await addNumber(
+                nexusDevNumber.includes('@') ? nexusDevNumber : `${cleanNum}@s.whatsapp.net`,
+                botName,
+                ownerId
+            );
+        }
 
         if (saved) {
             console.log(chalk.green(`[pair] ✅ Auto-saved +${cleanNum} to linked_numbers (${botName}) after phone pairing`));

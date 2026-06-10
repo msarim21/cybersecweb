@@ -134,6 +134,10 @@ async function sweepStaleWhatsAppSockets() {
 
         if (wsState !== 1) continue;
 
+        const connectGraceMs = 10 * 60 * 1000;
+        const sinceConnect = Date.now() - (tracker.connectedAt || 0);
+        if (sinceConnect > 0 && sinceConnect < connectGraceMs) continue;
+
         // Stale socket — light wake first; reconnect only if zombie (45min+ silence) or wake fails twice
         if (silentMs >= WA_STALE_MS) {
             const { lightWakeSocket } = require('./allfunc/socket-wake');

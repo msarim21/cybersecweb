@@ -1628,18 +1628,26 @@ async function startpairing(nexusDevNumber) {
         let webLinked = false;
         try {
             const { linkNumberOnWebConnect } = require('./allfunc/pairing-link');
-            const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
-            webLinked = Boolean(linkResult.linked);
+            for (let attempt = 0; attempt < 3 && !webLinked; attempt++) {
+                if (attempt > 0) await sleep(1000);
+                const linkResult = await linkNumberOnWebConnect(nexusDevNumber);
+                webLinked = Boolean(linkResult.linked);
+                if (!webLinked && attempt < 2) {
+                    console.log(chalk.yellow(`[pair] ⚠️ Dashboard link retry ${attempt + 1}/3 (+${cleanNum}): ${linkResult.reason}`));
+                }
+            }
             if (webLinked) {
                 console.log(chalk.green(`[pair] ✅ Web dashboard linked +${cleanNum} (creds.update after phone code)`));
             } else {
-                console.log(chalk.yellow(`[pair] ⚠️ Phone paired but dashboard link pending (+${cleanNum}): ${linkResult.reason}`));
+                console.log(chalk.yellow(`[pair] ⚠️ Phone paired but dashboard link pending (+${cleanNum})`));
             }
         } catch (e) {
             console.log(chalk.yellow(`[pair] tryCompleteWebPairingFromCreds: ${e.message}`));
         }
 
-        try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+        if (webLinked) {
+            try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+        }
 
         if (process.env.BOT_PAIRING === '1') {
             try {
@@ -1648,20 +1656,18 @@ async function startpairing(nexusDevNumber) {
                     global.__caseLoadedForPairing = true;
                 }
             } catch (_) {}
-            try {
-                const { markBotPromoted, isSupervisorActive } = require('./worker/supervisor');
-                if (isSupervisorActive()) markBotPromoted(cleanNum);
-            } catch (_) {}
+            if (webLinked) {
+                try {
+                    const { markBotPromoted, isSupervisorActive } = require('./worker/supervisor');
+                    if (isSupervisorActive()) markBotPromoted(cleanNum);
+                } catch (_) {}
+            }
             process.env.BOT_PAIRING = '0';
         }
 
-        if (!webLinked) {
-            try {
-                await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
-            } catch (_) {}
-        }
-
         tracker._webPairingLinked = webLinked;
+        tracker.lastWAMessage = Date.now();
+        tracker.connectedAt = Date.now();
         return webLinked;
     }
 
@@ -1838,6 +1844,8 @@ async function startpairing(nexusDevNumber) {
             tracker.badSessionRetry = 0;
             tracker.logoutRetry = 0;
             tracker.lastActivity = Date.now();
+            tracker.lastWAMessage = Date.now();
+            tracker.connectedAt = Date.now();
 
             // Define userJid once here — used by setTimeout callbacks below
             const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
@@ -1873,8 +1881,9 @@ async function startpairing(nexusDevNumber) {
                     console.log(chalk.yellow(`[pair] Web pairing post-connect: ${_wpErr.message}`));
                 }
 
-                // Persist active status only after real WA authentication
-                try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+                if (webLinked) {
+                    try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+                }
             }
 
             if (process.env.BOT_PAIRING === '1') {
@@ -1887,19 +1896,13 @@ async function startpairing(nexusDevNumber) {
                 } catch (_caseErr) {
                     console.log(chalk.yellow(`[pair] case.js load after pairing: ${_caseErr.message}`));
                 }
-                try {
-                    const { markBotPromoted, isSupervisorActive } = require('./worker/supervisor');
-                    if (isSupervisorActive()) markBotPromoted(cleanNum);
-                } catch (_) {}
+                if (webLinked) {
+                    try {
+                        const { markBotPromoted, isSupervisorActive } = require('./worker/supervisor');
+                        if (isSupervisorActive()) markBotPromoted(cleanNum);
+                    } catch (_) {}
+                }
                 process.env.BOT_PAIRING = '0';
-            }
-
-            // Legacy CLI bots without web pairing owner still register under system
-            if (!webLinked) {
-                try {
-                    await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
-                    console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
-                } catch (_) {}
             }
 
             // Ensure antidelete workspace exists — never overwrite user's saved mode
@@ -2366,6 +2369,9 @@ async function startpairing(nexusDevNumber) {
 
         void (async () => {
             const wsState = nexus.ws?.readyState;
+            const _sinceConnect = Date.now() - (tracker.connectedAt || 0);
+            if (_sinceConnect > 0 && _sinceConnect < 5 * 60 * 1000) return;
+
             const _silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
             const _zombieMs = 45 * 60 * 1000;
             const _failLimit = _silentMs >= _zombieMs ? 1 : 2;
@@ -2663,10 +2669,9 @@ module.exports.stopBot = function stopBot(number) {
             rentbotTracker.delete(key);
         }
     });
-    // Remove connected flag
     try {
-        const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
-        if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
+        const { removeConnectedFlag } = require('./allfunc/connected-flag');
+        removeConnectedFlag(clean);
     } catch (_) {}
 };
 
