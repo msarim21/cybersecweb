@@ -166,6 +166,13 @@ function _adPendingFile(botNum) {
 function _adOwnerJid(sock, clean) {
     const cached = sock?._cachedBotNumber;
     if (cached && String(cached).includes('@')) return String(cached);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') {
+            const decoded = sock.decodeJid(raw);
+            if (decoded?.includes('@')) return decoded;
+        }
+    } catch (_) {}
     const raw = String(sock?.user?.id || sock?.authState?.creds?.me?.id || '');
     if (raw.includes('@')) {
         const head = raw.split(':')[0];
@@ -173,6 +180,33 @@ function _adOwnerJid(sock, clean) {
         return `${head}@${domain}`;
     }
     return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+function _adOwnerTargetJids(sock, clean) {
+    const targets = [];
+    const add = (j) => {
+        const s = j ? String(j) : '';
+        if (s.includes('@') && !targets.includes(s)) targets.push(s);
+    };
+    add(sock?._cachedBotNumber);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
+    } catch (_) {}
+    add(_adOwnerJid(sock, clean));
+    add(_adNormJid(_adOwnerJid(sock, clean)));
+    if (clean) {
+        add(`${clean}@s.whatsapp.net`);
+        try {
+            const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+            add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
+        } catch (_) {}
+    }
+    return targets;
+}
+
+function _adValidMentions(...jids) {
+    return [...new Set(jids.filter((j) => j && String(j).includes('@')))];
 }
 
 function _adFindTracker(clean) {
@@ -746,23 +780,42 @@ function _adQueuePendingReport(botNum, report) {
     }
 }
 
-async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal, sender, deletedBy, botNum }) {
-    if (!sock || !targetJid || !text) return false;
-    const mentions = [deletedBy, sender].filter(Boolean);
-    try {
-        await sock.sendMessage(targetJid, { text, mentions });
-        if (mediaOriginal) {
-            await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
-            await _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender);
+async function _adDeliverAntideleteReport(sock, {
+    targetJid, text, mediaOriginal, sender, deletedBy, botNum, toOwner = false,
+}) {
+    if (!sock || !text) return false;
+    const clean = cleanBotNum(botNum);
+    const mentions = _adValidMentions(deletedBy, sender);
+    const sendOpts = { priority: true, _cmdReply: true };
+    const candidates = [];
+    if (targetJid) candidates.push(String(targetJid));
+    if (toOwner) {
+        for (const j of _adOwnerTargetJids(sock, clean)) {
+            if (!candidates.includes(j)) candidates.push(j);
         }
-        return true;
-    } catch (e) {
-        console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
-        if (botNum) {
-            _adQueuePendingReport(botNum, { targetJid, text, mediaOriginal, sender, deletedBy });
-        }
-        return false;
     }
+    if (!candidates.length) return false;
+
+    for (const jid of candidates) {
+        try {
+            await sock.sendMessage(jid, { text, mentions }, sendOpts);
+            if (mediaOriginal) {
+                await _adForwardDeletedMedia(sock, jid, mediaOriginal, sender, botNum);
+                await _adForwardDeletedExtras(sock, jid, mediaOriginal, sender);
+            }
+            console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${jid}`);
+            return true;
+        } catch (e) {
+            console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
+        }
+    }
+
+    const fallbackJid = candidates[0];
+    console.error(`[ANTIDELETE][${clean || '?'}] all deliver targets failed, queuing`);
+    if (botNum) {
+        _adQueuePendingReport(botNum, { targetJid: fallbackJid, text, mediaOriginal, sender, deletedBy });
+    }
+    return false;
 }
 
 async function _adFlushPendingReports(sock, botNum, botJid) {
@@ -783,8 +836,8 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
         const target = item.targetJid || botJid;
         if (!target) continue;
         try {
-            const mentions = [item.deletedBy, item.sender].filter(Boolean);
-            await sock.sendMessage(target, { text: item.text, mentions });
+            const mentions = _adValidMentions(item.deletedBy, item.sender);
+            await sock.sendMessage(target, { text: item.text, mentions }, { priority: true, _cmdReply: true });
             if (item.mediaOriginal) {
                 await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
                 await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
@@ -1100,7 +1153,8 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         try { groupName = (await sock.groupMetadata(chatId)).subject; } catch (_) {}
     }
 
-    const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
+    const toOwner = !(mode === 'chat' || mode === 'chat_groups');
+    const target = toOwner ? ownerJid : chatId;
 
     if (!orig) {
         if (reportMiss === false || !_adClaimMissReport(clean, chatId, msgId)) {
@@ -1119,6 +1173,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             sender: deletedBy,
             deletedBy,
             botNum: clean,
+            toOwner,
         });
         return false;
     }
@@ -1158,6 +1213,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         sender,
         deletedBy,
         botNum: clean,
+        toOwner,
     });
     if (sent) {
         _adMarkDeleteProcessed(clean, chatId, msgId);

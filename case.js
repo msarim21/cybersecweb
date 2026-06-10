@@ -981,9 +981,31 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
-// ── EARLY delete protocol — skip command pipeline only (antidelete handled in pair.js messages.delete)
+// ── Delete protocol: deliver ANTIDELETE REPORT to bot owner (saved messages) ──
 const _earlyDelProto = m.message?.protocolMessage;
 if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto?.key?.id) {
+    try {
+        const _adBotNumE = String(botNumber || '').replace(/[^0-9]/g, '') || jidToNum(getBotJid(devtrust));
+        const _adCfgE = loadAntideleteCfg(_adBotNumE);
+        if ((_adCfgE.mode || 'off') !== 'off' && typeof global._adHandleMessageDelete === 'function') {
+            const _adChatE = m.key?.remoteJid || _earlyDelProto.key?.remoteJid || '';
+            const _adAltE = typeof global._adChatIdsFromKey === 'function'
+                ? global._adChatIdsFromKey(m.key || _earlyDelProto.key || {})
+                : [];
+            const _adAltExp = typeof global._adExpandChatIds === 'function'
+                ? global._adExpandChatIds(devtrust, _adChatE, _adAltE)
+                : _adAltE;
+            await global._adHandleMessageDelete(devtrust, {
+                botNum: _adBotNumE,
+                chatId: _adChatE,
+                msgId: _earlyDelProto.key.id,
+                deletedBy: m.key?.participant || _earlyDelProto.key?.participant || m.key?.remoteJid || '',
+                fromMeDelete: Boolean(m.key?.fromMe),
+                altChatIds: _adAltExp,
+                reportMiss: true,
+            });
+        }
+    } catch (e) { console.error('[ANTIDELETE][case]', e?.message); }
     return;
 }
 
