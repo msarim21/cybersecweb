@@ -564,9 +564,17 @@ async function startpairing(nexusDevNumber) {
         browser: Browsers.macOS("Safari"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
-            const jid = key.remoteJid;
-            const msg = await store.loadMessage(jid, key.id);
-            return msg?.message || '';
+            const jid = key.remoteJid || key.remoteJidAlt;
+            if (!jid || !key.id) return { conversation: '' };
+            try {
+                const msg = await Promise.race([
+                    store.loadMessage(jid, key.id),
+                    new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+                ]);
+                return msg?.message || { conversation: '' };
+            } catch (_) {
+                return { conversation: '' };
+            }
         },
         shouldSyncHistoryMessage: msg => !!msg.syncType, // SPEED: removed noisy log
         msgRetryCounterCache,
@@ -599,12 +607,22 @@ async function startpairing(nexusDevNumber) {
     nexus.sendMessage = async function _sendWithAntideleteCache(jid, content, ...rest) {
         const last = rest[rest.length - 1];
         const opts = last && typeof last === 'object' && !Buffer.isBuffer(last) ? last : {};
-        const priority = Boolean(opts.priority || opts._cmdReply);
+        const inCmd = (nexus._caseInFlight || 0) > 0;
+        const priority = Boolean(opts.priority || opts._cmdReply || inCmd);
         if (!priority) {
             const { delay } = SecurityGuard.canSend(String(jid || ''), false);
-            if (delay > 0) await sleep(Math.min(delay, 400));
+            if (delay > 0) await sleep(Math.min(delay, 200));
         }
-        const sent = await _origSendMessage(jid, content, ...rest);
+        const SEND_TIMEOUT_MS = Number(process.env.WA_SEND_TIMEOUT_MS) || 25_000;
+        const sent = await Promise.race([
+            _origSendMessage(jid, content, ...rest),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('sendMessage timeout')), SEND_TIMEOUT_MS)),
+        ]).catch((e) => {
+            if (String(e?.message || e).includes('timeout')) {
+                console.error(`[send] timeout → ${String(jid).split('@')[0]}`);
+            }
+            throw e;
+        });
         try {
             if (sent?.key?.id && sent?.message && typeof global._cacheMessageForAntidelete === 'function') {
                 global._cacheMessageForAntidelete(sent, nexus);
@@ -1428,8 +1446,12 @@ async function startpairing(nexusDevNumber) {
 
             // ISOLATION FIX: fire-and-forget — one user's slow/stuck command
             // does NOT block any other user's bot. Each message runs independently.
+            nexus._caseInFlight = (nexus._caseInFlight || 0) + 1;
             require("./case")(nexusboiConnect, mek, chatUpdate, store)
-                .catch(err => console.error('[case.js]', err?.message || err));
+                .catch(err => console.error('[case.js]', err?.message || err))
+                .finally(() => {
+                    nexus._caseInFlight = Math.max(0, (nexus._caseInFlight || 1) - 1);
+                });
         } catch (err) {
             console.log(err);
         }
@@ -2104,10 +2126,12 @@ async function startpairing(nexusDevNumber) {
         try {
             if (!nexus.user) return;
             const _delTracker = rentbotTracker.get(nexusDevNumber);
+            void (async () => {
                 try {
                     const { ensureWhatsAppSocketHot } = require('./allfunc/socket-wake');
-                    await ensureWhatsAppSocketHot(nexus, _delTracker, { force: true });
+                    await ensureWhatsAppSocketHot(nexus, _delTracker, { force: true, light: true });
                 } catch (_) {}
+            })();
             if (_delTracker) _delTracker.lastWAMessage = Date.now();
             const botNumber = nexus._cachedBotNumber || nexus.decodeJid(nexus.user.id);
             const _adBotNum2 = typeof global._adResolveBotNum === 'function'

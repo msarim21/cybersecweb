@@ -721,7 +721,7 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
                 session.set(primaryChat, msgId, ex);
                 _adMongoSave(botNum, primaryChat, msgId, ex);
             }
-            session.saveDiskNow();
+            session.scheduleDiskSave();
         } catch (e) {
             console.error(`[ANTIDELETE][${botNum}] prefetch ${mtype}:`, e.message);
         }
@@ -827,7 +827,6 @@ function cacheMessageForAntidelete(rawMsg, sock) {
         ].filter(Boolean))];
         session.set(chatId, msgId, entry, allAliases);
         _adMongoSave(botNum, chatId, msgId, entry);
-        session.saveDiskNow();
         session.scheduleDiskSave();
     } catch (e) {
         console.error('[ANTIDELETE] cache error:', e.message);
@@ -1291,8 +1290,7 @@ async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
     let orig = null;
     while (Date.now() < deadline) {
         try {
-            const session = getAntideleteSession(clean);
-            session?.saveDiskNow();
+            getAntideleteSession(clean)?.refreshFromDisk();
         } catch (_) {}
 
         orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
@@ -1375,7 +1373,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
     try {
         const { ensureWhatsAppSocketHot } = require('./socket-wake');
-        await ensureWhatsAppSocketHot(sock, _tracker, { force: true, light: false });
+        await ensureWhatsAppSocketHot(sock, _tracker, { force: true, light: true });
     } catch (_) {}
 
     const cfg = loadAntideleteCfg(clean);

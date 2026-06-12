@@ -6,9 +6,9 @@
  */
 const SecurityGuard = {
     _buckets: new Map(),
-    MAX_BURST: 14,
+    MAX_BURST: 20,
     WINDOW_MS: 60_000,
-    REFILL_RATE: 5_000,
+    REFILL_RATE: 3_000,
 
     canSend(chatId, priority = false) {
         if (priority) return { allowed: true, delay: 0 };
