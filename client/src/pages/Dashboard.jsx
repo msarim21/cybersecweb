@@ -253,6 +253,7 @@ const LinkModal = ({ onClose, onAdd }) => {
   const [copied, setCopied] = useState(false);
   const [timer, setTimer] = useState(300);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const timerRef   = useRef(null);
   const pollRef    = useRef(null);
   const autoSaved  = useRef(false);
@@ -303,12 +304,17 @@ const LinkModal = ({ onClose, onAdd }) => {
       if (autoSaved.current) return;
       try {
         const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
+        setSyncing(Boolean(data.pairing || data.syncing));
         if (data.connected) {
           toast.success(data.linked ? '📱 WhatsApp paired! Saving to dashboard…' : '📱 WhatsApp connected! Saving to dashboard…');
           await finishLinking();
         }
-      } catch (_) {}
-    }, 2000);
+      } catch (err) {
+        if (err.response?.status === 403) {
+          toast.error('Session expired — login again.');
+        }
+      }
+    }, 1000);
     return () => clearInterval(pollRef.current);
   }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -362,7 +368,13 @@ const LinkModal = ({ onClose, onAdd }) => {
     try {
       const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
       if (!data.connected) {
-        toast.error('Pehle apne phone par WhatsApp mein code enter karein — abhi connect nahi hua.');
+        if (data.syncing || data.status === 'code_ready') {
+          toast.error('WhatsApp abhi sync ho raha hai — phone par "Keep app open" rakhein, 10–30 sec wait karein.');
+        } else if (data.pairing) {
+          toast.error('Pehle phone par WhatsApp → Linked Devices → code enter karein.');
+        } else {
+          toast.error('Abhi connect nahi hua — code dubara check karein ya NEW CODE try karein.');
+        }
         return;
       }
       await finishLinking();
@@ -439,6 +451,11 @@ const LinkModal = ({ onClose, onAdd }) => {
                   <div className="mt-3 font-mono text-xs" style={{ color: timer < 60 ? '#ff4444' : '#00ff88' }}>
                     ⏱ expires in {fmt(timer)}
                   </div>
+                  {syncing && (
+                    <div className="mt-3 font-mono text-[10px] text-[#00ff88] animate-pulse">
+                      ⟳ WhatsApp sync ho raha hai — phone par app open rakhein, auto-connect ho jayega…
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-xl p-4 space-y-2.5" style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
                   <div className="font-mono text-[10px] text-[#8b5cf6] tracking-widest mb-2">HOW TO ENTER THE CODE</div>

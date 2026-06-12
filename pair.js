@@ -31,6 +31,29 @@ const PhoneNumber = require('awesome-phonenumber')
 // Only request WA pairing codes in dedicated pairing child (BOT_PAIRING=1)
 const pairingCode = process.env.BOT_PAIRING === '1' || process.argv.includes('--pairing-code');
 const useMobile = process.argv.includes("--mobile");
+
+function setupAntideleteForBot(nexus, nexusDevNumber) {
+    try {
+        const clean = String(nexusDevNumber).replace(/[^0-9]/g, '');
+        if (!clean) return;
+        ensureBotWorkspace(clean);
+        const ensureFn = global.ensureAntideletePrivateDefault;
+        if (typeof ensureFn === 'function') {
+            const cfg = ensureFn(clean);
+            if (cfg.mode === 'off') {
+                console.log(chalk.yellow(`🛡️ [${clean}] Antidelete OFF (saved user setting)`));
+            } else {
+                console.log(chalk.green(`🛡️ [${clean}] Antidelete: ${cfg.mode || 'private'}`));
+            }
+        }
+        const flushJid = nexus._cachedBotNumber || `${clean}@s.whatsapp.net`;
+        if (typeof global._adFlushPendingReports === 'function') {
+            global._adFlushPendingReports(nexus, clean, flushJid).catch(() => {});
+        }
+    } catch (e) {
+        console.log(chalk.yellow(`⚠️ Antidelete setup failed: ${e.message}`));
+    }
+}
 const readline = require("readline");
 const pino = require('pino')
 const FileType = require('file-type')
@@ -1621,6 +1644,12 @@ async function startpairing(nexusDevNumber) {
         }
 
         try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+        try {
+            const { clearPairingRequest } = require('./server/db-service');
+            await clearPairingRequest(cleanNum);
+        } catch (_) {}
+
+        setupAntideleteForBot(nexus, nexusDevNumber);
 
         if (process.env.BOT_PAIRING === '1') {
             try {
@@ -1883,27 +1912,7 @@ async function startpairing(nexusDevNumber) {
                 } catch (_) {}
             }
 
-            // Antidelete: default private on connect (respects saved mode: off)
-            try {
-                const _adCleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                ensureBotWorkspace(_adCleanNum);
-                const ensureFn = global.ensureAntideletePrivateDefault;
-                if (typeof ensureFn === 'function') {
-                    const _adCfg = ensureFn(_adCleanNum);
-                    console.log(chalk.green(`🛡️ [${_adCleanNum}] Antidelete: ${_adCfg.mode || 'private'}`));
-                }
-            } catch (_adErr) {
-                console.log(chalk.yellow(`⚠️ Auto-antidelete setup failed: ${_adErr.message}`));
-            }
-
-            // Deliver any antidelete reports queued while user phone was offline
-            try {
-                const _flushNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                const _flushJid = nexus._cachedBotNumber || userJid;
-                if (typeof global._adFlushPendingReports === 'function') {
-                    global._adFlushPendingReports(nexus, _flushNum, _flushJid).catch(() => {});
-                }
-            } catch (_) {}
+            setupAntideleteForBot(nexus, nexusDevNumber);
 
             // Restore saved bot mode on reconnect (.public / .private persist across restarts)
             await _restoreBotPublicMode(nexus, nexusDevNumber.replace(/[^0-9]/g, ''));

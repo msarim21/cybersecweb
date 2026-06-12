@@ -211,38 +211,47 @@ router.get('/status/:number', protect, async (req, res) => {
   const canView = isOwner || isPairingOwner || req.user.role === 'admin';
   const { readConnectedFlag } = require('../../allfunc/connected-flag');
   const flag = readConnectedFlag(clean);
+  const pairingInFlight = PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus);
 
-  // Code generated but user has not entered it on WhatsApp yet — must win over stale linked flags
-  if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
-    return res.json({ connected: false, pairing: true, status: pairingState.pairingStatus });
-  }
+  const clearStalePairing = async () => {
+    if (pairingInFlight) await clearPairingRequest(clean).catch(() => {});
+  };
 
-  // Already saved to dashboard
+  // Success signals win over stale pairing_status (code_ready stuck after phone sync)
   try {
     if (await isNumberInLinkedNumbers(clean)) {
+      await clearStalePairing();
       if (canView) {
-        return res.json({ connected: true, ts: flag?.ts || Date.now(), linked: true });
+        return res.json({ connected: true, ts: flag?.ts || Date.now(), linked: true, status: 'linked' });
       }
     }
   } catch (_) {}
 
-  // Phone paired (session active) but dashboard save may still be pending
   if (pairingState?.status === 'active' && canView) {
     let linked = false;
     try { linked = await isNumberInLinkedNumbers(clean); } catch (_) {}
-    if (PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus)) {
-      await clearPairingRequest(clean).catch(() => {});
-    }
+    await clearStalePairing();
     return res.json({
       connected: true,
       linked: Boolean(linked),
       ts: flag?.ts || Date.now(),
       status: 'active',
+      syncing: !linked,
     });
   }
 
   if (flag?.linked && canView) {
+    await clearStalePairing();
     return res.json({ connected: true, ts: flag.ts || Date.now(), linked: true });
+  }
+
+  if (pairingInFlight) {
+    return res.json({
+      connected: false,
+      pairing: true,
+      status: pairingState.pairingStatus,
+      syncing: pairingState.pairingStatus === 'code_ready',
+    });
   }
 
   res.json({ connected: false });

@@ -73,7 +73,7 @@ function _adChatIdsFromKey(key) {
         ids.add(String(key.remoteJidAlt));
         ids.add(_adNormJid(key.remoteJidAlt));
     }
-    if (key?.participant && !String(key.remoteJid || '').endsWith('@g.us')) {
+    if (key?.participant && !String(primary).endsWith('@g.us')) {
         ids.add(String(key.participant));
         ids.add(_adNormJid(key.participant));
     }

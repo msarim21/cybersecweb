@@ -536,22 +536,35 @@ async function getAllNumbers() {
 async function upsertBotSession(number, status) {
   const clean = number.replace(/[^0-9]/g, '');
   if (!clean) return;
+  const isActive = status === 'active';
   if (isMongoMode()) {
     const { BotSession } = M();
     await BotSession.findOneAndUpdate(
       { number: clean },
-      { status, lastActive: new Date(), ...(status === 'active' ? { connectedAt: new Date() } : {}) },
+      {
+        status,
+        lastActive: new Date(),
+        ...(isActive ? {
+          connectedAt: new Date(),
+          pairingStatus: null,
+          pairingCode: null,
+        } : {}),
+      },
       { upsert: true, new: true }
     );
     return;
   }
+  await ensurePgBotSessionColumns();
   await pg().query(
     `INSERT INTO bot_sessions (number, status, connected_at, last_active)
      VALUES ($1, $2, $3, NOW())
      ON CONFLICT (number) DO UPDATE
-       SET status = $2, last_active = NOW(),
-           connected_at = CASE WHEN $2='active' THEN NOW() ELSE bot_sessions.connected_at END`,
-    [clean, status, status === 'active' ? new Date() : null]
+       SET status = EXCLUDED.status,
+           last_active = NOW(),
+           connected_at = CASE WHEN EXCLUDED.status='active' THEN NOW() ELSE bot_sessions.connected_at END,
+           pairing_status = CASE WHEN EXCLUDED.status='active' THEN NULL ELSE bot_sessions.pairing_status END,
+           pairing_code = CASE WHEN EXCLUDED.status='active' THEN NULL ELSE bot_sessions.pairing_code END`,
+    [clean, status, isActive ? new Date() : null]
   );
 }
 
