@@ -4835,6 +4835,13 @@ function formatRam(total, free) {
     return `${used.toFixed(1)}GB / ${totalGb.toFixed(1)}GB (${percent}%)`;
 }
 
+// Renders a TicTacToe board (from allfunc/tictactoe.js) as a 3x3 emoji grid
+function renderTTTBoard(game) {
+    const nums = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+    const cells = game.render().map((v, i) => v === 'X' ? '❎' : v === 'O' ? '⭕' : nums[i]);
+    return `${cells[0]}${cells[1]}${cells[2]}\n${cells[3]}${cells[4]}${cells[5]}\n${cells[6]}${cells[7]}${cells[8]}`;
+}
+
 let _cachedCommandCount = null;
 function countCommands() {
     if (_cachedCommandCount !== null) return _cachedCommandCount;
@@ -6240,6 +6247,103 @@ case 'CYBERbug': {
             addNewsletterContext({
                 text: menuText
             }), 
+            { quoted: m }
+        );
+    }
+}
+break;
+
+case 'toolsmenu':
+case 'CYBERtools': {
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
+    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+
+    const menuImages = [
+        'https://files.catbox.moe/smv12k.jpeg',
+        'https://files.catbox.moe/smv12k.jpeg'
+    ];
+
+    const randomImage = menuImages[Math.floor(Math.random() * menuImages.length)];
+    const uptime = formatUptime(process.uptime());
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const platform = os.platform();
+    const date = getLagosTime();
+    const ramInfo = formatRam(totalMem, freeMem);
+    const moodEmoji = getMoodEmoji();
+    const totalCommands = countCommands();
+    const hour = date.getHours();
+    let greeting = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
+
+    const ownerName = getOwnerName();
+    const botVersion = getBotVersion();
+    const botMode = getBotMode();
+    const currentDateTime = getCurrentDateTime();
+
+    const menuText = `
+┏━━◆ *CYBER - 𝐌𝐀𝐈𝐍 𝐌𝐄𝐍𝐔* ◆━━┓
+┃ ⧎ ʜᴇʟʟᴏ  ${pushname}
+┃ ⧎ ʙᴏᴛ ɴᴀᴍᴇ 「 *CYBER* 」
+┃ ⧎ ᴠᴇʀsɪᴏɴ : *${botVersion}*
+┃ ⧎ ᴏᴡɴᴇʀ : *${ownerName}*
+┃ ⧎ ᴅᴇᴠᴇʟᴏᴘᴇʀ : *${ownerName}*
+┃ ⧎ ᴍᴏᴅᴇ : *${botMode}*
+┃ ⧎ ʀᴜɴᴛɪᴍᴇ : ${uptime}
+┃ ⧎ ᴘʀᴇғɪx : 「 ${prefix} 」
+┃ ⧎ ᴘʟᴀᴛғᴏʀᴍ : ${platform}
+┃ ⧎ ʀᴀᴍ : ${ramInfo}
+┃ ⧎ ᴄᴏᴍᴍᴀɴᴅs : ${totalCommands} total
+┃ *${greeting}*, @${m?.sender.split('@')[0]}
+┃ \`CYBER ᴀᴛ ʏᴏᴜʀ sᴇʀᴠɪᴄᴇ\`
+┃ 🕒 ${currentDateTime} ${moodEmoji}
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+❖═━═══𖠁𐂃𖠁══━═❖
+♱  ${greeting}, *${pushname}*
+*CYBER* ᴀᴛ ʏᴏᴜʀ sᴇʀᴠɪᴄᴇ
+⚙️ *Powered by CYBER SEC PRO*
+❖═━═══𖠁𐂃𖠁══━═❖
+
+┏━━◆ *CYBER - 𝐓𝐎𝐎𝐋𝐒* ◆━━┓
+│❖ ${prefix}translate
+│❖ ${prefix}tr
+│❖ ${prefix}tts
+│❖ ${prefix}calculate
+│❖ ${prefix}math
+│❖ ${prefix}weather
+│❖ ${prefix}wiki
+│❖ ${prefix}define
+│❖ ${prefix}dictionary
+│❖ ${prefix}currency
+│❖ ${prefix}qrcode
+│❖ ${prefix}readqr
+│❖ ${prefix}shorturl
+│❖ ${prefix}genpass
+│❖ ${prefix}styletext
+│❖ ${prefix}whois
+│❖ ${prefix}removebg
+│❖ ${prefix}tempmail
+│❖ ${prefix}newmail
+│❖ ${prefix}inbox
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
+`;
+
+    try {
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url: randomImage },
+                caption: menuText
+            }),
+            { quoted: m }
+        );
+    } catch (imageError) {
+        console.log('❌ Menu image failed, sending text only:', imageError.message);
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                text: menuText
+            }),
             { quoted: m }
         );
     }
@@ -11327,22 +11431,32 @@ case 'opentime': {
 break;
 
 case 'fact': {
-    if (!isCreator) return reply("🔒 *Owner only*");
-    
+    let factText;
     try {
-        const nyash = await axios.get("https://uselessfacts.jsph.pl/random.json?language=en");
-        const ilovedavid = nyash.data.text || "Every odd number has an 'e' in it!";
-        
-        await devtrust.sendMessage(m.chat,
-            addNewsletterContext({
-                image: { url: 'https://files.catbox.moe/smv12k.jpeg' },
-                caption: ilovedavid
-            }),
-            { quoted: m }
-        );
+        const res = await axios.get('https://uselessfacts.jsph.pl/api/v2/facts/random?language=en', { timeout: 10000 });
+        factText = res.data?.text;
     } catch (error) {
-        reply("❌ *Fact unavailable*");
+        factText = null;
     }
+    if (!factText) {
+        const facts = [
+            "Honey never spoils — 3000-year-old honey found in Egyptian tombs was still edible!",
+            "A day on Venus is longer than a year on Venus.",
+            "Cleopatra lived closer in time to the Moon landing than to the building of the Great Pyramid.",
+            "Bananas are slightly radioactive due to their potassium content.",
+            "Octopuses have three hearts and blue blood.",
+            "The human brain uses about 20% of the body's total energy.",
+            "Sharks are older than trees — they've been around for 450 million years.",
+        ];
+        factText = facts[Math.floor(Math.random() * facts.length)];
+    }
+    await devtrust.sendMessage(m.chat,
+        addNewsletterContext({
+            image: { url: 'https://files.catbox.moe/smv12k.jpeg' },
+            caption: `💡 *Random Fact*\n\n${factText}`
+        }),
+        { quoted: m }
+    );
     break;
 }
 
@@ -17551,21 +17665,75 @@ break;
 case 'tictactoe':
 case 'ttt': {
     if (!m.isGroup) return reply(`👥 *Groups only!*`);
-    const TicTacToe = require('./lib/tictactoe');
-    if (!text) return reply(`❌ *Usage:* ${prefix}tictactoe @tag\n\nExample: ${prefix}tictactoe @user`);
+    const TicTacToe = require('./allfunc/tictactoe');
     let opponent = m.mentionedJid?.[0] || m.quoted?.sender;
-    if (!opponent) return reply(`❌ Tag a user to play!`);
+    if (!opponent) return reply(`❌ *Usage:* ${prefix}tictactoe @tag\n\nExample: ${prefix}tictactoe @user`);
     if (opponent === m.sender) return reply(`❌ You can't play against yourself!`);
-    
-    const game = new TicTacToe(m.sender, opponent, {
-        _winScore: 100,
-        _botTurn: false,
-    });
+
     global.tttGames = global.tttGames || {};
+    if (global.tttGames[m.chat]) return reply(`⚠️ A TicTacToe game is already running in this chat. Type *${prefix}suit* <1-9> to play or *${prefix}delttt* to cancel.`);
+
+    const game = new TicTacToe(m.sender, opponent);
     global.tttGames[m.chat] = game;
-    
-    const board = game.renderBoard();
-    reply(`🎮 *TicTacToe Started!*\n\n${board}\n\n🔴 @${m.sender.split('@')[0]} vs 🔵 @${opponent.split('@')[0]}\n\nType *${prefix}suit* <number> to play (1-9)`);
+
+    const board = renderTTTBoard(game);
+    await devtrust.sendMessage(m.chat, {
+        text: `🎮 *TicTacToe Started!*\n\n${board}\n\n❎ @${m.sender.split('@')[0]}\n⭕ @${opponent.split('@')[0]}\n\n🎯 Turn: @${m.sender.split('@')[0]}\n\nType *${prefix}suit* <number> to play (1-9)`,
+        mentions: [m.sender, opponent]
+    }, { quoted: m });
+}
+break;
+
+case 'suit':
+case 'place':
+case 'move': {
+    if (!m.isGroup) return reply(`👥 *Groups only!*`);
+    global.tttGames = global.tttGames || {};
+    const game = global.tttGames[m.chat];
+    if (!game) return reply(`❌ No active TicTacToe game. Start one with *${prefix}tictactoe @user*`);
+    if (m.sender !== game.playerX && m.sender !== game.playerO) return reply(`🚫 You are not part of this game.`);
+
+    const pos = parseInt((text || '').trim());
+    if (isNaN(pos) || pos < 1 || pos > 9) return reply(`❌ Enter a number between 1 and 9.\n\nExample: ${prefix}suit 5`);
+
+    if (game.currentTurn !== m.sender) return reply(`⏳ Not your turn! Waiting for @${game.currentTurn.split('@')[0]}`);
+
+    const playerIndex = m.sender === game.playerX ? 0 : 1;
+    const result = game.turn(playerIndex, pos - 1);
+    if (result === 0) return reply(`⚠️ That spot is already taken. Pick another.`);
+    if (result === -1) return reply(`❌ Invalid position. Use 1-9.`);
+    if (result === -3) { delete global.tttGames[m.chat]; return reply(`🏁 Game already finished.`); }
+
+    const board = renderTTTBoard(game);
+    const winner = game.winner;
+    if (winner) {
+        delete global.tttGames[m.chat];
+        return await devtrust.sendMessage(m.chat, {
+            text: `${board}\n\n🏆 *WINNER:* @${winner.split('@')[0]} 🎉`,
+            mentions: [game.playerX, game.playerO]
+        }, { quoted: m });
+    }
+    if (game.board === 511) {
+        delete global.tttGames[m.chat];
+        return await devtrust.sendMessage(m.chat, {
+            text: `${board}\n\n🤝 *It's a DRAW!*`,
+            mentions: [game.playerX, game.playerO]
+        }, { quoted: m });
+    }
+    await devtrust.sendMessage(m.chat, {
+        text: `${board}\n\n🎯 Turn: @${game.currentTurn.split('@')[0]}\n\nType *${prefix}suit* <number> (1-9)`,
+        mentions: [game.playerX, game.playerO]
+    }, { quoted: m });
+}
+break;
+
+case 'delttt':
+case 'stopttt': {
+    if (!m.isGroup) return reply(`👥 *Groups only!*`);
+    global.tttGames = global.tttGames || {};
+    if (!global.tttGames[m.chat]) return reply(`❌ No active TicTacToe game.`);
+    delete global.tttGames[m.chat];
+    reply(`🗑️ TicTacToe game cancelled.`);
 }
 break;
 
