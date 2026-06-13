@@ -262,6 +262,30 @@ async function syncBots() {
         if (ready) spawnBot(clean);
     }
 
+    // Scheduled memory restart — backup if child self-exit timer did not fire
+    let maxAgeMs = 0;
+    try {
+        const { getBotRestartHours } = require('../keepalive');
+        const hrs = getBotRestartHours();
+        if (hrs > 0) maxAgeMs = hrs * 60 * 60 * 1000;
+    } catch (_) {}
+    if (maxAgeMs > 0) {
+        for (const [clean, entry] of [...children]) {
+            if (entry?.pairing) continue;
+            if (global._pairingInFlight?.has(clean)) continue;
+            if (!linkedSet.has(clean)) continue;
+            const spawnedAt = entry.spawnedAt || 0;
+            if (!spawnedAt || Date.now() - spawnedAt < maxAgeMs) continue;
+
+            console.log(chalk.cyan(
+                `[Supervisor] 🔄 +${clean} memory restart (${Math.round((Date.now() - spawnedAt) / 3600000)}h uptime)`
+            ));
+            killBot(clean, 'SIGTERM');
+            const ready = await _ensureBotSessionReady(clean);
+            if (ready) spawnBot(clean);
+        }
+    }
+
     // Start bots that should be running (restore DB session after Heroku/dyno restart)
     let runningCount = children.size;
     for (const clean of linkedSet) {

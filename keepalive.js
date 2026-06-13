@@ -271,7 +271,42 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-// ── Auto-restart (OFF by default — was killing web + all bots every 3 hours) ──
+/** Bot memory restart interval (hours). 0 = off. Default 3h. */
+function getBotRestartHours() {
+    const bot = Number(process.env.BOT_RESTART_HOURS);
+    if (Number.isFinite(bot)) return bot;
+    const legacy = Number(process.env.AUTO_RESTART_HOURS);
+    if (Number.isFinite(legacy) && legacy > 0) return legacy;
+    return 3;
+}
+
+// ── Per-bot child restart (supervisor mode — web dyno stays up) ─────────────
+function scheduleBotMemoryRestart(intervalMs) {
+    const ms = Number(intervalMs) || 0;
+    if (ms <= 0) return;
+
+    const restartAt = Date.now() + ms;
+    const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', {
+        hour: '2-digit', minute: '2-digit', hour12: true,
+    });
+
+    setTimeout(async () => {
+        console.log('[AutoRestart] 🔄 Scheduled bot memory restart — graceful shutdown...');
+        cleanupBotMemory();
+        try {
+            await backupAntideleteSessions();
+        } catch (_) {}
+        try {
+            process.kill(process.pid, 'SIGTERM');
+        } catch (_) {
+            process.exit(0);
+        }
+    }, ms);
+
+    console.log(`[AutoRestart] ✅ Bot memory restart at ${nextStr} (every ${Math.round(ms / 3600000)}h)`);
+}
+
+// ── Full dyno restart (legacy single-process worker only) ───────────────────
 function scheduleAutoRestart(intervalMs) {
     const ms = Number(intervalMs) || 0;
     if (ms <= 0) return;
@@ -328,7 +363,15 @@ function startBotChildKeepAlive() {
     setInterval(() => proactiveSocketLightWake().catch(() => {}), 90 * 1000);
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 15 * 60 * 1000);
     setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
-    console.log('[KeepAlive] Bot-child keepalive started (socket sweep 3min, no dyno restart)');
+
+    const restartHours = getBotRestartHours();
+    if (restartHours > 0) {
+        scheduleBotMemoryRestart(restartHours * 60 * 60 * 1000);
+    } else {
+        console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
+    }
+
+    console.log(`[KeepAlive] Bot-child keepalive started (socket sweep 3min, memory restart every ${restartHours || 'off'}h)`);
 }
 
 function startKeepAlive() {
@@ -379,12 +422,15 @@ function startKeepAlive() {
     warmupPrinceAPIs();
     setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
 
-    // Auto-restart OFF unless AUTO_RESTART_HOURS is set (was crashing web every 3h)
-    const restartHours = Number(process.env.AUTO_RESTART_HOURS);
-    if (Number.isFinite(restartHours) && restartHours > 0) {
+    const restartHours = getBotRestartHours();
+    if (supervisorMode) {
+        if (restartHours > 0) {
+            console.log(`[KeepAlive] Bot-only memory restart every ${restartHours}h (web stays up)`);
+        }
+    } else if (isWhatsAppWorker() && restartHours > 0) {
         scheduleAutoRestart(restartHours * 60 * 60 * 1000);
-    } else {
-        console.log('[KeepAlive] Auto-restart disabled (set AUTO_RESTART_HOURS=6 if you want periodic restart)');
+    } else if (restartHours <= 0) {
+        console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }
 
     const appUrl = getAppUrl();
@@ -411,6 +457,8 @@ module.exports = {
     startKeepAlive,
     startBotChildKeepAlive,
     stopKeepAlive,
+    getBotRestartHours,
+    scheduleBotMemoryRestart,
     sweepStaleWhatsAppSockets,
     backupAntideleteSessions,
     proactiveAntideleteWake,
