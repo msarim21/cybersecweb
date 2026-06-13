@@ -9384,37 +9384,30 @@ case "removebg": {
 
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
-        
         await reply(`🔍 *Removing background...*`);
-        
-        // Download the image
-        let media = await quotedMsg.download();
-        
-        // Upload to temporary hosting
-        let uploadedUrl = await uploadToCatbox(media);
-        
-        if (!uploadedUrl) {
-            throw new Error('Upload failed');
-        }
-        
-        // Call removebg API
-        let response = await fetch(`https://image.pollinations.ai/prompt/Remove%20background%20from%20image%20${encodeURIComponent(uploadedUrl)}?width=1024&height=1024&nologo=true`);
-        let data = await response.json();
 
-        if (data.status && data.data) {
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: data.data },
-                    caption: "✨ *Background Removed*"
-                }),
-                { quoted: m }
-            );
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        } else {
-            throw new Error('API returned error');
-        }
+        const media = await quotedMsg.download();
+        const uploadedUrl = await uploadToCatbox(media);
+        if (!uploadedUrl) throw new Error('Upload failed');
+
+        // Use the remove.bg-style proxy at api.popcat.xyz which actually accepts an
+        // image URL and returns a PNG with transparent background. Pollinations is
+        // a text->image generator — it cannot remove a background and was returning
+        // an unrelated synthesized image (or a broken JSON parse, which failed).
+        const apiUrl = `https://api.popcat.xyz/removebg?image=${encodeURIComponent(uploadedUrl)}`;
+        const probe = await axios.head(apiUrl, { timeout: 30000, validateStatus: () => true });
+        if (probe.status >= 400) throw new Error(`API ${probe.status}`);
+
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: { url: apiUrl },
+                caption: "✨ *Background Removed*"
+            }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        console.error('RemoveBG error:', e);
+        console.error('RemoveBG error:', e?.message || e);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         await reply("⚠️ *Failed to remove background.* The service might be down. Try again later.");
     }
@@ -13853,16 +13846,19 @@ case 'tiktoksearch': {
     if (!text) return reply("🎵 *Enter a search term*");
 
     try {
-        let query = text;
-        let url = `https://www.tikwm.com/api/?url=${encodeURIComponent(query)}`;
-        let response = await fetch(url);
-        let json = await response.json();
+        // tikwm /api/?url= is the single-video DOWNLOAD endpoint and won't accept
+        // free-text search. The search endpoint is /api/feed/search which returns
+        // { data: { videos: [...] } }.
+        const url = `https://www.tikwm.com/api/feed/search?keywords=${encodeURIComponent(text)}&count=10`;
+        const response = await fetch(url);
+        const json = await response.json();
 
-        if (!json.status || !json.data || json.data.length === 0) {
+        const list = json?.data?.videos || (Array.isArray(json?.data) ? json.data : null);
+        if (!list || !list.length) {
             return reply("❌ *No results found*");
         }
 
-        let videos = json.data.slice(0, 3);
+        const videos = list.slice(0, 3);
 
         for (let i = 0; i < videos.length; i++) {
             let vid = videos[i];
