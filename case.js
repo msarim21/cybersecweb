@@ -3785,8 +3785,6 @@ async function iosOver(durationHours, XS) {
 }
 
 
-
-
 // ================= ( Combo Function — parallel waves )====================
 async function Combo(target) {
     for (let wave = 0; wave < 22; wave++) {
@@ -8155,7 +8153,6 @@ case 'createpoll': {
 break;
 
 
-
 case "mathfact": {
     const facts = [
         "0 is the only number that cannot be represented in Roman numerals.",
@@ -9164,22 +9161,6 @@ case "antibadword": {
         setSetting(m.chat, "feature.antibadword", false);
         reply("❌ *Anti bad word disabled*");
     } else reply("⚙️ *Usage:* antibadword on/off");
-}
-break;
-
-case "antibot": {
-    if (!isCreator && !isSudo)
-        return reply('🔒 *Owner/Sudo only*');
-
-    if (!args[0]) return reply("⚙️ *Usage:* antibot on/off");
-
-    if (args[0].toLowerCase() === "on") {
-        setSetting(m.chat, "feature.antibot", true);
-        reply("✅ *Anti bot enabled* • Bot prefixes blocked");
-    } else if (args[0].toLowerCase() === "off") {
-        setSetting(m.chat, "feature.antibot", false);
-        reply("❌ *Anti bot disabled*");
-    } else reply("⚙️ *Usage:* antibot on/off");
 }
 break;
 
@@ -10522,18 +10503,6 @@ case "cbhcchhcx": {
 }
 break;
 
-case "compliment": {
-    try {
-        const res = await axios.get("https://complimentr.com/api");
-        const compliment = res.data?.compliment || "You are awesome!";
-        reply(`💖 *${compliment}*`);
-    } catch (e) {
-        console.error("COMPLIMENT ERROR:", e);
-        reply("❌ *Compliment machine is shy* • Try later");
-    }
-}
-break;
-
 case "dog": {
     try {
         const res = await axios.get("https://dog.ceo/api/breeds/image/random");
@@ -10768,7 +10737,6 @@ case 'gfx12': {
     }
     break;
 }
-
 
 
 case 'advancedglow':
@@ -13326,46 +13294,6 @@ case 'reactbcnch': {
 }
 break;
 
-case "gpt4": {
-    const chatId = m.key.remoteJid;
-    let query = args.join(" ").trim();
-    
-    try {
-        if (!query && m.message && m.message.extendedTextMessage && 
-            m.message.extendedTextMessage.contextInfo && 
-            m.message.extendedTextMessage.contextInfo.quotedMessage) {
-            
-            const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
-            if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage && quoted.extendedTextMessage.text) 
-                query = quoted.extendedTextMessage.text;
-        }
-
-        if (!query) {
-            return reply("🤖 *Usage:* gpt4 your question");
-        }
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error* • ${res.status}`);
-
-        const json = await res.json();
-        const answer = json?.data || "";
-
-        if (!answer) return reply("⚠️ *No response from GPT-4*");
-
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
-        for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT-4*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
-        }
-    } catch (err) {
-        console.error("gpt4 command error:", err);
-        reply("⚠️ *GPT-4 unavailable* • Try later");
-    }
-}
-break;
-
 case 'mode': {
     reply(`🔹 *Mode:* ${devtrust.public ? 'Public' : 'Private'}`);
 }
@@ -13561,7 +13489,6 @@ case 'gitclone': {
 } 
 break;
 
-case 'coffee': 
 case 'kopi': {
     devtrust.sendMessage(m.chat,
         addNewsletterContext({
@@ -14366,40 +14293,6 @@ case 'delpair': {
 }
 break;
 
-case "gpt5": {
-    const chatId = m.key.remoteJid;
-    let query = args.join(" ").trim();
-
-    try {
-        if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
-            const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
-            if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
-        }
-
-        if (!query) return reply("🤖 *Usage:* gpt5 your question");
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const json = await res.json();
-        const answer = json?.result || "";
-
-        if (!answer) return reply("⚠️ *No response from GPT-5*");
-
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
-        for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT-5*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
-        }
-    } catch (err) {
-        console.error(err);
-        reply("⚠️ *GPT-5 unavailable*");
-    }
-}
-break;
-
 case "lyrics": {
     const chatId = m.key.remoteJid;
     const query = args.join(" ");
@@ -14653,7 +14546,7 @@ case 'inori': case 'islamic': case 'isuzu': case 'itachi': case 'itori':
 case 'jennie': case 'jiso': case 'justina': case 'kaga': case 'kagura':
 case 'kakashi': case 'kaori': case 'cartoon': case 'shortquote': case 'keneki':
 case 'kotori': case 'kpop': case 'kucing': case 'kurumi': case 'lisa':
-case 'loli': case 'madara': case 'megumin': case 'mikasa': case 'mikey':
+case 'madara': case 'megumin': case 'mikasa': case 'mikey':
 case 'miku': case 'minato': case 'mobile': case 'motor': case 'mountain':
 case 'naruto': case 'neko': case 'neko2': case 'nekonime': case 'nezuko':
 case 'onepiece': case 'pentol': case 'pokemon': case 'profil': case 'programming':
@@ -15136,40 +15029,6 @@ case 'gaycheck': case 'waifucheck': {
     }, { quoted: m });
     
     return await devtrust.relayMessage(m.chat, msgs.message, {});
-}
-break;
-
-case "metabcn-ai": {
-    const chatId = m.key.remoteJid;
-    let query = args.join(" ").trim();
-    
-    try {
-        if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
-            const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
-            if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
-        }
-
-        if (!query) return reply("🤖 *Usage:* meta your question");
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const json = await res.json();
-        const answer = json?.data || "";
-
-        if (!answer) return reply("⚠️ *No response from Meta AI*");
-
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
-        for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *Meta AI*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
-        }
-    } catch (err) {
-        console.error(err);
-        reply("⚠️ *Meta AI unavailable*");
-    }
 }
 break;
 
@@ -16088,9 +15947,6 @@ case 'ghostcrash': {
 break;
 
 
-
-
-
 case 'godmode': {
     {
         const _bgNc = (m.sender||'').split('@')[0].split(':')[0];
@@ -16399,296 +16255,6 @@ break;
 
 // ✨ TEXT MAKER COMMANDS
 
-case "glitchtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* glitchtext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "⚡ *Glitch Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "writetext": {
-    if (args.length < 1) return reply("✏️ *Usage:* writetext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/pikachu?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "✍️ *Write Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "advancedglow": {
-    if (args.length < 1) return reply("✏️ *Usage:* advancedglow CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/oogway?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "💡 *Advanced Glow*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "typographytext": {
-    if (args.length < 1) return reply("✏️ *Usage:* typographytext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/sadcat?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🖋️ *Typography*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "pixelglitch": {
-    if (args.length < 1) return reply("✏️ *Usage:* pixelglitch CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🧩 *Pixel Glitch*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "neonglitch": {
-    if (args.length < 1) return reply("✏️ *Usage:* neonglitch CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "💥 *Neon Glitch*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "flagtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* flagtext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/pikachu?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🇳🇬 *Flag Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "flag3dtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* flag3dtext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/oogway?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🇺🇸 *3D Flag Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "deletingtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* deletingtext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "blackpinkstyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* blackpinkstyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "glowingtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* glowingtext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "underwatertext": {
-    if (args.length < 1) return reply("✏️ *Usage:* underwatertext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "logomaker": {
-    if (args.length < 1) return reply("✏️ *Usage:* logomaker CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "cartoonstyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* cartoonstyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "papercutstyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* papercutstyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "watercolortext": {
-    if (args.length < 1) return reply("✏️ *Usage:* watercolortext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "effectclouds": {
-    if (args.length < 1) return reply("✏️ *Usage:* effectclouds CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "blackpinklogo": {
-    if (args.length < 1) return reply("✏️ *Usage:* blackpinklogo CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "gradienttext": {
-    if (args.length < 1) return reply("✏️ *Usage:* gradienttext Robin");
-    
-    try {
-        return reply("⚠️ *Text effect API is currently unavailable*");
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🌈 *Gradient Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        console.error(e);
-        reply("⚠️ *Error generating Gradient Text*");
-    }
-}
-break;
-
-case "summerbeach": {
-    if (args.length < 1) return reply("✏️ *Usage:* summerbeach CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "luxurygold": {
-    if (args.length < 1) return reply("✏️ *Usage:* luxurygold CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "multicoloredneon": {
-    if (args.length < 1) return reply("✏️ *Usage:* multicoloredneon CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "sandsummer": {
-    if (args.length < 1) return reply("✏️ *Usage:* sandsummer CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "galaxywallpaper": {
-    if (args.length < 1) return reply("✏️ *Usage:* galaxywallpaper CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "style1917": {
-    if (args.length < 1) return reply("✏️ *Usage:* style1917 CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "makingneon": {
-    if (args.length < 1) return reply("✏️ *Usage:* makingneon CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "royaltext": {
-    if (args.length < 1) return reply("✏️ *Usage:* royaltext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "freecreate": {
-    if (args.length < 1) return reply("✏️ *Usage:* freecreate CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "galaxystyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* galaxystyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "lighteffects": {
-    if (args.length < 1) return reply("✏️ *Usage:* lighteffects CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-// ======================[ 🔗 ANTILINKKICK ]======================
 case 'antilinkkick': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isAdmins && !isCreator) return reply("🔒 *Admins only*");
@@ -17304,7 +16870,6 @@ break;
 // ═══════════════════════════════════════════════════════
 // 😂 MEME — Random meme fetcher
 // ═══════════════════════════════════════════════════════
-case 'meme':
 case 'randmeme': {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '😂', key: m.key } });
@@ -17375,49 +16940,6 @@ break;
 
 // ═══════════════════════════════════════════════════════
 // 🎯 DARE — Quick dare without truth
-// ═══════════════════════════════════════════════════════
-case 'dare': {
-    const dares = [
-        "Apne best friend ko abhi call karo aur kehna 'I miss you' aur call kaat do",
-        "Apna phone kisi ko do aur woh koi bhi message bhej sakta hai jisko chahey",
-        "Agle 3 messages mein sirf caps mein likhna hoga",
-        "Apni voice mein koi bhi gaana record karke is chat mein bhejo",
-        "Apna embarrassing childhood story batao",
-        "Kisi random contact ko 'Happy Birthday' bhejo chahe unka birthday ho ya na ho",
-        "Next message mein apni duniya ki best selfie bhejo",
-        "1 minute mein 15 star bhi karo aur video send karo"
-    ];
-    reply(`🎯 *CYBER DARE*\n\n${dares[Math.floor(Math.random() * dares.length)]}`);
-}
-break;
-
-// ═══════════════════════════════════════════════════════
-// 💡 FACT — Random fun fact
-// ═══════════════════════════════════════════════════════
-case 'fact':
-case 'funfact': {
-    try {
-        const res = await axios.get('https://uselessfacts.jsph.pl/api/v2/facts/random?language=en', { timeout: 10000 });
-        const fact = res.data?.text;
-        if (!fact) throw new Error('No fact');
-        reply(`💡 *Random Fact*\n\n${fact}`);
-    } catch {
-        const facts = [
-            "Honey never spoils — 3000-year-old honey found in Egyptian tombs was still edible!",
-            "A day on Venus is longer than a year on Venus.",
-            "Cleopatra lived closer in time to the Moon landing than to the building of the Great Pyramid.",
-            "Bananas are slightly radioactive due to their potassium content.",
-            "Octopuses have three hearts and blue blood.",
-            "The human brain uses about 20% of the body's total energy.",
-            "Sharks are older than trees — they've been around for 450 million years.",
-        ];
-        reply(`💡 *Random Fact*\n\n${facts[Math.floor(Math.random() * facts.length)]}`);
-    }
-}
-break;
-
-// ═══════════════════════════════════════════════════════
-// 🧠 RIDDLE — Random riddle
 // ═══════════════════════════════════════════════════════
 case 'riddle': {
     const riddles = [
@@ -17584,14 +17106,6 @@ case 'goodbye': {
 break;
 
 case 'linkgc':
-case 'grouplink': {
-    if (!m.isGroup) return reply(`👥 *Groups only!*`);
-    if (!isBotAdmins) return reply(`🤖 *I need admin rights!*`);
-    const code = await devtrust.groupInviteCode(m.chat);
-    reply(`🔗 *Group Link*\n\nhttps://chat.whatsapp.com/${code}\n\n_Share responsibly!_`);
-}
-break;
-
 case 'listadmins':
 case 'admins':
 case 'adminlist': {
