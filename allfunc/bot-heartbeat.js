@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { cleanBotNum } = require('./bot-workspace');
 
-const DEFAULT_MAX_AGE_MS = 6 * 60 * 1000;
+const DEFAULT_MAX_AGE_MS = 15 * 60 * 1000;
 const DB_UPSERT_MIN_MS = 3 * 60 * 1000;
 
 const _lastFileWrite = new Map();

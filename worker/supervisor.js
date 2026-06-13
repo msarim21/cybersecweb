@@ -15,7 +15,8 @@ const { ensureBotWorkspace } = require('../allfunc/bot-workspace');
 
 const SYNC_INTERVAL_MS = 25_000;
 const RESTART_DELAY_MS = 12_000;
-const MAX_RESTARTS_PER_HOUR = 20;
+const MAX_RESTARTS_PER_HOUR = 12;
+const MAX_BOTS_PER_DYNO = Number(process.env.MAX_BOTS_PER_DYNO) || 2;
 
 /** @type {Map<string, { child: import('child_process').ChildProcess, restarts: number[], pairing: boolean }>} */
 const children = new Map();
@@ -32,8 +33,13 @@ function _botRunnerScript() {
 }
 
 function _spawnEnv(extra = {}) {
+    const childHeap = process.env.BOT_CHILD_HEAP_MB || '256';
+    const existing = String(process.env.NODE_OPTIONS || '');
+    const heapFlag = `--max-old-space-size=${childHeap}`;
+    const nodeOpts = existing.includes('max-old-space-size') ? existing : `${existing} ${heapFlag}`.trim();
     return {
         ...process.env,
+        NODE_OPTIONS: nodeOpts,
         WHATSAPP_WORKER: '1',
         BOT_ISOLATION: '1',
         ...extra,
@@ -157,13 +163,15 @@ function _isChildProcessAlive(entry) {
 function _isChildHealthy(clean, entry) {
     if (!_isChildProcessAlive(entry)) return false;
 
-    const graceMs = 4 * 60 * 1000;
+    const graceMs = 5 * 60 * 1000;
     const spawnedAt = entry.spawnedAt || 0;
     if (spawnedAt && Date.now() - spawnedAt < graceMs) return true;
 
     try {
-        const { isBotHeartbeatFresh } = require('../allfunc/bot-heartbeat');
-        if (isBotHeartbeatFresh(clean)) return true;
+        const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
+        const hb = readBotHeartbeat(clean);
+        if (hb?.wsState === 1) return true;
+        if (isBotHeartbeatFresh(clean, 15 * 60 * 1000)) return true;
     } catch (_) {}
 
     return false;
@@ -222,6 +230,13 @@ async function syncBots() {
     const stopped = new Set(readStopped());
     const linkedSet = new Set(linked.filter((n) => !stopped.has(n)));
 
+    if (linkedSet.size > MAX_BOTS_PER_DYNO) {
+        console.log(chalk.yellow(
+            `[Supervisor] ⚠️ ${linkedSet.size} bots linked but MAX_BOTS_PER_DYNO=${MAX_BOTS_PER_DYNO} — ` +
+            'only first N run on this dyno (upgrade RAM or add worker dyno)'
+        ));
+    }
+
     const { isConnected } = require('../allfunc/connected-flag');
 
     // Backup: restart pairing-only child as full bot once linked + registered (stuck state)
@@ -248,11 +263,16 @@ async function syncBots() {
     }
 
     // Start bots that should be running (restore DB session after Heroku/dyno restart)
+    let runningCount = children.size;
     for (const clean of linkedSet) {
+        if (runningCount >= MAX_BOTS_PER_DYNO) break;
         if (global._pairingInFlight?.has(clean)) continue;
         if (!children.has(clean)) {
             const ready = await _ensureBotSessionReady(clean);
-            if (ready) spawnBot(clean);
+            if (ready) {
+                spawnBot(clean);
+                runningCount++;
+            }
         }
     }
 

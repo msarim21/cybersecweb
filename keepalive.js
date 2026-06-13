@@ -73,8 +73,17 @@ function isWhatsAppWorker() {
     return false;
 }
 
-const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 2 * 60 * 1000;
+const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 10 * 60 * 1000;
 const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 45 * 60 * 1000;
+
+function _supervisorActive() {
+    try {
+        const { isSupervisorActive } = require('./worker/supervisor');
+        return isSupervisorActive();
+    } catch (_) {
+        return false;
+    }
+}
 
 /** Persist antidelete RAM → disk → Mongo so dyno restarts don't lose cache */
 async function backupAntideleteSessions() {
@@ -144,7 +153,7 @@ async function sweepStaleWhatsAppSockets() {
                 tracker._staleWakeFails = 0;
             }
             const zombie = silentMs >= WA_ZOMBIE_MS;
-            const failLimit = zombie ? 1 : 2;
+            const failLimit = zombie ? 2 : 3;
             if (!woke && (tracker._staleWakeFails || 0) >= failLimit) {
                 console.log(`[SocketKeepAlive] 💀 ${clean} zombie socket (${Math.round(silentMs / 60000)}m idle) — reconnecting`);
                 tracker._staleWakeFails = 0;
@@ -262,20 +271,20 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-// ── Auto-restart every 3 hours ────────────────────────────────────────────────
-// process.exit(0) = clean exit → platform restarts dyno with fresh memory.
-const AUTO_RESTART_MS = 3 * 60 * 60 * 1000; // 3 hours
+// ── Auto-restart (OFF by default — was killing web + all bots every 3 hours) ──
+function scheduleAutoRestart(intervalMs) {
+    const ms = Number(intervalMs) || 0;
+    if (ms <= 0) return;
 
-function scheduleAutoRestart() {
     const warnings = [
         { before: 10 * 60 * 1000, label: '10 minutes' },
         { before:  5 * 60 * 1000, label: '5 minutes'  },
         { before:  1 * 60 * 1000, label: '1 minute'   },
     ];
-    const restartAt = Date.now() + AUTO_RESTART_MS;
+    const restartAt = Date.now() + ms;
 
     for (const w of warnings) {
-        const fireAt = AUTO_RESTART_MS - w.before;
+        const fireAt = ms - w.before;
         if (fireAt > 0) {
             setTimeout(() => {
                 console.log(`[AutoRestart] ⏰ Bot & website ${w.label} mein restart hoga`);
@@ -284,13 +293,13 @@ function scheduleAutoRestart() {
     }
 
     setTimeout(() => {
-        console.log('[AutoRestart] 🔄 3-hour auto-restart — full memory cleanup. Restarting now...');
+        console.log('[AutoRestart] 🔄 Scheduled auto-restart — full memory cleanup. Restarting now...');
         cleanupBotMemory();
         setTimeout(() => process.exit(0), 500);
-    }, AUTO_RESTART_MS);
+    }, ms);
 
     const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
-    console.log(`[AutoRestart] ✅ Scheduled — fresh restart at ${nextStr} (every 3 hours)`);
+    console.log(`[AutoRestart] ✅ Scheduled — restart at ${nextStr} (every ${Math.round(ms / 3600000)}h)`);
 }
 
 /** Light presence wake — every 60s so first command after hours of silence is instant */
@@ -309,58 +318,58 @@ async function proactiveAntideleteWake() {
     } catch (_) {}
 }
 
-/** Isolated bot child — wake idle WA socket + event loop (no dyno auto-restart) */
+/** Isolated bot child — wake idle WA socket (no dyno-wide exit) */
 function startBotChildKeepAlive() {
     if (_started) return;
     _started = true;
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
     setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 20_000);
-    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 90 * 1000);
-    setInterval(() => proactiveSocketLightWake().catch(() => {}), 60 * 1000);
-    setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
+    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 3 * 60 * 1000);
+    setInterval(() => proactiveSocketLightWake().catch(() => {}), 90 * 1000);
+    setInterval(() => proactiveAntideleteWake().catch(() => {}), 15 * 60 * 1000);
     setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
+    console.log('[KeepAlive] Bot-child keepalive started (socket sweep 3min, no dyno restart)');
 }
 
 function startKeepAlive() {
     if (_started) return;
     _started = true;
 
+    const supervisorMode = _supervisorActive();
+
     // Website ping every 8 min — Heroku Eco sleeps ~30min without HTTP traffic
     _timer = setInterval(selfPing, 8 * 60 * 1000);
 
-    // Every 90s: wake idle WA sockets + dead session reconnect
-    setInterval(async () => {
-        await sweepStaleWhatsAppSockets().catch(() => {});
-        await refreshBotSessions().catch(() => {});
-    }, 90 * 1000);
-
-    // Every 60s: light presence — prevents 1–2 min delay on first command after idle
-    setInterval(() => proactiveSocketLightWake().catch(() => {}), 60 * 1000);
-
-    // Every 4 min: heavy wake — antidelete disk/mongo refresh during long silence
-    setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
-
-    // Every 10 min: flush antidelete cache to disk + Mongo (survives dyno restart)
-    if (isWhatsAppWorker()) {
-        setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
-    }
-
-    // Every 5 min: backup all connected sessions to DB (survives dyno restart)
-    if (isWhatsAppWorker()) {
+    if (!supervisorMode) {
+        // Legacy single-process: parent owns WhatsApp sockets
         setInterval(async () => {
-            try {
-                const { backupSessionFolder } = require('./session-db');
-                const tracker = global._rentbotTracker;
-                if (!tracker || !tracker.size) return;
-                for (const [key, t] of tracker.entries()) {
-                    if (!key.includes('@')) continue;
-                    const ws = t?.connection?.ws;
-                    if (!ws || ws.readyState !== 1) continue;
-                    const clean = key.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-                    await backupSessionFolder(clean, require('path').join(__dirname, 'nexstore', 'pairing', key));
-                }
-            } catch (_) {}
-        }, 5 * 60 * 1000);
+            await sweepStaleWhatsAppSockets().catch(() => {});
+            await refreshBotSessions().catch(() => {});
+        }, 90 * 1000);
+        setInterval(() => proactiveSocketLightWake().catch(() => {}), 60 * 1000);
+        setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
+        if (isWhatsAppWorker()) {
+            setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
+        }
+        if (isWhatsAppWorker()) {
+            setInterval(async () => {
+                try {
+                    const { backupSessionFolder } = require('./session-db');
+                    const tracker = global._rentbotTracker;
+                    if (!tracker || !tracker.size) return;
+                    for (const [key, t] of tracker.entries()) {
+                        if (!key.includes('@')) continue;
+                        const ws = t?.connection?.ws;
+                        if (!ws || ws.readyState !== 1) continue;
+                        const clean = key.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+                        await backupSessionFolder(clean, require('path').join(__dirname, 'nexstore', 'pairing', key));
+                    }
+                } catch (_) {}
+            }, 5 * 60 * 1000);
+        }
+        setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 25_000);
+    } else {
+        console.log('[KeepAlive] Supervisor mode — parent only pings website (bots managed in child processes)');
     }
 
     // Node.js event loop alive rakhne ke liye
@@ -370,8 +379,13 @@ function startKeepAlive() {
     warmupPrinceAPIs();
     setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
 
-    // 3-hour auto-restart for speed & fresh memory
-    scheduleAutoRestart();
+    // Auto-restart OFF unless AUTO_RESTART_HOURS is set (was crashing web every 3h)
+    const restartHours = Number(process.env.AUTO_RESTART_HOURS);
+    if (Number.isFinite(restartHours) && restartHours > 0) {
+        scheduleAutoRestart(restartHours * 60 * 60 * 1000);
+    } else {
+        console.log('[KeepAlive] Auto-restart disabled (set AUTO_RESTART_HOURS=6 if you want periodic restart)');
+    }
 
     const appUrl = getAppUrl();
     if (appUrl) {

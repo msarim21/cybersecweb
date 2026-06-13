@@ -42,7 +42,13 @@ async function runOrphanDisconnectCheck() {
       const connected = isBotConnected(cleanNum);
       if (!connected) continue;
 
-      const inLinked = await isNumberInLinkedNumbers(cleanNum).catch(() => false);
+      let inLinked = null;
+      try {
+        inLinked = await isNumberInLinkedNumbers(cleanNum);
+      } catch (dbErr) {
+        console.error(`[OrphanDisconnect] DB error for +${cleanNum}, skip wipe:`, dbErr.message);
+        continue;
+      }
       if (inLinked) continue;
 
       const flag = readConnectedFlag(cleanNum);

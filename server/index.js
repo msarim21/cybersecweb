@@ -5,13 +5,12 @@ const compression = require('compression');
 process.on('uncaughtException', err => {
   console.error('');
   console.error('╔══════════════════════════════════════════════════╗');
-  console.error('║         FATAL: UNCAUGHT EXCEPTION                ║');
+  console.error('║         UNCAUGHT EXCEPTION (staying alive)       ║');
   console.error('╚══════════════════════════════════════════════════╝');
   console.error('Error   :', err.message);
   console.error('Stack   :', err.stack);
   console.error('Time    :', new Date().toISOString());
   console.error('');
-  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
