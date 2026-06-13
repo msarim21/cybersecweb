@@ -12590,22 +12590,22 @@ case 'ibsbmg': {
     let prompt = parts[0]?.trim();
     let ratio = parts[1]?.trim() || "1:1";
 
-    try {
-        let apiUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${Date.now()}`;
-        let res = await fetch(apiUrl);
-        let data = await res.json();
+    // Map ratio string → width/height (default 1:1 = 1024x1024)
+    const _ratioMap = { "1:1": [1024,1024], "3:4": [768,1024], "4:3": [1024,768], "9:16": [720,1280], "16:9": [1280,720] };
+    const [_iw, _ih] = _ratioMap[ratio] || [1024, 1024];
 
-        if (data.status && data.result) {
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: data.result },
-                    caption: `🎨 *${prompt}* (${ratio})`
-                }),
-                { quoted: m }
-            );
-        } else {
-            reply("❌ *Failed to generate image*");
-        }
+    try {
+        // image.pollinations.ai returns the IMAGE bytes directly, not JSON.
+        // Pass the URL straight to Baileys which will fetch + send as media.
+        const apiUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${_iw}&height=${_ih}&nologo=true&seed=${Date.now()}`;
+
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: { url: apiUrl },
+                caption: `🎨 *${prompt}* (${ratio})`
+            }),
+            { quoted: m }
+        );
     } catch (e) {
         console.error(e);
         reply("⚠️ *Error fetching from API*");
@@ -13606,49 +13606,41 @@ break;
 }
 break;
 
-  case "xvideodl": {
-  if (!isCreator) return reply("Owner only"); 
-if (!text) return m.reply(example(`xvideo link`))
-// Check if link is from xvideo
-if (!text.includes("xvideos.com")) return m.reply("Link is not from xvideos.com")
-await devtrust.sendMessage(m.chat, {react: {text: '🍑', key: m.key}})
-// Fetching video data from API
-try {
-let res = await fetch(`https://api.agatz.xyz/api/xvideodown?url=${encodeURIComponent(text)}`);
-let json = await res.json();
+case "xvideodl": {
+    if (!isCreator) return reply("🔒 *Owner only*");
+    if (!text) return reply(`🍑 *Usage:* ${prefix}xvideodl <xvideos url>`);
+    if (!text.includes("xvideos.com")) return reply("❌ *Link must be from xvideos.com*");
 
-// Bad response from API
-if (json.status !== 200 || !json.data) {
-throw "Cannot find video for this URL.";
-}
+    await devtrust.sendMessage(m.chat, { react: { text: '🍑', key: m.key } });
+    try {
+        const res = await fetch(`https://api.agatz.xyz/api/xvideodown?url=${encodeURIComponent(text)}`, { timeout: 30000 });
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        const json = await res.json();
+        if (json?.status !== 200 || !json.data) throw new Error('Cannot find video for this URL.');
 
-// Retrieving video information from API
-let videoData = json.data;
+        const videoData = json.data;
+        const videoUrl = videoData.url;
+        if (!videoUrl) throw new Error('No video URL returned');
 
-// Download videos using URLs obtained from API
-const videoUrl = videoData.url;
-const videoResponse = await fetch(videoUrl);
-
-// Check if the video was downloaded successfully
-if (!videoResponse.ok) {
-throw "Failed to download video.";
-}
-
-// Send video
-await devtrust.sendMessage(m.chat, {
-video: {
-url: videoUrl,
-},
-caption: `*Title:* ${videoData.title || 'No title'}\n` +
-`*Views:* ${videoData.views || 'No view information'}\n` +
-`*Votes:* ${videoData.vote || 'No vote information'}\n` +
-`*Likes:* ${videoData.like_count || 'No like information'}\n` +
-`*Dislikes:* ${videoData.dislike_count || 'No dislike information'}`,
-});
-await devtrust.sendMessage(m.chat, {react: {text: '', key: m.key}})
-} catch (e) {
-console.log(`Error downloading video: ${e}`);
-}
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                video: { url: videoUrl },
+                mimetype: 'video/mp4',
+                caption:
+                    `🍑 *XVideos Download*\n\n` +
+                    `📽️ *Title:* ${videoData.title || 'No title'}\n` +
+                    `👁️ *Views:* ${videoData.views || '-'}\n` +
+                    `👍 *Likes:* ${videoData.like_count || '-'}\n` +
+                    `👎 *Dislikes:* ${videoData.dislike_count || '-'}`,
+            }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    } catch (e) {
+        console.error('xvideodl error:', e?.message || e);
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        reply(`❌ *Download failed:* ${e?.message || e}`);
+    }
 }
 break;
   case "xnxxvideodl": {
@@ -13678,47 +13670,20 @@ break;
     }
 }
 break;
-case 'xvideosearch':{
+case 'xvideosearch': {
     // 18+ unlock check
     const _xvsrch_num = (m.sender || '').split('@')[0].split(':')[0];
     const _xvsrch_unlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
     const _xvsrch_banned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
     if (_xvsrch_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvsrch_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
-  if (!text) return m.reply(example(`Milf`))
-  try {
-    // checking data from api
-    let res = await fetch(null /* XVideos search disabled */);
-    let json = await res.json();
 
-    // checking api response status
-    if (json.status !== 200 || !json.data || json.data.length === 0) {
-      throw 'No videos found for this keyword.';
-    }
-
-    // fetching search data from api
-    let videos = json.data;
-    let message = `🍑\nxvideo search result\n\n *"${text}"*:\n`;
-
-    // Composing messages with video information
-    videos.forEach(video => {
-      message += `Title: ${video.title || 'no name'}\n` +
-                 `  Duration: ${video.duration || 'no duration'}\n` +
-                 `  URL: ${video.url || 'no URL'}\n` +
-                 `  Thumbnail: ${video.thumb || 'no thumbnail'}\n\n`;
-    });
-
-    // Sending messages with video lists
-    await devtrust.sendMessage(m.chat, {
-      text: message,
-    });
-
-  } catch (e) {
-    // Handling errors and sending error messages
-    await devtrust.sendMessage(m.chat, `can't fetch result from query`);
-  }
+    // XVideos search API was removed (was throwing TypeError on every call).
+    // Use xnxxsearch instead which has a working scraper in allfunc/xnxxdownload.
+    return reply(`ℹ️ *XVideos search is currently disabled*\n\nUse \`${prefix}xnxxsearch <query>\` instead.`);
 }
-break; 
+break;
+
 // ✅ Command switch
 case 'xnxxsearch': {
     // 18+ unlock check
@@ -14296,26 +14261,34 @@ break;
 case "lyrics": {
     const chatId = m.key.remoteJid;
     const query = args.join(" ");
-    
-    if (!query) return reply("🎵 *Usage:* lyrics song title");
+
+    if (!query) return reply("🎵 *Usage:* lyrics song title\nExample: lyrics adele hello");
 
     try {
-        const res = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
-        const json = await res.json();
-
-        if (!json.status || !json.data || !json.data.lyrics) {
+        // Step 1: search via suggest endpoint to get a real {artist,title} match
+        const sRes = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
+        const sJson = await sRes.json().catch(() => ({}));
+        const hit = Array.isArray(sJson?.data) ? sJson.data[0] : null;
+        if (!hit?.artist?.name || !hit?.title) {
             return reply(`❌ *Lyrics not found for "${query}"*`);
         }
+        const artistName = hit.artist.name;
+        const songTitle  = hit.title;
+        const album      = hit.album?.title || 'Unknown';
 
-        const { title, artist, album, lyrics } = json.data;
+        // Step 2: pull the actual lyrics
+        const lRes = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artistName)}/${encodeURIComponent(songTitle)}`);
+        const lJson = await lRes.json().catch(() => ({}));
+        const lyrics = (lJson?.lyrics || '').trim();
+        if (!lyrics) return reply(`❌ *Lyrics not found for "${songTitle}" by ${artistName}*`);
+
         const chunks = lyrics.match(/[\s\S]{1,3500}/g) || [lyrics];
-
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? `🎵 *${title}* – *${artist}*\n📀 ${album || 'Unknown'}\n\n` : "";
+            const header = i === 0 ? `🎵 *${songTitle}* – *${artistName}*\n📀 ${album}\n\n` : "";
             await devtrust.sendMessage(chatId, { text: header + chunks[i] });
         }
     } catch (err) {
-        console.error(err);
+        console.error('lyrics error:', err?.message || err);
         reply("⚠️ *Lyrics fetch failed*");
     }
 }
@@ -15049,8 +15022,7 @@ case "qwenxj": {
         const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
         if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
 
-        const json = await res.json();
-        const answer = json?.data || "";
+        const answer = (await res.text()).trim();
 
         if (!answer) return reply("⚠️ *No response from Qwen*");
 
