@@ -10015,14 +10015,21 @@ case 'weatherinfo': {
 }
 break;
 
+case "calc":
 case "calculate": {
     if (!text) return reply("🧮 *Example:* calculate 12+25*3");
-    
+
     try {
-        const result = eval(text);
-        reply(`🧮 *Result*\n\n${text} = ${result}`);
-    } catch {
-        reply("❌ *Invalid expression*");
+        // SECURITY: previously this used eval() on raw user input — that lets
+        // any group member run arbitrary Node.js (require('child_process'),
+        // process.exit(), file reads, etc.). Use mathjs's safe expression
+        // evaluator instead, which only understands math.
+        const _math = require('mathjs');
+        const result = _math.evaluate(text);
+        const out = (typeof result === 'object' && result?.toString) ? result.toString() : String(result);
+        reply(`🧮 *Result*\n\n${text} = ${out}`);
+    } catch (e) {
+        reply(`❌ *Invalid expression*\n${e?.message || ''}`.trim());
     }
 }
 break;
