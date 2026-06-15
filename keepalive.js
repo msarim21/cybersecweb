@@ -108,6 +108,13 @@ async function backupAntideleteSessions() {
 
 /** Wake idle WhatsApp sockets so first command/delete after silence is instant */
 async function sweepStaleWhatsAppSockets() {
+    // In supervisor mode the parent process must never open WhatsApp sockets.
+    // Each bot runs as an isolated child (bot-runner.js) that manages its own socket.
+    // Calling pair() here from the parent would load every bot in-process → R14/R15.
+    if (_supervisorActive()) return;
+    // In an isolated child process only manage THIS child's own bot — never call
+    // pair() for a different JID inside this sweep (would fork a second bot in-process).
+    const _ownBot = global.__ISOLATED_BOT ? String(global.__ISOLATED_BOT) : null;
     const trackerMap = global._rentbotTracker;
     if (!trackerMap?.size) return;
 
@@ -126,6 +133,11 @@ async function sweepStaleWhatsAppSockets() {
         const clean = String(key).replace(/[^0-9]/g, '');
         const jid = key.includes('@') ? key : (clean ? `${clean}@s.whatsapp.net` : '');
         if (!jid) continue;
+
+        // In an isolated child process, only manage this child's own bot number.
+        // Skip any other bot that somehow ends up in _rentbotTracker (prevents
+        // loading foreign bots in-process via pairMod() below → memory explosion).
+        if (_ownBot && clean !== _ownBot) continue;
 
         const lastWa = tracker.lastWAMessage || tracker.lastActivity || 0;
         const silentMs = Date.now() - lastWa;
@@ -190,6 +202,11 @@ function cleanupBotMemory() {
 // Every 10 min: reconnect dead sessions AND trigger full autoload if nothing loaded.
 // ONLY on worker dyno — web dyno must never touch WhatsApp sockets (440 disconnects).
 async function refreshBotSessions() {
+    // Hard guard: supervisor owns all bots — never load them in-process here.
+    if (_supervisorActive()) return;
+    // In an isolated bot child process, this function must never run — each child
+    // manages only its own single bot; loading others causes per-child memory explosion.
+    if (global.__ISOLATED_BOT) return;
     if (!isWhatsAppWorker()) return;
     try {
         // Isolated supervisor mode: sync child processes instead of autoload
