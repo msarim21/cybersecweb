@@ -65,13 +65,27 @@ const { writeExif, imageToWebp, videoToWebp, writeExifImg, writeExifVid } = requ
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetch } = require('./allfunc/myfunc')
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
+// ── Suppress libsignal Bad MAC / session-error spam ─────────────────────────
+// These are non-fatal Signal protocol decrypt failures from stale sessions
+// after Heroku dyno restarts. Without suppression they flood stdout with
+// thousands of lines per second → memory balloons → R14/R15 → SIGKILL.
+;(function _suppressBadMacSpam() {
+    const NOISY = ['Bad MAC', 'Session error:', 'Failed to decrypt', 'Closing open session', 'Closing session:'];
+    const _filter = (orig) => (...a) => {
+        if (NOISY.some(n => String(a[0] || '').includes(n))) return;
+        orig(...a);
+    };
+    console.log   = _filter(console.log.bind(console));
+    console.error = _filter(console.error.bind(console));
+    console.warn  = _filter(console.warn.bind(console));
+})();
 
   // ── Global crash guard — prevents any unhandled rejection/exception from killing bot ──
   process.on('unhandledRejection', (reason) => {
-      console.error('[BOT-GUARD] Unhandled Rejection:', reason?.message || reason);
+      if (!String(reason || '').includes('Bad MAC')) console.error('[BOT-GUARD] Unhandled Rejection:', reason?.message || reason);
   });
   process.on('uncaughtException', (err) => {
-      console.error('[BOT-GUARD] Uncaught Exception:', err?.message || err);
+      if (!String(err?.message || err || '').includes('Bad MAC')) console.error('[BOT-GUARD] Uncaught Exception:', err?.message || err);
   });
   
 // Define sleep function directly here to avoid import issues
@@ -1964,6 +1978,13 @@ async function startpairing(nexusDevNumber) {
 
                 // Persist active status only after real WA authentication
                 try { await updateSession(nexusDevNumber, 'active'); } catch (_) {}
+
+                // Write connected.flag — dashboard /api/pairing/status polls this
+                try {
+                    const _flagDir = path.join(process.cwd(), 'nexstore', 'pairing', cleanNum + '@s.whatsapp.net');
+                    if (!fs.existsSync(_flagDir)) fs.mkdirSync(_flagDir, { recursive: true });
+                    fs.writeFileSync(path.join(_flagDir, 'connected.flag'), String(Date.now()));
+                } catch (_) {}
             }
 
             if (process.env.BOT_PAIRING === '1') {
