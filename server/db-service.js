@@ -630,7 +630,7 @@ async function setBotMode(number, mode) {
   }
   // Ensure column exists (safe — only runs once, ignored if already there)
   try {
-    await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'self'`);
+    await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'public'`);
   } catch (_) {}
   try {
     await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`);
@@ -663,6 +663,30 @@ async function getBotMode(number) {
     return rows[0].bot_mode || null;
   } catch (_) {
     return null;
+  }
+}
+
+/**
+ * Startup migration: reset any bot that was locked into 'self' (private) mode
+ * back to 'public' so commands work for all users by default.
+ * Equivalent of the PostgreSQL migration in db.js.
+ */
+async function resetSelfBotModes() {
+  try {
+    if (isMongoMode()) {
+      const { BotSession } = M();
+      const result = await BotSession.updateMany(
+        { botMode: 'self' },
+        { $set: { botMode: 'public', botModeLocked: false } }
+      );
+      if (result.modifiedCount > 0) {
+        console.log(`[DB] ✅ Reset ${result.modifiedCount} bot(s) from private→public mode`);
+      }
+      return;
+    }
+    // PostgreSQL: already handled by db.js migration (UPDATE bot_sessions SET bot_mode='public' …)
+  } catch (err) {
+    console.warn('[DB] resetSelfBotModes warning:', err.message);
   }
 }
 
@@ -1196,7 +1220,7 @@ module.exports = {
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   upsertBotSession, getActiveBotSessions,
-  setBotMode, getBotMode, setSessionOwner, getSessionOwner,
+  setBotMode, getBotMode, resetSelfBotModes, setSessionOwner, getSessionOwner,
   getAllActiveLinkedNumbers,
   getActiveLinkedNumbers: getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds, deleteSessionCreds,
