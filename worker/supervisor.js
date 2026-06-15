@@ -419,13 +419,24 @@ async function syncBots() {
                 ));
                 // Fall through to spawn below
             } else {
-                // RAM is full and bots are running — evict LRU to make room.
+                // RAM is full and bots are running — evict LRU to make room,
+                // but only if the LRU bot has been running long enough.
+                const BOT_MIN_RUN_MS = Number(process.env.BOT_MIN_RUN_MINUTES ?? 5) * 60_000;
                 const lru = _getLruRunningBot(myBots);
                 if (!lru) {
                     // No eviction candidate — all bots are too recent to evict.
                     console.log(chalk.yellow(
                         `[Supervisor] ⚠️ RAM full (${getMemSummary(runningNow)}) — ` +
                         `${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) queued for next slot`
+                    ));
+                    break;
+                }
+                const lruEntry = children.get(lru);
+                const lruAge = lruEntry?.spawnedAt ? Date.now() - lruEntry.spawnedAt : Infinity;
+                if (lruAge < BOT_MIN_RUN_MS) {
+                    const remSec = Math.ceil((BOT_MIN_RUN_MS - lruAge) / 1000);
+                    console.log(chalk.yellow(
+                        `[Supervisor] ⏳ RAM full but +${lru} too young to evict (${remSec}s remaining) — waiting for next sync`
                     ));
                     break;
                 }
