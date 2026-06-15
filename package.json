@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "heroku-postbuild": "cd client && npm install && npm run build"
   },
   "engines": {
     "node": ">=20.0.0"
