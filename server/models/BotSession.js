@@ -19,6 +19,8 @@ const botSessionSchema = new mongoose.Schema({
   /** public = everyone; self = owner + linked number only — set only via .public / .private */
   botMode:          { type: String, enum: ['public', 'self'] },
   botModeLocked:    { type: Boolean, default: false },
+  /** WhatsApp number that enabled self mode — that user's commands pass even if not in owner.json */
+  sessionOwner:     { type: String, default: null },
 });
 
 module.exports = mongoose.model('BotSession', botSessionSchema);
