@@ -357,33 +357,47 @@ async function syncBots() {
         .filter((c) => !children.has(c) && !global._pairingInFlight?.has(c))
         .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
 
+    // Count currently running (non-pairing) bots
+    const runningNow = [...children.values()].filter((e) => !e?.pairing).length;
+
     for (const clean of sleepingBots) {
-        if (!canSpawnBot()) {
-            // RAM is full — evict the least-recently-active running bot to make room.
-            const lru = _getLruRunningBot(myBots);
-            if (!lru) {
-                // Every running bot was active more recently than we can safely evict.
-                // Log once and stop trying — next syncBots cycle will re-evaluate.
+        const memOk = canSpawnBot();
+
+        if (!memOk) {
+            // If NO bots are running at all, start anyway — an empty dyno should
+            // always have at least one bot regardless of RAM reading.
+            // (os.freemem on Linux shows only uncached pages; actual available RAM
+            //  is much higher. We guard here only when bots are already using RAM.)
+            if (runningNow === 0 && children.size === 0) {
                 console.log(chalk.yellow(
-                    `[Supervisor] ⚠️ RAM full (${getMemSummary()}) — ` +
-                    `${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) waiting for a slot`
+                    `[Supervisor] ⚠️ RAM pressure high but no bots running — starting first bot anyway | ${getMemSummary()}`
                 ));
-                break;
-            }
-            console.log(chalk.yellow(
-                `[Supervisor] 🔄 RAM full — evicting +${lru} (LRU) to start +${clean} | ${getMemSummary()}`
-            ));
-            // Mark evicted bot's activity as 0 so it goes to the back of the sleep queue.
-            lastActivity.set(lru, 0);
-            killBot(lru, 'SIGTERM');
-            // Give the OS a moment to reclaim memory before spawning.
-            await new Promise((r) => setTimeout(r, 1500));
-            if (!canSpawnBot()) {
-                // Still not enough — skip this bot for now.
-                console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight after eviction — skipping +${clean}`));
-                continue;
+                // Fall through to spawn below
+            } else {
+                // RAM is full and bots are running — evict LRU to make room.
+                const lru = _getLruRunningBot(myBots);
+                if (!lru) {
+                    // No eviction candidate — all bots are too recent to evict.
+                    // Stop trying this cycle; next syncBots will re-evaluate.
+                    console.log(chalk.yellow(
+                        `[Supervisor] ⚠️ RAM full (${getMemSummary()}) — ` +
+                        `${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) queued for next slot`
+                    ));
+                    break;
+                }
+                console.log(chalk.yellow(
+                    `[Supervisor] 🔄 RAM full — rotating +${lru} out, +${clean} in | ${getMemSummary()}`
+                ));
+                lastActivity.set(lru, 0);
+                killBot(lru, 'SIGTERM');
+                await new Promise((r) => setTimeout(r, 1500));
+                if (!canSpawnBot()) {
+                    console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight after eviction — skipping +${clean}`));
+                    continue;
+                }
             }
         }
+
         const ready = await _ensureBotSessionReady(clean);
         if (ready) {
             spawnBot(clean);

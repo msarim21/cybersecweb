@@ -1,27 +1,37 @@
 'use strict';
 
 const os = require('os');
+const fs = require('fs');
 
 /**
- * Memory guard — prevents OOM crashes by checking free RAM before spawning a bot.
+ * Memory guard — prevents OOM crashes by checking available RAM before spawning.
+ *
+ * IMPORTANT: Uses /proc/meminfo MemAvailable on Linux (Heroku) instead of
+ * os.freemem(), because os.freemem() only counts truly-free pages and ignores
+ * cached/buffered memory that the OS can instantly reclaim. On a Heroku dyno
+ * os.freemem() can show only 10-30 MB "free" even with 300 MB actually available,
+ * which would block ALL bots from starting. MemAvailable is the correct metric.
  *
  * Env vars (all optional):
- *   SERVER_RESERVE_MB   — MB to keep free for the web server itself     (default: 120)
- *   BOT_CHILD_HEAP_MB   — max heap given to each bot child process       (default: 256)
- *   BOT_ROTATION_HOURS  — hours between automatic bot rotation cycles    (default: 6)
- *
- * How to reduce Heroku bill:
- *   - Set WHATSAPP_HOST_DYNO=web to run bots on the web dyno (no extra worker dyno needed)
- *   - Use UptimeRobot (free) to ping the app every 5 min → Eco dyno never sleeps
- *   - This way: 1x Eco web dyno ($5/mah) runs the website + all bots (up to RAM limit)
- *   - RAM formula: total_RAM - SERVER_RESERVE_MB / BOT_CHILD_HEAP_MB = max concurrent bots
- *     e.g. 512MB dyno: (512 - 120) / 256 ≈ 1-2 bots always-on, or up to ~4 with rotation
+ *   MAX_MEM_PERCENT     — stop spawning when total usage exceeds this %   (default: 88)
+ *   BOT_ROTATION_HOURS  — hours between automatic bot rotation cycles     (default: 6)
  */
 
-const SERVER_RESERVE_MB = Math.max(60, Number(process.env.SERVER_RESERVE_MB) || 120);
-const BOT_ESTIMATE_MB   = Math.max(64, Number(process.env.BOT_CHILD_HEAP_MB)  || 256);
+const MAX_MEM_PERCENT = Math.min(98, Math.max(50, Number(process.env.MAX_MEM_PERCENT) || 88));
 
-function getFreeMemMB() {
+/**
+ * Returns available memory in MB.
+ * On Linux: reads MemAvailable from /proc/meminfo (accurate, includes reclaimable cache).
+ * On other platforms: falls back to os.freemem().
+ */
+function getAvailableMemMB() {
+    try {
+        if (process.platform === 'linux') {
+            const info = fs.readFileSync('/proc/meminfo', 'utf8');
+            const match = info.match(/^MemAvailable:\s+(\d+)\s+kB/m);
+            if (match) return Math.floor(parseInt(match[1], 10) / 1024);
+        }
+    } catch (_) {}
     return Math.floor(os.freemem() / 1024 / 1024);
 }
 
@@ -30,10 +40,10 @@ function getTotalMemMB() {
 }
 
 function getUsedMemMB() {
-    return getTotalMemMB() - getFreeMemMB();
+    return getTotalMemMB() - getAvailableMemMB();
 }
 
-/** 0-100 percentage of RAM currently in use */
+/** 0-100 percentage of RAM currently in use (based on available, not just free) */
 function getMemPressurePct() {
     const total = getTotalMemMB();
     if (!total) return 0;
@@ -41,28 +51,28 @@ function getMemPressurePct() {
 }
 
 /**
- * Returns true if there is enough free RAM to safely spawn another bot child.
- * Formula: free memory > server reserve + one bot's estimated heap.
+ * Returns true when it is safe to spawn another bot child process.
+ * Blocks only when overall memory usage exceeds MAX_MEM_PERCENT.
+ * This prevents OOM kills without blocking bots on healthy dynos.
  */
 function canSpawnBot() {
-    return getFreeMemMB() >= (SERVER_RESERVE_MB + BOT_ESTIMATE_MB);
+    return getMemPressurePct() < MAX_MEM_PERCENT;
 }
 
 /** Human-readable memory summary for log lines */
 function getMemSummary() {
-    const free  = getFreeMemMB();
+    const avail = getAvailableMemMB();
     const total = getTotalMemMB();
     const pct   = getMemPressurePct();
-    return `RAM ${total - free}/${total} MB used (${pct}%) — ${free} MB free`;
+    return `RAM ${total - avail}/${total} MB used (${pct}%) — ${avail} MB avail`;
 }
 
 module.exports = {
-    getFreeMemMB,
+    getAvailableMemMB,
     getTotalMemMB,
     getUsedMemMB,
     getMemPressurePct,
     canSpawnBot,
     getMemSummary,
-    SERVER_RESERVE_MB,
-    BOT_ESTIMATE_MB,
+    MAX_MEM_PERCENT,
 };
