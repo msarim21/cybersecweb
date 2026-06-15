@@ -357,10 +357,14 @@ async function syncBots() {
         .filter((c) => !children.has(c) && !global._pairingInFlight?.has(c))
         .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
 
-    // Count currently running (non-pairing) bots
-    const runningNow = [...children.values()].filter((e) => !e?.pairing).length;
-
     for (const clean of sleepingBots) {
+        // Re-compute runningNow on EVERY iteration — it changes after each
+        // killBot() call because children.delete() runs synchronously inside killBot.
+        // Using a stale count causes the post-eviction canSpawnBot check to wrongly
+        // report "RAM still tight" while all bots have actually been killed, then
+        // _scheduleRestart fires them all simultaneously → 5 × 200 MB memory spike.
+        const runningNow = [...children.values()].filter((e) => !e?.pairing).length;
+
         // Pass runningNow so canSpawnBot() can project dyno memory accurately.
         // On Heroku, /proc/meminfo shows HOST machine RAM (e.g. 63 GB), not the
         // 512 MB dyno limit — without activeChildCount the guard always returns true.
@@ -369,11 +373,9 @@ async function syncBots() {
         if (!memOk) {
             // If NO bots are running at all, start anyway — an empty dyno should
             // always have at least one bot regardless of RAM reading.
-            // (os.freemem on Linux shows only uncached pages; actual available RAM
-            //  is much higher. We guard here only when bots are already using RAM.)
             if (runningNow === 0 && children.size === 0) {
                 console.log(chalk.yellow(
-                    `[Supervisor] ⚠️ RAM pressure high but no bots running — starting first bot anyway | ${getMemSummary()}`
+                    `[Supervisor] ⚠️ RAM pressure high but no bots running — starting first bot anyway | ${getMemSummary(runningNow)}`
                 ));
                 // Fall through to spawn below
             } else {
@@ -381,21 +383,27 @@ async function syncBots() {
                 const lru = _getLruRunningBot(myBots);
                 if (!lru) {
                     // No eviction candidate — all bots are too recent to evict.
-                    // Stop trying this cycle; next syncBots will re-evaluate.
                     console.log(chalk.yellow(
-                        `[Supervisor] ⚠️ RAM full (${getMemSummary()}) — ` +
+                        `[Supervisor] ⚠️ RAM full (${getMemSummary(runningNow)}) — ` +
                         `${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) queued for next slot`
                     ));
                     break;
                 }
                 console.log(chalk.yellow(
-                    `[Supervisor] 🔄 RAM full — rotating +${lru} out, +${clean} in | ${getMemSummary()}`
+                    `[Supervisor] 🔄 RAM full — rotating +${lru} out, +${clean} in | ${getMemSummary(runningNow)}`
                 ));
                 lastActivity.set(lru, 0);
                 killBot(lru, 'SIGTERM');
-                await new Promise((r) => setTimeout(r, 1500));
-                if (!canSpawnBot(runningNow)) {
-                    console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight after eviction — skipping +${clean}`));
+                // Wait 4 s so the killed process has time to actually exit and free
+                // RSS before we re-project. (SIGTERM → graceful exit takes ~1-3 s.)
+                await new Promise((r) => setTimeout(r, 4000));
+                // IMPORTANT: re-read children AFTER the kill — children.delete() ran
+                // synchronously inside killBot so this count is accurate.
+                const runningAfterEviction = [...children.values()].filter((e) => !e?.pairing).length;
+                if (!canSpawnBot(runningAfterEviction)) {
+                    console.log(chalk.yellow(
+                        `[Supervisor] ⚠️ RAM still tight after eviction — skipping +${clean} | ${getMemSummary(runningAfterEviction)}`
+                    ));
                     continue;
                 }
             }
@@ -404,7 +412,8 @@ async function syncBots() {
         const ready = await _ensureBotSessionReady(clean);
         if (ready) {
             spawnBot(clean);
-            console.log(chalk.green(`[Supervisor] ▶ +${clean} started | ${getMemSummary()}`));
+            const freshCount = [...children.values()].filter((e) => !e?.pairing).length;
+            console.log(chalk.green(`[Supervisor] ▶ +${clean} started | ${getMemSummary(freshCount)}`));
         }
     }
 
