@@ -455,6 +455,10 @@ async function syncBots() {
             const freshCount = [...children.values()].filter((e) => !e?.pairing).length;
             console.log(chalk.green(`[Supervisor] ▶ +${clean} started | ${getMemSummary(freshCount)}`));
         }
+        // If we spawned under memory pressure (forced first-bot), stop here.
+        // Without this break the loop continues, sees RAM still full, and immediately
+        // evicts the bot we just started — causing a pointless rotation storm.
+        if (!memOk) break;
     }
 
     // ── Scheduled rotation ────────────────────────────────────────────────────
