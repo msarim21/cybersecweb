@@ -90,7 +90,19 @@ async function processUser(user, index, total) {
 
   try {
     const startpairing = require('./pair');
-    const sock = await startpairing(user);
+
+    // ⏱ 90-second timeout: agar connection hang ho to baaki bots block na hon
+    const connectWithTimeout = () => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Connection timeout after 90s for ${clean}`));
+      }, 90000);
+
+      Promise.resolve(startpairing(user))
+        .then(sock => { clearTimeout(timer); resolve(sock); })
+        .catch(err  => { clearTimeout(timer); reject(err); });
+    });
+
+    const sock = await connectWithTimeout();
     if (!sock) throw new Error('Connection skipped (stopped or duplicate socket)');
     console.log(chalk.green(`✅ Connected: ${user}`));
     return user;
@@ -234,7 +246,6 @@ async function buildUserList() {
     .filter((v, i, a) => a.indexOf(v) === i)
     .filter(jid => {
       const plain = jid.replace('@s.whatsapp.net', '');
-      // Skip numbers that were manually stopped/disconnected
       if (stoppedNumbers.has(plain)) return false;
       const pathA = path.join(pairingDir, jid, 'creds.json');
       const pathB = path.join(pairingDir, plain, 'creds.json');
