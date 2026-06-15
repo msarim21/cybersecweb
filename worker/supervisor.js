@@ -36,8 +36,17 @@ let _lastRotationAt = Date.now();
 /** @type {Map<string, { child: import('child_process').ChildProcess, restarts: number[], pairing: boolean }>} */
 const children = new Map();
 
-let _syncTimer = null;
-let _active = false;
+/**
+ * Bots currently being evicted by the RAM-rotation logic.
+ * _scheduleRestart skips these so they don't immediately re-spawn and
+ * cause a memory spike (evicted bot exits → _scheduleRestart fires →
+ * restarts the bot we just killed → 4-5 simultaneous processes → R14/R15).
+ */
+const _evictedBots = new Set();
+
+let _syncTimer  = null;
+let _syncBusy   = false;   // mutex — prevents concurrent syncBots calls
+let _active     = false;
 
 function isSupervisorActive() {
     return _active;
@@ -61,10 +70,18 @@ function _spawnEnv(extra = {}) {
     };
 }
 
-function killBot(botNum, signal = 'SIGTERM') {
+/**
+ * @param {string}  botNum
+ * @param {string}  [signal='SIGTERM']
+ * @param {boolean} [evict=false]  — true when called from RAM-rotation so that
+ *                                   _scheduleRestart does NOT re-spawn this bot
+ *                                   automatically (we want syncBots to decide).
+ */
+function killBot(botNum, signal = 'SIGTERM', evict = false) {
     const clean = cleanBotNum(botNum);
     const entry = children.get(clean);
     if (!entry?.child) return false;
+    if (evict) _evictedBots.add(clean);
     try {
         entry.child.kill(signal);
     } catch (_) {}
@@ -130,6 +147,15 @@ function spawnBot(botNum, opts = {}) {
 function _scheduleRestart(clean) {
     setTimeout(async () => {
         if (!_active) return;
+
+        // If this bot was evicted by RAM-rotation, skip self-restart.
+        // syncBots will pick it up in the next rotation slot — no immediate re-spawn.
+        if (_evictedBots.has(clean)) {
+            _evictedBots.delete(clean);
+            console.log(chalk.gray(`[Supervisor] +${clean} evicted — skipping auto-restart, syncBots will rotate`));
+            return;
+        }
+
         try {
             const { readStopped } = require('../allfunc/stopped-bots');
             if (readStopped().includes(clean)) return;
@@ -150,6 +176,15 @@ function _scheduleRestart(clean) {
             }
             if (!global._supervisorRestarts) global._supervisorRestarts = {};
             global._supervisorRestarts[clean] = [...recent, Date.now()];
+
+            // Check RAM before self-restart — prevents simultaneous restarts from blowing past limit.
+            const runningNow = [...children.values()].filter((e) => !e?.pairing).length;
+            if (!canSpawnBot(runningNow)) {
+                console.log(chalk.yellow(
+                    `[Supervisor] +${clean} restart deferred — RAM full (${getMemSummary(runningNow)})`
+                ));
+                return;
+            }
 
             const ready = await _ensureBotSessionReady(clean);
             if (ready) spawnBot(clean);
@@ -255,6 +290,10 @@ function promotePairingToNormal(botNum) {
 }
 
 async function syncBots() {
+    // Mutex: drop concurrent calls — timers can fire while a previous syncBots is
+    // still awaiting DB / session checks, causing duplicate spawns.
+    if (_syncBusy) return;
+    _syncBusy = true;
     try {
         const { syncStoppedWithLinkedNumbers } = require('../allfunc/stopped-bots');
         await syncStoppedWithLinkedNumbers();
@@ -393,7 +432,7 @@ async function syncBots() {
                     `[Supervisor] 🔄 RAM full — rotating +${lru} out, +${clean} in | ${getMemSummary(runningNow)}`
                 ));
                 lastActivity.set(lru, 0);
-                killBot(lru, 'SIGTERM');
+                killBot(lru, 'SIGTERM', true);   // evict=true → _scheduleRestart will skip re-spawn
                 // Wait 4 s so the killed process has time to actually exit and free
                 // RSS before we re-project. (SIGTERM → graceful exit takes ~1-3 s.)
                 await new Promise((r) => setTimeout(r, 4000));
@@ -433,7 +472,7 @@ async function syncBots() {
                     `[Supervisor] ⏰ Rotation: pausing +${lru} → waking +${nextBot}`
                 ));
                 lastActivity.set(lru, 0);
-                killBot(lru, 'SIGTERM');
+                killBot(lru, 'SIGTERM', true);   // evict=true → _scheduleRestart will skip re-spawn
             }
         }
     }
@@ -443,6 +482,9 @@ async function syncBots() {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
         if (!myBots.has(clean)) killBot(clean);
+    }
+    } finally {
+        _syncBusy = false;
     }
 }
 
