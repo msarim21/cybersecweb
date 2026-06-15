@@ -1729,7 +1729,11 @@ async function startpairing(nexusDevNumber) {
 
         if (!webLinked) {
             try {
-                await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
+                const { isNumberInLinkedNumbers } = require('./server/db-service');
+                const alreadyLinked = await isNumberInLinkedNumbers(cleanNum).catch(() => false);
+                if (!alreadyLinked) {
+                    await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
+                }
             } catch (_) {}
         }
 
@@ -1980,10 +1984,15 @@ async function startpairing(nexusDevNumber) {
             }
 
             // Legacy CLI bots without web pairing owner still register under system
+            // GUARD: Only add system entry if NOT already linked — prevents duplicate rows
             if (!webLinked) {
                 try {
-                    await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
-                    console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
+                    const { isNumberInLinkedNumbers } = require('./server/db-service');
+                    const alreadyLinked = await isNumberInLinkedNumbers(cleanNum).catch(() => false);
+                    if (!alreadyLinked) {
+                        await addNumber(nexusDevNumber, 'CYBER-MAIN', 'system');
+                        console.log(chalk.cyan(`[pair] 📁 Auto-registered main bot ${cleanNum} in linked_numbers`));
+                    }
                 } catch (_) {}
             }
 
