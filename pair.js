@@ -2087,6 +2087,59 @@ async function startpairing(nexusDevNumber) {
         }
     });
 
+    // ── Periodic Signal-key backup every 2 min ──────────────────────────────────
+    // creds.update fires only when creds.json changes, but Signal protocol keys
+    // (pre-keys, session records, sender-keys) change on every msg WITHOUT
+    // triggering creds.update — so they stay stale in DB on restart → Bad MAC Error.
+    // This periodic backup captures those key changes and prevents Bad MAC on restart.
+    if (!tracker._periodicBackupInterval) {
+        tracker._periodicBackupInterval = setInterval(async () => {
+            try {
+                const _bkPath = './nexstore/pairing/' + nexusDevNumber;
+                if (!fs.existsSync(_bkPath)) return;
+                const _bkFiles = {};
+                const _bkList = fs.readdirSync(_bkPath);
+                await Promise.all(_bkList.map(async _f => {
+                    try {
+                        const _fp = path.join(_bkPath, _f);
+                        if (fs.lstatSync(_fp).isFile()) {
+                            const _r = await fs.promises.readFile(_fp, 'utf8');
+                            try { _bkFiles[_f] = JSON.parse(_r); } catch (_e) { _bkFiles[_f] = _r; }
+                        }
+                    } catch (_) {}
+                }));
+                if (Object.keys(_bkFiles).length > 0) {
+                    saveCredsToDb(nexusDevNumber.replace(/[^0-9]/g, ''), _bkFiles).catch(() => {});
+                }
+            } catch (_) {}
+        }, 2 * 60 * 1000); // every 2 minutes
+    }
+
+    // ── Register flush fn for graceful SIGTERM shutdown ──────────────────────────
+    if (!global._sessionFlushFns) global._sessionFlushFns = new Map();
+    global._sessionFlushFns.set(nexusDevNumber, async () => {
+        if (tracker._credsBackupTimer) { clearTimeout(tracker._credsBackupTimer); tracker._credsBackupTimer = null; }
+        if (tracker._periodicBackupInterval) { clearInterval(tracker._periodicBackupInterval); tracker._periodicBackupInterval = null; }
+        try {
+            const _fp2 = './nexstore/pairing/' + nexusDevNumber;
+            if (!fs.existsSync(_fp2)) return;
+            const _sf2 = {};
+            const _fr2 = fs.readdirSync(_fp2);
+            for (const _fk of _fr2) {
+                try {
+                    const _fl2 = path.join(_fp2, _fk);
+                    if (fs.lstatSync(_fl2).isFile()) {
+                        const _r2 = fs.readFileSync(_fl2, 'utf8');
+                        try { _sf2[_fk] = JSON.parse(_r2); } catch (_) { _sf2[_fk] = _r2; }
+                    }
+                } catch (_) {}
+            }
+            if (Object.keys(_sf2).length > 0) {
+                await saveCredsToDb(nexusDevNumber.replace(/[^0-9]/g, ''), _sf2);
+            }
+        } catch (_) {}
+    });
+
     // ============ ANTICALL — Top-level call handler ============
     nexus.ev.on('call', async (calls) => {
         for (const call of calls) {
