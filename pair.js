@@ -873,10 +873,32 @@ async function startpairing(nexusDevNumber) {
         }, 5 * 60 * 1000);
     }
 
+    // ── Reconnect command buffer — holds commands that arrive while bot is re-connecting ──
+    // Prevents "command sent at wrong time = no response" during 30s reconnect windows
+    if (!nexus._reconnectCmdQueue) nexus._reconnectCmdQueue = [];
+
     nexus.ev.on('messages.upsert', async chatUpdate => {
     try {
-        // ✅ GUARD: Skip if socket not authenticated yet
-        if (!nexus.user) return;
+        // GUARD: If socket not yet authenticated, buffer command-like messages up to 10s
+        // and replay them once connected — instead of silently dropping them
+        if (!nexus.user) {
+            const _isCmd = (chatUpdate.messages||[])[0] && _pairLooksLikeCommand((chatUpdate.messages||[])[0]);
+            if (_isCmd && nexus._reconnectCmdQueue.length < 20) {
+                nexus._reconnectCmdQueue.push({ chatUpdate, ts: Date.now() });
+            }
+            return;
+        }
+        // Drain any buffered commands from reconnect window (max 10s old)
+        if (nexus._reconnectCmdQueue && nexus._reconnectCmdQueue.length) {
+            const _now = Date.now();
+            const _pending = nexus._reconnectCmdQueue.splice(0);
+            nexus._reconnectCmdQueue = [];
+            for (const _q of _pending) {
+                if (_now - _q.ts < 10000) { // replay only if <10s old
+                    setImmediate(() => nexus.ev.emit('messages.upsert', _q.chatUpdate));
+                }
+            }
+        }
 
         // ── Track last real WhatsApp message time (used by dead-connection watchdog) ──
         const _tracker = rentbotTracker.get(nexusDevNumber);
