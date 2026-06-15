@@ -18430,9 +18430,14 @@ default:
 }
 
 let file = require.resolve(__filename);
-require('fs').watchFile(file, () => {
-    require('fs').unwatchFile(file);
-    console.log('\x1b[0;32m' + __filename + ' \x1b[1;32mupdated!\x1b[0m');
-    delete require.cache[file];
-    require(file);
-});
+// Hot-reload: disabled on Heroku (DYNO env set) — spurious fs events cause case.js
+// to be re-parsed from disk (200-500ms event loop block per trigger, makes commands
+// intermittently slow). Only active in local development where it's actually useful.
+if (!process.env.DYNO && process.env.NODE_ENV !== 'production') {
+    require('fs').watchFile(file, () => {
+        require('fs').unwatchFile(file);
+        console.log('\x1b[0;32m' + __filename + ' \x1b[1;32mupdated!\x1b[0m');
+        delete require.cache[file];
+        require(file);
+    });
+}
