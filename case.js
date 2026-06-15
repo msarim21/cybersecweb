@@ -917,8 +917,11 @@ if (isCmd && command) {
             const _turboSender = _turboJidNum(m.sender);
             const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
             const _turboCreator = [devtrust._cachedBotNumber, ...(Array.isArray(owner) ? owner : [])].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
-            // Private mode: linked user OR owner only — same rule as full command path
-            if (devtrust.public === false && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
+            // Session owner: specific number who enabled .self for this bot (may differ from owner.json)
+            const _turboSessionOwner = Boolean(devtrust._sessionOwnerNum && _turboSender
+                && _turboSender === String(devtrust._sessionOwnerNum).replace(/[^0-9]/g, ''));
+            // Private mode: linked user OR owner OR session owner only
+            if (devtrust.public === false && !_turboLinked && !_turboCreator && !_turboSessionOwner && !m.key?.fromMe) return;
             ensureFlagCache();
             if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
                 try {
@@ -4327,7 +4330,11 @@ if (devtrust.public === false) {
     // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
     const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
     const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
+    // Session owner: the specific WhatsApp number that ran .self for this bot session.
+    // This allows that user to use commands even if they're not listed in owner.json.
+    const _isSessionOwner = Boolean(devtrust._sessionOwnerNum && _senderClean
+        && _senderClean === String(devtrust._sessionOwnerNum).replace(/[^0-9]/g, ''));
+    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel && !_isSessionOwner) return;
 }
 
 // Linked-user / owner commands — skip auto-react, status hooks, group moderation
@@ -13353,8 +13360,13 @@ case 'checkapis': {
 break;
 
 case 'public': {
+    // Security: only the session owner / linked user / global owner can change bot mode
+    if (!isCreator && !_isBotLinkedUser() && !(devtrust._sessionOwnerNum && (m.sender||'').includes(devtrust._sessionOwnerNum))) {
+        return reply("🔒 *Owner only*\nSirf bot owner ya session user mode change kar sakta hai");
+    }
     // Per-session only — only this connected number switches to public
     devtrust.public = true;
+    devtrust._sessionOwnerNum = null; // clear session owner on public mode
     // Save to DB so mode survives restarts (per-number, not shared)
     try {
         const { setBotMode } = require('./server/db-service');
@@ -13367,15 +13379,27 @@ break;
 
 case 'private':
 case 'self': {
+    // Security: only existing owner / linked user can enable self mode
+    if (!isCreator && !_isBotLinkedUser()) {
+        return reply("🔒 *Owner only*\nSirf bot owner ya bot number hi private mode enable kar sakta hai");
+    }
     // Per-session only — only this connected number switches to private/self
     devtrust.public = false;
+    // Store the sender's number as session owner — allows THIS specific user's commands
+    // even if they're not in owner.json (important for multi-session where each bot has its own user)
+    const _selfSenderNum = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+    devtrust._sessionOwnerNum = _selfSenderNum || null;
     // Save to DB so mode survives restarts (per-number, not shared)
     try {
-        const { setBotMode } = require('./server/db-service');
+        const { setBotMode, setSessionOwner } = require('./server/db-service');
         const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
-        if (_modeNum) setBotMode(_modeNum, 'self').catch(() => {});
+        if (_modeNum) {
+            setBotMode(_modeNum, 'self').catch(() => {});
+            // Save session owner so it's restored after restart
+            if (_selfSenderNum) setSessionOwner(_modeNum, _selfSenderNum).catch(() => {});
+        }
     } catch (_) {}
-    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
+    reply("🔐 *Private mode activated*\nSirf aap is bot ke commands use kar sakte hain");
 }
 break;
 
