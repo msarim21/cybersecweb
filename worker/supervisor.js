@@ -361,7 +361,10 @@ async function syncBots() {
     const runningNow = [...children.values()].filter((e) => !e?.pairing).length;
 
     for (const clean of sleepingBots) {
-        const memOk = canSpawnBot();
+        // Pass runningNow so canSpawnBot() can project dyno memory accurately.
+        // On Heroku, /proc/meminfo shows HOST machine RAM (e.g. 63 GB), not the
+        // 512 MB dyno limit — without activeChildCount the guard always returns true.
+        const memOk = canSpawnBot(runningNow);
 
         if (!memOk) {
             // If NO bots are running at all, start anyway — an empty dyno should
@@ -391,7 +394,7 @@ async function syncBots() {
                 lastActivity.set(lru, 0);
                 killBot(lru, 'SIGTERM');
                 await new Promise((r) => setTimeout(r, 1500));
-                if (!canSpawnBot()) {
+                if (!canSpawnBot(runningNow)) {
                     console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight after eviction — skipping +${clean}`));
                     continue;
                 }
