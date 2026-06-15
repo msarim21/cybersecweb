@@ -4753,9 +4753,7 @@ async function nexusLoading() {
 
 // NOTE: Newsletter auto-react is now handled inline above (no nested listener)
 
-if (m.message && isCmd) {
-    console.log(chalk.hex('#3498db')(`cmd "${body}" from ${pushname} (${m.isGroup ? 'group' : 'private'})`));
-}
+// PERF: per-command console.log removed — was sync I/O blocking the event loop
 
 // ============ NEWSLETTER AUTO-REACT (inline, no nested listener) ============
 const newsletterJids = ["120363408022768294@newsletter"];
