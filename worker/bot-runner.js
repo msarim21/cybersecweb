@@ -1,5 +1,33 @@
 'use strict';
 
+// ── Suppress libsignal Bad MAC / session-error spam ───────────────────────────
+// MUST be the very first code — before any require() — so we override
+// process.stdout.write BEFORE libsignal loads and potentially caches console.log.
+// Without this: "Closing session: SessionEntry {..." floods fill the parent dyno
+// log buffer causing R14 → R15 → SIGKILL on Heroku Eco (512 MB).
+;(function _suppressLibsignalSpam() {
+    const NOISY = [
+        'Bad MAC', 'Session error:', 'Failed to decrypt',
+        'Closing session:', 'Closing open session', 'Removing old closed session',
+        'SessionEntry {', '_chains:', 'registrationId:', 'currentRatchet:',
+        'indexInfo:', 'ephemeralKeyPair:', 'lastRemoteEphemeralKey:',
+        'baseKey:', 'baseKeyType:', 'remoteIdentityKey:', 'previousCounter:'
+    ];
+    const _origOut = process.stdout.write.bind(process.stdout);
+    const _origErr = process.stderr.write.bind(process.stderr);
+    const _makeFilter = (orig) => function(chunk, enc, cb) {
+        const s = typeof chunk === 'string' ? chunk : (chunk ? chunk.toString() : '');
+        if (NOISY.some(n => s.includes(n))) {
+            if (typeof enc === 'function') enc();
+            else if (typeof cb === 'function') cb();
+            return true;
+        }
+        return orig(chunk, enc, cb);
+    };
+    process.stdout.write = _makeFilter(_origOut);
+    process.stderr.write = _makeFilter(_origErr);
+})();
+
 /**
  * Single-bot worker process — ONE WhatsApp number per Node.js process.
  * Complete isolation: own memory, own globals, own config files.
