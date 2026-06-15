@@ -1,3 +1,38 @@
+// ── Suppress libsignal Bad MAC / session-error stdout spam ───────────────────
+// libsignal captures console.log reference at module-load time, so overriding
+// console.log in pair.js is too late. Override process.stdout.write here —
+// the very first line of server — to intercept everything before any require.
+// Without this, Bad MAC floods fill 512 MB Eco dyno memory → R14 → R15 → SIGKILL.
+;(function _suppressLibsignalSpam() {
+    const NOISY = [
+        'Bad MAC', 'Session error:', 'Failed to decrypt',
+        'Closing session:', 'Closing open session', 'Removing old closed session',
+        'SessionEntry {', '_chains:', 'registrationId:', 'currentRatchet:',
+        'indexInfo:', 'ephemeralKeyPair:', 'lastRemoteEphemeralKey:',
+        'baseKey:', 'baseKeyType:', 'remoteIdentityKey:', 'previousCounter:'
+    ];
+    const _makeFilter = (orig) => function(chunk, enc, cb) {
+        const s = typeof chunk === 'string' ? chunk : (chunk ? chunk.toString() : '');
+        if (NOISY.some(n => s.includes(n))) {
+            if (typeof enc === 'function') enc();
+            else if (typeof cb === 'function') cb();
+            return true;
+        }
+        return orig.call(process.stdout, chunk, enc, cb);
+    };
+    const _makeErrFilter = (orig) => function(chunk, enc, cb) {
+        const s = typeof chunk === 'string' ? chunk : (chunk ? chunk.toString() : '');
+        if (NOISY.some(n => s.includes(n))) {
+            if (typeof enc === 'function') enc();
+            else if (typeof cb === 'function') cb();
+            return true;
+        }
+        return orig.call(process.stderr, chunk, enc, cb);
+    };
+    process.stdout.write = _makeFilter(process.stdout.write.bind(process.stdout));
+    process.stderr.write = _makeErrFilter(process.stderr.write.bind(process.stderr));
+})();
+
 require('dotenv').config();
 const compression = require('compression');
 
