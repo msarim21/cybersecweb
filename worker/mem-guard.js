@@ -6,23 +6,26 @@ const fs = require('fs');
 /**
  * Memory guard — prevents OOM crashes by checking available RAM before spawning.
  *
- * IMPORTANT: Uses /proc/meminfo MemAvailable on Linux (Heroku) instead of
- * os.freemem(), because os.freemem() only counts truly-free pages and ignores
- * cached/buffered memory that the OS can instantly reclaim. On a Heroku dyno
- * os.freemem() can show only 10-30 MB "free" even with 300 MB actually available,
- * which would block ALL bots from starting. MemAvailable is the correct metric.
+ * On Heroku, /proc/meminfo and os.totalmem() reflect the HOST machine (e.g. 63 GB),
+ * not the dyno container limit (512 MB Eco). Use DYNO_TOTAL_RAM_MB env var to tell
+ * the guard the real dyno size. It then projects usage as:
+ *   parent RSS  +  (activeChildCount × BOT_CHILD_HEAP_MB)
+ * and blocks spawning when that projection exceeds MAX_MEM_PERCENT of the dyno limit.
  *
  * Env vars (all optional):
- *   MAX_MEM_PERCENT     — stop spawning when total usage exceeds this %   (default: 88)
- *   BOT_ROTATION_HOURS  — hours between automatic bot rotation cycles     (default: 6)
+ *   DYNO_TOTAL_RAM_MB   — actual dyno RAM ceiling (default: 512 for Heroku Eco)
+ *   MAX_MEM_PERCENT     — stop spawning when projected usage exceeds this %  (default: 78)
+ *   BOT_CHILD_HEAP_MB   — estimated RSS per bot child process in MB           (default: 130)
+ *   BOT_ROTATION_HOURS  — hours between automatic bot rotation cycles         (default: 6)
  */
 
-const MAX_MEM_PERCENT = Math.min(98, Math.max(50, Number(process.env.MAX_MEM_PERCENT) || 88));
+const MAX_MEM_PERCENT = Math.min(95, Math.max(50, Number(process.env.MAX_MEM_PERCENT) || 78));
 
 /**
  * Returns available memory in MB.
  * On Linux: reads MemAvailable from /proc/meminfo (accurate, includes reclaimable cache).
  * On other platforms: falls back to os.freemem().
+ * NOTE: On Heroku this reflects HOST machine memory, not dyno limit.
  */
 function getAvailableMemMB() {
     try {
@@ -51,20 +54,53 @@ function getMemPressurePct() {
 }
 
 /**
- * Returns true when it is safe to spawn another bot child process.
- * Blocks only when overall memory usage exceeds MAX_MEM_PERCENT.
- * This prevents OOM kills without blocking bots on healthy dynos.
+ * Returns the dyno RAM ceiling in MB.
+ * Set DYNO_TOTAL_RAM_MB in Heroku config vars to match your dyno size.
+ * Defaults to 512 (Heroku Eco / Basic dyno).
  */
-function canSpawnBot() {
-    return getMemPressurePct() < MAX_MEM_PERCENT;
+function getDynoLimitMB() {
+    return Number(process.env.DYNO_TOTAL_RAM_MB) || 512;
 }
 
-/** Human-readable memory summary for log lines */
-function getMemSummary() {
-    const avail = getAvailableMemMB();
-    const total = getTotalMemMB();
-    const pct   = getMemPressurePct();
-    return `RAM ${total - avail}/${total} MB used (${pct}%) — ${avail} MB avail`;
+/**
+ * Returns the current process RSS in MB (parent server process only).
+ */
+function getParentRssMB() {
+    return Math.floor(process.memoryUsage().rss / 1024 / 1024);
+}
+
+/**
+ * Projects total dyno memory usage:
+ *   parent RSS  +  activeChildCount × estimated RSS per child
+ */
+function getProjectedDynoUsageMB(activeChildCount = 0) {
+    const parentRss  = getParentRssMB();
+    const childEstMB = Number(process.env.BOT_CHILD_HEAP_MB) || 130;
+    return parentRss + (activeChildCount * childEstMB);
+}
+
+/**
+ * Returns true when it is safe to spawn another bot child process.
+ *
+ * Uses dyno-aware projection (DYNO_TOTAL_RAM_MB) when set.
+ * Falls back to host /proc/meminfo check for non-container environments.
+ *
+ * @param {number} activeChildCount — number of bot children currently running
+ */
+function canSpawnBot(activeChildCount = 0) {
+    const dynoLimit = getDynoLimitMB();
+    const thresholdMB = Math.floor(dynoLimit * (MAX_MEM_PERCENT / 100));
+    const projectedMB = getProjectedDynoUsageMB(activeChildCount);
+    return projectedMB < thresholdMB;
+}
+
+/** Human-readable memory summary for log lines (dyno-aware) */
+function getMemSummary(activeChildCount = 0) {
+    const dynoLimit   = getDynoLimitMB();
+    const projected   = getProjectedDynoUsageMB(activeChildCount);
+    const pct         = Math.round((projected / dynoLimit) * 100);
+    const parentRss   = getParentRssMB();
+    return `Dyno ~${projected}/${dynoLimit} MB projected (${pct}%) — parent RSS ${parentRss} MB`;
 }
 
 module.exports = {
@@ -72,6 +108,9 @@ module.exports = {
     getTotalMemMB,
     getUsedMemMB,
     getMemPressurePct,
+    getDynoLimitMB,
+    getParentRssMB,
+    getProjectedDynoUsageMB,
     canSpawnBot,
     getMemSummary,
     MAX_MEM_PERCENT,
