@@ -4349,9 +4349,7 @@ if (!global.banned) global.banned = {} // stores banned users JIDs
 
 // autobio feature permanently removed — caused WhatsApp rate-limiting & 2min command delay
 
-if (isCmd && !_cmdFastPath) {
-    console.log(chalk.black(chalk.bgWhite('[ CYBER ]')), chalk.black(chalk.bgGreen(new Date)), chalk.black(chalk.bgBlue(body || m.mtype)) + '\n' + chalk.magenta('=> From'), chalk.green(pushname), chalk.yellow(m.sender) + '\n' + chalk.blueBright('=>In'), chalk.green(m.isGroup ? pushname : 'Private Chat', m.chat))
-}
+// PERF: console.log with chalk removed — was sync I/O per command (blocking event loop)
 
 // ======================[ BANNED USERS CHECK ]======================
 if (getSetting(m.sender, "banned", false)) {
