@@ -23,6 +23,10 @@ async function linkNumberOnWebConnect(nexusDevNumber) {
 
         const ownerId = pst?.pairingOwnerId;
         if (!ownerId || ownerId === 'system') {
+            // Re-check: pairing process may have already linked the number and cleared the state
+            if (await isNumberInLinkedNumbers(clean)) {
+                return { linked: true, reason: 'already_linked_late' };
+            }
             return { linked: false, reason: 'no_pairing_owner' };
         }
 
