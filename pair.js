@@ -441,8 +441,20 @@ async function _restoreBotPublicMode(nexus, cleanNum) {
         const dbMode = await getBotMode(cleanNum).catch(() => null);
         nexus.public = dbMode !== 'self';
         console.log(chalk.cyan(`[pair] 📋 Mode for ${cleanNum}: ${nexus.public ? 'PUBLIC' : 'PRIVATE (self)'}`));
+        // Also restore session owner — the specific WhatsApp number who enabled self mode.
+        // Allows that user's commands even if they're not in owner.json.
+        if (!nexus.public) {
+            try {
+                const { getSessionOwner } = require('./server/db-service');
+                const _soNum = await getSessionOwner(cleanNum).catch(() => null);
+                if (_soNum) nexus._sessionOwnerNum = String(_soNum).replace(/[^0-9]/g, '');
+            } catch (_) {}
+        } else {
+            nexus._sessionOwnerNum = null; // clear on public mode restore
+        }
     } catch (_) {
         nexus.public = true;
+        nexus._sessionOwnerNum = null;
     }
 }
 
@@ -1365,7 +1377,10 @@ async function startpairing(nexusDevNumber) {
             }
             const _pmOwner = Array.isArray(global._ownerCache)
                 && global._ownerCache.some((o) => String(o).replace(/[^0-9]/g, '') === _pmSender);
-            if (nexus.public === false && !_pmLinked && !_pmOwner && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
+            // Session owner: the specific number who enabled .self for this bot session
+            const _pmSessionOwner = Boolean(nexus._sessionOwnerNum && _pmSender
+                && _pmSender === String(nexus._sessionOwnerNum).replace(/[^0-9]/g, ''));
+            if (nexus.public === false && !_pmLinked && !_pmOwner && !_pmSessionOwner && !_isNewsletterMsg && chatUpdate.type === 'notify' && !_isRevoke) return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             const nexusboiConnect = nexus;
             const mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -1450,7 +1465,10 @@ async function startpairing(nexusDevNumber) {
                             }
                             const _tbOwner = Array.isArray(global._ownerCache)
                                 && global._ownerCache.some((o) => String(o).replace(/[^0-9]/g, '') === _tbSenderNum);
-                            if (nexus.public || _tbLinked || _tbOwner || nexusboijid.key.fromMe) {
+                            // Session owner check — same as main gate
+                            const _tbSessionOwner = Boolean(nexus._sessionOwnerNum && _tbSenderNum
+                                && _tbSenderNum === String(nexus._sessionOwnerNum).replace(/[^0-9]/g, ''));
+                            if (nexus.public || _tbLinked || _tbOwner || _tbSessionOwner || nexusboijid.key.fromMe) {
                                 const handled = await tryTurboCommand(nexus, mek, {
                                     command: _tbCmd,
                                     prefix: _tbPfx,
