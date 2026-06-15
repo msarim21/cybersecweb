@@ -167,7 +167,7 @@ const initDb = async () => {
         pairing_status      VARCHAR(20),
         pairing_owner_id    VARCHAR(50),
         pairing_bot_name    VARCHAR(64),
-        bot_mode            VARCHAR(10) DEFAULT 'self',
+        bot_mode            VARCHAR(10) DEFAULT 'public',
         bot_mode_locked     BOOLEAN DEFAULT false,
         connected_at        TIMESTAMPTZ,
         first_connected_at  TIMESTAMPTZ,
