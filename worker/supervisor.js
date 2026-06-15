@@ -12,11 +12,26 @@ const chalk = require('chalk');
 
 const { cleanBotNum } = require('../allfunc/bot-workspace');
 const { ensureBotWorkspace } = require('../allfunc/bot-workspace');
+const { getDynoIndex, getTotalWorkerDynos } = require('../allfunc/whatsapp-host');
+const { canSpawnBot, getMemSummary } = require('./mem-guard');
 
 const SYNC_INTERVAL_MS = 25_000;
 const RESTART_DELAY_MS = 12_000;
 const MAX_RESTARTS_PER_HOUR = 12;
-const MAX_BOTS_PER_DYNO = Number(process.env.MAX_BOTS_PER_DYNO) || 2;
+
+// Rotation: how often to cycle one sleeping bot in (so all bots share uptime fairly).
+// Set BOT_ROTATION_HOURS=0 to disable rotation entirely.
+const ROTATION_INTERVAL_MS = (Number(process.env.BOT_ROTATION_HOURS) ?? 6) * 60 * 60 * 1000;
+
+/**
+ * Tracks the last known activity time per bot number.
+ * Updated on spawn and on IPC 'activity' messages from child.
+ * Used to pick the LRU bot for eviction when RAM is full.
+ * @type {Map<string, number>}
+ */
+const lastActivity = new Map();
+
+let _lastRotationAt = Date.now();
 
 /** @type {Map<string, { child: import('child_process').ChildProcess, restarts: number[], pairing: boolean }>} */
 const children = new Map();
@@ -85,6 +100,10 @@ function spawnBot(botNum, opts = {}) {
         pairing: Boolean(opts.pairing),
         spawnedAt: Date.now(),
     });
+
+    // Track activity — any IPC message from the child counts as "active"
+    lastActivity.set(clean, Date.now());
+    child.on('message', () => { lastActivity.set(clean, Date.now()); });
 
     child.on('exit', (code, sig) => {
         const wasPairing = children.get(clean)?.pairing;
@@ -177,6 +196,26 @@ function _isChildHealthy(clean, entry) {
     return false;
 }
 
+/**
+ * Returns the bot number (from botSet) that has been least recently active
+ * among currently running, non-pairing, non-pairingInFlight children.
+ * Returns null if no eviction candidate exists.
+ * @param {Set<string>} botSet
+ * @returns {string|null}
+ */
+function _getLruRunningBot(botSet) {
+    let lruNum = null;
+    let lruTime = Infinity;
+    for (const [clean, entry] of children) {
+        if (!botSet.has(clean)) continue;
+        if (entry?.pairing) continue;
+        if (global._pairingInFlight?.has(clean)) continue;
+        const t = lastActivity.get(clean) || (entry.spawnedAt || 0);
+        if (t < lruTime) { lruTime = t; lruNum = clean; }
+    }
+    return lruNum;
+}
+
 /** Local creds OR restore from MongoDB/PostgreSQL after dyno restart */
 async function _ensureBotSessionReady(clean) {
     if (_hasRegisteredCreds(clean)) return true;
@@ -230,11 +269,24 @@ async function syncBots() {
     const stopped = new Set(readStopped());
     const linkedSet = new Set(linked.filter((n) => !stopped.has(n)));
 
-    if (linkedSet.size > MAX_BOTS_PER_DYNO) {
-        console.log(chalk.yellow(
-            `[Supervisor] ⚠️ ${linkedSet.size} bots linked but MAX_BOTS_PER_DYNO=${MAX_BOTS_PER_DYNO} — ` +
-            'only first N run on this dyno (upgrade RAM or add worker dyno)'
+    // ── Dyno sharding — distribute bots evenly across multiple worker dynos ──────
+    // When TOTAL_WORKER_DYNOS > 1, each worker dyno only manages its own shard.
+    // Sorted list ensures stable, deterministic assignment across restarts.
+    // Setup: heroku ps:scale worker=N  +  Config Var TOTAL_WORKER_DYNOS=N
+    const dynoIndex   = getDynoIndex();
+    const totalDynos  = getTotalWorkerDynos();
+    const sortedLinked = [...linkedSet].sort();
+    const myBots = new Set(
+        sortedLinked.filter((_, i) => i % totalDynos === dynoIndex)
+    );
+
+    if (totalDynos > 1) {
+        console.log(chalk.cyan(
+            `[Supervisor] Dyno ${dynoIndex + 1}/${totalDynos} — ` +
+            `managing ${myBots.size} of ${linkedSet.size} bots (shard ${dynoIndex})`
         ));
+    } else if (linkedSet.size > 0) {
+        console.log(chalk.cyan(`[Supervisor] Managing ${linkedSet.size} bot(s)`));
     }
 
     const { isConnected } = require('../allfunc/connected-flag');
@@ -243,7 +295,7 @@ async function syncBots() {
     for (const [clean, entry] of [...children]) {
         if (!entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
-        if (!linkedSet.has(clean)) continue;
+        if (!myBots.has(clean)) continue;
         if (_hasRegisteredCreds(clean) && isConnected(clean)) {
             promotePairingToNormal(clean);
         }
@@ -253,7 +305,7 @@ async function syncBots() {
     for (const [clean, entry] of [...children]) {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
-        if (!linkedSet.has(clean)) continue;
+        if (!myBots.has(clean)) continue;
         if (_isChildHealthy(clean, entry)) continue;
 
         console.log(chalk.red(`[Supervisor] 💀 +${clean} unhealthy — auto-restarting`));
@@ -273,7 +325,7 @@ async function syncBots() {
         for (const [clean, entry] of [...children]) {
             if (entry?.pairing) continue;
             if (global._pairingInFlight?.has(clean)) continue;
-            if (!linkedSet.has(clean)) continue;
+            if (!myBots.has(clean)) continue;
             const spawnedAt = entry.spawnedAt || 0;
             if (!spawnedAt || Date.now() - spawnedAt < maxAgeMs) continue;
 
@@ -286,25 +338,85 @@ async function syncBots() {
         }
     }
 
-    // Start bots that should be running (restore DB session after Heroku/dyno restart)
-    let runningCount = children.size;
-    for (const clean of linkedSet) {
-        if (runningCount >= MAX_BOTS_PER_DYNO) break;
-        if (global._pairingInFlight?.has(clean)) continue;
-        if (!children.has(clean)) {
-            const ready = await _ensureBotSessionReady(clean);
-            if (ready) {
-                spawnBot(clean);
-                runningCount++;
+    // ── Memory-aware bot start + LRU eviction ────────────────────────────────
+    // Update lastActivity from heartbeat files for every running bot.
+    // This gives the LRU eviction real data even before IPC messages arrive.
+    try {
+        const { readBotHeartbeat } = require('../allfunc/bot-heartbeat');
+        for (const [clean] of children) {
+            const hb = readBotHeartbeat(clean);
+            if (hb?.ts && hb.ts > (lastActivity.get(clean) || 0)) {
+                lastActivity.set(clean, hb.ts);
+            }
+        }
+    } catch (_) {}
+
+    // Sort sleeping bots: longest offline first (fairest rotation — bots offline
+    // the longest get the next available RAM slot before recently-evicted ones).
+    const sleepingBots = [...myBots]
+        .filter((c) => !children.has(c) && !global._pairingInFlight?.has(c))
+        .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
+
+    for (const clean of sleepingBots) {
+        if (!canSpawnBot()) {
+            // RAM is full — evict the least-recently-active running bot to make room.
+            const lru = _getLruRunningBot(myBots);
+            if (!lru) {
+                // Every running bot was active more recently than we can safely evict.
+                // Log once and stop trying — next syncBots cycle will re-evaluate.
+                console.log(chalk.yellow(
+                    `[Supervisor] ⚠️ RAM full (${getMemSummary()}) — ` +
+                    `${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) waiting for a slot`
+                ));
+                break;
+            }
+            console.log(chalk.yellow(
+                `[Supervisor] 🔄 RAM full — evicting +${lru} (LRU) to start +${clean} | ${getMemSummary()}`
+            ));
+            // Mark evicted bot's activity as 0 so it goes to the back of the sleep queue.
+            lastActivity.set(lru, 0);
+            killBot(lru, 'SIGTERM');
+            // Give the OS a moment to reclaim memory before spawning.
+            await new Promise((r) => setTimeout(r, 1500));
+            if (!canSpawnBot()) {
+                // Still not enough — skip this bot for now.
+                console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight after eviction — skipping +${clean}`));
+                continue;
+            }
+        }
+        const ready = await _ensureBotSessionReady(clean);
+        if (ready) {
+            spawnBot(clean);
+            console.log(chalk.green(`[Supervisor] ▶ +${clean} started | ${getMemSummary()}`));
+        }
+    }
+
+    // ── Scheduled rotation ────────────────────────────────────────────────────
+    // Every BOT_ROTATION_HOURS (default 6h), cycle one sleeping bot in so that
+    // ALL registered bots get uptime over time — even when RAM is always full.
+    if (ROTATION_INTERVAL_MS > 0 && Date.now() - _lastRotationAt >= ROTATION_INTERVAL_MS) {
+        _lastRotationAt = Date.now();
+        const stillSleeping = [...myBots]
+            .filter((c) => !children.has(c) && !global._pairingInFlight?.has(c));
+        if (stillSleeping.length > 0) {
+            // Longest-sleeping bot gets priority for the rotation slot.
+            const nextBot = stillSleeping.sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0))[0];
+            const lru = _getLruRunningBot(myBots);
+            if (lru) {
+                console.log(chalk.cyan(
+                    `[Supervisor] ⏰ Rotation: pausing +${lru} → waking +${nextBot}`
+                ));
+                lastActivity.set(lru, 0);
+                killBot(lru, 'SIGTERM');
             }
         }
     }
 
-    // Stop bots no longer linked or stopped (never kill active pairing children)
+    // Stop bots NOT assigned to this dyno, or no longer linked / stopped
     for (const [clean, entry] of children) {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
-        if (!linkedSet.has(clean)) killBot(clean);
+        if (!myBots.has(clean)) killBot(clean);
     }
 }
 

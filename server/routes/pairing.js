@@ -214,10 +214,23 @@ router.get('/status/:number', protect, async (req, res) => {
   const pairingInFlight = PAIRING_IN_FLIGHT.has(pairingState?.pairingStatus);
 
   const clearStalePairing = async () => {
-    if (pairingInFlight) await clearPairingRequest(clean).catch(() => {});
+    if (!pairingInFlight) await clearPairingRequest(clean).catch(() => {});
   };
 
-  // Success signals win over stale pairing_status (code_ready stuck after phone sync)
+  // FIX: Pairing in-flight MUST be checked first — prevents re-pair from immediately
+  // returning connected:true because an old linked_numbers row still exists.
+  // Without this, requesting a new pair code on an already-linked number shows
+  // the dashboard "connected" before the user even opens WhatsApp.
+  if (pairingInFlight) {
+    return res.json({
+      connected: false,
+      pairing: true,
+      status: pairingState.pairingStatus,
+      syncing: pairingState.pairingStatus === 'code_ready',
+    });
+  }
+
+  // Once pairing is no longer in-flight, check real connection signals
   try {
     if (await isNumberInLinkedNumbers(clean)) {
       await clearStalePairing();
@@ -243,15 +256,6 @@ router.get('/status/:number', protect, async (req, res) => {
   if (flag?.linked && canView) {
     await clearStalePairing();
     return res.json({ connected: true, ts: flag.ts || Date.now(), linked: true });
-  }
-
-  if (pairingInFlight) {
-    return res.json({
-      connected: false,
-      pairing: true,
-      status: pairingState.pairingStatus,
-      syncing: pairingState.pairingStatus === 'code_ready',
-    });
   }
 
   res.json({ connected: false });

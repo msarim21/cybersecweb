@@ -41,6 +41,20 @@
     "NODE_ENV": {
       "description": "Runtime environment.",
       "value": "production"
+    },
+    "TOTAL_WORKER_DYNOS": {
+      "description": "Number of worker dynos running in parallel. Must match 'heroku ps:scale worker=N'. Each dyno manages an equal share of bots. Default: 1 (no sharding).",
+      "value": "1",
+      "required": false
+    },
+    "WHATSAPP_HOST_DYNO": {
+      "description": "Which dyno type runs WhatsApp bots. Set to 'worker' for Basic/Performance plans (recommended). Default on Heroku: 'web'.",
+      "value": "worker",
+      "required": false
+    },
+    "MAX_BOTS_PER_DYNO": {
+      "description": "Hard cap on bots per dyno. Leave empty for no limit (recommended with TOTAL_WORKER_DYNOS sharding).",
+      "required": false
     }
   },
   "buildpacks": [
