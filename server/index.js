@@ -558,6 +558,13 @@ process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 initDb()
   .then(async () => {
     await ensureAdminAccount();
+
+    // Reset any bots locked in 'self'/private mode back to public (startup migration)
+    try {
+      const { resetSelfBotModes } = require('./db-service');
+      await resetSelfBotModes();
+    } catch (_) {}
+
     console.log('✅ Database initialised successfully');
 
     try {
