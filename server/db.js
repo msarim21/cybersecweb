@@ -40,7 +40,7 @@ function _attachMongoHandlers() {
   mongoose.connection.on('disconnected', () => {
     console.warn('⚠️  MongoDB disconnected — auto-reconnecting...');
     _dbReady = false;
-    _initPromise = null; // allow initDb() to run again after blip
+    _initPromise = null;
     setTimeout(() => {
       initDb().catch((err) => {
         console.error('MongoDB reconnect failed:', err.message);
@@ -112,7 +112,6 @@ const initDb = async () => {
     keepAlive:              true,
     keepAliveInitialDelayMillis: 10000,
   });
-  // Log pool errors so they don't silently crash the process
   _pool.on('error', (err) => {
     console.error('PostgreSQL pool error:', err.message);
   });
@@ -142,7 +141,7 @@ const initDb = async () => {
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(50) DEFAULT NULL`).catch(() => {});
-  await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS license_key VARCHAR(100) DEFAULT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS license_key VARCHAR(100) DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upgrade_request VARCHAR(20) DEFAULT 'none'`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upgrade_request_at TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
 
@@ -157,22 +156,35 @@ const initDb = async () => {
         created_at  TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS bot_sessions (
         id                  SERIAL PRIMARY KEY,
         number              VARCHAR(50) UNIQUE NOT NULL,
         status              VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('active','inactive','pending')),
+        session_data        JSONB DEFAULT NULL,
+        pairing_code        VARCHAR(32),
+        pairing_status      VARCHAR(20),
+        pairing_owner_id    VARCHAR(50),
+        pairing_bot_name    VARCHAR(64),
+        bot_mode            VARCHAR(10) DEFAULT 'self',
+        bot_mode_locked     BOOLEAN DEFAULT false,
         connected_at        TIMESTAMPTZ,
         first_connected_at  TIMESTAMPTZ,
         last_active         TIMESTAMPTZ DEFAULT NOW(),
         created_at          TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    // Migrate: add first_connected_at if table already exists without it
-    await client.query(`
-      ALTER TABLE bot_sessions
-      ADD COLUMN IF NOT EXISTS first_connected_at TIMESTAMPTZ
-    `).catch(() => {});
+    // Migrate: add columns if table already exists without them
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS first_connected_at TIMESTAMPTZ`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS session_data JSONB DEFAULT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_code VARCHAR(32)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_status VARCHAR(20)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_owner_id VARCHAR(50)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_bot_name VARCHAR(64)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'self'`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_messages (
         id         SERIAL PRIMARY KEY,
