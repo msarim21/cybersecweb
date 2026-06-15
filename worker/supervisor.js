@@ -295,9 +295,10 @@ async function syncBots() {
     if (_syncBusy) return;
     _syncBusy = true;
     try {
-        const { syncStoppedWithLinkedNumbers } = require('../allfunc/stopped-bots');
-        await syncStoppedWithLinkedNumbers();
-    } catch (_) {}
+        try {
+            const { syncStoppedWithLinkedNumbers } = require('../allfunc/stopped-bots');
+            await syncStoppedWithLinkedNumbers();
+        } catch (_) {}
 
     const { getActiveLinkedNumbers } = require('../session-db');
     const { readStopped } = require('../allfunc/stopped-bots');
