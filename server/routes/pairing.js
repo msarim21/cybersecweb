@@ -219,9 +219,17 @@ router.get('/status/:number', protect, async (req, res) => {
 
   // FIX: Pairing in-flight MUST be checked first — prevents re-pair from immediately
   // returning connected:true because an old linked_numbers row still exists.
-  // Without this, requesting a new pair code on an already-linked number shows
-  // the dashboard "connected" before the user even opens WhatsApp.
+  // EXCEPTION: If the connected flag was set within the last 30s while status is 'code_ready',
+  // the user JUST entered the code → return connected immediately (don't wait for clearPairingRequest).
   if (pairingInFlight) {
+    const flagTs = flag?.ts || 0;
+    const freshConnect = pairingState?.pairingStatus === 'code_ready'
+      && Boolean(flag?.linked)
+      && (Date.now() - flagTs < 30000);
+    if (freshConnect && canView) {
+      await clearPairingRequest(clean).catch(() => {});
+      return res.json({ connected: true, ts: flag.ts, linked: true, status: 'linked', syncing: false });
+    }
     return res.json({
       connected: false,
       pairing: true,
