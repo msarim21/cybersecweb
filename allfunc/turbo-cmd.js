@@ -70,7 +70,13 @@ async function tryTurboCommand(devtrust, m, ctx) {
     const chat = m.chat || m.key?.remoteJid;
     if (!chat) return false;
 
-    const send = (payload) => devtrust.sendMessage(chat, payload, { priority: true, quoted: m });
+    const send = async (payload) => {
+        try {
+            return await devtrust.sendMessage(chat, payload, { quoted: m });
+        } catch (_sendErr) {
+            return await devtrust.sendMessage(chat, payload);
+        }
+    };
 
     if (cmd === 'ping' || cmd === 'speed') {
         const t1 = process.hrtime.bigint();
