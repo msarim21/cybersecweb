@@ -443,7 +443,13 @@ function startKeepAlive() {
 
     // First ping 5 second baad
     setTimeout(selfPing, 5000);
-    setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 25_000);
+    // Only sweep sockets in legacy single-process mode.
+    // In supervisor mode all bots run as isolated children — calling
+    // sweepStaleWhatsAppSockets here would load every bot DIRECTLY into the
+    // parent process as well, doubling memory (parent + child per bot → R14/R15).
+    if (!supervisorMode) {
+        setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 25_000);
+    }
 }
 
 function stopKeepAlive() {
