@@ -37,8 +37,20 @@ process.on('uncaughtException', (error) => {
   console.log(chalk.yellow('[Worker] Uncaught exception (staying alive):', error.message));
 });
 
-process.on('SIGTERM', () => {
-  console.log(chalk.yellow('[Worker] SIGTERM received — shutting down gracefully.'));
+process.on('SIGTERM', async () => {
+  console.log(chalk.yellow('[Worker] SIGTERM received — flushing session keys before shutdown...'));
+  try {
+    // Flush Signal key backups before exit — prevents Bad MAC Error on restart.
+    // Signal keys (pre-keys, sessions, sender-keys) change during msg processing
+    // WITHOUT triggering creds.update so they must be force-flushed on shutdown.
+    if (global._sessionFlushFns && global._sessionFlushFns.size > 0) {
+      console.log(chalk.yellow('[Worker] Flushing ' + global._sessionFlushFns.size + ' bot sessions to DB...'));
+      const _flushJobs = [...global._sessionFlushFns.values()].map(fn => fn().catch(() => {}));
+      // Race: either all complete or 8s max (Heroku gives 30s before SIGKILL)
+      await Promise.race([Promise.allSettled(_flushJobs), new Promise(r => setTimeout(r, 8000))]);
+      console.log(chalk.green('[Worker] ✅ Sessions flushed — shutting down.'));
+    }
+  } catch (_) {}
   process.exit(0);
 });
 
