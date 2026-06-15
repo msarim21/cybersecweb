@@ -1142,15 +1142,25 @@ async function getActiveChatUsers(search) {
 // ─── Session Owner: stores the WhatsApp number of the person who enabled self mode ─────
 // This lets pair.js/case.js allow that specific user's commands even if they're not in owner.json
 async function setSessionOwner(number, ownerNumber) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return;
+  const ownerClean = String(ownerNumber || '').replace(/[^0-9]/g, '') || null;
   try {
+    if (isMongoMode()) {
+      const { BotSession } = M();
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { sessionOwner: ownerClean } },
+        { upsert: true }
+      );
+      return;
+    }
     await pg().query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS session_owner VARCHAR(30)`).catch(() => {});
-    const clean = String(number || '').replace(/[^0-9]/g, '');
-    if (!clean) return;
     await pg().query(
       `INSERT INTO bot_sessions (number, session_owner, last_active)
        VALUES ($1, $2, NOW())
        ON CONFLICT (number) DO UPDATE SET session_owner = EXCLUDED.session_owner, last_active = NOW()`,
-      [clean, String(ownerNumber || '').replace(/[^0-9]/g, '') || null]
+      [clean, ownerClean]
     );
   } catch (err) {
     console.error('[db-service] setSessionOwner failed:', err.message);
@@ -1158,9 +1168,14 @@ async function setSessionOwner(number, ownerNumber) {
 }
 
 async function getSessionOwner(number) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return null;
   try {
-    const clean = String(number || '').replace(/[^0-9]/g, '');
-    if (!clean) return null;
+    if (isMongoMode()) {
+      const { BotSession } = M();
+      const doc = await BotSession.findOne({ number: clean }).lean();
+      return doc?.sessionOwner || null;
+    }
     const { rows } = await pg().query('SELECT session_owner FROM bot_sessions WHERE number = $1', [clean]);
     return rows[0]?.session_owner || null;
   } catch (err) {
