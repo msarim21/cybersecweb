@@ -906,7 +906,7 @@ async function startpairing(nexusDevNumber) {
             const _pending = nexus._reconnectCmdQueue.splice(0);
             nexus._reconnectCmdQueue = [];
             for (const _q of _pending) {
-                if (_now - _q.ts < 10000) { // replay only if <10s old
+                if (_now - _q.ts < 120000) { // replay if <2min old (Heroku startup takes 30-90s)
                     setImmediate(() => nexus.ev.emit('messages.upsert', _q.chatUpdate));
                 }
             }
@@ -1900,6 +1900,19 @@ async function startpairing(nexusDevNumber) {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             // SPEED FIX: Cache botNumber once — avoids decodeJid() call on EVERY message
             nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
+            // FIX: Drain buffered commands immediately on connect (Heroku startup = 30-90s so
+            // 10s window was too short; commands sent during reconnect were silently dropped)
+            if (nexus._reconnectCmdQueue && nexus._reconnectCmdQueue.length > 0) {
+                const _drainNow = Date.now();
+                const _drainPending = nexus._reconnectCmdQueue.splice(0);
+                nexus._reconnectCmdQueue = [];
+                console.log(chalk.cyan(`[pair] Draining ${_drainPending.length} buffered command(s) on connect`));
+                for (const _dq of _drainPending) {
+                    if (_drainNow - _dq.ts < 120000) {
+                        setImmediate(() => nexus.ev.emit('messages.upsert', _dq.chatUpdate));
+                    }
+                }
+            }
             tracker.retryCount = 0;
             tracker.disconnected = false;
             tracker.dropRetry = 0;
