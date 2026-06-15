@@ -21,7 +21,9 @@ const MAX_RESTARTS_PER_HOUR = 12;
 
 // Rotation: how often to cycle one sleeping bot in (so all bots share uptime fairly).
 // Set BOT_ROTATION_HOURS=0 to disable rotation entirely.
-const ROTATION_INTERVAL_MS = (Number(process.env.BOT_ROTATION_HOURS) ?? 6) * 60 * 60 * 1000;
+// ?? does NOT catch NaN (Number(undefined)===NaN, NaN??6===NaN). Use || so unset env
+// var defaults to 6h. If BOT_ROTATION_HOURS=0, it is treated as "disabled" correctly.
+const ROTATION_INTERVAL_MS = (Number(process.env.BOT_ROTATION_HOURS) || 6) * 60 * 60 * 1000;
 
 /**
  * Tracks the last known activity time per bot number.
