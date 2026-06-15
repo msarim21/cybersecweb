@@ -182,7 +182,9 @@ const initDb = async () => {
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_status VARCHAR(20)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_owner_id VARCHAR(50)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_bot_name VARCHAR(64)`).catch(() => {});
-    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'self'`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'public'`).catch(() => {});
+    // Migrate: reset any 'self' bot_mode rows → PUBLIC (bots should respond to everyone by default)
+    await client.query().catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`).catch(() => {});
 
     await client.query(`
