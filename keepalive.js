@@ -144,6 +144,10 @@ async function sweepStaleWhatsAppSockets() {
         const wsState = nexus.ws?.readyState ?? -1;
 
         if (wsState === 3 || wsState === -1) {
+            // If pair.js is already handling a 440-retry loop, don't interfere —
+            // a second reconnect attempt would cause another 440 and extend the loop.
+            if (tracker.err440Retry > 0) continue;
+
             // Cooldown: skip reconnect if we already tried within last 45s
             if (!global._socketKACooldown) global._socketKACooldown = new Map();
             const lastTry = global._socketKACooldown.get(clean) || 0;
