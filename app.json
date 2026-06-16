@@ -18,6 +18,10 @@
       "description": "Secret key for signing JWT auth tokens.",
       "generator": "secret"
     },
+    "APP_URL": {
+      "description": "Your Heroku app URL — used for keepalive pings so bots stay online. Format: https://YOUR-APP-NAME.herokuapp.com",
+      "required": false
+    },
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram bot token from @BotFather",
       "required": false
@@ -64,6 +68,10 @@
   ],
   "formation": {
     "web": {
+      "quantity": 1,
+      "size": "eco"
+    },
+    "worker": {
       "quantity": 1,
       "size": "eco"
     }
