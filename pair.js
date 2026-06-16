@@ -1937,7 +1937,14 @@ async function startpairing(nexusDevNumber) {
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.err405Retry = 0;
-            tracker.err440Retry = 0;
+            // Delay err440Retry reset — if bot reconnects but immediately gets another 440,
+            // we want to keep the backoff building instead of restarting from retry #1.
+            // Only reset after 2 minutes of stable connection.
+            if (tracker._err440ResetTimer) clearTimeout(tracker._err440ResetTimer);
+            tracker._err440ResetTimer = setTimeout(() => {
+                tracker.err440Retry = 0;
+                tracker._err440ResetTimer = null;
+            }, 120_000);
             tracker.badSessionRetry = 0;
             tracker.logoutRetry = 0;
             tracker.lastActivity = Date.now();
