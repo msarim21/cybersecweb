@@ -723,6 +723,9 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
             }
             session.scheduleDiskSave();
         } catch (e) {
+            // Silently skip known WhatsApp media key errors (message deleted before key was cached)
+            const _knownSkip = ['Cannot derive from empty media key', 'no mediaKey', 'media key is null', 'failed to decrypt'];
+            if (_knownSkip.some(s => e.message?.includes(s))) return;
             console.error(`[ANTIDELETE][${botNum}] prefetch ${mtype}:`, e.message);
         }
     })();
