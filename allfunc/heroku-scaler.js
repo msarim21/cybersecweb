@@ -109,8 +109,8 @@ function currentCapacity(dynoCount) {
  * Call this after any new bot is successfully linked.
  *
  * Sharding logic (in autoload.js shardJids):
- *   Each dyno loads bots[i % TOTAL_WORKER_DYNOS === dynoIndex]
- *   So dyno.1 gets bots: 0,N,2N,... and dyno.2 gets bots: 1,N+1,2N+1,...
+ *   Block assignment — dyno N → bots[N*BPD .. (N+1)*BPD - 1]
+ *   dyno.1 → bots 0-4 | dyno.2 → bots 5-9 | dyno.3 → bots 10-14 | ...
  *
  * Scale up only — never auto scale down (safety: downscaling is manual).
  * Non-fatal: bot linking succeeds even if auto-scale fails.
