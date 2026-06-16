@@ -12,12 +12,12 @@ const KEYS = {
 
 async function getAudioMeta() {
   try {
-    const [data, original] = await Promise.all([
-      getSiteSetting(KEYS.data),
-      getSiteSetting(KEYS.original),
-    ]);
+    // Only fetch the small `original` filename — NOT the multi-MB base64 blob.
+    // Both fields are always written/cleared together in saveAudio/deleteAudio,
+    // so `original` being non-empty reliably means audio data exists.
+    const original = await getSiteSetting(KEYS.original);
     return {
-      filename: data ? 'db' : '',
+      filename: original ? 'db' : '',
       original: original || '',
     };
   } catch {
