@@ -154,6 +154,11 @@ router.post('/', protect, async (req, res) => {
     } catch (_) {}
 
     const newNumber = await addNumber(number, botName, req.user.id);
+    // Auto-scale worker dynos if bot capacity is exceeded (non-blocking, non-fatal)
+    try {
+      const { autoScaleWorkers } = require('../allfunc/heroku-scaler');
+      autoScaleWorkers().catch(() => {});
+    } catch (_) {}
     res.status(201).json(newNumber);
   } catch (err) {
     res.status(500).json({ error: err.message });
