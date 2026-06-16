@@ -167,6 +167,28 @@ async function waitForDbReady(maxWaitMs = 45000) {
   return false;
 }
 
+// ── Dyno sharding: each worker dyno handles only ITS assigned bots ───────────
+// How to use for 100 bots:
+//   heroku ps:scale worker=10          (10 dynos)
+//   heroku config:set TOTAL_WORKER_DYNOS=10
+// Each dyno picks bots[i % totalDynos === dynoIndex] — round-robin, no overlap.
+function shardJids(jids) {
+    const { getDynoIndex, getTotalWorkerDynos } = require('./allfunc/whatsapp-host');
+    const total = getTotalWorkerDynos();
+    if (total <= 1) return jids; // single dyno — load everything
+    const myIdx = getDynoIndex();
+    const mine = jids.filter((_, i) => i % total === myIdx);
+    console.log(chalk.cyan(
+        `[AutoLoad] 🔀 Dyno ${myIdx + 1}/${total}: managing ${mine.length} / ${jids.length} bots (round-robin)`
+    ));
+    if (mine.length === 0) {
+        console.log(chalk.yellow(
+            `[AutoLoad] ℹ️  No bots assigned to this dyno (${myIdx + 1}/${total}) — it will idle.`
+        ));
+    }
+    return mine;
+}
+
 // ── Build user list: DB first, filesystem fallback ──────────────────────────
 async function buildUserList() {
   const pairingDir = path.join(__dirname, 'nexstore', 'pairing');
@@ -218,7 +240,7 @@ async function buildUserList() {
         console.log(chalk.yellow(`[AutoLoad] 🚫 Skipped ${dbNumbers.length - jids.length} stopped number(s)`));
       }
       console.log(chalk.green(`[AutoLoad] 📦 DB source: found ${jids.length} linked numbers`));
-      return jids;
+      return shardJids(jids);
     }
     console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 5 attempts — falling back to filesystem'));
   } catch (err) {
@@ -253,7 +275,7 @@ async function buildUserList() {
     });
 
   console.log(chalk.yellow(`[AutoLoad] 📁 Filesystem source: found ${jids.length} sessions`));
-  return jids;
+  return shardJids(jids);
 }
 
 // ── Main export ──────────────────────────────────────────────────────────────
