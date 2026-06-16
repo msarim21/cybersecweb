@@ -224,7 +224,8 @@ async function refreshBotSessions() {
         if (!allNums || !allNums.length) return;
 
         // ── Dyno sharding: only manage bots assigned to THIS dyno ──────────────
-        // Must mirror shardJids() in autoload.js: bot[i] → dyno[i % total]
+        // Must mirror shardJids() in autoload.js exactly:
+        //   Block assignment — dyno N → bots[N*bpd .. (N+1)*bpd - 1]
         // Without this, every dyno tries to reconnect ALL bots → Error 440 flood.
         let nums = allNums;
         try {
@@ -232,7 +233,8 @@ async function refreshBotSessions() {
             const total = getTotalWorkerDynos();
             if (total > 1) {
                 const myIdx = getDynoIndex();
-                nums = allNums.filter((_, i) => i % total === myIdx);
+                const bpd = Math.max(1, parseInt(process.env.BOTS_PER_DYNO, 10) || 5);
+                nums = allNums.filter((_, i) => Math.floor(i / bpd) === myIdx);
             }
         } catch (_) {}
 
