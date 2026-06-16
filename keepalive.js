@@ -220,21 +220,36 @@ async function refreshBotSessions() {
 
         const pairMod = require('./pair');
         const { getActiveLinkedNumbers } = require('./session-db');
-        const nums = await getActiveLinkedNumbers().catch(() => []);
-        if (!nums || !nums.length) return;
+        const allNums = await getActiveLinkedNumbers().catch(() => []);
+        if (!allNums || !allNums.length) return;
+
+        // ── Dyno sharding: only manage bots assigned to THIS dyno ──────────────
+        // Must mirror shardJids() in autoload.js: bot[i] → dyno[i % total]
+        // Without this, every dyno tries to reconnect ALL bots → Error 440 flood.
+        let nums = allNums;
+        try {
+            const { getDynoIndex, getTotalWorkerDynos } = require('./allfunc/whatsapp-host');
+            const total = getTotalWorkerDynos();
+            if (total > 1) {
+                const myIdx = getDynoIndex();
+                nums = allNums.filter((_, i) => i % total === myIdx);
+            }
+        } catch (_) {}
 
         const trackerMap = global._rentbotTracker;
         const trackerSize = (trackerMap && typeof trackerMap.size === 'number') ? trackerMap.size : -1;
 
         // If tracker is empty but DB has linked numbers → initial autoload failed
         if (trackerSize === 0 || trackerSize === -1) {
-            console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} number(s) — triggering autoload...`);
-            try {
-                const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
-                await syncStoppedWithLinkedNumbers();
-                const { autoLoadPairs } = require('./autoload');
-                autoLoadPairs({ batchSize: 3 }).catch(() => {});
-            } catch (_) {}
+            if (nums.length > 0) {
+                console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} assigned number(s) — triggering autoload...`);
+                try {
+                    const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
+                    await syncStoppedWithLinkedNumbers();
+                    const { autoLoadPairs } = require('./autoload');
+                    autoLoadPairs({ batchSize: 3 }).catch(() => {});
+                } catch (_) {}
+            }
             return;
         }
 
