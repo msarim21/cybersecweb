@@ -144,6 +144,11 @@ async function sweepStaleWhatsAppSockets() {
         const wsState = nexus.ws?.readyState ?? -1;
 
         if (wsState === 3 || wsState === -1) {
+            // Cooldown: skip reconnect if we already tried within last 45s
+            if (!global._socketKACooldown) global._socketKACooldown = new Map();
+            const lastTry = global._socketKACooldown.get(clean) || 0;
+            if (Date.now() - lastTry < 45_000) continue;
+            global._socketKACooldown.set(clean, Date.now());
             console.log(`[SocketKeepAlive] ${clean} ws closed (${wsState}) — reconnecting`);
             try {
                 if (typeof pairMod.stopBot === 'function') pairMod.stopBot(jid);
