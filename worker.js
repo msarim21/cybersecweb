@@ -1,5 +1,34 @@
 'use strict';
 
+// ── Suppress libsignal / Baileys session-dump spam ───────────────────────────
+// MUST be the very first code — before any require() — so process.stdout.write
+// is patched before libsignal loads. Without this, flat mode (BOT_ISOLATION=0)
+// floods logs with "Closing session: SessionEntry { _chains: … privKey: … }"
+// which exposes private keys and can trigger R14→R15→SIGKILL on Heroku Eco.
+;(function _suppressLibsignalSpam() {
+    const NOISY = [
+        'Bad MAC', 'Session error:', 'Failed to decrypt',
+        'Closing session:', 'Closing open session', 'Removing old closed session',
+        'SessionEntry {', '_chains:', 'registrationId:', 'currentRatchet:',
+        'indexInfo:', 'ephemeralKeyPair:', 'lastRemoteEphemeralKey:',
+        'baseKey:', 'baseKeyType:', 'remoteIdentityKey:', 'previousCounter:',
+        'pendingPreKey:', 'signedKeyId:', 'preKeyId:',
+    ];
+    const _origOut = process.stdout.write.bind(process.stdout);
+    const _origErr = process.stderr.write.bind(process.stderr);
+    const _makeFilter = (orig) => function(chunk, enc, cb) {
+        const s = typeof chunk === 'string' ? chunk : (chunk ? chunk.toString() : '');
+        if (NOISY.some(n => s.includes(n))) {
+            if (typeof enc === 'function') enc();
+            else if (typeof cb === 'function') cb();
+            return true;
+        }
+        return orig(chunk, enc, cb);
+    };
+    process.stdout.write = _makeFilter(_origOut);
+    process.stderr.write = _makeFilter(_origErr);
+})();
+
 // ============================================================
 // WORKER DYNO — WhatsApp Bot Keep-Alive
 // Sirf WhatsApp connections zinda rakhta hai.
