@@ -215,6 +215,21 @@ async function startWorker() {
   startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — ALL bots live, 24/7'));
 
+  // ── Memory monitor: log RSS every 5 min, warn when nearing dyno limit ─────
+  // If RSS > 85%: add more worker dynos:
+  //   heroku ps:scale worker=N  (e.g. N=10 for 100 bots)
+  //   heroku config:set TOTAL_WORKER_DYNOS=N
+  const DYNO_RAM_MB = parseInt(process.env.DYNO_TOTAL_RAM_MB, 10) || 512;
+  setInterval(() => {
+    const rss = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    const pct = Math.round(rss / DYNO_RAM_MB * 100);
+    const icon = pct > 85 ? '🔴' : pct > 70 ? '🟡' : '🟢';
+    const warn = pct > 85
+      ? chalk.red(' ⚠️  Memory high! Scale: heroku ps:scale worker=N + TOTAL_WORKER_DYNOS=N')
+      : '';
+    console.log(chalk.cyan(`[Mem] ${icon} ${rss}/${DYNO_RAM_MB}MB (${pct}%)${warn}`));
+  }, 5 * 60 * 1000);
+
   const { startPairingProcessor } = require('./worker/pairing-processor');
   startPairingProcessor(150);
 
