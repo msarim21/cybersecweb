@@ -48,6 +48,11 @@ async function linkNumberOnWebConnect(nexusDevNumber) {
                 await clearPairingRequest(cleanNum);
                 await markFirstConnected(cleanNum);
             } catch (_) {}
+            // Auto-scale worker dynos if capacity is exceeded (non-blocking)
+            try {
+                const { autoScaleWorkers } = require('./heroku-scaler');
+                autoScaleWorkers().catch(() => {});
+            } catch (_) {}
             return { linked: true, reason: 'saved', record: saved };
         }
 
