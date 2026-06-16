@@ -312,7 +312,10 @@ const audioStore = require('./audio-store');
 app.get('/api/site/audio', async (req, res) => {
   try {
     if (!isDbReady()) return res.json({ filename: '', original: '' });
-    const meta = await audioStore.getAudioMeta();
+    const meta = await Promise.race([
+      audioStore.getAudioMeta(),
+      new Promise((_, r) => setTimeout(() => r(new Error('audio-meta timeout')), 5000)),
+    ]);
     res.json(meta);
   } catch {
     res.json({ filename: '', original: '' });
