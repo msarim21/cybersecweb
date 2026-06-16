@@ -7,10 +7,12 @@ const ANTIDELETE_RETENTION_DAYS = Math.max(
 );
 const ANTIDELETE_RETENTION_MS = ANTIDELETE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-/** LRU cap per bot — oldest dropped when full (independent of idle socket wake). */
+/** LRU cap per bot — oldest dropped when full.
+ *  Default 300 to keep per-bot memory low (~5 MB vs ~50 MB at 2000).
+ *  Override via ANTIDELETE_MAX_ENTRIES env var (e.g. 1000 for more history). */
 const ANTIDELETE_MAX_ENTRIES = Math.max(
-    500,
-    Number(process.env.ANTIDELETE_MAX_ENTRIES) || 2000
+    100,
+    Number(process.env.ANTIDELETE_MAX_ENTRIES) || 300
 );
 
 function getRetentionCutoffTs(now = Date.now()) {
