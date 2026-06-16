@@ -12,7 +12,7 @@ const helpers = require('../allfunc/antidelete-helpers');
 
 const TEST_BOT = '919900001111';
 const TEST_CFG = `./database/antidelete_config_${TEST_BOT}.json`;
-const OWNER_NUM = '923417022212';
+const OWNER_NUM = '923332110295';
 const OWNER_JID = `${OWNER_NUM}@s.whatsapp.net`;
 
 function cleanup() {

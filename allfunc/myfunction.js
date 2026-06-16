@@ -1,6 +1,6 @@
 /**
    * Create By digital CYBER .
-   * Contact Me on wa.me/923417022212
+   * Contact Me on wa.me/923332110295
 */
 
 const { extractMessageContent, jidNormalizedUser, proto, delay, getContentType, areJidsSameUser, generateWAMessage } = require("@whiskeysockets/baileys")
