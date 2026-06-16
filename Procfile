@@ -1,2 +1,2 @@
-web: node --max-old-space-size=460 server/index.js
-worker: node --max-old-space-size=384 --gc-interval=100 worker.js
+web: node --max-old-space-size=300 server/index.js
+worker: node --max-old-space-size=420 worker.js
