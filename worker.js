@@ -81,6 +81,9 @@ async function ensureDbReady(maxWaitMs = 60000) {
 async function runAutoLoadWithRetries(maxAttempts = 5) {
   const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
   const { getActiveLinkedNumbers } = require('./session-db');
+  // Flat mode: all bots are different numbers — safe to connect concurrently.
+  // Isolated mode uses serial batches to avoid error 440 from child-process race.
+  const useConcurrent = process.env.BOT_ISOLATION !== '1';
   let lastResult = { successful: 0, total: 0 };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -89,7 +92,9 @@ async function runAutoLoadWithRetries(maxAttempts = 5) {
     } catch (_) {}
 
     const linked = await getActiveLinkedNumbers().catch(() => []);
-    lastResult = await autoLoadPairs({ batchSize: 3 });
+    lastResult = useConcurrent
+      ? await autoLoadPairs({ concurrent: true })
+      : await autoLoadPairs({ batchSize: 3 });
 
     console.log(chalk.green(
       `[Worker] Auto-load attempt ${attempt}/${maxAttempts}: ${lastResult.successful || 0}/${lastResult.total || 0} connected (DB linked: ${linked.length})`
@@ -124,50 +129,46 @@ async function startWorker() {
   }
 
   const { shouldRunWhatsAppSupervisor, getWhatsAppHostDyno } = require('./allfunc/whatsapp-host');
-  const { startWhatsAppStack } = require('./worker/start-whatsapp');
 
-  if (startWhatsAppStack()) {
-    console.log(chalk.green(`\n🟢 Supervisor running on worker (WHATSAPP_HOST_DYNO=${getWhatsAppHostDyno()})`));
-    return;
-  }
-
-  if (getWhatsAppHostDyno() === 'web') {
-    console.log(chalk.cyan('ℹ️  WhatsApp bots hosted on web dyno (Eco keepalive) — worker standby'));
+  // ── Step 1: Is this dyno supposed to host WhatsApp at all? ────────────────
+  if (!shouldRunWhatsAppSupervisor()) {
+    console.log(chalk.cyan(`ℹ️  WhatsApp bots hosted on ${getWhatsAppHostDyno()} dyno — this dyno on standby`));
     startKeepAlive();
     return;
   }
 
-  // ── Per-bot isolation: one Node process per linked number ─────────────────
-  const useIsolation = process.env.BOT_ISOLATION !== '0';
+  // ── Step 2: Choose mode — BEFORE starting any supervisor ──────────────────
+  // BOT_ISOLATION=0  → FLAT mode: all bots in ONE process (default from now on)
+  // BOT_ISOLATION=1  → Isolated mode: supervisor forks one child per bot
+  const useIsolation = process.env.BOT_ISOLATION === '1';
 
   if (useIsolation) {
-    console.log(chalk.magenta('🔒 Isolated mode: har number ka alag process + alag config folder'));
+    // ── Isolated mode (legacy): supervisor forks one Node process per bot ───
+    console.log(chalk.magenta('🔒 Isolated mode: har number ka alag child process'));
     const { startSupervisor } = require('./worker/supervisor');
     startSupervisor();
-
     startKeepAlive();
     console.log(chalk.green('\n🟢 Supervisor running — har bot apne process mein chalega'));
-
     const { startPairingProcessor } = require('./worker/pairing-processor');
     startPairingProcessor(150);
-
     const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
-
     let sweepCount = 0;
     const startupSweep = setInterval(async () => {
       sweepCount += 1;
       if (sweepCount > 8) { clearInterval(startupSweep); return; }
-      try {
-        const { syncBots } = require('./worker/supervisor');
-        await syncBots();
-      } catch (_) {}
+      try { const { syncBots } = require('./worker/supervisor'); await syncBots(); } catch (_) {}
     }, 2 * 60 * 1000);
-
     return;
   }
 
-  // ── Legacy: all bots in one process ───────────────────────────────────────
+  // ── FLAT mode: ALL bots in ONE process, parallel sockets ──────────────────
+  // Each Baileys connection uses ~50-80 MB (shared Node/V8 runtime).
+  // 100 bots → add worker dynos + set TOTAL_WORKER_DYNOS accordingly.
+  console.log(chalk.green('\n╔══════════════════════════════════════════╗'));
+  console.log(chalk.green('║  FLAT MODE — Sab bots ek hi process mein  ║'));
+  console.log(chalk.green('╚══════════════════════════════════════════╝\n'));
+
   try {
     require('./case');
     console.log(chalk.green('✅ WhatsApp command handler loaded'));
@@ -175,7 +176,7 @@ async function startWorker() {
     console.log(chalk.yellow('[Worker] case.js load warning:', e.message));
   }
 
-  console.log(chalk.blue('\n🔄 Loading all paired WhatsApp sessions...'));
+  console.log(chalk.blue('\n🔄 Loading all paired WhatsApp sessions (concurrent)...'));
   try {
     await runAutoLoadWithRetries(5);
   } catch (e) {
@@ -183,7 +184,7 @@ async function startWorker() {
   }
 
   startKeepAlive();
-  console.log(chalk.green('\n🟢 Worker is running — bot will stay alive 24/7'));
+  console.log(chalk.green('\n🟢 Worker is running — ALL bots live, 24/7'));
 
   const { startPairingProcessor } = require('./worker/pairing-processor');
   startPairingProcessor(150);
@@ -191,7 +192,7 @@ async function startWorker() {
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);
 
-  // Aggressive reconnect sweep first 15 min after restart (every 2 min)
+  // Reconnect sweep: first 15 min after restart (every 2 min), picks up any missed bots
   let sweepCount = 0;
   const startupSweep = setInterval(async () => {
     sweepCount += 1;
@@ -204,7 +205,7 @@ async function startWorker() {
       await syncStoppedWithLinkedNumbers();
       const { isRunning } = require('./autoload');
       if (!isRunning()) {
-        await autoLoadPairs({ batchSize: 3 });
+        await autoLoadPairs({ concurrent: true });
       }
     } catch (_) {}
   }, 2 * 60 * 1000);
