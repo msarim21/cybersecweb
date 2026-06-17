@@ -640,9 +640,20 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Default public mode — bot responds to all users by default
-    // Per-session mode can be changed via .mode command and is stored in bot_sessions
-    nexus.public = true;
+    // Restore per-number bot mode from DB (bot_sessions.bot_mode)
+    // Defaults to public; .self command sets 'self' and saves to DB
+    nexus.public = true; // initial safe default
+    ;(async () => {
+        try {
+            const { getBotMode } = require('./server/db-service');
+            const clean = nexusDevNumber.replace(/[^0-9]/g, '');
+            const savedMode = await getBotMode(clean);
+            nexus.public = (savedMode !== 'self');
+            console.log(chalk.cyan(`[${clean}] Bot mode restored from DB: ${savedMode}`));
+        } catch (_) {
+            nexus.public = true;
+        }
+    })();
 
     nexus.sendText = (jid, text, quoted = '', options) => nexus.sendMessage(jid, { text: text, ...options }, { quoted })
 
@@ -837,9 +848,10 @@ async function startpairing(nexusDevNumber) {
                     tracker.disconnected = true;
                 }
             } else if (reason === DisconnectReason.badSession) {
-                console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber}`));
+                console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber} — clearing session files, keeping DB record`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                removeLinkedNumber(nexusDevNumber).catch(() => {});
+                // ⚠️ Do NOT removeLinkedNumber here — keeps the number in dashboard
+                // so the user can see it and re-pair manually. Only loggedOut removes.
                 forceCleanupSession(nexusDevNumber);
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.loggedOut) {

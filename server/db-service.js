@@ -397,6 +397,33 @@ async function getAndClearPairingOwner(number) {
   } catch (_) { return null; }
 }
 
+// ── Per-number bot mode (self/public) stored in bot_sessions.bot_mode ───────
+async function getBotMode(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return 'public';
+  try {
+    const { rows } = await pg().query(
+      'SELECT bot_mode FROM bot_sessions WHERE number=$1 LIMIT 1',
+      [clean]
+    );
+    return rows[0]?.bot_mode || 'public';
+  } catch (_) { return 'public'; }
+}
+
+async function setBotMode(number, mode) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  const safeMode = mode === 'self' ? 'self' : 'public';
+  try {
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, bot_mode, last_active)
+       VALUES ($1, 'active', $2, NOW())
+       ON CONFLICT (number) DO UPDATE SET bot_mode=$2, last_active=NOW()`,
+      [clean, safeMode]
+    );
+  } catch (_) {}
+}
+
 async function toggleNumber(id, userId) {
   if (isMongoMode()) {
     const { LinkedNumber } = M();
@@ -801,6 +828,7 @@ module.exports = {
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   savePairingOwner, getAndClearPairingOwner,
+  getBotMode, setBotMode,
   upsertBotSession, getActiveBotSessions,
   getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds,
