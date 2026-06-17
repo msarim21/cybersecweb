@@ -913,8 +913,26 @@ async function startpairing(nexusDevNumber) {
             // Add small delay to ensure everything is initialized
             await sleep(5000);
 
-            // Persist active status to DB
+            // Persist active status to DB (BotSession + LinkedNumber via updateSession)
             updateSession(nexusDevNumber, 'active').catch(() => {});
+
+            // ✅ Directly activate LinkedNumber so autoload picks up this bot after restart
+            // updateSession may fail silently so we also do it here as a safety net
+            (async () => {
+              try {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const mongoose = require('mongoose');
+                if (mongoose.connection.readyState === 1) {
+                  const LinkedNumber = require('./server/models/LinkedNumber');
+                  const existing = await LinkedNumber.findOne({ number: { $in: [cleanNum, nexusDevNumber] } });
+                  if (existing) {
+                    // Activate existing record
+                    await LinkedNumber.findByIdAndUpdate(existing._id, { $set: { status: 'active', lastActive: new Date() } });
+                  }
+                  // If no LinkedNumber exists, BotSession (set by updateSession) will cover it
+                }
+              } catch (_) {}
+            })();
 
             // Write connected flag so web panel can auto-save the number
             try {
