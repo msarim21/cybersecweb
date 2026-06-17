@@ -5,9 +5,10 @@ const { isMongoMode, getPool } = require('./db');
 
 function M() {
   return {
-    User:         require('./models/User'),
-    LinkedNumber: require('./models/LinkedNumber'),
-    BotSession:   require('./models/BotSession'),
+    User:           require('./models/User'),
+    LinkedNumber:   require('./models/LinkedNumber'),
+    BotSession:     require('./models/BotSession'),
+    PairingRequest: require('./models/PairingRequest'),
   };
 }
 
@@ -570,6 +571,92 @@ async function getSessionCreds(number) {
   return null;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PAIRING QUEUE — used by worker/pairing-processor.js (isolated mode)
+// ════════════════════════════════════════════════════════════════════════════
+
+async function getPendingPairingRequests() {
+  try {
+    if (!isMongoMode()) return [];
+    const { PairingRequest } = M();
+    const docs = await PairingRequest.find({ status: 'requested' })
+      .sort({ createdAt: 1 }).limit(5).lean();
+    return docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+  } catch (err) {
+    console.error('[db-service] getPendingPairingRequests:', err.message);
+    return [];
+  }
+}
+
+async function markPairingInProgress(clean) {
+  try {
+    if (!isMongoMode()) return false;
+    const { PairingRequest } = M();
+    const res = await PairingRequest.findOneAndUpdate(
+      { number: clean, status: 'requested' },
+      { $set: { status: 'in_progress', updatedAt: new Date() } },
+      { new: false }
+    );
+    return !!res;
+  } catch (err) {
+    console.error('[db-service] markPairingInProgress:', err.message);
+    return false;
+  }
+}
+
+async function resetPairingRequest(clean) {
+  try {
+    if (!isMongoMode()) return;
+    const { PairingRequest } = M();
+    await PairingRequest.findOneAndUpdate(
+      { number: clean },
+      { $set: { status: 'requested', updatedAt: new Date() } }
+    );
+  } catch (err) {
+    console.error('[db-service] resetPairingRequest:', err.message);
+  }
+}
+
+async function markPairingFailed(clean) {
+  try {
+    if (!isMongoMode()) return;
+    const { PairingRequest } = M();
+    await PairingRequest.findOneAndUpdate(
+      { number: clean },
+      { $set: { status: 'failed', updatedAt: new Date() } }
+    );
+  } catch (err) {
+    console.error('[db-service] markPairingFailed:', err.message);
+  }
+}
+
+async function getPairingState(clean) {
+  try {
+    if (!isMongoMode()) return null;
+    const { PairingRequest } = M();
+    const doc = await PairingRequest.findOne({ number: clean }).lean();
+    if (!doc) return null;
+    return { code: doc.code, status: doc.status };
+  } catch (err) {
+    console.error('[db-service] getPairingState:', err.message);
+    return null;
+  }
+}
+
+async function clearStalePairingRequests() {
+  try {
+    if (!isMongoMode()) return;
+    const { PairingRequest } = M();
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+    await PairingRequest.deleteMany({
+      status: { $in: ['requested', 'in_progress', 'failed'] },
+      updatedAt: { $lt: cutoff }
+    });
+  } catch (err) {
+    console.error('[db-service] clearStalePairingRequests:', err.message);
+  }
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -582,4 +669,6 @@ module.exports = {
   saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,
   countAdmins,
+  getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
+  markPairingFailed, getPairingState, clearStalePairingRequests,
 };
