@@ -572,6 +572,75 @@ async function getSessionCreds(number) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// PLAN EXPIRY — used by server/jobs/planExpiryJob.js
+// ════════════════════════════════════════════════════════════════════════════
+
+async function getExpiredUsers() {
+  const now = new Date();
+  if (isMongoMode()) {
+    const { User } = M();
+    // Users whose trialExpiresAt has passed and plan is not 'free'
+    const users = await User.find({
+      trialExpiresAt: { $lt: now, $ne: null },
+      subscriptionPlan: { $ne: 'free' },
+      banned: { $ne: true },
+    }).lean();
+    return users.map(u => ({
+      id: String(u._id),
+      username: u.username,
+      email: u.email,
+      subscriptionPlan: u.subscriptionPlan,
+      trialExpiresAt: u.trialExpiresAt,
+    }));
+  }
+  // PostgreSQL fallback
+  try {
+    const { rows } = await pg().query(
+      `SELECT id, username, email, subscription_plan, trial_expires_at FROM users
+       WHERE trial_expires_at < $1 AND trial_expires_at IS NOT NULL
+         AND subscription_plan != 'free' AND (banned IS NULL OR banned = false)`,
+      [now]
+    );
+    return rows.map(r => ({
+      id: String(r.id),
+      username: r.username,
+      email: r.email,
+      subscriptionPlan: r.subscription_plan,
+      trialExpiresAt: r.trial_expires_at,
+    }));
+  } catch (_) { return []; }
+}
+
+async function disconnectAllUserDevices(userId) {
+  let disconnected = 0;
+  try {
+    if (isMongoMode()) {
+      const { LinkedNumber } = M();
+      const nums = await LinkedNumber.find({ ownerId: userId, status: 'active' }).lean();
+      disconnected = nums.length;
+      // Mark all as inactive
+      await LinkedNumber.updateMany({ ownerId: userId }, { $set: { status: 'inactive', lastActive: new Date() } });
+      // Downgrade user plan to free
+      const { User } = M();
+      await User.findByIdAndUpdate(userId, { $set: { subscriptionPlan: 'free', trialExpiresAt: null } });
+    } else {
+      const { rows } = await pg().query(
+        "UPDATE linked_numbers SET status='inactive', last_active=NOW() WHERE owner_id=$1 AND status='active' RETURNING id",
+        [userId]
+      );
+      disconnected = rows.length;
+      await pg().query(
+        "UPDATE users SET subscription_plan='free', trial_expires_at=NULL WHERE id=$1",
+        [userId]
+      );
+    }
+  } catch (err) {
+    console.error('[db-service] disconnectAllUserDevices:', err.message);
+  }
+  return { disconnected };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // PAIRING QUEUE — used by worker/pairing-processor.js (isolated mode)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -671,4 +740,5 @@ module.exports = {
   countAdmins,
   getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
   markPairingFailed, getPairingState, clearStalePairingRequests,
+  getExpiredUsers, disconnectAllUserDevices,
 };
