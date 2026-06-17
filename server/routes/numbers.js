@@ -99,18 +99,24 @@ router.get('/', protect, async (req, res) => {
         const sessions = await BotSession.find({ number: { $in: cleans } })
           .select('number status lastActive').lean();
         sessions.forEach(s => {
-          dbSessionMap[s.number] = s.status === 'active' &&
+          // online = session active AND heartbeat fresh in MongoDB
+          const online = s.status === 'active' &&
             s.lastActive &&
             (Date.now() - new Date(s.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS);
+          dbSessionMap[s.number] = { online, status: s.status };
         });
       }
     } catch (_) {}
 
     const enriched = numbers.map((n) => {
       const clean = String(n.number || '').replace(/[^0-9]/g, '');
-      const botOnline = n.status === 'active' && clean &&
-        (isBotHeartbeatFresh(clean) || dbSessionMap[clean] === true);
-      return { ...n, botOnline };
+      const sess = dbSessionMap[clean];
+      // botOnline: check local heartbeat file (same dyno) OR MongoDB BotSession (cross-dyno)
+      const botOnline = clean && (isBotHeartbeatFresh(clean) || sess?.online === true);
+      // ACTIVE/INACTIVE badge: use BotSession.status if available (real-time cross-dyno)
+      // fall back to linked_numbers.status
+      const status = sess?.status || n.status;
+      return { ...n, status, botOnline };
     });
     res.json(enriched);
   } catch (err) {

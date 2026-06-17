@@ -302,6 +302,19 @@ async function startpairing(nexusDevNumber) {
     
     const tracker = rentbotTracker.get(nexusDevNumber);
 
+    // ✅ Duplicate guard: if this number already has an active WA socket, skip.
+    // Without this, autoload.js + index.js both start connections for the same
+    // number, two instances share the same session key, WhatsApp kicks both → 401
+    if (!tracker.disconnected && tracker.connection) {
+        try {
+            const wsState = tracker.connection?.ws?.readyState;
+            if (wsState === 1 /* WebSocket.OPEN */) {
+                console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already connected (ws=OPEN) — skipping duplicate`));
+                return tracker.connection;
+            }
+        } catch (_) {}
+    }
+
     // ✅ Clear any existing healthCheckInterval from a previous session
     if (tracker.healthCheckInterval) {
         clearInterval(tracker.healthCheckInterval);

@@ -548,13 +548,18 @@ async function upsertBotSession(number, status) {
       { status, lastActive: new Date(), ...(status === 'active' ? { connectedAt: new Date() } : {}) },
       { upsert: true, new: true }
     );
-    // ✅ FIX: also sync linked_numbers.status so dashboard reflects real bot state
-    try {
-      await LinkedNumber.findOneAndUpdate(
-        { number: { $regex: `^${clean}` } },
-        { $set: { status: status === 'active' ? 'active' : 'inactive', lastActive: new Date() } }
-      );
-    } catch (_) {}
+    // ✅ Only sync 'active' to linked_numbers — never 'inactive'.
+    // linked_numbers represents permanently enrolled numbers.
+    // AutoLoad uses linked_numbers to find bots to restart after dyno boot.
+    // Setting it to 'inactive' on disconnect would cause AutoLoad to find 0 bots → pairing loop.
+    if (status === 'active') {
+      try {
+        await LinkedNumber.findOneAndUpdate(
+          { number: { $regex: `^${clean}` } },
+          { $set: { status: 'active', lastActive: new Date() } }
+        );
+      } catch (_) {}
+    }
     return;
   }
   await pg().query(
@@ -565,14 +570,16 @@ async function upsertBotSession(number, status) {
            connected_at = CASE WHEN $2='active' THEN NOW() ELSE bot_sessions.connected_at END`,
     [clean, status, status === 'active' ? new Date() : null]
   );
-  // ✅ FIX: also sync linked_numbers.status for PostgreSQL
-  try {
-    await pg().query(
-      `UPDATE linked_numbers SET status=$1, last_active=NOW()
-       WHERE REGEXP_REPLACE(number,'[^0-9]','','g')=$2`,
-      [status === 'active' ? 'active' : 'inactive', clean]
-    );
-  } catch (_) {}
+  // Only sync 'active' to linked_numbers for PostgreSQL too
+  if (status === 'active') {
+    try {
+      await pg().query(
+        `UPDATE linked_numbers SET status='active', last_active=NOW()
+         WHERE REGEXP_REPLACE(number,'[^0-9]','','g')=$1`,
+        [clean]
+      );
+    } catch (_) {}
+  }
 }
 
 async function getActiveBotSessions() {
