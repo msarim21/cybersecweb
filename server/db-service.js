@@ -749,6 +749,20 @@ async function deleteSessionCreds(number) {
   } catch (_) {}
 }
 
+// ── isPlanExpired — used by auth middleware & routes ──────────────────────────
+function isPlanExpired(user) {
+  if (!user) return false;
+  // Admins never expire
+  if (user.role === 'admin') return false;
+  // Pro / enterprise plans don't expire via trial timer
+  const plan = user.subscription_plan || user.subscriptionPlan || 'free';
+  if (plan === 'pro' || plan === 'enterprise') return false;
+  // Free trial: check trial_expires_at
+  const expiresAt = user.trial_expires_at || user.trialExpiresAt || null;
+  if (!expiresAt) return false;
+  return new Date(expiresAt) < new Date();
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -765,4 +779,5 @@ module.exports = {
   markPairingFailed, getPairingState, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices,
   deleteSessionCreds,
+  isPlanExpired,
 };
