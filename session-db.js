@@ -22,6 +22,20 @@ async function updateSession(number, status) {
     await _init();
     const { upsertBotSession } = require('./server/db-service');
     await upsertBotSession(number, status);
+    // ✅ Sync LinkedNumber status so autoload sees this bot correctly
+    const clean = String(number).replace(/[^0-9]/g, '');
+    if (clean) {
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 1) {
+          const LinkedNumber = require('./server/models/LinkedNumber');
+          await LinkedNumber.findOneAndUpdate(
+            { number: { $in: [clean, number, clean + '@s.whatsapp.net'] } },
+            { $set: { status: (status === 'active' ? 'active' : 'inactive'), lastActive: new Date() } }
+          );
+        }
+      } catch (_) {}
+    }
   } catch (err) {
     console.error('[session-db] update failed:', err.message);
   }
