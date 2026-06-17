@@ -283,7 +283,7 @@ async function startWorker() {
 
       const linkedSet = new Set(linkedNumbers.map(n => String(n).replace(/[^0-9]/g, '')));
       const { readConnectedFlag } = require('./allfunc/connected-flag');
-      const PAIRING_GRACE_MS = 3 * 60 * 1000;
+      const PAIRING_GRACE_MS = 20 * 60 * 1000; // 20 min grace before auto-disconnect
       for (const num of activeSessions) {
         const clean = String(num).replace(/[^0-9]/g, '');
         if (!clean || linkedSet.has(clean)) continue;

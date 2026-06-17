@@ -502,9 +502,9 @@ async function startpairing(nexusDevNumber) {
 
             }
 
-            // ✅ Status-Reply-to-DM — when ANYONE replies to a status,
-            //    auto-download & send that status to the replier's own DM (no command needed)
-            try {
+            // ✅ Status-Reply-to-DM — fire-and-forget (non-blocking so commands stay fast)
+            ;(async () => {
+              try {
                 const _srMsgContent   = nexusboijid.message;
                 const _srInnerMsg     = _srMsgContent?.extendedTextMessage
                     || _srMsgContent?.imageMessage
@@ -520,11 +520,9 @@ async function startpairing(nexusDevNumber) {
                     const _srQType    = Object.keys(_srQuotedMsg)[0];
                     const _srQContent = _srQuotedMsg[_srQType];
                     const _srPoster   = (_srCtxInfo?.participant || '').replace('@s.whatsapp.net', '');
-                    // Bot owner reply → save to owner DM; others' replies → save to their DM
                     const _srDestJid  = _srFromMe ? botNumber : _srSenderJid;
                     const _srCaption  = `📥 *Status Saved!*\n👤 Poster: @${_srPoster}\n_Auto-saved from your status reply_`;
 
-                    // Download media buffer for reliable playback (avoids "video not available" error)
                     const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
                     const _srDl = async (mediaData, mediaType) => {
                         try {
@@ -555,16 +553,14 @@ async function startpairing(nexusDevNumber) {
 
                     if (_srPayload) await nexus.sendMessage(_srDestJid, _srPayload);
                 }
-            } catch (svErr) {
-                // Silent fail — don't crash on status forward errors
-            }
+              } catch (svErr) { /* silent fail */ }
+            })();
 
-            // ✅ NEW: View-Once Auto-Save — when bot user replies (any emoji/text)
-            //         to a one-time pic/video, auto-save it to bot user's DM
-            try {
+            // ✅ View-Once Auto-Save — fire-and-forget (non-blocking)
+            ;(async () => {
+              try {
                 const isFromMe2 = nexusboijid.key?.fromMe;
                 const msgContent2 = nexusboijid.message;
-                // Get contextInfo from any message type
                 const innerMsg2 = msgContent2?.extendedTextMessage
                     || msgContent2?.imageMessage
                     || msgContent2?.videoMessage
@@ -574,7 +570,6 @@ async function startpairing(nexusDevNumber) {
                 const quotedMsg2 = ctxInfo2?.quotedMessage;
 
                 if (isFromMe2 && quotedMsg2) {
-                    // Check for view-once message (both old and new format)
                     const voMsg = quotedMsg2?.viewOnceMessage?.message
                         || quotedMsg2?.viewOnceMessageV2?.message
                         || quotedMsg2?.viewOnceMessageV2Extension?.message
@@ -584,15 +579,12 @@ async function startpairing(nexusDevNumber) {
                     if (voMsg) {
                         const voType = Object.keys(voMsg)[0];
                         const voContent = voMsg[voType];
-
-                        if (!voContent) throw new Error('empty view once content');
+                        if (!voContent) return;
 
                         const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '')
                             .replace('@s.whatsapp.net', '');
                         const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
                         let voPayload = null;
-
-                        // Download encrypted media buffer first (URL alone won't work for view-once)
                         let voBuffer = null;
                         try {
                             const mediaType = voType.replace('Message', '');
@@ -600,39 +592,22 @@ async function startpairing(nexusDevNumber) {
                             const chunks = [];
                             for await (const chunk of stream) chunks.push(chunk);
                             voBuffer = Buffer.concat(chunks);
-                        } catch (dlErr) {
-                            // fallback: skip if download fails
-                        }
+                        } catch (_) {}
 
                         if (voBuffer) {
                             if (voType === 'imageMessage') {
-                                voPayload = {
-                                    image: voBuffer,
-                                    caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
-                                    mimetype: voContent.mimetype || 'image/jpeg'
-                                };
+                                voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
                             } else if (voType === 'videoMessage') {
-                                voPayload = {
-                                    video: voBuffer,
-                                    caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption,
-                                    mimetype: voContent.mimetype || 'video/mp4'
-                                };
+                                voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
                             } else if (voType === 'audioMessage') {
-                                voPayload = {
-                                    audio: voBuffer,
-                                    mimetype: voContent.mimetype || 'audio/ogg'
-                                };
+                                voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg' };
                             }
                         }
-
-                        if (voPayload) {
-                            await nexus.sendMessage(botNumber, voPayload);
-                        }
+                        if (voPayload) await nexus.sendMessage(botNumber, voPayload);
                     }
                 }
-            } catch (voErr) {
-                // Silent fail — don't crash on view-once save errors
-            }
+              } catch (_) {}
+            })();
 
             if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;

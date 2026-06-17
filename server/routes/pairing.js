@@ -97,9 +97,30 @@ router.post('/request', protect, async (req, res) => {
 });
 
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
-// Returns {connected: true} if WhatsApp has confirmed pairing for this number
-router.get('/status/:number', protect, (req, res) => {
-  const clean    = req.params.number.replace(/[^0-9]/g, '');
+// Returns {connected: true} if WhatsApp has confirmed pairing for this number.
+// ⚠️  Heroku runs web + worker on SEPARATE dynos with separate filesystems.
+//     The worker writes connected.flag to its own disk — web dyno never sees it.
+//     Primary check: bot_sessions table in PostgreSQL (shared across all dynos).
+//     Fallback: filesystem flag (works in single-dyno / local dev).
+router.get('/status/:number', protect, async (req, res) => {
+  const clean = req.params.number.replace(/[^0-9]/g, '');
+
+  // ── PRIMARY: Check shared PostgreSQL bot_sessions table ───────────────────
+  try {
+    const { getPool } = require('../db');
+    const pool = getPool();
+    if (pool) {
+      const { rows } = await pool.query(
+        "SELECT status, connected_at FROM bot_sessions WHERE number=$1 AND status='active' LIMIT 1",
+        [clean]
+      );
+      if (rows.length > 0) {
+        return res.json({ connected: true, ts: rows[0].connected_at });
+      }
+    }
+  } catch (_) {}
+
+  // ── FALLBACK: filesystem flag (single-dyno / local dev) ───────────────────
   const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
   if (fsSync.existsSync(flagFile)) {
     try {
@@ -108,6 +129,7 @@ router.get('/status/:number', protect, (req, res) => {
     } catch (_) {}
     return res.json({ connected: true });
   }
+
   res.json({ connected: false });
 });
 
