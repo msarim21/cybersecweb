@@ -542,12 +542,19 @@ async function upsertBotSession(number, status) {
   const clean = number.replace(/[^0-9]/g, '');
   if (!clean) return;
   if (isMongoMode()) {
-    const { BotSession } = M();
+    const { BotSession, LinkedNumber } = M();
     await BotSession.findOneAndUpdate(
       { number: clean },
       { status, lastActive: new Date(), ...(status === 'active' ? { connectedAt: new Date() } : {}) },
       { upsert: true, new: true }
     );
+    // ✅ FIX: also sync linked_numbers.status so dashboard reflects real bot state
+    try {
+      await LinkedNumber.findOneAndUpdate(
+        { number: { $regex: `^${clean}` } },
+        { $set: { status: status === 'active' ? 'active' : 'inactive', lastActive: new Date() } }
+      );
+    } catch (_) {}
     return;
   }
   await pg().query(
@@ -558,6 +565,14 @@ async function upsertBotSession(number, status) {
            connected_at = CASE WHEN $2='active' THEN NOW() ELSE bot_sessions.connected_at END`,
     [clean, status, status === 'active' ? new Date() : null]
   );
+  // ✅ FIX: also sync linked_numbers.status for PostgreSQL
+  try {
+    await pg().query(
+      `UPDATE linked_numbers SET status=$1, last_active=NOW()
+       WHERE REGEXP_REPLACE(number,'[^0-9]','','g')=$2`,
+      [status === 'active' ? 'active' : 'inactive', clean]
+    );
+  } catch (_) {}
 }
 
 async function getActiveBotSessions() {

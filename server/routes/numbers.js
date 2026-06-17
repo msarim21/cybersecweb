@@ -86,9 +86,30 @@ router.get('/', protect, async (req, res) => {
   try {
     const numbers = await getNumbersByOwner(req.user.id, req.query.search || null);
     const { isBotHeartbeatFresh } = require('../../allfunc/bot-heartbeat');
+
+    // Cross-dyno online check: web dyno can't read worker's heartbeat files.
+    // Read BotSession.lastActive from MongoDB (shared DB) as fallback.
+    const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000;
+    let dbSessionMap = {};
+    try {
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState === 1) {
+        const BotSession = require('../models/BotSession');
+        const cleans = numbers.map(n => String(n.number || '').replace(/[^0-9]/g, '')).filter(Boolean);
+        const sessions = await BotSession.find({ number: { $in: cleans } })
+          .select('number status lastActive').lean();
+        sessions.forEach(s => {
+          dbSessionMap[s.number] = s.status === 'active' &&
+            s.lastActive &&
+            (Date.now() - new Date(s.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS);
+        });
+      }
+    } catch (_) {}
+
     const enriched = numbers.map((n) => {
       const clean = String(n.number || '').replace(/[^0-9]/g, '');
-      const botOnline = n.status === 'active' && clean && isBotHeartbeatFresh(clean);
+      const botOnline = n.status === 'active' && clean &&
+        (isBotHeartbeatFresh(clean) || dbSessionMap[clean] === true);
       return { ...n, botOnline };
     });
     res.json(enriched);
