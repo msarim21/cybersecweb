@@ -11,7 +11,7 @@
     "build": "npm install --legacy-peer-deps --prefix client && npm run build --prefix client",
     "test": "node --check index.js",
     "test:antidelete": "node scripts/test-antidelete.js",
-    "heroku-postbuild": "npm run build && pip install pytubefix --quiet 2>/dev/null || true"
+    "heroku-postbuild": "npm run build && (pip install pytubefix --quiet 2>/dev/null || true)"
   },
   "keywords": ["whiskeysockets","multi-device","whatsapp-bot","telegram-bot","multi-session","pairing-bot"],
   "author": "Nexus",
