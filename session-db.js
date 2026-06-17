@@ -34,29 +34,31 @@ async function updateSession(number, status) {
         const { getAndClearPairingOwner, addNumber } = require('./server/db-service');
         const pending = await getAndClearPairingOwner(clean);
         if (pending && pending.user_id) {
-          const userId = parseInt(pending.user_id, 10);
-          if (!isNaN(userId)) {
+          // Support both PostgreSQL integer IDs and MongoDB ObjectId strings
+          const rawId = pending.user_id;
+          const userId = /^\d+$/.test(rawId) ? parseInt(rawId, 10) : rawId;
+          if (userId) {
             // Check if already in linked_numbers to avoid duplicates
-            const { getPool } = require('./server/db');
-            const pool = getPool();
-            let alreadyExists = false;
-            if (pool) {
-              const { rows } = await pool.query(
-                `SELECT id FROM linked_numbers WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 LIMIT 1`,
-                [clean]
-              );
-              alreadyExists = rows.length > 0;
-            }
+            const { isNumberInLinkedNumbers } = require('./server/db-service');
+            const alreadyExists = await isNumberInLinkedNumbers(clean);
             if (!alreadyExists) {
               await addNumber(clean, pending.bot_name || 'CYBER PRO', userId);
               console.log('[session-db] ✅ Auto-saved number to linked_numbers:', clean);
             } else {
-              // Already exists — just activate it
+              // Already exists — just re-activate it
+              const { getPool, isMongoMode: _isMongo } = require('./server/db');
+              const pool = getPool();
               if (pool) {
                 await pool.query(
                   `UPDATE linked_numbers SET status='active', last_active=NOW()
                    WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
                   [clean]
+                );
+              } else if (_isMongo && _isMongo()) {
+                const { LinkedNumber } = require('./server/models/LinkedNumber');
+                await LinkedNumber.findOneAndUpdate(
+                  { number: { $regex: clean, $options: 'i' } },
+                  { $set: { status: 'active', lastActive: new Date() } }
                 );
               }
               console.log('[session-db] ✅ Activated existing linked_number:', clean);

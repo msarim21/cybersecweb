@@ -50,3 +50,28 @@
 
 ---
 Pushed to: https://github.com/msarim21/cybersecweb
+---
+
+## Bug 7 - Paired Numbers Disappear from Dashboard (Critical Fix)
+**Problem:** When a WhatsApp number is paired via the website, it disappears from the dashboard after ~1 minute and is never permanently saved in the database.
+
+**Root Cause (3 separate bugs):**
+1. `savePairingOwner()` in `server/db-service.js` had NO MongoDB support — only PostgreSQL code. If app uses MongoDB, the pairing owner info was never stored, so auto-save on connect had no owner to attribute the number to.
+2. `getAndClearPairingOwner()` in `server/db-service.js` had NO MongoDB support — always called `pg()` which returns `null` in MongoDB mode, causing silent failure.
+3. `session-db.js` parsed `userId` as `parseInt(pending.user_id, 10)`, which returns `NaN` for MongoDB ObjectId strings (e.g. `"507f1f77bcf86cd799439011"`). The `!isNaN(userId)` guard then blocked the auto-save entirely.
+4. `isNumberInLinkedNumbers()` was missing from `module.exports` in `db-service.js`, causing `orphanDisconnectJob` to crash with a TypeError on every check.
+
+**Fix:**
+- `server/db-service.js`:
+  - Added full MongoDB support to `savePairingOwner()` (uses `BotSession.findOneAndUpdate` with `pairingOwnerId`/`pairingBotName` fields)
+  - Added full MongoDB support to `getAndClearPairingOwner()` (reads and clears `pairingOwnerId`/`pairingBotName` from BotSession)
+  - Added new `isNumberInLinkedNumbers(number)` function (supports both MongoDB and PostgreSQL)
+  - Exported `isNumberInLinkedNumbers` from module.exports
+- `session-db.js`:
+  - Replaced `parseInt(pending.user_id, 10)` + `!isNaN(userId)` guard with a smart parser: uses integer for numeric IDs (PostgreSQL), keeps as-is for ObjectId strings (MongoDB)
+  - Replaced inline duplicate-check SQL with call to `isNumberInLinkedNumbers()` — works for both DB modes
+  - Added MongoDB LinkedNumber activate path in the "already exists" branch
+
+**Result:** When any WhatsApp number successfully pairs (connection opens), its number is immediately and permanently saved to `linked_numbers` in the database. The dashboard shows it on the next refresh and it never disappears.
+
+**Files:** `server/db-service.js`, `session-db.js`

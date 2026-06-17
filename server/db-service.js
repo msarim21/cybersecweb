@@ -371,6 +371,17 @@ async function addNumber(number, botName, userId) {
 async function savePairingOwner(number, userId, botName) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    try {
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { status: 'pending', pairingOwnerId: String(userId), pairingBotName: botName || 'CYBER PRO', lastActive: new Date() } },
+        { upsert: true, new: true }
+      );
+    } catch (_) {}
+    return;
+  }
   try {
     await pg().query(
       `INSERT INTO bot_sessions (number, status, pairing_owner_id, pairing_bot_name, last_active)
@@ -385,6 +396,21 @@ async function savePairingOwner(number, userId, botName) {
 async function getAndClearPairingOwner(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return null;
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    try {
+      const doc = await BotSession.findOneAndUpdate(
+        { number: clean, pairingOwnerId: { $exists: true, $ne: null } },
+        { $unset: { pairingOwnerId: 1, pairingBotName: 1 } },
+        { new: false }
+      );
+      if (!doc) return null;
+      return {
+        user_id: doc.pairingOwnerId ? String(doc.pairingOwnerId) : null,
+        bot_name: doc.pairingBotName || 'CYBER PRO',
+      };
+    } catch (_) { return null; }
+  }
   try {
     const { rows } = await pg().query(
       `UPDATE bot_sessions
@@ -395,6 +421,28 @@ async function getAndClearPairingOwner(number) {
     );
     return rows[0] || null;
   } catch (_) { return null; }
+}
+
+// ── Check if a number exists in linked_numbers table ────────────────────────
+async function isNumberInLinkedNumbers(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return false;
+  if (isMongoMode()) {
+    const { LinkedNumber } = M();
+    try {
+      const count = await LinkedNumber.countDocuments({
+        number: { $regex: clean, $options: 'i' },
+      });
+      return count > 0;
+    } catch (_) { return false; }
+  }
+  try {
+    const { rows } = await pg().query(
+      `SELECT id FROM linked_numbers WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 LIMIT 1`,
+      [clean]
+    );
+    return rows.length > 0;
+  } catch (_) { return false; }
 }
 
 // ── Per-number bot mode (self/public) stored in bot_sessions.bot_mode ───────
@@ -845,7 +893,7 @@ module.exports = {
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
-  savePairingOwner, getAndClearPairingOwner,
+  savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers,
   getBotMode, setBotMode,
   upsertBotSession, getActiveBotSessions,
   getAllActiveLinkedNumbers,
