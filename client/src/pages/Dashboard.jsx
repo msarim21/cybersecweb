@@ -332,25 +332,13 @@ const LinkModal = ({ onClose, onAdd }) => {
     e.preventDefault();
     if (!form.number || !form.botName) return toast.error('All fields required');
     setStep(2);
-    const clean = form.number.replace(/\D/g, '');
     try {
-      await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
-
-      const deadline = Date.now() + 120_000;
-      while (Date.now() < deadline) {
-        const { data } = await axios.get(`/api/pairing/code/${clean}`);
-        if (data.code) {
-          setCode(data.code);
-          setTimer(300);
-          setStep(3);
-          return;
-        }
-        if (data.status === 'failed') {
-          throw new Error('Pairing failed on server — dubara try karein.');
-        }
-        await new Promise(r => setTimeout(r, 350));
-      }
-      throw new Error('Pairing code timeout (2 min) — page refresh karke dubara try karein.');
+      // Backend returns { code, number } directly in the POST response
+      const { data } = await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
+      if (!data.code) throw new Error('No pairing code received from server.');
+      setCode(data.code);
+      setTimer(300);
+      setStep(3);
     } catch (err) {
       setStep(1);
       const errCode = err.response?.data?.error;
