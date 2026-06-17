@@ -615,13 +615,19 @@ async function saveSessionCreds(number, sessionFiles) {
     );
     return;
   }
-  // PostgreSQL fallback — store as JSON text in bot_sessions if column exists
+  // PostgreSQL: store session files as JSONB so bot can restore after Heroku restart
   try {
     await pg().query(
-      `UPDATE bot_sessions SET last_active = NOW() WHERE number = $1`,
-      [clean]
+      `INSERT INTO bot_sessions (number, status, session_data, last_active)
+       VALUES ($1, 'active', $2::jsonb, NOW())
+       ON CONFLICT (number) DO UPDATE
+         SET session_data = $2::jsonb, last_active = NOW()`,
+      [clean, JSON.stringify(sessionFiles)]
     );
-  } catch (_) {}
+  } catch (err) {
+    // Non-fatal: log and continue — filesystem creds still usable locally
+    console.error('[db-service] saveSessionCreds PG error:', err.message);
+  }
 }
 
 async function getSessionCreds(number) {
@@ -631,6 +637,18 @@ async function getSessionCreds(number) {
     const { BotSession } = M();
     const doc = await BotSession.findOne({ number: clean });
     return doc?.sessionData || null;
+  }
+  // PostgreSQL: read session_data JSONB column
+  try {
+    const { rows } = await pg().query(
+      'SELECT session_data FROM bot_sessions WHERE number=$1 AND session_data IS NOT NULL LIMIT 1',
+      [clean]
+    );
+    if (rows.length > 0 && rows[0].session_data) {
+      return rows[0].session_data;
+    }
+  } catch (err) {
+    console.error('[db-service] getSessionCreds PG error:', err.message);
   }
   return null;
 }
