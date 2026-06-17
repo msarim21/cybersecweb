@@ -857,7 +857,8 @@ async function startpairing(nexusDevNumber) {
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                removeLinkedNumber(nexusDevNumber).catch(() => {});
+                // ✅ FIX: Do NOT delete from linked_numbers on logout — number must stay
+                // permanently in dashboard. User can remove it manually if needed.
                 forceCleanupSession(nexusDevNumber);
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.connectionClosed || 
