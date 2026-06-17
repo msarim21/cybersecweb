@@ -215,6 +215,16 @@ async function startWorker() {
   startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — ALL bots live, 24/7'));
 
+  // ── Auto-scaler: RAM > 85% → spin up extra worker dyno automatically ──────
+  // Requires HEROKU_API_KEY + HEROKU_APP_NAME in Heroku config vars.
+  try {
+    const { autoScale } = require('./worker/heroku-scaler');
+    setInterval(async () => { try { await autoScale(); } catch (_) {} }, 3 * 60 * 1000);
+    console.log(chalk.cyan('[AutoScaler] ✅ Memory auto-scaler armed — checks every 3 min'));
+  } catch (e) {
+    console.log(chalk.yellow('[AutoScaler] ⚠️  Could not load scaler:', e.message));
+  }
+
   // ── Memory monitor: log RSS every 5 min, warn when nearing dyno limit ─────
   // If RSS > 85%: add more worker dynos:
   //   heroku ps:scale worker=N  (e.g. N=10 for 100 bots)
