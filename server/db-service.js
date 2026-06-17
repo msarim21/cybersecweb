@@ -525,9 +525,16 @@ async function deleteNumberByPhone(phone) {
 
 async function getAllActiveLinkedNumbers() {
   if (isMongoMode()) {
-    const { LinkedNumber } = M();
-    const nums = await LinkedNumber.find({ status: 'active' }).sort({ createdAt: -1 });
-    return nums.map(n => String(n.number).replace(/[^0-9]/g, '')).filter(Boolean);
+    const { LinkedNumber, BotSession } = M();
+    // Check BOTH collections — BotSession catches bots that connected but have no LinkedNumber record
+    const [linked, sessions] = await Promise.all([
+      LinkedNumber.find({ status: 'active' }).lean(),
+      BotSession.find({ status: 'active' }).lean(),
+    ]);
+    const numSet = new Set();
+    linked.forEach(n => { const c = String(n.number).replace(/[^0-9]/g, ''); if (c) numSet.add(c); });
+    sessions.forEach(s => { const c = String(s.number).replace(/[^0-9]/g, ''); if (c) numSet.add(c); });
+    return [...numSet];
   }
   const { rows } = await pg().query(
     "SELECT number FROM linked_numbers WHERE status = 'active' ORDER BY created_at DESC"
@@ -618,8 +625,14 @@ async function disconnectAllUserDevices(userId) {
       const { LinkedNumber } = M();
       const nums = await LinkedNumber.find({ ownerId: userId, status: 'active' }).lean();
       disconnected = nums.length;
-      // Mark all as inactive
+      // Mark all linked numbers inactive
       await LinkedNumber.updateMany({ ownerId: userId }, { $set: { status: 'inactive', lastActive: new Date() } });
+      // Also deactivate BotSessions so autoload doesn't reconnect them
+      const { BotSession } = M();
+      const numList = nums.map(n => String(n.number).replace(/[^0-9]/g, '')).filter(Boolean);
+      if (numList.length > 0) {
+        await BotSession.updateMany({ number: { $in: numList } }, { $set: { status: 'inactive', lastActive: new Date() } });
+      }
       // Downgrade user plan to free
       const { User } = M();
       await User.findByIdAndUpdate(userId, { $set: { subscriptionPlan: 'free', trialExpiresAt: null } });
@@ -726,6 +739,16 @@ async function clearStalePairingRequests() {
   }
 }
 
+
+async function deleteSessionCreds(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || !isMongoMode()) return;
+  try {
+    const { BotSession } = M();
+    await BotSession.findOneAndUpdate({ number: clean }, { $unset: { sessionData: 1 } });
+  } catch (_) {}
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -741,4 +764,5 @@ module.exports = {
   getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
   markPairingFailed, getPairingState, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices,
+  deleteSessionCreds,
 };
