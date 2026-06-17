@@ -5,6 +5,16 @@ const fsAsync = require('fs').promises;
 const path = require('path');
 const chalk = require('chalk');
 
+// ── Memory guard: check RAM before connecting each bot ───────────────────────
+function getRssMb() {
+  return Math.round(process.memoryUsage().rss / 1024 / 1024);
+}
+function isDynoMemFull() {
+  const totalMb = parseInt(process.env.DYNO_TOTAL_RAM_MB, 10) || 512;
+  const maxPct  = parseInt(process.env.MAX_MEM_PERCENT,   10) || 80;
+  return getRssMb() >= Math.floor(totalMb * maxPct / 100);
+}
+
 let isAutoLoadRunning = false;
 let isShuttingDown = false;
 
@@ -70,6 +80,20 @@ async function restoreSessionBeforeConnect(number) {
 // ── Process a single user ───────────────────────────────────────────────────
 async function processUser(user, index, total) {
   if (isShuttingDown) throw new Error('Shutdown in progress');
+
+  // ── Memory guard: if dyno RAM is nearly full, skip this bot ──────────────
+  // runAutoLoadWithRetries sees it as failed → retries → auto-scaler adds dyno
+  if (isDynoMemFull()) {
+    const rss     = getRssMb();
+    const totalMb = parseInt(process.env.DYNO_TOTAL_RAM_MB, 10) || 512;
+    const maxPct  = parseInt(process.env.MAX_MEM_PERCENT, 10) || 80;
+    const limitMb = Math.floor(totalMb * maxPct / 100);
+    const clean   = user.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+    console.log(chalk.yellow(`[AutoLoad] ⚠️  RAM ${rss}/${limitMb}MB full — queuing ${clean} for extra dyno`));
+    if (!global._memSkippedBots) global._memSkippedBots = new Set();
+    global._memSkippedBots.add(clean);
+    return { skipped: true, user };
+  }
 
   console.log(chalk.blue(`⌛ Connecting ${index + 1}/${total}: ${user}`));
 
