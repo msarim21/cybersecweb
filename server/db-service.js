@@ -367,6 +367,36 @@ async function addNumber(number, botName, userId) {
   return { _id: r.id, number: r.number, botName: r.bot_name, status: r.status, ownerId: r.owner_id, lastActive: r.last_active, createdAt: r.created_at };
 }
 
+// ── Auto-save pairing owner info to bot_sessions so pair.js can save to linked_numbers ──
+async function savePairingOwner(number, userId, botName) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  try {
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, pairing_owner_id, pairing_bot_name, last_active)
+       VALUES ($1, 'pending', $2, $3, NOW())
+       ON CONFLICT (number) DO UPDATE
+         SET pairing_owner_id = $2, pairing_bot_name = $3, last_active = NOW()`,
+      [clean, String(userId), botName || 'CYBER PRO']
+    );
+  } catch (_) {}
+}
+
+async function getAndClearPairingOwner(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  try {
+    const { rows } = await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_owner_id = NULL, pairing_bot_name = NULL
+       WHERE number = $1 AND pairing_owner_id IS NOT NULL
+       RETURNING pairing_owner_id AS user_id, pairing_bot_name AS bot_name`,
+      [clean]
+    );
+    return rows[0] || null;
+  } catch (_) { return null; }
+}
+
 async function toggleNumber(id, userId) {
   if (isMongoMode()) {
     const { LinkedNumber } = M();
@@ -770,6 +800,7 @@ module.exports = {
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
+  savePairingOwner, getAndClearPairingOwner,
   upsertBotSession, getActiveBotSessions,
   getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds,

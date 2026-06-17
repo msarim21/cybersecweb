@@ -328,7 +328,7 @@ async function startpairing(nexusDevNumber) {
         printQRInTerminal: false,
         auth: state,
         version,
-        browser: Browsers.ubuntu("Edge"),
+        browser: Browsers.macOS("Safari"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
@@ -640,19 +640,9 @@ async function startpairing(nexusDevNumber) {
         })
     }
 
-    // Restore public/private mode from saved settings
-    try {
-        const _modeFile = './database/bot_mode.json';
-        const _fs = require('fs');
-        if (_fs.existsSync(_modeFile)) {
-            const _savedMode = JSON.parse(_fs.readFileSync(_modeFile, 'utf-8'));
-            nexus.public = _savedMode.mode !== 'self';
-        } else {
-            nexus.public = true;
-        }
-    } catch (e) {
-        nexus.public = true;
-    }
+    // Default public mode — bot responds to all users by default
+    // Per-session mode can be changed via .mode command and is stored in bot_sessions
+    nexus.public = true;
 
     nexus.sendText = (jid, text, quoted = '', options) => nexus.sendMessage(jid, { text: text, ...options }, { quoted })
 

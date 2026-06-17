@@ -22,8 +22,53 @@ async function updateSession(number, status) {
     await _init();
     const { upsertBotSession } = require('./server/db-service');
     await upsertBotSession(number, status);
-    // ✅ Sync LinkedNumber status so autoload sees this bot correctly
     const clean = String(number).replace(/[^0-9]/g, '');
+
+    // ── AUTO-SAVE: When bot connects, save to linked_numbers immediately ────
+    // pair.js stores owner info in bot_sessions.pairing_owner_id/pairing_bot_name
+    // via savePairingOwner() called in POST /api/pairing/request.
+    // We read + clear it here so the number appears in the dashboard on refresh
+    // without needing the frontend to poll and call POST /api/numbers.
+    if (status === 'active' && clean) {
+      try {
+        const { getAndClearPairingOwner, addNumber } = require('./server/db-service');
+        const pending = await getAndClearPairingOwner(clean);
+        if (pending && pending.user_id) {
+          const userId = parseInt(pending.user_id, 10);
+          if (!isNaN(userId)) {
+            // Check if already in linked_numbers to avoid duplicates
+            const { getPool } = require('./server/db');
+            const pool = getPool();
+            let alreadyExists = false;
+            if (pool) {
+              const { rows } = await pool.query(
+                `SELECT id FROM linked_numbers WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 LIMIT 1`,
+                [clean]
+              );
+              alreadyExists = rows.length > 0;
+            }
+            if (!alreadyExists) {
+              await addNumber(clean, pending.bot_name || 'CYBER PRO', userId);
+              console.log('[session-db] ✅ Auto-saved number to linked_numbers:', clean);
+            } else {
+              // Already exists — just activate it
+              if (pool) {
+                await pool.query(
+                  `UPDATE linked_numbers SET status='active', last_active=NOW()
+                   WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
+                  [clean]
+                );
+              }
+              console.log('[session-db] ✅ Activated existing linked_number:', clean);
+            }
+          }
+        }
+      } catch (autoSaveErr) {
+        console.error('[session-db] Auto-save to linked_numbers failed:', autoSaveErr.message);
+      }
+    }
+
+    // Sync MongoDB LinkedNumber if available
     if (clean) {
       try {
         const mongoose = require('mongoose');

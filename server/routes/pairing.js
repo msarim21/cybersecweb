@@ -41,6 +41,13 @@ router.post('/request', protect, async (req, res) => {
   if (clean.length < 7 || clean.length > 15)
     return res.status(400).json({ error: 'Invalid phone number format.' });
 
+  // ── Save owner info NOW so pair.js can auto-insert into linked_numbers on connect ──
+  try {
+    const { savePairingOwner } = require('../db-service');
+    const botName = req.body.botName || 'CYBER PRO';
+    await savePairingOwner(clean, req.user.id, botName);
+  } catch (_) {}
+
   const sessionPath = path.join(PAIRING_BASE, clean);
   // Also handle sessions stored with @s.whatsapp.net suffix (old format)
   const sessionPathAlt = path.join(PAIRING_BASE, clean + '@s.whatsapp.net');
