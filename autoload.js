@@ -77,6 +77,34 @@ async function restoreSessionBeforeConnect(number) {
   }
 }
 
+function getLiveTracker(clean) {
+  try {
+    const pairMod = require('./pair');
+    const trackerMap = pairMod._getTracker?.();
+    if (!trackerMap?.get) return null;
+    return trackerMap.get(`${clean}@s.whatsapp.net`) || trackerMap.get(clean) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function waitForBotReady(clean, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tracker = getLiveTracker(clean);
+    const wsState = tracker?.connection?.ws?.readyState;
+    if (tracker?.connection?.user && wsState === 1) return true;
+
+    try {
+      const { isBotHeartbeatFresh } = require('./allfunc/bot-heartbeat');
+      if (isBotHeartbeatFresh(clean, 5 * 60 * 1000)) return true;
+    } catch (_) {}
+
+    await delay(1000);
+  }
+  return false;
+}
+
 // ── Process a single user ───────────────────────────────────────────────────
 async function processUser(user, index, total) {
   if (isShuttingDown) throw new Error('Shutdown in progress');
@@ -128,6 +156,12 @@ async function processUser(user, index, total) {
 
     const sock = await connectWithTimeout();
     if (!sock) throw new Error('Connection skipped (stopped or duplicate socket)');
+
+    const ready = await waitForBotReady(clean, 90_000);
+    if (!ready) {
+      throw new Error(`Bot did not become ready after connect for ${clean}`);
+    }
+
     console.log(chalk.green(`✅ Connected: ${user}`));
     return user;
   } catch (error) {
