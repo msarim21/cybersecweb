@@ -992,9 +992,8 @@ async function startpairing(nexusDevNumber, options = {}) {
 
             // Write connected flag so web panel can auto-save the number
             try {
-                const flagDir  = path.join(process.cwd(), 'nexstore', 'pairing', cleanNum);
-                if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
+                const { writeConnectedFlag } = require('./allfunc/connected-flag');
+                writeConnectedFlag(cleanNum, { connected: true, number: cleanNum, ts: Date.now() });
             } catch (_) {}
 
             // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected

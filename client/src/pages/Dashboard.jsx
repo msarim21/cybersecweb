@@ -297,6 +297,7 @@ const LinkModal = ({ onClose, onAdd }) => {
   const timerRef   = useRef(null);
   const pollRef    = useRef(null);
   const autoSaved  = useRef(false);
+  const linkingRef = useRef(false);
 
   useEffect(() => {
     if (step === 3) {
@@ -309,9 +310,13 @@ const LinkModal = ({ onClose, onAdd }) => {
   }, [step]);
 
   const finishLinking = async () => {
-    if (autoSaved.current) return;
+    if (autoSaved.current || linkingRef.current) return;
+    linkingRef.current = true;
     autoSaved.current = true;
-    clearInterval(pollRef.current);
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
     setSaving(true);
     try {
       const listRes = await axios.get('/api/numbers');
@@ -325,28 +330,33 @@ const LinkModal = ({ onClose, onAdd }) => {
         const res = await axios.post('/api/numbers', { number: form.number, botName: form.botName });
         onAdd(res.data);
       }
-      toast.success('✅ NUMBER LINKED SUCCESSFULLY');
+      toast.success('✅ Number linked successfully');
       onClose();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to save number');
       autoSaved.current = false;
+      linkingRef.current = false;
     } finally {
       setSaving(false);
     }
   };
 
-  // Auto-detect WhatsApp pairing — only after user enters code on phone
+  // Auto-detect WhatsApp pairing — polls DB (works web+worker split on Heroku)
   useEffect(() => {
-    if (step !== 3) { autoSaved.current = false; return; }
+    if (step !== 3) {
+      autoSaved.current = false;
+      linkingRef.current = false;
+      return;
+    }
     const cleanNum = form.number.replace(/\D/g, '');
     if (!cleanNum) return;
-    pollRef.current = setInterval(async () => {
-      if (autoSaved.current) return;
+
+    const poll = async () => {
+      if (autoSaved.current || linkingRef.current) return;
       try {
         const { data } = await axios.get(`/api/pairing/status/${cleanNum}`);
         setSyncing(Boolean(data.pairing || data.syncing));
         if (data.connected) {
-          toast.success(data.linked ? '📱 WhatsApp paired! Saving to dashboard…' : '📱 WhatsApp connected! Saving to dashboard…');
           await finishLinking();
         }
       } catch (err) {
@@ -354,8 +364,16 @@ const LinkModal = ({ onClose, onAdd }) => {
           toast.error('Session expired — login again.');
         }
       }
-    }, 1000);
-    return () => clearInterval(pollRef.current);
+    };
+
+    poll();
+    pollRef.current = setInterval(poll, 2000);
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
   }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmt = s => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
@@ -391,11 +409,13 @@ const LinkModal = ({ onClose, onAdd }) => {
 
   const handleNewCode = async () => {
     autoSaved.current = false;
+    linkingRef.current = false;
     if (pollRef.current) clearInterval(pollRef.current);
     await handleRequest();
   };
 
   const handleConfirm = async () => {
+    if (autoSaved.current || linkingRef.current) return;
     const cleanNum = form.number.replace(/\D/g, '');
     setSaving(true);
     try {

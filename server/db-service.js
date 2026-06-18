@@ -9,6 +9,7 @@ function M() {
     LinkedNumber:   require('./models/LinkedNumber'),
     BotSession:     require('./models/BotSession'),
     PairingRequest: require('./models/PairingRequest'),
+    ChatMessage:    require('./models/ChatMessage'),
   };
 }
 
@@ -1192,6 +1193,214 @@ function isPlanExpired(user) {
   return new Date(expiresAt) < new Date();
 }
 
+// ── Live chat (Support tab + admin chat) ─────────────────────────────────────
+
+function _chatUserFilter(userId) {
+  if (isMongoMode()) {
+    const mongoose = require('mongoose');
+    if (mongoose.Types.ObjectId.isValid(String(userId))) {
+      return new mongoose.Types.ObjectId(String(userId));
+    }
+    return userId;
+  }
+  return /^\d+$/.test(String(userId)) ? parseInt(String(userId), 10) : userId;
+}
+
+function _normChatMessage(doc) {
+  if (!doc) return null;
+  return {
+    id: doc.id ?? doc._id,
+    userId: String(doc.userId ?? doc.user_id),
+    sender: doc.sender,
+    message: doc.message,
+    read: Boolean(doc.read),
+    createdAt: doc.createdAt ?? doc.created_at,
+  };
+}
+
+async function sendChatMessage(userId, sender, message) {
+  const text = String(message || '').trim();
+  if (!text) throw new Error('Message is required');
+  if (!['user', 'admin'].includes(sender)) throw new Error('Invalid sender');
+
+  if (isMongoMode()) {
+    const { ChatMessage } = M();
+    const doc = await ChatMessage.create({
+      userId: _chatUserFilter(userId),
+      sender,
+      message: text,
+      read: false,
+    });
+    return _normChatMessage(doc.toObject ? doc.toObject() : doc);
+  }
+
+  const uid = _chatUserFilter(userId);
+  const { rows } = await pg().query(
+    `INSERT INTO chat_messages (user_id, sender, message, read)
+     VALUES ($1, $2, $3, false)
+     RETURNING id, user_id, sender, message, read, created_at`,
+    [uid, sender, text]
+  );
+  return _normChatMessage(rows[0]);
+}
+
+async function getChatMessages(userId, limit = 100) {
+  const lim = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
+  const uid = _chatUserFilter(userId);
+
+  if (isMongoMode()) {
+    const { ChatMessage } = M();
+    const docs = await ChatMessage.find({ userId: uid })
+      .sort({ createdAt: 1 })
+      .limit(lim)
+      .lean();
+    return docs.map(_normChatMessage);
+  }
+
+  const { rows } = await pg().query(
+    `SELECT id, user_id, sender, message, read, created_at
+     FROM chat_messages WHERE user_id=$1 ORDER BY created_at ASC LIMIT $2`,
+    [uid, lim]
+  );
+  return rows.map(_normChatMessage);
+}
+
+async function markChatMessagesRead(userId, senderToMark) {
+  if (!['user', 'admin'].includes(senderToMark)) return;
+  const uid = _chatUserFilter(userId);
+
+  if (isMongoMode()) {
+    const { ChatMessage } = M();
+    await ChatMessage.updateMany(
+      { userId: uid, sender: senderToMark, read: false },
+      { $set: { read: true } }
+    );
+    return;
+  }
+
+  await pg().query(
+    `UPDATE chat_messages SET read=true WHERE user_id=$1 AND sender=$2 AND read=false`,
+    [uid, senderToMark]
+  );
+}
+
+async function getActiveChatUsers(search) {
+  if (isMongoMode()) {
+    const { ChatMessage, User } = M();
+    const userIds = await ChatMessage.distinct('userId');
+    if (!userIds.length) return [];
+    const filter = { _id: { $in: userIds } };
+    if (search && String(search).trim()) {
+      const re = new RegExp(String(search).trim(), 'i');
+      filter.$or = [{ username: re }, { email: re }];
+    }
+    const users = await User.find(filter).select('username email').sort({ username: 1 }).lean();
+    return users.map((u) => ({ id: u._id, username: u.username, email: u.email }));
+  }
+
+  let q = `
+    SELECT DISTINCT u.id, u.username, u.email
+    FROM chat_messages c
+    JOIN users u ON u.id = c.user_id`;
+  const params = [];
+  if (search && String(search).trim()) {
+    q += ` WHERE u.username ILIKE $1 OR u.email ILIKE $1`;
+    params.push(`%${String(search).trim()}%`);
+  }
+  q += ` ORDER BY u.username ASC`;
+  const { rows } = await pg().query(q, params);
+  return rows;
+}
+
+async function getChatUnreadCounts() {
+  if (isMongoMode()) {
+    const { ChatMessage } = M();
+    const agg = await ChatMessage.aggregate([
+      { $match: { read: false, sender: 'user' } },
+      { $group: { _id: '$userId', count: { $sum: 1 }, lastMessageAt: { $max: '$createdAt' } } },
+    ]);
+    return agg.map((a) => ({
+      userId: a._id,
+      count: a.count,
+      lastMessageAt: a.lastMessageAt,
+    }));
+  }
+
+  const { rows } = await pg().query(`
+    SELECT user_id AS "userId", COUNT(*)::int AS count, MAX(created_at) AS "lastMessageAt"
+    FROM chat_messages WHERE read=false AND sender='user'
+    GROUP BY user_id
+  `);
+  return rows;
+}
+
+/** Cross-dyno pairing status — web dyno reads DB, not worker filesystem. */
+async function getBotPairingStatus(clean) {
+  const digits = String(clean).replace(/[^0-9]/g, '');
+  if (!digits) return { connected: false };
+
+  const FRESH_MS = 5 * 60 * 1000;
+
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      const doc = await BotSession.findOne({ number: digits })
+        .select('status lastActive connectedAt pairingStatus')
+        .lean();
+      if (doc) {
+        const ps = doc.pairingStatus || doc.pairing_status;
+        if (ps === 'code_ready' || ps === 'in_progress' || ps === 'requested') {
+          return { connected: false, pairing: true, syncing: ps !== 'code_ready', status: ps };
+        }
+        if (doc.status === 'active') {
+          const last = doc.lastActive ? new Date(doc.lastActive).getTime() : 0;
+          if (last > 0 && (Date.now() - last) <= FRESH_MS) {
+            return {
+              connected: true,
+              ts: doc.connectedAt || doc.lastActive,
+            };
+          }
+        }
+      }
+    } catch (_) {}
+  } else {
+    try {
+      const { rows } = await pg().query(
+        `SELECT status, last_active, connected_at, pairing_status
+         FROM bot_sessions WHERE number=$1 LIMIT 1`,
+        [digits]
+      );
+      const row = rows[0];
+      if (row) {
+        if (['code_ready', 'in_progress', 'requested'].includes(row.pairing_status)) {
+          return {
+            connected: false,
+            pairing: true,
+            syncing: row.pairing_status !== 'code_ready',
+            status: row.pairing_status,
+          };
+        }
+        if (row.status === 'active') {
+          const last = row.last_active ? Date.parse(row.last_active) : 0;
+          if (last > 0 && (Date.now() - last) <= FRESH_MS) {
+            return { connected: true, ts: row.connected_at || row.last_active };
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  const st = await getPairingState(digits).catch(() => null);
+  if (st?.status === 'code_ready') {
+    return { connected: false, pairing: true, syncing: true, status: st.status };
+  }
+  if (st?.status === 'in_progress' || st?.status === 'requested') {
+    return { connected: false, pairing: true, syncing: true, status: st.status };
+  }
+
+  return { connected: false };
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -1214,4 +1423,7 @@ module.exports = {
   deleteSessionCreds,
   hasFirstConnected, markFirstConnected,
   isPlanExpired,
+  sendChatMessage, getChatMessages, markChatMessagesRead,
+  getActiveChatUsers, getChatUnreadCounts,
+  getBotPairingStatus,
 };

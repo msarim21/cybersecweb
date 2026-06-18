@@ -229,27 +229,27 @@ router.get('/status/:number', protect, async (req, res) => {
   const clean = req.params.number.replace(/[^0-9]/g, '');
 
   try {
-    const { getPool } = require('../db');
-    const pool = getPool();
-    if (pool) {
-      const { rows } = await pool.query(
-        "SELECT status, connected_at FROM bot_sessions WHERE number=$1 AND status='active' LIMIT 1",
-        [clean]
-      );
-      if (rows.length > 0) {
-        return res.json({ connected: true, ts: rows[0].connected_at });
-      }
+    const { getBotPairingStatus, isNumberInLinkedNumbers } = require('../db-service');
+    const status = await getBotPairingStatus(clean);
+
+    if (status.connected) {
+      const linked = await isNumberInLinkedNumbers(clean).catch(() => false);
+      return res.json({ ...status, linked });
+    }
+
+    if (status.pairing || status.syncing) {
+      return res.json(status);
     }
   } catch (_) {}
 
-  const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
-  if (fsSync.existsSync(flagFile)) {
-    try {
-      const data = JSON.parse(fsSync.readFileSync(flagFile, 'utf-8'));
-      return res.json({ connected: true, ts: data.ts });
-    } catch (_) {}
-    return res.json({ connected: true });
-  }
+  // Same-dyno fallback (local dev / single process)
+  try {
+    const { readConnectedFlag } = require('../../allfunc/connected-flag');
+    const flag = readConnectedFlag(clean);
+    if (flag?.connected) {
+      return res.json({ connected: true, ts: flag.ts, linked: Boolean(flag.linked) });
+    }
+  } catch (_) {}
 
   res.json({ connected: false });
 });
