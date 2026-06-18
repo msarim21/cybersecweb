@@ -5,7 +5,8 @@ const path = require('path');
 const { cleanBotNum } = require('./bot-workspace');
 
 const DEFAULT_MAX_AGE_MS = 15 * 60 * 1000;
-const DB_UPSERT_MIN_MS = 3 * 60 * 1000;
+const DB_UPSERT_MIN_MS = 60 * 1000;
+const FILE_WRITE_MIN_MS = 15 * 1000;
 
 const _lastFileWrite = new Map();
 const _lastDbUpsert = new Map();
@@ -22,7 +23,9 @@ function touchBotHeartbeat(botNum, extra = {}) {
 
     const now = Date.now();
     const lastFile = _lastFileWrite.get(clean) || 0;
-    if (now - lastFile >= 30_000) {
+    const wsOpen = extra.wsState === 1 || extra.event === 'watchdog' || extra.event === 'message';
+    const fileInterval = wsOpen ? FILE_WRITE_MIN_MS : 30_000;
+    if (now - lastFile >= fileInterval) {
         _lastFileWrite.set(clean, now);
         const file = _heartbeatPath(clean);
         const payload = {

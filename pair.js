@@ -569,7 +569,7 @@ async function startpairing(nexusDevNumber, options = {}) {
         }
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             let botNumber = await nexus.decodeJid(nexus.user.id);
-            touchBotHeartbeat(nexusDevNumber, { event: 'message' });
+            touchBotHeartbeat(nexusDevNumber, { event: 'message', wsState: 1, ready: true });
             try {
                 if (!nexusboijid.message?.protocolMessage && typeof global._cacheMessageForAntidelete === 'function') {
                     global._cacheMessageForAntidelete(nexusboijid, nexus);
