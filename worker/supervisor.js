@@ -79,7 +79,7 @@ function _nextSlot() {
 }
 
 function _buildThreadEnv(extra = {}) {
-    const childHeap  = process.env.BOT_CHILD_HEAP_MB || '256';
+    const childHeap  = process.env.BOT_CHILD_HEAP_MB || '128';
     const existing   = String(process.env.NODE_OPTIONS || '');
     const heapFlag   = `--max-old-space-size=${childHeap}`;
     const nodeOpts   = existing.includes('max-old-space-size') ? existing : `${existing} ${heapFlag}`.trim();

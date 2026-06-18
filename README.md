@@ -119,8 +119,16 @@ heroku config:set ADMIN_EMAIL="admin@yourdomain.com"
 heroku config:set ADMIN_PASSWORD="your_secure_password"
 heroku config:set NODE_ENV="production"
 heroku config:set NPM_CONFIG_LEGACY_PEER_DEPS="true"
+heroku config:set WHATSAPP_HOST_DYNO="worker"
+heroku config:set BOT_ISOLATION="1"
+heroku config:set DYNO_TOTAL_RAM_MB="1024"
+heroku config:set BOT_CHILD_HEAP_MB="128"
+heroku config:set MAX_MEM_PERCENT="80"
 
-# 3. Deploy
+# 3. Scale the worker dyno to 1 GB
+heroku ps:resize worker=standard-2x
+
+# 4. Deploy
 git push heroku main
 ```
 
@@ -129,6 +137,10 @@ git push heroku main
 > Heroku's filesystem resets on every dyno restart. WhatsApp sessions in `nexstore/pairing/` will be lost.
 
 For persistent sessions, use **Railway** or a **VPS** with a mounted volume. On Heroku, users simply re-pair after a dyno restart.
+
+#### About 50 bots on one worker
+
+The worker is now tuned to keep many linked numbers under one supervisor and rotate them safely when memory gets tight. A single 1 GB worker can manage a lot of paired accounts, but if you need all 50 bots hot at the same instant, we should split them across more worker dynos and set `TOTAL_WORKER_DYNOS` to match the scale.
 
 ---
 
