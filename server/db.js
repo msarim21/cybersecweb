@@ -186,6 +186,8 @@ const initDb = async () => {
     // Migrate: only set NULL bot_mode to default — never overwrite user-set 'self' mode
     await client.query("UPDATE bot_sessions SET bot_mode = 'public' WHERE bot_mode IS NULL").catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS command_ready BOOLEAN DEFAULT false`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS ws_state INTEGER DEFAULT -1`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_messages (

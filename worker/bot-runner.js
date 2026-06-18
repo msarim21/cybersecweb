@@ -187,6 +187,8 @@ async function runBot() {
                 touchBotHeartbeat(BOT_NUMBER, {
                     wsState: ws?.readyState ?? -1,
                     connected: Boolean(tracker?.connection?.user),
+                    ready: Boolean(tracker?.commandReady),
+                    syncing: Boolean(tracker?.syncing && !tracker?.commandReady),
                 });
             } catch (_) {
                 touchBotHeartbeat(BOT_NUMBER);

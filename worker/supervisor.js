@@ -46,7 +46,7 @@ function getRotationIntervalMs() {
     const hours = Number(process.env.BOT_ROTATION_HOURS);
     if (Number.isFinite(hours) && hours > 0) return hours * 60 * 60 * 1000;
     if (process.env.BOT_TURBO_ROTATION === '1') {
-        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 6) * 1000;
+        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 20) * 1000;
     }
     return _numEnv('BOT_ROTATION_INTERVAL_SEC', 45) * 1000;
 }
@@ -58,9 +58,13 @@ function getRotationSwapMs() {
 
 function getRotationsPerSync() {
     if (process.env.BOT_TURBO_ROTATION === '1') {
-        return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 4));
+        return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 2));
     }
     return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 1));
+}
+
+function getMinRotationUptimeMs() {
+    return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', process.env.BOT_TURBO_ROTATION === '1' ? 120_000 : 180_000));
 }
 
 const THREAD_RESTART_DELAY  = 5_000;
@@ -144,7 +148,8 @@ function _isThreadHealthy(clean, entry) {
     try {
         const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
         const hb = readBotHeartbeat(clean);
-        if (hb?.wsState === 1) return true;
+        if (hb?.wsState === 1 && hb?.ready !== false) return true;
+        if (hb?.wsState === 1 && Date.now() - (entry.spawnedAt || 0) < getMinRotationUptimeMs()) return true;
         if (isBotHeartbeatFresh(clean, 15 * 60 * 1000)) return true;
     } catch (_) {}
 
@@ -154,10 +159,17 @@ function _isThreadHealthy(clean, entry) {
 function _getLruRunningBot(botSet) {
     let lruNum = null;
     let lruTime = Infinity;
+    const minUptime = getMinRotationUptimeMs();
     for (const [clean, entry] of threads) {
         if (!botSet.has(clean)) continue;
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
+        if (Date.now() - (entry.spawnedAt || 0) < minUptime) continue;
+        try {
+            const { readBotHeartbeat } = require('../allfunc/bot-heartbeat');
+            const hb = readBotHeartbeat(clean);
+            if (hb?.ready === false || hb?.syncing === true) continue;
+        } catch (_) {}
         const t = lastActivity.get(clean) || (entry.spawnedAt || 0);
         if (t < lruTime) { lruTime = t; lruNum = clean; }
     }
