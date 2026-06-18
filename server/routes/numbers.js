@@ -88,8 +88,9 @@ router.get('/', protect, async (req, res) => {
     const { isBotHeartbeatFresh } = require('../../allfunc/bot-heartbeat');
 
     // Cross-dyno online check: web dyno can't read worker's heartbeat files.
-    // Read BotSession.lastActive from MongoDB (shared DB) as fallback.
+    // Read BotSession.lastActive / connectedAt from MongoDB (shared DB) as fallback.
     const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000;
+    const BOT_CONNECTED_GRACE_MS = 10 * 60 * 1000;
     let dbSessionMap = {};
     try {
       const mongoose = require('mongoose');
@@ -97,13 +98,20 @@ router.get('/', protect, async (req, res) => {
         const BotSession = require('../models/BotSession');
         const cleans = numbers.map(n => String(n.number || '').replace(/[^0-9]/g, '')).filter(Boolean);
         const sessions = await BotSession.find({ number: { $in: cleans } })
-          .select('number status lastActive').lean();
+          .select('number status lastActive connectedAt').lean();
         sessions.forEach(s => {
-          // online = session active AND heartbeat fresh in MongoDB
-          const online = s.status === 'active' &&
-            s.lastActive &&
+          const lastActiveOk = s.lastActive &&
             (Date.now() - new Date(s.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS);
-          dbSessionMap[s.number] = { online, status: s.status };
+          const connectedAtOk = s.connectedAt &&
+            (Date.now() - new Date(s.connectedAt).getTime() <= BOT_CONNECTED_GRACE_MS);
+          const online = s.status === 'active' &&
+            (lastActiveOk || connectedAtOk);
+          dbSessionMap[s.number] = {
+            online,
+            status: s.status,
+            connectedAt: s.connectedAt || null,
+            lastActive: s.lastActive || null,
+          };
         });
       }
     } catch (_) {}
@@ -111,8 +119,12 @@ router.get('/', protect, async (req, res) => {
     const enriched = numbers.map((n) => {
       const clean = String(n.number || '').replace(/[^0-9]/g, '');
       const sess = dbSessionMap[clean];
-      // botOnline: check local heartbeat file (same dyno) OR MongoDB BotSession (cross-dyno)
-      const botOnline = clean && (isBotHeartbeatFresh(clean) || sess?.online === true);
+      // botOnline: local heartbeat, MongoDB session freshness, or a live connected flag.
+      const botOnline = clean && (
+        isBotHeartbeatFresh(clean) ||
+        sess?.online === true ||
+        (sess?.status === 'active' && sess?.connectedAt && (Date.now() - new Date(sess.connectedAt).getTime() <= BOT_CONNECTED_GRACE_MS))
+      );
       // Keep the badge tied to the user's linked record. Short WhatsApp
       // reconnects should not make a successfully paired number look inactive;
       // botOnline carries the live connection signal separately.
