@@ -46,7 +46,7 @@ function getRotationIntervalMs() {
     const hours = Number(process.env.BOT_ROTATION_HOURS);
     if (Number.isFinite(hours) && hours > 0) return hours * 60 * 60 * 1000;
     if (process.env.BOT_TURBO_ROTATION === '1') {
-        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 20) * 1000;
+        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 30) * 1000;
     }
     return _numEnv('BOT_ROTATION_INTERVAL_SEC', 45) * 1000;
 }
@@ -64,7 +64,15 @@ function getRotationsPerSync() {
 }
 
 function getMinRotationUptimeMs() {
-    return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', process.env.BOT_TURBO_ROTATION === '1' ? 120_000 : 180_000));
+    const fallback = process.env.BOT_TURBO_ROTATION === '1' ? 5 * 60 * 1000 : 30 * 60 * 1000;
+    return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', fallback));
+}
+
+/** Only time-share bots when there are more linked numbers than RAM allows live at once. */
+function _shouldUseRotation(myBots, runningNow) {
+    const maxConcurrent = getMaxConcurrentBots();
+    if (!myBots || myBots.size <= maxConcurrent) return false;
+    return runningNow >= maxConcurrent;
 }
 
 const THREAD_RESTART_DELAY  = 5_000;
@@ -142,15 +150,14 @@ function _isThreadAlive(entry) {
 
 function _isThreadHealthy(clean, entry) {
     if (!entry?.thread) return false;
-    const gracePeriod = 5 * 60 * 1000;
+    const gracePeriod = 10 * 60 * 1000;
     if (Date.now() - (entry.spawnedAt || 0) < gracePeriod) return true;
 
     try {
         const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
         const hb = readBotHeartbeat(clean);
-        if (hb?.wsState === 1 && hb?.ready !== false) return true;
-        if (hb?.wsState === 1 && Date.now() - (entry.spawnedAt || 0) < getMinRotationUptimeMs()) return true;
-        if (isBotHeartbeatFresh(clean, 15 * 60 * 1000)) return true;
+        if (hb?.wsState === 1) return true;
+        if (isBotHeartbeatFresh(clean, 20 * 60 * 1000)) return true;
     } catch (_) {}
 
     return false;
@@ -177,7 +184,9 @@ function _getLruRunningBot(botSet) {
 }
 
 /** Swap one running bot out for the next sleeping bot (LRU rotation). */
-async function _rotateOneBot(myBots, sleepingList) {
+async function _rotateOneBot(myBots, sleepingList, runningNow) {
+    if (!_shouldUseRotation(myBots, runningNow)) return false;
+
     const pending = (sleepingList || []).filter((c) => !threads.has(c));
     if (!pending.length) return false;
 
@@ -185,7 +194,7 @@ async function _rotateOneBot(myBots, sleepingList) {
     const next = pending[0];
     if (!lru || !next || lru === next) return false;
 
-    console.log(chalk.cyan(`[Supervisor] ⚡ Rotate +${lru} → +${next} | ${getMemSummary()}`));
+    console.log(chalk.cyan(`[Supervisor] ⚡ Rotate +${lru} → +${next} | ${getMemSummary(runningNow)}`));
     lastActivity.set(lru, 0);
     killBot(lru, 'SIGTERM');
     await new Promise((r) => setTimeout(r, getRotationSwapMs()));
@@ -377,8 +386,12 @@ async function syncBots() {
         ));
     } else if (linkedSet.size > 0) {
         const maxConcurrent = getMaxConcurrentBots();
+        const turbo = process.env.BOT_TURBO_ROTATION === '1';
+        const rotateNote = linkedSet.size > maxConcurrent
+            ? `turbo LRU ON (${linkedSet.size} linked > ${maxConcurrent} slots)`
+            : `all ${linkedSet.size} bot(s) run 24/7 — turbo idle (no swap needed)`;
         console.log(chalk.cyan(
-            `[Supervisor] Managing ${linkedSet.size} bot(s) | max ${maxConcurrent} concurrent | ${getMemSummary()}`
+            `[Supervisor] Managing ${linkedSet.size} bot(s) | max ${maxConcurrent} concurrent | ${rotateNote} | ${getMemSummary()}`
         ));
     }
 
@@ -441,15 +454,21 @@ async function syncBots() {
     let runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
     const maxConcurrent = getMaxConcurrentBots();
     const rotationsPerSync = getRotationsPerSync();
+    const useRotation = _shouldUseRotation(myBots, runningNow);
     let turboSwaps = 0;
 
-    for (const clean of sleepingBots) {
+    if (!useRotation && myBots.size <= maxConcurrent) {
+        for (const clean of sleepingBots) {
+            const ready = await _ensureBotSessionReady(clean);
+            if (ready) spawnBot(clean);
+        }
+    } else for (const clean of sleepingBots) {
         if (runningNow >= maxConcurrent) {
-            // At cap: keep rotating instead of stopping — wake queued bots fast.
             if (turboSwaps < rotationsPerSync) {
-                const ok = await _rotateOneBot(myBots, sleepingBots);
+                const ok = await _rotateOneBot(myBots, sleepingBots, runningNow);
                 if (ok) {
                     turboSwaps += 1;
+                    runningNow = Math.max(0, runningNow - 1);
                     continue;
                 }
             }
@@ -465,10 +484,11 @@ async function syncBots() {
         if (!memOk) {
             if (runningNow === 0 && threads.size === 0) {
                 console.log(chalk.yellow(`[Supervisor] ⚠️ RAM pressure — no threads running, starting first bot anyway`));
-            } else if (turboSwaps < rotationsPerSync) {
-                const ok = await _rotateOneBot(myBots, sleepingBots);
+            } else if (runningNow >= maxConcurrent && turboSwaps < rotationsPerSync) {
+                const ok = await _rotateOneBot(myBots, sleepingBots, runningNow);
                 if (ok) {
                     turboSwaps += 1;
+                    runningNow = Math.max(0, runningNow - 1);
                     continue;
                 }
                 console.log(chalk.yellow(
@@ -491,9 +511,15 @@ async function syncBots() {
         console.log(chalk.green(`[Supervisor] ⚡ Turbo: ${turboSwaps} bot(s) rotated this sync`));
     }
 
-    // 6. Scheduled LRU rotation — runs every few seconds in turbo mode (not hours)
+    // 6. Scheduled LRU rotation — ONLY when at concurrent cap (never kill live bots early)
     const rotationInterval = getRotationIntervalMs();
-    if (rotationInterval > 0 && Date.now() - _lastRotationAt >= rotationInterval) {
+    runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
+    if (
+        useRotation &&
+        rotationInterval > 0 &&
+        Date.now() - _lastRotationAt >= rotationInterval &&
+        runningNow >= maxConcurrent
+    ) {
         _lastRotationAt = Date.now();
         let scheduledSwaps = 0;
         while (scheduledSwaps < rotationsPerSync) {
@@ -501,7 +527,8 @@ async function syncBots() {
                 .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
                 .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
             if (!stillSleeping.length) break;
-            const ok = await _rotateOneBot(myBots, stillSleeping);
+            runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
+            const ok = await _rotateOneBot(myBots, stillSleeping, runningNow);
             if (!ok) break;
             scheduledSwaps += 1;
         }

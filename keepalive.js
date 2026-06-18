@@ -322,7 +322,7 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-/** Bot memory restart interval (hours). 0 = off. Default 3h. */
+/** Bot memory restart interval (hours). 0 = off. Default 3h — clears per-bot heap leaks. */
 function getBotRestartHours() {
     const bot = Number(process.env.BOT_RESTART_HOURS);
     if (Number.isFinite(bot)) return bot;
@@ -409,11 +409,12 @@ function startBotChildKeepAlive() {
     if (_started) return;
     _started = true;
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
-    setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 20_000);
-    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 3 * 60 * 1000);
+    // First sweep after 2 min — avoid reconnecting during initial handshake
+    setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 2 * 60 * 1000);
+    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 5 * 60 * 1000);
     setInterval(() => proactiveSocketLightWake().catch(() => {}), 90 * 1000);
-    setInterval(() => proactiveAntideleteWake().catch(() => {}), 15 * 60 * 1000);
-    setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
+    setInterval(() => proactiveAntideleteWake().catch(() => {}), 5 * 60 * 1000);
+    setInterval(() => backupAntideleteSessions().catch(() => {}), 2 * 60 * 1000);
 
     const restartHours = getBotRestartHours();
     if (restartHours > 0) {
@@ -422,7 +423,7 @@ function startBotChildKeepAlive() {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }
 
-    console.log(`[KeepAlive] Bot-child keepalive started (socket sweep 3min, memory restart every ${restartHours || 'off'}h)`);
+    console.log(`[KeepAlive] Bot-child keepalive started (socket sweep 5min, antidelete backup 2min, memory restart ${restartHours || 'off'})`);
 }
 
 function startKeepAlive() {
