@@ -15,7 +15,7 @@ const {
 } = require("@whiskeysockets/baileys");
 
 // Persist session state to PostgreSQL so restarts can reload sessions
-const { updateSession, removeLinkedNumber, saveCredsToDb, hasFirstConnected, markFirstConnected } = require('./session-db');
+const { updateSession, removeLinkedNumber, saveCredsToDb, hasFirstConnected, markFirstConnected, ensureSessionRestored } = require('./session-db');
 const { clearPairingRequest, setPairingCode, setLinkedNumberStatus } = require('./server/db-service');
 const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
 require('./allfunc/antidelete-helpers');
@@ -316,6 +316,10 @@ async function startpairing(nexusDevNumber) {
     // Ensure session directory exists
     const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
     ensureDirectoryExists(sessionPath);
+
+    // If Heroku/restart wiped local files, hydrate the exact auth folder first.
+    // This keeps saved numbers on the reconnect path instead of falling back to a fresh pairing code.
+    await ensureSessionRestored(nexusDevNumber).catch(() => {});
     
     const {
         state,

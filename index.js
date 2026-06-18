@@ -12,7 +12,7 @@ const { startKeepAlive } = require('./keepalive');
 const AUTH_FILE = './auth.json';
 const PAIRING_DIR = './nexstore/pairing/';
 const startpairing = require('./pair');
-const { getActiveLinkedNumbers, restoreCredsFromDb } = require('./session-db');
+const { getActiveLinkedNumbers, ensureSessionRestored } = require('./session-db');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -64,12 +64,12 @@ const autoLoadPairs = async () => {
     // Now: all numbers connect in parallel batches — everyone online in seconds
     const connectOne = async (userNumber, idx) => {
         const cleanNum   = userNumber.replace(/[^0-9]/g, '');
-        const sessionPath = path.join(PAIRING_DIR, userNumber);
+        const sessionPath = path.join(PAIRING_DIR, cleanNum);
         try {
             const credsPath = path.join(sessionPath, 'creds.json');
             if (!fs.existsSync(credsPath)) {
                 console.log(chalk.blue(`🔁 Restoring session from DB for ${userNumber}...`));
-                const restored = await restoreCredsFromDb(cleanNum, sessionPath);
+                const restored = await ensureSessionRestored(cleanNum);
                 if (!restored) {
                     console.log(chalk.yellow(`⚠️  No DB backup for ${userNumber} — skipping (needs re-pair).`));
                     return;
