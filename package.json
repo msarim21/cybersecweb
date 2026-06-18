@@ -109,6 +109,6 @@
   "devDependencies": {
     "nodemon": "^3.1.7"
   },
-  "repository": { "type": "git", "url": "https://t.me/namelesztech" },
-  "bugs": { "url": "https://t.me/namelesztech" }
+  "repository": { "type": "git", "url": "https://github.com/msarim21/cybersecweb" },
+  "bugs": { "url": "https://github.com/msarim21/cybersecweb/issues" }
 }

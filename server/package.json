@@ -23,7 +23,7 @@
   "author": "Nexus",
   "license": "MIT",
   "engines": {
-    "node": "22.x",
+    "node": "20.x",
     "npm": ">=10.x"
   },
   "dependencies": {
