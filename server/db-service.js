@@ -1022,10 +1022,21 @@ async function clearStalePairingRequests() {
 
 async function deleteSessionCreds(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
-  if (!clean || !isMongoMode()) return;
+  if (!clean) return;
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      await BotSession.findOneAndUpdate({ number: clean }, { $unset: { sessionData: 1 } });
+    } catch (_) {}
+    return;
+  }
+  // PostgreSQL: clear persisted session blob so the next pairing starts clean
+  // and orphan/expiry cleanup can't be undone by a restored session.
   try {
-    const { BotSession } = M();
-    await BotSession.findOneAndUpdate({ number: clean }, { $unset: { sessionData: 1 } });
+    await pg().query(
+      `UPDATE bot_sessions SET session_data = NULL WHERE number = $1`,
+      [clean]
+    );
   } catch (_) {}
 }
 
@@ -1087,9 +1098,13 @@ function isPlanExpired(user) {
   if (!user) return false;
   // Admins never expire
   if (user.role === 'admin') return false;
-  // Pro / enterprise plans don't expire via trial timer
   const plan = user.subscription_plan || user.subscriptionPlan || 'free';
-  if (plan === 'pro' || plan === 'enterprise') return false;
+  // Paid plans expire via plan_expires_at if set by admin
+  if (plan === 'pro' || plan === 'enterprise') {
+    const planExp = user.plan_expires_at || user.planExpiresAt || null;
+    if (!planExp) return false;
+    return new Date(planExp) < new Date();
+  }
   // Free trial: check trial_expires_at
   const expiresAt = user.trial_expires_at || user.trialExpiresAt || null;
   if (!expiresAt) return false;
