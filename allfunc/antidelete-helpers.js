@@ -609,6 +609,7 @@ async function _adEnsureMongoReady() {
 }
 
 async function _adFlushMongoSavesNow() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) {
         clearTimeout(_adMongoFlushTimer);
         _adMongoFlushTimer = null;
@@ -652,6 +653,7 @@ function _adScheduleMongoFlush() {
 }
 
 async function _adMongoGet(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return null;
     try {
         if (!_adMongoEnabled()) return null;
         if (!(await _adEnsureMongoReady())) return null;
