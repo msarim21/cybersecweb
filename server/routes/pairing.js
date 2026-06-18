@@ -8,6 +8,7 @@ const fsSync = require('fs');
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const PAIRING_JSON = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
+const PAIRING_ACTIVE_MAX_AGE_MS = 5 * 60 * 1000;
 
 function ensureDir(p) {
   if (!fsSync.existsSync(p)) fsSync.mkdirSync(p, { recursive: true });
@@ -44,6 +45,36 @@ async function waitForDbPairingCode(clean, deadlineMs = 40_000) {
   return null;
 }
 
+async function isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingState) {
+  const activeSessions = await getActiveBotSessions().catch(() => []);
+  if (!activeSessions.map((n) => String(n).replace(/[^0-9]/g, '')).includes(clean)) {
+    return false;
+  }
+
+  const state = await getPairingState(clean).catch(() => null);
+  if (state?.status === 'code_ready' || state?.status === 'requested' || state?.status === 'in_progress') {
+    return false;
+  }
+
+  try {
+    const { getPool } = require('../db');
+    const pool = getPool();
+    if (!pool) return true;
+    const { rows } = await pool.query(
+      "SELECT status, last_active, connected_at FROM bot_sessions WHERE number=$1 LIMIT 1",
+      [clean]
+    );
+    const row = rows[0];
+    if (!row || row.status !== 'active') return false;
+    const lastActive = row.last_active ? Date.parse(row.last_active) : 0;
+    const connectedAt = row.connected_at ? Date.parse(row.connected_at) : 0;
+    const fresh = Math.max(lastActive, connectedAt);
+    return fresh > 0 && (Date.now() - fresh) <= PAIRING_ACTIVE_MAX_AGE_MS;
+  } catch (_) {
+    return true;
+  }
+}
+
 // POST /api/pairing/request
 router.post('/request', protect, async (req, res) => {
   const { phoneNumber } = req.body;
@@ -64,8 +95,8 @@ router.post('/request', protect, async (req, res) => {
     getActiveBotSessions,
   } = require('../db-service');
 
-  const activeSessions = await getActiveBotSessions().catch(() => []);
-  if (activeSessions.map((n) => String(n).replace(/[^0-9]/g, '')).includes(clean)) {
+  const alreadyLive = await isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingState);
+  if (alreadyLive) {
     return res.status(409).json({ error: 'This number is already connected. Re-pair only after disconnecting it.' });
   }
 
