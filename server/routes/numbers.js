@@ -85,46 +85,29 @@ function isTrialExpired(user) {
 router.get('/', protect, async (req, res) => {
   try {
     const numbers = await getNumbersByOwner(req.user.id, req.query.search || null);
-    const { isBotHeartbeatFresh } = require('../../allfunc/bot-heartbeat');
+    const { isBotHeartbeatFresh, isBotCommandReady } = require('../../allfunc/bot-heartbeat');
+    const { getBotSessionsByNumbers } = require('../db-service');
 
-    // Cross-dyno online check: web dyno can't read worker's heartbeat files.
-    // Read BotSession.lastActive / connectedAt from MongoDB (shared DB) as fallback.
     const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000;
     const BOT_STARTING_GRACE_MS = 10 * 60 * 1000;
-    let dbSessionMap = {};
-    try {
-      const mongoose = require('mongoose');
-      if (mongoose.connection.readyState === 1) {
-        const BotSession = require('../models/BotSession');
-        const cleans = numbers.map(n => String(n.number || '').replace(/[^0-9]/g, '')).filter(Boolean);
-        const sessions = await BotSession.find({ number: { $in: cleans } })
-          .select('number status lastActive connectedAt').lean();
-        sessions.forEach(s => {
-          const lastActiveOk = s.lastActive &&
-            (Date.now() - new Date(s.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS);
-          const connectedAtOk = s.connectedAt &&
-            (Date.now() - new Date(s.connectedAt).getTime() <= BOT_STARTING_GRACE_MS);
-          const phase = s.status === 'active'
-            ? (lastActiveOk ? 'online' : (connectedAtOk ? 'starting' : 'offline'))
-            : 'offline';
-          const online = phase === 'online';
-          dbSessionMap[s.number] = {
-            online,
-            phase,
-            status: s.status,
-            connectedAt: s.connectedAt || null,
-            lastActive: s.lastActive || null,
-          };
-        });
-      }
-    } catch (_) {}
+    const cleans = numbers.map(n => String(n.number || '').replace(/[^0-9]/g, '')).filter(Boolean);
+    const dbSessionMap = await getBotSessionsByNumbers(cleans).catch(() => ({}));
 
     const enriched = numbers.map((n) => {
       const clean = String(n.number || '').replace(/[^0-9]/g, '');
       const sess = dbSessionMap[clean];
       const botPhase = (() => {
         if (!clean) return 'offline';
-        if (isBotHeartbeatFresh(clean) || sess?.online === true) return 'online';
+        const hbFresh = isBotHeartbeatFresh(clean);
+        const hbReady = isBotCommandReady(clean);
+        const dbReady = sess?.commandReady === true;
+        const dbSyncing = sess?.status === 'active' && sess?.commandReady === false;
+
+        if ((hbFresh && hbReady) || (sess?.status === 'active' && dbReady && sess?.lastActive &&
+            (Date.now() - new Date(sess.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS))) {
+          return 'online';
+        }
+        if (dbSyncing || (hbFresh && !hbReady && sess?.status === 'active')) return 'syncing';
         if (sess?.status === 'active') {
           const connectedAtFresh = sess?.connectedAt &&
             (Date.now() - new Date(sess.connectedAt).getTime() <= BOT_STARTING_GRACE_MS);

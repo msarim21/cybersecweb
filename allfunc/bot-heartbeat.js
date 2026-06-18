@@ -9,6 +9,7 @@ const DB_UPSERT_MIN_MS = 3 * 60 * 1000;
 
 const _lastFileWrite = new Map();
 const _lastDbUpsert = new Map();
+const _lastReadyState = new Map();
 
 function _heartbeatPath(botNum) {
     const clean = cleanBotNum(botNum);
@@ -37,14 +38,21 @@ function touchBotHeartbeat(botNum, extra = {}) {
         } catch (_) {}
     }
 
+    const readyChanged = extra.ready !== undefined && extra.ready !== _lastReadyState.get(clean);
+    const forceDb = readyChanged || extra.event === 'ready' || extra.event === 'open' || extra.event === 'message';
     const lastDb = _lastDbUpsert.get(clean) || 0;
-    if (now - lastDb < DB_UPSERT_MIN_MS) return;
+    if (!forceDb && now - lastDb < DB_UPSERT_MIN_MS) return;
     _lastDbUpsert.set(clean, now);
+    if (extra.ready !== undefined) _lastReadyState.set(clean, extra.ready);
 
     setImmediate(async () => {
         try {
             const { upsertBotSession } = require('../server/db-service');
-            await upsertBotSession(clean, 'active');
+            const meta = {};
+            if (extra.ready !== undefined) meta.commandReady = extra.ready;
+            if (extra.wsState !== undefined) meta.wsState = extra.wsState;
+            const status = extra.ready === false ? 'active' : 'active';
+            await upsertBotSession(clean, status, meta);
         } catch (_) {}
     });
 }
@@ -69,10 +77,19 @@ function isBotHeartbeatFresh(botNum, maxAgeMs = DEFAULT_MAX_AGE_MS) {
     return getBotHeartbeatAgeMs(botNum) <= maxAgeMs;
 }
 
+function isBotCommandReady(botNum) {
+    const hb = readBotHeartbeat(botNum);
+    if (!hb) return false;
+    if (hb.ready === true) return true;
+    if (hb.ready === false) return false;
+    return hb.event === 'ready' || hb.event === 'message';
+}
+
 module.exports = {
     touchBotHeartbeat,
     readBotHeartbeat,
     getBotHeartbeatAgeMs,
     isBotHeartbeatFresh,
+    isBotCommandReady,
     DEFAULT_MAX_AGE_MS,
 };

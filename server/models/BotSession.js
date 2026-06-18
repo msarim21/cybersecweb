@@ -16,6 +16,9 @@ const botSessionSchema = new mongoose.Schema({
   firstConnectedAt: { type: Date },
   lastActive:       { type: Date, default: Date.now },
   createdAt:        { type: Date, default: Date.now },
+  /** false while WhatsApp is still syncing — dashboard should show SYNCING not ONLINE */
+  commandReady:     { type: Boolean, default: false },
+  wsState:          { type: Number, default: -1 },
   /** public = everyone; self = owner + linked number only — set only via .public / .private */
   botMode:          { type: String, enum: ['public', 'self'] },
   botModeLocked:    { type: Boolean, default: false },

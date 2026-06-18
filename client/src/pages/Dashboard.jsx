@@ -57,6 +57,16 @@ const getBotPresence = (n) => {
     };
   }
 
+  if (n?.botPhase === 'syncing') {
+    return {
+      label: 'SYNCING',
+      dot: '↻',
+      textClass: 'text-[#00f5ff]',
+      bg: 'rgba(0,245,255,0.08)',
+      border: 'rgba(0,245,255,0.28)',
+    };
+  }
+
   if (n?.botOnline) {
     return {
       label: 'ONLINE',

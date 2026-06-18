@@ -640,39 +640,56 @@ async function getAllNumbers() {
 // BOT SESSION METHODS
 // ════════════════════════════════════════════════════════════════════════════
 
-async function upsertBotSession(number, status) {
+async function upsertBotSession(number, status, meta = {}) {
   const clean = number.replace(/[^0-9]/g, '');
   if (!clean) return;
+  const now = new Date();
+  const setFields = { status, lastActive: now };
+  if (meta.commandReady !== undefined) setFields.commandReady = meta.commandReady;
+  if (meta.wsState !== undefined) setFields.wsState = meta.wsState;
+  if (status === 'active' && meta.commandReady === true) {
+    setFields.connectedAt = now;
+  } else if (status === 'active' && meta.commandReady === undefined) {
+    setFields.connectedAt = now;
+  }
   if (isMongoMode()) {
     const { BotSession, LinkedNumber } = M();
     await BotSession.findOneAndUpdate(
       { number: clean },
-      { status, lastActive: new Date(), ...(status === 'active' ? { connectedAt: new Date() } : {}) },
+      setFields,
       { upsert: true, new: true }
     );
-    // ✅ Only sync 'active' to linked_numbers — never 'inactive'.
-    // linked_numbers represents permanently enrolled numbers.
-    // AutoLoad uses linked_numbers to find bots to restart after dyno boot.
-    // Setting it to 'inactive' on disconnect would cause AutoLoad to find 0 bots → pairing loop.
     if (status === 'active') {
       try {
         await LinkedNumber.findOneAndUpdate(
           { number: { $regex: `^${clean}` } },
-          { $set: { status: 'active', lastActive: new Date() } }
+          { $set: { status: 'active', lastActive: now } }
         );
       } catch (_) {}
     }
     return;
   }
   await pg().query(
-    `INSERT INTO bot_sessions (number, status, connected_at, last_active)
-     VALUES ($1, $2, $3, NOW())
+    `INSERT INTO bot_sessions (number, status, connected_at, last_active, command_ready, ws_state)
+     VALUES ($1, $2, $3, NOW(), $4, $5)
      ON CONFLICT (number) DO UPDATE
-       SET status = $2, last_active = NOW(),
-           connected_at = CASE WHEN $2='active' THEN NOW() ELSE bot_sessions.connected_at END`,
-    [clean, status, status === 'active' ? new Date() : null]
+       SET status = $2,
+           last_active = NOW(),
+           command_ready = COALESCE($4, bot_sessions.command_ready),
+           ws_state = COALESCE($5, bot_sessions.ws_state),
+           connected_at = CASE
+             WHEN $2='active' AND $4 IS TRUE THEN NOW()
+             WHEN $2='active' AND $4 IS NULL THEN NOW()
+             ELSE bot_sessions.connected_at
+           END`,
+    [
+      clean,
+      status,
+      meta.commandReady === true || (status === 'active' && meta.commandReady === undefined) ? now : null,
+      meta.commandReady !== undefined ? meta.commandReady : null,
+      meta.wsState !== undefined ? meta.wsState : null,
+    ]
   );
-  // Only sync 'active' to linked_numbers for PostgreSQL too
   if (status === 'active') {
     try {
       await pg().query(
@@ -682,6 +699,30 @@ async function upsertBotSession(number, status) {
       );
     } catch (_) {}
   }
+}
+
+async function getBotSessionsByNumbers(numbers) {
+  const cleans = [...new Set((numbers || []).map((n) => String(n).replace(/[^0-9]/g, '')).filter(Boolean))];
+  if (!cleans.length) return {};
+  const map = {};
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const docs = await BotSession.find({ number: { $in: cleans } })
+      .select('number status lastActive connectedAt commandReady wsState')
+      .lean();
+    for (const s of docs) {
+      map[s.number] = s;
+    }
+    return map;
+  }
+  const { rows } = await pg().query(
+    `SELECT number, status, last_active AS "lastActive", connected_at AS "connectedAt",
+            command_ready AS "commandReady", ws_state AS "wsState"
+     FROM bot_sessions WHERE number = ANY($1::text[])`,
+    [cleans]
+  );
+  for (const r of rows) map[r.number] = r;
+  return map;
 }
 
 async function getActiveBotSessions() {
@@ -1345,7 +1386,7 @@ async function getBotPairingStatus(clean) {
     try {
       const { BotSession } = M();
       const doc = await BotSession.findOne({ number: digits })
-        .select('status lastActive connectedAt pairingStatus')
+        .select('status lastActive connectedAt pairingStatus commandReady')
         .lean();
       if (doc) {
         const ps = doc.pairingStatus || doc.pairing_status;
@@ -1354,7 +1395,11 @@ async function getBotPairingStatus(clean) {
         }
         if (doc.status === 'active') {
           const last = doc.lastActive ? new Date(doc.lastActive).getTime() : 0;
-          if (last > 0 && (Date.now() - last) <= FRESH_MS) {
+          const fresh = last > 0 && (Date.now() - last) <= FRESH_MS;
+          if (fresh && doc.commandReady === false) {
+            return { connected: false, pairing: false, syncing: true, status: 'syncing' };
+          }
+          if (fresh && doc.commandReady !== false) {
             return {
               connected: true,
               ts: doc.connectedAt || doc.lastActive,
@@ -1382,7 +1427,11 @@ async function getBotPairingStatus(clean) {
         }
         if (row.status === 'active') {
           const last = row.last_active ? Date.parse(row.last_active) : 0;
-          if (last > 0 && (Date.now() - last) <= FRESH_MS) {
+          const fresh = last > 0 && (Date.now() - last) <= FRESH_MS;
+          if (fresh && row.command_ready === false) {
+            return { connected: false, pairing: false, syncing: true, status: 'syncing' };
+          }
+          if (fresh && row.command_ready !== false) {
             return { connected: true, ts: row.connected_at || row.last_active };
           }
         }
@@ -1411,7 +1460,7 @@ module.exports = {
   setLinkedNumberStatus,
   savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers,
   getBotMode, setBotMode,
-  upsertBotSession, getActiveBotSessions,
+  upsertBotSession, getActiveBotSessions, getBotSessionsByNumbers,
   getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,

@@ -22,11 +22,11 @@ async function _init() {
 /**
  * Upsert a session row.
  */
-async function updateSession(number, status) {
+async function updateSession(number, status, meta = {}) {
   try {
     await _init();
     const { upsertBotSession } = require('./server/db-service');
-    await upsertBotSession(number, status);
+    await upsertBotSession(number, status, meta);
     const clean = String(number).replace(/[^0-9]/g, '');
 
     // ── AUTO-SAVE: When bot connects, save to linked_numbers immediately ────

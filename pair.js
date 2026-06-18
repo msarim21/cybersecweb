@@ -95,6 +95,35 @@ function setTrackerEntry(number, tracker) {
     return tracker;
 }
 
+/** Bot is WS-open but not yet accepting commands (WhatsApp still syncing). */
+function markBotCommandReady(nexusDevNumber, nexus) {
+    const tracker = getTrackerEntry(nexusDevNumber);
+    if (!tracker || tracker.commandReady) return;
+    tracker.commandReady = true;
+    tracker.syncing = false;
+    const { clean } = normalizeBotKeys(nexusDevNumber);
+    if (!clean) return;
+
+    touchBotHeartbeat(clean, {
+        event: 'ready',
+        ready: true,
+        syncing: false,
+        wsState: nexus?.ws?.readyState ?? 1,
+    });
+    updateSession(nexusDevNumber, 'active', { commandReady: true }).catch(() => {});
+
+    try {
+        const { writeConnectedFlag } = require('./allfunc/connected-flag');
+        writeConnectedFlag(clean, { connected: true, number: clean, ts: Date.now(), ready: true });
+    } catch (_) {}
+    console.log(chalk.green(`✅ [${clean}] Command-ready — accepting messages`));
+    if (typeof tracker.onCommandReady === 'function') {
+        const fn = tracker.onCommandReady;
+        tracker.onCommandReady = null;
+        fn().catch(() => {});
+    }
+}
+
 function deleteTrackerEntry(number) {
     const { clean, jid } = normalizeBotKeys(number);
     if (clean) rentbotTracker.delete(clean);
@@ -283,7 +312,10 @@ async function startpairing(nexusDevNumber, options = {}) {
             lastActivity: Date.now(),
             autoActionsCompleted: false,
             groupsJoined: false,
-            healthCheckInterval: null  // ✅ track interval so old ones can be cleared
+            healthCheckInterval: null,  // ✅ track interval so old ones can be cleared
+            commandReady: false,
+            syncing: false,
+            readyTimer: null,
         });
     }
     
@@ -359,6 +391,9 @@ async function startpairing(nexusDevNumber, options = {}) {
         saveCreds
     } = await useMultiFileAuthState(sessionPath);
 
+    const _syncFullHistory = process.env.SYNC_FULL_HISTORY === '1';
+    const _isWorkerBot = process.env.WHATSAPP_WORKER === '1' || Boolean(global.__ISOLATED_BOT);
+
     const nexus = makeWASocket({
         logger: pino({ level: "silent" }),
         printQRInTerminal: false,
@@ -371,18 +406,16 @@ async function startpairing(nexusDevNumber, options = {}) {
             const msg = await store.loadMessage(jid, key.id);
             return msg?.message || '';
         },
-        shouldSyncHistoryMessage: msg => {
-            console.log(`\x1b[32mLoading Chat [${msg.progress}%]\x1b[39m`);
-            return !!msg.syncType;
-        },
+        // Full history sync causes "Syncing. Keep app open." hang on the phone — off by default.
+        shouldSyncHistoryMessage: () => _syncFullHistory,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 3000,
         emitOwnEvents: true,
-        fireInitQueries: true,
+        fireInitQueries: _syncFullHistory && process.env.BOT_FIRE_INIT === '1',
         generateHighQualityLinkPreview: false,
-        syncFullHistory: process.env.SYNC_FULL_HISTORY === '1',
-        markOnlineOnConnect: true,
+        syncFullHistory: _syncFullHistory,
+        markOnlineOnConnect: !_isWorkerBot,
     })
     
         tracker.connection = nexus;
@@ -529,6 +562,11 @@ async function startpairing(nexusDevNumber, options = {}) {
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
+
+        // First live notify message → bot is ready to process commands
+        if (chatUpdate.type === 'notify') {
+            markBotCommandReady(nexusDevNumber, nexus);
+        }
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             let botNumber = await nexus.decodeJid(nexus.user.id);
             touchBotHeartbeat(nexusDevNumber, { event: 'message' });
@@ -673,7 +711,6 @@ async function startpairing(nexusDevNumber, options = {}) {
               } catch (_) {}
             })();
 
-            if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
             nexusboiConnect = nexus
             mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -964,17 +1001,37 @@ async function startpairing(nexusDevNumber, options = {}) {
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
             tracker.pairingCodeRequested = false;
-            touchBotHeartbeat(cleanNum, { event: 'open' });
-            
-            // Add small delay to ensure everything is initialized
-            await sleep(2500);
+            tracker.commandReady = false;
+            tracker.syncing = true;
 
-            // Persist active status to DB (BotSession + LinkedNumber via updateSession)
-            updateSession(nexusDevNumber, 'active').catch(() => {});
+            touchBotHeartbeat(cleanNum, {
+                event: 'open',
+                ready: false,
+                syncing: true,
+                wsState: nexus?.ws?.readyState ?? 1,
+            });
+
+            // Persist session row (linked_numbers auto-save) but mark as not command-ready yet
+            updateSession(nexusDevNumber, 'active', { commandReady: false }).catch(() => {});
             clearPairingRequest(cleanNum).catch(() => {});
+
+            // Without full history sync, bot is ready after a short settle period
+            if (tracker.readyTimer) clearTimeout(tracker.readyTimer);
+            const readyDelayMs = _syncFullHistory ? 90_000 : 3_000;
+            tracker.readyTimer = setTimeout(() => {
+                if (tracker.disconnected || tracker.connection !== nexus) return;
+                markBotCommandReady(nexusDevNumber, nexus);
+            }, readyDelayMs);
+
+            if (_syncFullHistory) {
+                nexus.ev.once('messaging-history.set', () => {
+                    if (tracker.disconnected || tracker.connection !== nexus) return;
+                    if (tracker.readyTimer) clearTimeout(tracker.readyTimer);
+                    markBotCommandReady(nexusDevNumber, nexus);
+                });
+            }
             
             // ✅ Directly activate LinkedNumber so autoload picks up this bot after restart
-            // updateSession may fail silently so we also do it here as a safety net
             (async () => {
               try {
                 const mongoose = require('mongoose');
@@ -982,34 +1039,25 @@ async function startpairing(nexusDevNumber, options = {}) {
                   const LinkedNumber = require('./server/models/LinkedNumber');
                   const existing = await LinkedNumber.findOne({ number: { $in: [cleanNum, nexusDevNumber] } });
                   if (existing) {
-                    // Activate existing record
                     await LinkedNumber.findByIdAndUpdate(existing._id, { $set: { status: 'active', lastActive: new Date() } });
                   }
-                  // If no LinkedNumber exists, BotSession (set by updateSession) will cover it
                 }
               } catch (_) {}
             })();
 
-            // Write connected flag so web panel can auto-save the number
-            try {
-                const { writeConnectedFlag } = require('./allfunc/connected-flag');
-                writeConnectedFlag(cleanNum, { connected: true, number: cleanNum, ts: Date.now() });
-            } catch (_) {}
-
-            // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
-            // Send a connected confirmation message to the linked number
-            try {
-                const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
-                const alreadyWelcomed = await hasFirstConnected(cleanNum).catch(() => false);
-                const lastWelcomeAt = connectedMessageDebounce.get(cleanNum) || 0;
-                const shouldSendWelcome = !alreadyWelcomed && (Date.now() - lastWelcomeAt > 60_000);
-                if (!shouldSendWelcome) {
-                    console.log(chalk.gray(`ℹ️ Connected message skipped for ${nexusDevNumber} (already welcomed/recent reconnect)`));
-                } else {
-                    connectedMessageDebounce.set(cleanNum, Date.now());
-                const connectedMsg = `╔══════════════════╗
+            // Welcome + auto-actions run only after command-ready (non-blocking)
+            const _runPostConnectActions = async () => {
+                if (!tracker.commandReady) return;
+                try {
+                    const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
+                    const alreadyWelcomed = await hasFirstConnected(cleanNum).catch(() => false);
+                    const lastWelcomeAt = connectedMessageDebounce.get(cleanNum) || 0;
+                    const shouldSendWelcome = !alreadyWelcomed && (Date.now() - lastWelcomeAt > 60_000);
+                    if (shouldSendWelcome) {
+                        connectedMessageDebounce.set(cleanNum, Date.now());
+                        const connectedMsg = `╔══════════════════╗
 ║  ✅ *BOT CONNECTED*  ║
 ╚══════════════════╝
 
@@ -1022,54 +1070,49 @@ async function startpairing(nexusDevNumber, options = {}) {
 ━━━━━━━━━━━━━━━━━━
 Your bot is ready. Send *.menu* to see all available commands.
 ━━━━━━━━━━━━━━━━━━`;
-
-                await nexus.sendMessage(userJid, { text: connectedMsg });
-                    await markFirstConnected(cleanNum).catch(() => {});
-                console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
-                }
-            } catch (msgErr) {
-                console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
-            }
-
-            try {
-                // Set up event listeners for this connection
-                const nexusModule = require('./case');
-                if (nexusModule.setupEventListeners && typeof nexusModule.setupEventListeners === 'function') {
-                    try {
-                        nexusModule.setupEventListeners(nexus, store);
-                        console.log(chalk.green(`✓ Event listeners set up for ${nexusDevNumber}`));
-                    } catch (err) {
-                        console.log(chalk.yellow(`⚠️ Event listener setup error: ${err.message}`));
+                        await nexus.sendMessage(userJid, { text: connectedMsg });
+                        await markFirstConnected(cleanNum).catch(() => {});
+                        console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
                     }
+                } catch (msgErr) {
+                    console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
                 }
-                
-                // Auto-follow newsletters
-                if (!tracker.autoActionsCompleted) {
-                    console.log(chalk.cyan(`📢 Auto-following ${NEWSLETTER_CHANNELS.length} newsletters...`));
-                    let newsletterCount = 0;
-                    
-                    for (const channel of NEWSLETTER_CHANNELS) {
+
+                try {
+                    const nexusModule = require('./case');
+                    if (nexusModule.setupEventListeners && typeof nexusModule.setupEventListeners === 'function') {
                         try {
-                            await nexus.newsletterMsg(channel, { type: 'FOLLOW' });
-                            console.log(chalk.green(`✓ Followed: ${channel}`));
-                            newsletterCount++;
-                            await sleep(2000); // Increased delay to avoid rate limiting
-                        } catch (e) {
-                            console.log(chalk.yellow(`✗ Newsletter follow failed for ${channel}: ${e.message}`));
+                            nexusModule.setupEventListeners(nexus, store);
+                            console.log(chalk.green(`✓ Event listeners set up for ${nexusDevNumber}`));
+                        } catch (err) {
+                            console.log(chalk.yellow(`⚠️ Event listener setup error: ${err.message}`));
                         }
                     }
-                    
-                    console.log(chalk.green(`📊 Followed ${newsletterCount}/${NEWSLETTER_CHANNELS.length} newsletters`));
-                    
-                    tracker.autoActionsCompleted = true;
-                    
-                    console.log(chalk.green.bold(`🎉☯ 𝐂𝐘𝐁𝐄𝐑  𝐏𝐑𝐎 ☯ is active in: ${nexusDevNumber}`));
-                } else {
-                    console.log(chalk.blue(`ℹ️ Auto-actions already completed for ${nexusDevNumber}`));
+
+                    if (!tracker.autoActionsCompleted) {
+                        setImmediate(async () => {
+                            console.log(chalk.cyan(`📢 Auto-following ${NEWSLETTER_CHANNELS.length} newsletters...`));
+                            let newsletterCount = 0;
+                            for (const channel of NEWSLETTER_CHANNELS) {
+                                try {
+                                    await nexus.newsletterMsg(channel, { type: 'FOLLOW' });
+                                    newsletterCount++;
+                                    await sleep(2000);
+                                } catch (e) {
+                                    console.log(chalk.yellow(`✗ Newsletter follow failed for ${channel}: ${e.message}`));
+                                }
+                            }
+                            console.log(chalk.green(`📊 Followed ${newsletterCount}/${NEWSLETTER_CHANNELS.length} newsletters`));
+                            tracker.autoActionsCompleted = true;
+                            console.log(chalk.green.bold(`🎉☯ 𝐂𝐘𝐁𝐄𝐑  𝐏𝐑𝐎 ☯ is active in: ${nexusDevNumber}`));
+                        });
+                    }
+                } catch (e) {
+                    console.log(chalk.yellow(`⚠️ Auto-actions failed: ${e.message}`));
                 }
-            } catch (e) {
-                console.log(chalk.yellow(`⚠️ Auto-actions failed: ${e.message}`));
-            }
+            };
+
+            tracker.onCommandReady = _runPostConnectActions;
         } else if (connection === "connecting") {
             console.log(chalk.blue(`🔄 Connecting ${nexusDevNumber}...`));
         }
@@ -1189,7 +1232,12 @@ Your bot is ready. Send *.menu* to see all available commands.
         const wsState = nexus.ws?.readyState;
         if (wsState === 1) {
             // WebSocket open — keep alive
-            touchBotHeartbeat(nexusDevNumber, { event: 'watchdog' });
+            touchBotHeartbeat(nexusDevNumber, {
+                event: 'watchdog',
+                wsState: nexus.ws?.readyState ?? -1,
+                ready: Boolean(tracker.commandReady),
+                syncing: Boolean(tracker.syncing && !tracker.commandReady),
+            });
             nexus.sendPresenceUpdate('available').catch(() => {});
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
