@@ -9,7 +9,7 @@
     "dev": "nodemon server/index.js",
     "bot": "node bot.js",
     "build": "npm ci --legacy-peer-deps --no-audit --no-fund --prefix client && npm run build --prefix client",
-    "test": "node --check index.js",
+    "test": "node scripts/check-js-syntax.js && node scripts/test-antidelete.js",
     "test:antidelete": "node scripts/test-antidelete.js",
     "heroku-postbuild": "npm run build && (pip install pytubefix --quiet 2>/dev/null || true)"
   },

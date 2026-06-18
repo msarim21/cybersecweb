@@ -25,8 +25,16 @@ module.exports = {
       watch: false,
       autorestart: true,
       max_memory_restart: "800M",
-      node_args: "--max-old-space-size=700",
-      env: { NODE_ENV: "production", WHATSAPP_WORKER: "1", BOT_ISOLATION: "1", RESTART_COUNT: "0" },
+      node_args: "--max-old-space-size=512",
+      env: {
+        NODE_ENV: "production",
+        WHATSAPP_WORKER: "1",
+        BOT_ISOLATION: "1",
+        DYNO_TOTAL_RAM_MB: "1024",
+        BOT_CHILD_HEAP_MB: "128",
+        MAX_MEM_PERCENT: "80",
+        RESTART_COUNT: "0"
+      },
       error_file: "./logs/error.log",
       out_file: "./logs/output.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss",
