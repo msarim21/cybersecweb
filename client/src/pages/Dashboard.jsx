@@ -1026,8 +1026,7 @@ export default function Dashboard() {
                             </div>
                             <div className="flex flex-col items-end gap-1">
                               <span className={n.status === 'active' ? 'status-active' : 'status-inactive'}>{n.status.toUpperCase()}</span>
-                              {n.status === 'active' && (
-                              {(() => {
+                              {n.status === 'active' && (() => {
                                 const presence = getBotPresence(n);
                                 return (
                                   <span className={`font-mono text-[9px] ${presence.textClass}`}>
@@ -1035,7 +1034,6 @@ export default function Dashboard() {
                                   </span>
                                 );
                               })()}
-                              )}
                             </div>
                           </div>
                         ))
@@ -1094,18 +1092,16 @@ export default function Dashboard() {
                             <div className="font-mono text-[10px] text-gray-600 mt-0.5">Added {new Date(n.createdAt).toLocaleDateString()}</div>
                           </div>
                           <div className="flex items-center gap-2 ml-3 flex-shrink-0">
-                            {n.status === 'active' && (
-                              {(() => {
-                                const presence = getBotPresence(n);
-                                return (
-                                  <span
-                                    className={`font-mono text-[9px] px-2 py-1 rounded-lg ${presence.textClass}`}
-                                    style={{ background: presence.bg, border: `1px solid ${presence.border}` }}>
-                                    {presence.dot} {presence.label}
-                                  </span>
-                                );
-                              })()}
-                            )}
+                            {n.status === 'active' && (() => {
+                              const presence = getBotPresence(n);
+                              return (
+                                <span
+                                  className={`font-mono text-[9px] px-2 py-1 rounded-lg ${presence.textClass}`}
+                                  style={{ background: presence.bg, border: `1px solid ${presence.border}` }}>
+                                  {presence.dot} {presence.label}
+                                </span>
+                              );
+                            })()}
                             <button onClick={() => handleToggle(n._id)} className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
                               {n.status.toUpperCase()}
                             </button>
