@@ -160,7 +160,7 @@ async function runBot() {
     const startpairing = require('../pair');
 
     console.log(chalk.blue(`[BotRunner:${BOT_NUMBER}] Connecting WhatsApp...`));
-    await startpairing(jid);
+    await startpairing(jid, isPairing ? { freshPairing: true } : undefined);
 
     // Minimal keepalive — only this bot's socket
     const { startBotChildKeepAlive } = require('../keepalive');

@@ -227,30 +227,29 @@ async function waitForDbReady(maxWaitMs = 45000) {
 
 // ── Dyno sharding: each worker dyno handles only ITS assigned bots ───────────
 // Block assignment — dyno N gets bots[N*B .. (N+1)*B-1]
-//
-// How to use for 100 bots with 5 bots/dyno:
-//   heroku ps:scale worker=20
-//   heroku config:set TOTAL_WORKER_DYNOS=20 BOTS_PER_DYNO=5
-//   → dyno.1 → bots 0-4 | dyno.2 → bots 5-9 | ... | dyno.20 → bots 95-99
-//
-// Auto-scaler (heroku-scaler.js) sets TOTAL_WORKER_DYNOS automatically.
+// Block assignment — must match worker/supervisor.js (see allfunc/dyno-shard.js)
 function shardJids(jids) {
+    const { shardLinkedNumbers } = require('./allfunc/dyno-shard');
     const { getDynoIndex, getTotalWorkerDynos } = require('./allfunc/whatsapp-host');
     const total = getTotalWorkerDynos();
     const bpd = Math.max(1, parseInt(process.env.BOTS_PER_DYNO, 10) || 5);
-    if (total <= 1) return jids; // single dyno — load everything
-    const myIdx = getDynoIndex();
-    // Block: dyno 0 → bots[0..bpd-1], dyno 1 → bots[bpd..2*bpd-1], etc.
-    const mine = jids.filter((_, i) => Math.floor(i / bpd) === myIdx);
-    console.log(chalk.cyan(
-        `[AutoLoad] 🔀 Dyno ${myIdx + 1}/${total}: managing ${mine.length} / ${jids.length} bots (block ${myIdx * bpd}–${myIdx * bpd + mine.length - 1}, max ${bpd}/dyno)`
-    ));
-    if (mine.length === 0) {
-        console.log(chalk.yellow(
-            `[AutoLoad] ℹ️  No bots assigned to this dyno (${myIdx + 1}/${total}) — it will idle.`
+    const cleanList = jids.map((j) => String(j).replace(/[^0-9]/g, '')).filter(Boolean);
+    const mine = shardLinkedNumbers(cleanList);
+    const mineSet = new Set(mine);
+    const result = jids.filter((j) => mineSet.has(String(j).replace(/[^0-9]/g, '')));
+
+    if (total > 1) {
+        const myIdx = getDynoIndex();
+        console.log(chalk.cyan(
+            `[AutoLoad] 🔀 Dyno ${myIdx + 1}/${total}: managing ${result.length} / ${jids.length} bots (block ${myIdx * bpd}–${myIdx * bpd + result.length - 1}, max ${bpd}/dyno)`
         ));
+        if (result.length === 0) {
+            console.log(chalk.yellow(
+                `[AutoLoad] ℹ️  No bots assigned to this dyno (${myIdx + 1}/${total}) — it will idle.`
+            ));
+        }
     }
-    return mine;
+    return result;
 }
 
 // ── Build user list: DB first, filesystem fallback ──────────────────────────

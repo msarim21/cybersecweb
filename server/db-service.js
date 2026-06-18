@@ -90,9 +90,16 @@ async function findUserByUsername(username, excludeId) {
     if (excludeId) filter._id = { $ne: excludeId };
     return normUser(await User.findOne(filter));
   }
+  if (excludeId != null && excludeId !== '') {
+    const { rows } = await pg().query(
+      'SELECT id FROM users WHERE username = $1 AND id != $2',
+      [username, excludeId]
+    );
+    return rows[0] || null;
+  }
   const { rows } = await pg().query(
-    'SELECT id FROM users WHERE username = $1 AND id != $2',
-    [username, excludeId]
+    'SELECT id FROM users WHERE username = $1 LIMIT 1',
+    [username]
   );
   return rows[0] || null;
 }
@@ -746,16 +753,11 @@ async function deleteNumberByPhone(phone) {
 
 async function getAllActiveLinkedNumbers() {
   if (isMongoMode()) {
-    const { LinkedNumber, BotSession } = M();
-    // Check BOTH collections — BotSession catches bots that connected but have no LinkedNumber record
-    const [linked, sessions] = await Promise.all([
-      LinkedNumber.find({ status: 'active' }).lean(),
-      BotSession.find({ status: 'active' }).lean(),
-    ]);
-    const numSet = new Set();
-    linked.forEach(n => { const c = String(n.number).replace(/[^0-9]/g, ''); if (c) numSet.add(c); });
-    sessions.forEach(s => { const c = String(s.number).replace(/[^0-9]/g, ''); if (c) numSet.add(c); });
-    return [...numSet];
+    const { LinkedNumber } = M();
+    const linked = await LinkedNumber.find({ status: 'active' }).lean();
+    return linked
+      .map(n => String(n.number).replace(/[^0-9]/g, ''))
+      .filter(Boolean);
   }
   const { rows } = await pg().query(
     "SELECT number FROM linked_numbers WHERE status = 'active' ORDER BY created_at DESC"
@@ -943,11 +945,19 @@ async function markPairingInProgress(clean) {
 
 async function resetPairingRequest(clean) {
   try {
-    if (!isMongoMode()) return;
-    const { PairingRequest } = M();
-    await PairingRequest.findOneAndUpdate(
-      { number: clean },
-      { $set: { status: 'requested', updatedAt: new Date() } }
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      await PairingRequest.findOneAndUpdate(
+        { number: clean },
+        { $set: { status: 'requested', code: null, updatedAt: new Date() } }
+      );
+      return;
+    }
+    await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'requested', pairing_code = NULL, last_active = NOW()
+       WHERE number = $1`,
+      [clean]
     );
   } catch (err) {
     console.error('[db-service] resetPairingRequest:', err.message);
@@ -956,11 +966,19 @@ async function resetPairingRequest(clean) {
 
 async function markPairingFailed(clean) {
   try {
-    if (!isMongoMode()) return;
-    const { PairingRequest } = M();
-    await PairingRequest.findOneAndUpdate(
-      { number: clean },
-      { $set: { status: 'failed', updatedAt: new Date() } }
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      await PairingRequest.findOneAndUpdate(
+        { number: clean },
+        { $set: { status: 'failed', updatedAt: new Date() } }
+      );
+      return;
+    }
+    await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'failed', last_active = NOW()
+       WHERE number = $1`,
+      [clean]
     );
   } catch (err) {
     console.error('[db-service] markPairingFailed:', err.message);
@@ -1061,13 +1079,22 @@ async function clearPairingRequest(clean) {
 
 async function clearStalePairingRequests() {
   try {
-    if (!isMongoMode()) return;
-    const { PairingRequest } = M();
     const cutoff = new Date(Date.now() - 15 * 60 * 1000);
-    await PairingRequest.deleteMany({
-      status: { $in: ['requested', 'in_progress', 'failed'] },
-      updatedAt: { $lt: cutoff }
-    });
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      await PairingRequest.deleteMany({
+        status: { $in: ['requested', 'in_progress', 'failed'] },
+        updatedAt: { $lt: cutoff }
+      });
+      return;
+    }
+    await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_code = NULL, pairing_status = NULL
+       WHERE pairing_status IN ('requested', 'in_progress', 'failed', 'code_ready')
+         AND last_active < NOW() - INTERVAL '15 minutes'
+         AND status != 'active'`
+    );
   } catch (err) {
     console.error('[db-service] clearStalePairingRequests:', err.message);
   }

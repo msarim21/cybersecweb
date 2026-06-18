@@ -219,7 +219,16 @@ router.put('/:id/toggle', protect, async (req, res) => {
   try {
     const updated = await toggleNumber(req.params.id, req.user.id);
     if (!updated) return res.status(404).json({ error: 'Number not found.' });
-    if (updated.status === 'inactive' && updated.number) tryStopBot(updated.number);
+    if (updated.number) {
+      const clean = String(updated.number).replace(/[^0-9]/g, '');
+      if (updated.status === 'inactive') {
+        tryStopBot(updated.number);
+        try {
+          const { upsertBotSession } = require('../db-service');
+          await upsertBotSession(clean, 'inactive');
+        } catch (_) {}
+      }
+    }
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });

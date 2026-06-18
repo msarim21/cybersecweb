@@ -23,7 +23,7 @@ const chalk       = require('chalk');
 
 const { cleanBotNum, ensureBotWorkspace }  = require('../allfunc/bot-workspace');
 const { getDynoIndex, getTotalWorkerDynos } = require('../allfunc/whatsapp-host');
-const { canSpawnBot, getMemSummary }        = require('./mem-guard');
+const { canSpawnBot, getMemSummary, getMaxConcurrentBots } = require('./mem-guard');
 const {
     createSharedBuffer,
     wrapSlot,
@@ -31,11 +31,40 @@ const {
     setActiveBotCount,
 } = require('./shared-state');
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-const SYNC_INTERVAL_MS      = 25_000;
+// ── Rotation timing (env-tunable — BOT_TURBO_ROTATION=1 for max speed on 1GB) ─
+function _numEnv(key, fallback) {
+    const v = Number(process.env[key]);
+    return Number.isFinite(v) && v >= 0 ? v : fallback;
+}
+
+function getSyncIntervalMs() {
+    if (process.env.BOT_TURBO_ROTATION === '1') return _numEnv('BOT_SYNC_INTERVAL_MS', 2000);
+    return _numEnv('BOT_SYNC_INTERVAL_MS', 8000);
+}
+
+function getRotationIntervalMs() {
+    const hours = Number(process.env.BOT_ROTATION_HOURS);
+    if (Number.isFinite(hours) && hours > 0) return hours * 60 * 60 * 1000;
+    if (process.env.BOT_TURBO_ROTATION === '1') {
+        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 6) * 1000;
+    }
+    return _numEnv('BOT_ROTATION_INTERVAL_SEC', 45) * 1000;
+}
+
+function getRotationSwapMs() {
+    // Too low → WhatsApp 440; 400–600ms is the safe floor for kill→spawn.
+    return Math.max(400, _numEnv('BOT_ROTATION_SWAP_MS', process.env.BOT_TURBO_ROTATION === '1' ? 500 : 1200));
+}
+
+function getRotationsPerSync() {
+    if (process.env.BOT_TURBO_ROTATION === '1') {
+        return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 4));
+    }
+    return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 1));
+}
+
 const THREAD_RESTART_DELAY  = 5_000;
 const MAX_RESTARTS_PER_HOUR = 12;
-const ROTATION_INTERVAL_MS  = (Number(process.env.BOT_ROTATION_HOURS) ?? 6) * 60 * 60 * 1000;
 const BOT_RUNNER_SCRIPT     = path.join(__dirname, 'bot-runner.js');
 
 // ── Shared memory (zero-copy metrics from all threads) ───────────────────────
@@ -135,6 +164,27 @@ function _getLruRunningBot(botSet) {
     return lruNum;
 }
 
+/** Swap one running bot out for the next sleeping bot (LRU rotation). */
+async function _rotateOneBot(myBots, sleepingList) {
+    const pending = (sleepingList || []).filter((c) => !threads.has(c));
+    if (!pending.length) return false;
+
+    const lru = _getLruRunningBot(myBots);
+    const next = pending[0];
+    if (!lru || !next || lru === next) return false;
+
+    console.log(chalk.cyan(`[Supervisor] ⚡ Rotate +${lru} → +${next} | ${getMemSummary()}`));
+    lastActivity.set(lru, 0);
+    killBot(lru, 'SIGTERM');
+    await new Promise((r) => setTimeout(r, getRotationSwapMs()));
+
+    const ready = await _ensureBotSessionReady(next);
+    if (!ready) return false;
+    spawnBot(next);
+    lastActivity.set(next, Date.now());
+    return true;
+}
+
 async function _ensureBotSessionReady(clean) {
     if (_hasRegisteredCreds(clean)) return true;
     try {
@@ -227,8 +277,7 @@ function _spawnThread(clean, opts = {}) {
         if (code === 0) return;
 
         const hourAgo = Date.now() - 60 * 60 * 1000;
-        const entry2 = threads.get(clean);
-        const recentRestarts = (entry2?.restartTimes || []).filter((t) => t > hourAgo);
+        const recentRestarts = (wasEntry?.restartTimes || []).filter((t) => t > hourAgo);
         if (recentRestarts.length >= MAX_RESTARTS_PER_HOUR) {
             console.log(chalk.red(`[Supervisor] +${clean} thread restart limit — skip`));
             return;
@@ -298,23 +347,27 @@ async function syncBots() {
 
     const { getActiveLinkedNumbers } = require('../session-db');
     const { readStopped }            = require('../allfunc/stopped-bots');
+    const { shardLinkedSet }           = require('../allfunc/dyno-shard');
 
     const linked = (await getActiveLinkedNumbers().catch(() => []))
         .map((n) => cleanBotNum(n)).filter(Boolean);
     const stopped    = new Set(readStopped());
     const linkedSet  = new Set(linked.filter((n) => !stopped.has(n)));
 
-    const dynoIndex  = getDynoIndex();
+    const { getTotalWorkerDynos } = require('../allfunc/whatsapp-host');
     const totalDynos = getTotalWorkerDynos();
-    const sortedLinked = [...linkedSet].sort();
-    const myBots = new Set(sortedLinked.filter((_, i) => i % totalDynos === dynoIndex));
+    const myBots = shardLinkedSet([...linkedSet]);
 
     if (totalDynos > 1) {
+        const dynoIndex = getDynoIndex();
         console.log(chalk.cyan(
             `[Supervisor] 🔀 Dyno ${dynoIndex + 1}/${totalDynos}: managing ${myBots.size}/${linkedSet.size} bots`
         ));
     } else if (linkedSet.size > 0) {
-        console.log(chalk.cyan(`[Supervisor] Managing ${linkedSet.size} bot(s) | ${getMemSummary()}`));
+        const maxConcurrent = getMaxConcurrentBots();
+        console.log(chalk.cyan(
+            `[Supervisor] Managing ${linkedSet.size} bot(s) | max ${maxConcurrent} concurrent | ${getMemSummary()}`
+        ));
     }
 
     const { isConnected } = require('../allfunc/connected-flag');
@@ -373,50 +426,75 @@ async function syncBots() {
         .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
         .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
 
-    const runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
+    let runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
+    const maxConcurrent = getMaxConcurrentBots();
+    const rotationsPerSync = getRotationsPerSync();
+    let turboSwaps = 0;
 
     for (const clean of sleepingBots) {
-        const memOk = canSpawnBot();
+        if (runningNow >= maxConcurrent) {
+            // At cap: keep rotating instead of stopping — wake queued bots fast.
+            if (turboSwaps < rotationsPerSync) {
+                const ok = await _rotateOneBot(myBots, sleepingBots);
+                if (ok) {
+                    turboSwaps += 1;
+                    continue;
+                }
+            }
+            if (turboSwaps === 0) {
+                console.log(chalk.yellow(
+                    `[Supervisor] ⏸ At cap (${runningNow}/${maxConcurrent}) — ${sleepingBots.length} queued (next sync in ${getSyncIntervalMs()}ms)`
+                ));
+            }
+            break;
+        }
+
+        const memOk = canSpawnBot(runningNow);
         if (!memOk) {
             if (runningNow === 0 && threads.size === 0) {
                 console.log(chalk.yellow(`[Supervisor] ⚠️ RAM pressure — no threads running, starting first bot anyway`));
-            } else {
-                const lru = _getLruRunningBot(myBots);
-                if (!lru) {
-                    console.log(chalk.yellow(
-                        `[Supervisor] ⚠️ RAM full (${getMemSummary()}) — ${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) queued`
-                    ));
-                    break;
-                }
-                console.log(chalk.yellow(`[Supervisor] 🔄 RAM full — rotating +${lru} out → +${clean} in | ${getMemSummary()}`));
-                lastActivity.set(lru, 0);
-                killBot(lru, 'SIGTERM');
-                await new Promise((r) => setTimeout(r, 1500));
-                if (!canSpawnBot()) {
-                    console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight — skipping +${clean}`));
+            } else if (turboSwaps < rotationsPerSync) {
+                const ok = await _rotateOneBot(myBots, sleepingBots);
+                if (ok) {
+                    turboSwaps += 1;
                     continue;
                 }
+                console.log(chalk.yellow(
+                    `[Supervisor] ⚠️ RAM full (${getMemSummary(runningNow)}) — queue paused`
+                ));
+                break;
+            } else {
+                break;
             }
         }
 
         const ready = await _ensureBotSessionReady(clean);
-        if (ready) spawnBot(clean);
+        if (ready) {
+            spawnBot(clean);
+            runningNow += 1;
+        }
     }
 
-    // 6. LRU rotation (scheduled)
-    if (ROTATION_INTERVAL_MS > 0 && Date.now() - _lastRotationAt >= ROTATION_INTERVAL_MS) {
+    if (turboSwaps > 0) {
+        console.log(chalk.green(`[Supervisor] ⚡ Turbo: ${turboSwaps} bot(s) rotated this sync`));
+    }
+
+    // 6. Scheduled LRU rotation — runs every few seconds in turbo mode (not hours)
+    const rotationInterval = getRotationIntervalMs();
+    if (rotationInterval > 0 && Date.now() - _lastRotationAt >= rotationInterval) {
         _lastRotationAt = Date.now();
-        const stillSleeping = [...myBots]
-            .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
-            .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
-        if (stillSleeping.length > 0) {
-            const nextBot = stillSleeping[0];
-            const lru = _getLruRunningBot(myBots);
-            if (lru) {
-                console.log(chalk.cyan(`[Supervisor] ⏰ Rotation: pausing +${lru} → waking +${nextBot}`));
-                lastActivity.set(lru, 0);
-                killBot(lru, 'SIGTERM');
-            }
+        let scheduledSwaps = 0;
+        while (scheduledSwaps < rotationsPerSync) {
+            const stillSleeping = [...myBots]
+                .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
+                .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
+            if (!stillSleeping.length) break;
+            const ok = await _rotateOneBot(myBots, stillSleeping);
+            if (!ok) break;
+            scheduledSwaps += 1;
+        }
+        if (scheduledSwaps > 0) {
+            console.log(chalk.cyan(`[Supervisor] ⏰ Scheduled rotation: ${scheduledSwaps} swap(s)`));
         }
     }
 
@@ -508,18 +586,19 @@ function startSupervisor() {
     console.log(chalk.cyan('╚════════════════════════════════════════════════════╝\n'));
     console.log(chalk.gray(`  SharedArrayBuffer: ${sharedBuffer.byteLength} bytes | MAX_BOTS: 300`));
     console.log(chalk.gray(`  IPC: parentPort.postMessage (microsecond latency)`));
-    console.log(chalk.gray(`  Dyno: ${process.env.DYNO || 'local'} | Index: ${getDynoIndex()}/${getTotalWorkerDynos()}\n`));
+    console.log(chalk.gray(`  Dyno: ${process.env.DYNO || 'local'} | Index: ${getDynoIndex()}/${getTotalWorkerDynos()}`));
+    console.log(chalk.gray(
+        `  Rotation: sync=${getSyncIntervalMs()}ms swap=${getRotationSwapMs()}ms interval=${getRotationIntervalMs()}ms ×${getRotationsPerSync()}${process.env.BOT_TURBO_ROTATION === '1' ? ' [TURBO]' : ''}\n`
+    ));
 
     const runSync = () => syncBots().catch((e) => {
         console.log(chalk.yellow(`[Supervisor] syncBots error: ${e.message}`));
     });
 
+    const syncMs = getSyncIntervalMs();
     runSync();
-    [3000, 8000, 20000, 45000, 90000].forEach((ms) => setTimeout(runSync, ms));
-    _syncTimer = setInterval(runSync, SYNC_INTERVAL_MS);
-    if (!global._supervisorHealthTimer) {
-        global._supervisorHealthTimer = setInterval(runSync, 3 * 60 * 1000);
-    }
+    [500, 1500, 3500, 7000].forEach((ms) => setTimeout(runSync, ms));
+    _syncTimer = setInterval(runSync, syncMs);
 
     try {
         const pairMod = require('../pair');

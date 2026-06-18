@@ -103,6 +103,18 @@ function getMemSummary(activeChildCount = 0) {
     return `Dyno ~${projected}/${dynoLimit} MB projected (${pct}%) — parent RSS ${parentRss} MB`;
 }
 
+/** Max bot child processes that may run at once on this dyno (LRU rotation handles the rest). */
+function getMaxConcurrentBots() {
+  const explicit = parseInt(process.env.MAX_CONCURRENT_BOTS, 10);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+  const dynoLimit = getDynoLimitMB();
+  const childEst = Number(process.env.BOT_CHILD_HEAP_MB) || 130;
+  const parentEst = 140;
+  const thresholdMB = Math.floor(dynoLimit * (MAX_MEM_PERCENT / 100));
+  return Math.max(1, Math.floor((thresholdMB - parentEst) / childEst));
+}
+
 module.exports = {
     getAvailableMemMB,
     getTotalMemMB,
@@ -113,5 +125,6 @@ module.exports = {
     getProjectedDynoUsageMB,
     canSpawnBot,
     getMemSummary,
+    getMaxConcurrentBots,
     MAX_MEM_PERCENT,
 };
