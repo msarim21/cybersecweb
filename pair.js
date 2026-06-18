@@ -912,7 +912,7 @@ async function startpairing(nexusDevNumber) {
             touchBotHeartbeat(cleanNum, { event: 'open' });
             
             // Add small delay to ensure everything is initialized
-            await sleep(5000);
+            await sleep(2500);
 
             // Persist active status to DB (BotSession + LinkedNumber via updateSession)
             updateSession(nexusDevNumber, 'active').catch(() => {});
