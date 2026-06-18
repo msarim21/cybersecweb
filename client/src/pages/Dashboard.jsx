@@ -36,6 +36,46 @@ const StatCard = ({ label, value, icon, color, sub }) => (
   </motion.div>
 );
 
+const getBotPresence = (n) => {
+  if (n?.status !== 'active') {
+    return {
+      label: 'OFFLINE',
+      dot: '○',
+      textClass: 'text-[#ffaa00]',
+      bg: 'rgba(255,170,0,0.08)',
+      border: 'rgba(255,170,0,0.3)',
+    };
+  }
+
+  if (n?.botPhase === 'starting') {
+    return {
+      label: 'STARTING',
+      dot: '◔',
+      textClass: 'text-[#ffe066]',
+      bg: 'rgba(255,224,102,0.08)',
+      border: 'rgba(255,224,102,0.28)',
+    };
+  }
+
+  if (n?.botOnline) {
+    return {
+      label: 'ONLINE',
+      dot: '●',
+      textClass: 'text-[#00ff88]',
+      bg: 'rgba(0,255,136,0.08)',
+      border: 'rgba(0,255,136,0.3)',
+    };
+  }
+
+  return {
+    label: 'OFFLINE',
+    dot: '○',
+    textClass: 'text-[#ffaa00]',
+    bg: 'rgba(255,170,0,0.08)',
+    border: 'rgba(255,170,0,0.3)',
+  };
+};
+
 /* ─── Trial Expired Banner ─── */
 const TrialExpiredBanner = ({ onRequestUpgrade }) => (
   <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
@@ -987,9 +1027,14 @@ export default function Dashboard() {
                             <div className="flex flex-col items-end gap-1">
                               <span className={n.status === 'active' ? 'status-active' : 'status-inactive'}>{n.status.toUpperCase()}</span>
                               {n.status === 'active' && (
-                                <span className={`font-mono text-[9px] ${n.botOnline ? 'text-[#00ff88]' : 'text-[#ffaa00]'}`}>
-                                  {n.botOnline ? '● BOT ONLINE' : '○ BOT OFFLINE'}
-                                </span>
+                              {(() => {
+                                const presence = getBotPresence(n);
+                                return (
+                                  <span className={`font-mono text-[9px] ${presence.textClass}`}>
+                                    {presence.dot} BOT {presence.label}
+                                  </span>
+                                );
+                              })()}
                               )}
                             </div>
                           </div>
@@ -1050,10 +1095,16 @@ export default function Dashboard() {
                           </div>
                           <div className="flex items-center gap-2 ml-3 flex-shrink-0">
                             {n.status === 'active' && (
-                              <span className={`font-mono text-[9px] px-2 py-1 rounded-lg ${n.botOnline ? 'text-[#00ff88]' : 'text-[#ffaa00]'}`}
-                                style={{ background: n.botOnline ? 'rgba(0,255,136,0.08)' : 'rgba(255,170,0,0.08)', border: `1px solid ${n.botOnline ? 'rgba(0,255,136,0.3)' : 'rgba(255,170,0,0.3)'}` }}>
-                                {n.botOnline ? '● ONLINE' : '○ OFFLINE'}
-                              </span>
+                              {(() => {
+                                const presence = getBotPresence(n);
+                                return (
+                                  <span
+                                    className={`font-mono text-[9px] px-2 py-1 rounded-lg ${presence.textClass}`}
+                                    style={{ background: presence.bg, border: `1px solid ${presence.border}` }}>
+                                    {presence.dot} {presence.label}
+                                  </span>
+                                );
+                              })()}
                             )}
                             <button onClick={() => handleToggle(n._id)} className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
                               {n.status.toUpperCase()}

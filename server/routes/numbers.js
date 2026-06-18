@@ -90,7 +90,7 @@ router.get('/', protect, async (req, res) => {
     // Cross-dyno online check: web dyno can't read worker's heartbeat files.
     // Read BotSession.lastActive / connectedAt from MongoDB (shared DB) as fallback.
     const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000;
-    const BOT_CONNECTED_GRACE_MS = 10 * 60 * 1000;
+    const BOT_STARTING_GRACE_MS = 10 * 60 * 1000;
     let dbSessionMap = {};
     try {
       const mongoose = require('mongoose');
@@ -103,11 +103,14 @@ router.get('/', protect, async (req, res) => {
           const lastActiveOk = s.lastActive &&
             (Date.now() - new Date(s.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS);
           const connectedAtOk = s.connectedAt &&
-            (Date.now() - new Date(s.connectedAt).getTime() <= BOT_CONNECTED_GRACE_MS);
-          const online = s.status === 'active' &&
-            (lastActiveOk || connectedAtOk);
+            (Date.now() - new Date(s.connectedAt).getTime() <= BOT_STARTING_GRACE_MS);
+          const phase = s.status === 'active'
+            ? (lastActiveOk ? 'online' : (connectedAtOk ? 'starting' : 'offline'))
+            : 'offline';
+          const online = phase === 'online';
           dbSessionMap[s.number] = {
             online,
+            phase,
             status: s.status,
             connectedAt: s.connectedAt || null,
             lastActive: s.lastActive || null,
@@ -119,16 +122,23 @@ router.get('/', protect, async (req, res) => {
     const enriched = numbers.map((n) => {
       const clean = String(n.number || '').replace(/[^0-9]/g, '');
       const sess = dbSessionMap[clean];
-      // botOnline: local heartbeat, MongoDB session freshness, or a live connected flag.
-      const botOnline = clean && (
-        isBotHeartbeatFresh(clean) ||
-        sess?.online === true ||
-        (sess?.status === 'active' && sess?.connectedAt && (Date.now() - new Date(sess.connectedAt).getTime() <= BOT_CONNECTED_GRACE_MS))
-      );
+      const botPhase = (() => {
+        if (!clean) return 'offline';
+        if (isBotHeartbeatFresh(clean) || sess?.online === true) return 'online';
+        if (sess?.status === 'active') {
+          const connectedAtFresh = sess?.connectedAt &&
+            (Date.now() - new Date(sess.connectedAt).getTime() <= BOT_STARTING_GRACE_MS);
+          const lastActiveFresh = sess?.lastActive &&
+            (Date.now() - new Date(sess.lastActive).getTime() <= BOT_STARTING_GRACE_MS);
+          if (connectedAtFresh || lastActiveFresh) return 'starting';
+        }
+        return 'offline';
+      })();
+      const botOnline = botPhase === 'online';
       // Keep the badge tied to the user's linked record. Short WhatsApp
       // reconnects should not make a successfully paired number look inactive;
       // botOnline carries the live connection signal separately.
-      return { ...n, status: n.status, botOnline, connectionStatus: sess?.status || null };
+      return { ...n, status: n.status, botOnline, botPhase, connectionStatus: sess?.status || null };
     });
     res.json(enriched);
   } catch (err) {
