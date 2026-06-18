@@ -454,8 +454,13 @@ async function handlePairingRequest(clean) {
         removeFromStoppedBots(num);
         killBot(num, 'SIGKILL');
 
-        const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', `${num}@s.whatsapp.net`);
-        if (fs.existsSync(sessionPath)) _deleteFolderRecursive(sessionPath);
+        // pair.js writes auth to nexstore/pairing/<digits>; some legacy paths
+        // also created <digits>@s.whatsapp.net. Wipe both so the new pairing
+        // request doesn't reuse stale creds.
+        const sessionPathAlt = path.join(__dirname, '..', 'nexstore', 'pairing', `${num}@s.whatsapp.net`);
+        const sessionPath    = path.join(__dirname, '..', 'nexstore', 'pairing', num);
+        if (fs.existsSync(sessionPathAlt)) _deleteFolderRecursive(sessionPathAlt);
+        if (fs.existsSync(sessionPath))    _deleteFolderRecursive(sessionPath);
 
         try { const { deleteSessionCreds } = require('../session-db'); await deleteSessionCreds(num); } catch (_) {}
         try {

@@ -17,7 +17,14 @@ const { getActiveLinkedNumbers, ensureSessionRestored } = require('./session-db'
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function isAuthenticated() {
-    return fs.existsSync(AUTH_FILE) && JSON.parse(fs.readFileSync(AUTH_FILE)).authenticated;
+    if (!fs.existsSync(AUTH_FILE)) return false;
+    try {
+        const data = JSON.parse(fs.readFileSync(AUTH_FILE));
+        return Boolean(data && data.authenticated);
+    } catch (err) {
+        console.log(chalk.yellow(`⚠️  auth.json could not be parsed (${err.message}); treating as unauthenticated`));
+        return false;
+    }
 }
 
 function setAuthenticated(value) {
