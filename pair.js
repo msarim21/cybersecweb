@@ -359,34 +359,51 @@ async function startpairing(nexusDevNumber) {
         }
         
         const pairingTimer = setTimeout(async () => {
-            try {
-                if (tracker.disconnected || tracker.connection !== nexus || nexus.ws?.readyState !== 1) {
-                    return;
-                }
-                let code = await nexus.requestPairingCode(phoneNumber);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                
-                console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+            const startedAt = Date.now();
+            const codeDeadline = startedAt + 45_000;
 
-                // Ensure pairing directory exists
-                ensureDirectoryExists('./nexstore/pairing');
-                
-                fs.writeFileSync(
-                    './nexstore/pairing/pairing.json',
-                    JSON.stringify({ 
-                        number: nexusDevNumber,
-                        code: code,
-                        timestamp: new Date().toISOString()
-                    }, null, 2),
-                    'utf8'
-                );
+            while (Date.now() < codeDeadline) {
                 try {
-                    await setPairingCode(nexusDevNumber, code);
-                } catch (_) {}
-                
-                console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
-            } catch (err) {
-                console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
+                    if (tracker.disconnected || tracker.connection !== nexus) return;
+                    if (nexus.ws?.readyState !== 1) {
+                        await sleep(750);
+                        continue;
+                    }
+                    if (tracker.pairingCodeRequested) return;
+                    tracker.pairingCodeRequested = true;
+
+                    let code = await nexus.requestPairingCode(phoneNumber);
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
+
+                    console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+
+                    // Ensure pairing directory exists
+                    ensureDirectoryExists('./nexstore/pairing');
+
+                    fs.writeFileSync(
+                        './nexstore/pairing/pairing.json',
+                        JSON.stringify({
+                            number: nexusDevNumber,
+                            code: code,
+                            timestamp: new Date().toISOString()
+                        }, null, 2),
+                        'utf8'
+                    );
+                    try {
+                        await setPairingCode(nexusDevNumber, code);
+                    } catch (_) {}
+
+                    console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
+                    return;
+                } catch (err) {
+                    tracker.pairingCodeRequested = false;
+                    if (tracker.disconnected || tracker.connection !== nexus) return;
+                    if (Date.now() >= codeDeadline) {
+                        console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
+                        return;
+                    }
+                    await sleep(750);
+                }
             }
         }, 1500);
         tracker.pairingTimer = pairingTimer;
@@ -813,6 +830,7 @@ async function startpairing(nexusDevNumber) {
                 clearTimeout(tracker.pairingTimer);
                 tracker.pairingTimer = null;
             }
+            tracker.pairingCodeRequested = false;
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
@@ -844,6 +862,7 @@ async function startpairing(nexusDevNumber) {
                 
                 tracker.disconnected = true;
                 tracker.connection = null;
+                tracker.pairingCodeRequested = false;
                 
                 console.log(chalk.red(`🚫 ${nexusDevNumber} will NOT reconnect. User must re-pair.`));
                 return;
@@ -865,6 +884,7 @@ async function startpairing(nexusDevNumber) {
                 // so the user can see it and re-pair manually. Only loggedOut removes.
                 forceCleanupSession(nexusDevNumber);
                 tracker.disconnected = true;
+                tracker.pairingCodeRequested = false;
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
@@ -873,6 +893,7 @@ async function startpairing(nexusDevNumber) {
                 // permanently in dashboard. User can remove it manually if needed.
                 forceCleanupSession(nexusDevNumber);
                 tracker.disconnected = true;
+                tracker.pairingCodeRequested = false;
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
                        reason === DisconnectReason.timedOut) {
@@ -900,6 +921,7 @@ async function startpairing(nexusDevNumber) {
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
+            tracker.pairingCodeRequested = false;
             touchBotHeartbeat(cleanNum, { event: 'open' });
             
             // Add small delay to ensure everything is initialized
@@ -1220,6 +1242,7 @@ module.exports.stopBot = function stopBot(number) {
         const tracker = getTrackerEntry(key);
         if (tracker) {
             tracker.disconnected = true;
+            tracker.pairingCodeRequested = false;
             if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
             try { tracker.connection?.ws?.terminate(); } catch (_) {}
             deleteTrackerEntry(key);
