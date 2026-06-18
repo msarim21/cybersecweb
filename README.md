@@ -221,8 +221,8 @@ Use Nginx as reverse proxy on port 3001 and Certbot for HTTPS.
 | `BOT_CHILD_HEAP_MB` | `96` | Heap per bot child |
 | `MAX_CONCURRENT_BOTS` | `7` | Live bots at once on 1 GB |
 | `SYNC_FULL_HISTORY` | `0` | Keep `0` — prevents phone sync hang |
-| `BOT_TURBO_ROTATION` | `1` | Fast LRU rotation for many bots |
-| `BOT_MIN_UPTIME_MS` | `120000` | Min uptime before rotation (2 min) |
+| `BOT_TURBO_ROTATION` | `1` | Fast LRU when linked bots **exceed** `MAX_CONCURRENT`; if ≤7 bots, all run 24/7 with no swap |
+| `BOT_MIN_UPTIME_MS` | `300000` | Min 5 min live before a bot can be rotated out (only when at RAM cap) |
 | `TOTAL_WORKER_DYNOS` | `1` | Shard bots across worker dynos |
 
 See [`.env.example`](.env.example) for the full list.

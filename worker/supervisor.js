@@ -46,7 +46,7 @@ function getRotationIntervalMs() {
     const hours = Number(process.env.BOT_ROTATION_HOURS);
     if (Number.isFinite(hours) && hours > 0) return hours * 60 * 60 * 1000;
     if (process.env.BOT_TURBO_ROTATION === '1') {
-        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 20) * 1000;
+        return _numEnv('BOT_ROTATION_INTERVAL_SEC', 30) * 1000;
     }
     return _numEnv('BOT_ROTATION_INTERVAL_SEC', 45) * 1000;
 }
@@ -58,13 +58,14 @@ function getRotationSwapMs() {
 
 function getRotationsPerSync() {
     if (process.env.BOT_TURBO_ROTATION === '1') {
-        return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 1));
+        return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 2));
     }
     return Math.max(1, _numEnv('BOT_ROTATIONS_PER_SYNC', 1));
 }
 
 function getMinRotationUptimeMs() {
-    return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', 30 * 60 * 1000));
+    const fallback = process.env.BOT_TURBO_ROTATION === '1' ? 5 * 60 * 1000 : 30 * 60 * 1000;
+    return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', fallback));
 }
 
 /** Only time-share bots when there are more linked numbers than RAM allows live at once. */
@@ -385,8 +386,12 @@ async function syncBots() {
         ));
     } else if (linkedSet.size > 0) {
         const maxConcurrent = getMaxConcurrentBots();
+        const turbo = process.env.BOT_TURBO_ROTATION === '1';
+        const rotateNote = linkedSet.size > maxConcurrent
+            ? `turbo LRU ON (${linkedSet.size} linked > ${maxConcurrent} slots)`
+            : `all ${linkedSet.size} bot(s) run 24/7 — turbo idle (no swap needed)`;
         console.log(chalk.cyan(
-            `[Supervisor] Managing ${linkedSet.size} bot(s) | max ${maxConcurrent} concurrent | ${getMemSummary()}`
+            `[Supervisor] Managing ${linkedSet.size} bot(s) | max ${maxConcurrent} concurrent | ${rotateNote} | ${getMemSummary()}`
         ));
     }
 
