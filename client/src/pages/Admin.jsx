@@ -600,10 +600,15 @@ export default function Admin() {
   const fetchAudio = async (silent = false) => {
     const applyInfo = (data) => {
       if (!data?.filename) return false;
-      setAudioInfo(data);
-      setAudioVersion(v => {
-        const next = data.original;
-        return next ? Date.now() : v;
+      // Only cache-bust when the actual file/original name changes — otherwise
+      // the 15s polling interval keeps bumping audioVersion and restarts the
+      // preview every tick.
+      setAudioInfo(prev => {
+        const changed =
+          (data.original || '') !== (prev?.original || '') ||
+          (data.filename || '') !== (prev?.filename || '');
+        if (changed) setAudioVersion(Date.now());
+        return data;
       });
       return true;
     };

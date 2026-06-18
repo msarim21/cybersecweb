@@ -214,9 +214,14 @@ export default function Landing() {
         style={{ scaleX: scrollYProgress, background: 'linear-gradient(90deg, #00f5ff, #8b5cf6, #ff00ff)' }} />
 
       {/* Navbar */}
-      <motion.nav style={{ opacity: headerOpacity }}
+      <motion.nav
         className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4"
-        style={{ background: 'rgba(4,6,26,0.85)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,245,255,0.15)' }}>
+        style={{
+          opacity: headerOpacity,
+          background: 'rgba(4,6,26,0.85)',
+          backdropFilter: 'blur(20px)',
+          borderBottom: '1px solid rgba(0,245,255,0.15)',
+        }}>
         <div className="flex items-center gap-3 absolute left-1/2 -translate-x-1/2 md:static md:translate-x-0">
           <div className="relative">
             <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 sm:w-10 sm:h-10 object-cover rounded-full" style={{ filter: 'drop-shadow(0 0 12px #00f5ff)' }} />
