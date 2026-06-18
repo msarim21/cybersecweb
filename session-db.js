@@ -70,15 +70,17 @@ async function updateSession(number, status) {
       }
     }
 
-    // Sync MongoDB LinkedNumber if available
-    if (clean) {
+    // Keep linked_numbers stable. Temporary socket drops should not make the
+    // dashboard show a paired number as inactive; explicit user actions handle
+    // deactivation/deletion through the numbers routes.
+    if (clean && status === 'active') {
       try {
         const mongoose = require('mongoose');
         if (mongoose.connection.readyState === 1) {
           const LinkedNumber = require('./server/models/LinkedNumber');
           await LinkedNumber.findOneAndUpdate(
             { number: { $in: [clean, number, clean + '@s.whatsapp.net'] } },
-            { $set: { status: (status === 'active' ? 'active' : 'inactive'), lastActive: new Date() } }
+            { $set: { status: 'active', lastActive: new Date() } }
           );
         }
       } catch (_) {}

@@ -16,6 +16,8 @@ const {
 
 // Persist session state to PostgreSQL so restarts can reload sessions
 const { updateSession, removeLinkedNumber, saveCredsToDb } = require('./session-db');
+const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+require('./allfunc/antidelete-helpers');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
@@ -486,6 +488,12 @@ async function startpairing(nexusDevNumber) {
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             let botNumber = await nexus.decodeJid(nexus.user.id);
+            touchBotHeartbeat(nexusDevNumber, { event: 'message' });
+            try {
+                if (!nexusboijid.message?.protocolMessage && typeof global._cacheMessageForAntidelete === 'function') {
+                    global._cacheMessageForAntidelete(nexusboijid, nexus);
+                }
+            } catch (_) {}
 
             // ✅ FIX: support both setting names (antiswview + autoViewStatus)
             let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
@@ -495,6 +503,7 @@ async function startpairing(nexusDevNumber) {
                 if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast'){
                     await nexus.readMessages([nexusboijid.key]);
                 }
+            }
             // ✅ Cache this status message for deleted-status auto-save
             if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast' && nexusboijid.message) {
                 try {
@@ -513,7 +522,6 @@ async function startpairing(nexusDevNumber) {
                 } catch (_ce) {}
             }
 
-            }
 
             // ✅ Status-Reply-to-DM — fire-and-forget (non-blocking so commands stay fast)
             ;(async () => {
@@ -894,12 +902,14 @@ async function startpairing(nexusDevNumber) {
             }
         } else if (connection === "open") {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
+            const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
             tracker.retryCount = 0;
             tracker.disconnected = false;
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
+            touchBotHeartbeat(cleanNum, { event: 'open' });
             
             // Add small delay to ensure everything is initialized
             await sleep(5000);
@@ -911,7 +921,6 @@ async function startpairing(nexusDevNumber) {
             // updateSession may fail silently so we also do it here as a safety net
             (async () => {
               try {
-                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 const mongoose = require('mongoose');
                 if (mongoose.connection.readyState === 1) {
                   const LinkedNumber = require('./server/models/LinkedNumber');
@@ -927,7 +936,6 @@ async function startpairing(nexusDevNumber) {
 
             // Write connected flag so web panel can auto-save the number
             try {
-                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                 const flagDir  = path.join(process.cwd(), 'nexstore', 'pairing', cleanNum);
                 if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
                 fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
@@ -1040,9 +1048,28 @@ Your bot is ready. Send *.menu* to see all available commands.
         try {
             if (!nexus.user) return;
             const botNumber = await nexus.decodeJid(nexus.user.id);
-            const keys = item.keys || [];
+            const keys = Array.isArray(item?.keys) ? item.keys
+                : Array.isArray(item) ? item
+                : item?.key ? [item.key]
+                : [];
             for (const key of keys) {
-                if (key.remoteJid !== 'status@broadcast') continue;
+                if (!key?.id || !key?.remoteJid) continue;
+                if (key.remoteJid !== 'status@broadcast') {
+                    try {
+                        if (typeof global._adInvokeDeleteHandler !== 'function') require('./allfunc/antidelete-helpers');
+                        if (typeof global._adInvokeDeleteHandler === 'function') {
+                            await global._adInvokeDeleteHandler(nexus, {
+                                key,
+                                protoKey: key,
+                                reportMiss: true,
+                                retryMs: 1200,
+                            });
+                        }
+                    } catch (e) {
+                        console.error('[ANTIDELETE][messages.delete]', e.message);
+                    }
+                    continue;
+                }
                 const cached = global._statusCache?.get(key.id);
                 if (!cached) continue;
 
@@ -1102,6 +1129,7 @@ Your bot is ready. Send *.menu* to see all available commands.
         const wsState = nexus.ws?.readyState;
         if (wsState === 1) {
             // WebSocket open — keep alive
+            touchBotHeartbeat(nexusDevNumber, { event: 'watchdog' });
             nexus.sendPresenceUpdate('available').catch(() => {});
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect

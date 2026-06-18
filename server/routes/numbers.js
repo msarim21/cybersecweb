@@ -113,10 +113,10 @@ router.get('/', protect, async (req, res) => {
       const sess = dbSessionMap[clean];
       // botOnline: check local heartbeat file (same dyno) OR MongoDB BotSession (cross-dyno)
       const botOnline = clean && (isBotHeartbeatFresh(clean) || sess?.online === true);
-      // ACTIVE/INACTIVE badge: use BotSession.status if available (real-time cross-dyno)
-      // fall back to linked_numbers.status
-      const status = sess?.status || n.status;
-      return { ...n, status, botOnline };
+      // Keep the badge tied to the user's linked record. Short WhatsApp
+      // reconnects should not make a successfully paired number look inactive;
+      // botOnline carries the live connection signal separately.
+      return { ...n, status: n.status, botOnline, connectionStatus: sess?.status || null };
     });
     res.json(enriched);
   } catch (err) {
