@@ -88,13 +88,13 @@ const TrialExpiredBanner = ({ onRequestUpgrade }) => (
         <div className="font-mono text-[11px] text-gray-400 mb-3">Your 24-hour free trial has ended. Upgrade to continue using your bot.</div>
         <div className="flex flex-wrap gap-2">
           <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-            onClick={onRequestUpgrade}
+            onClick={() => onRequestUpgrade('pro')}
             className="px-4 py-2 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.4),rgba(255,0,255,0.2))', border: '1px solid rgba(139,92,246,0.5)' }}>
             ⚡ REQUEST PRO (5 numbers)
           </motion.button>
           <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-            onClick={onRequestUpgrade}
+            onClick={() => onRequestUpgrade('enterprise')}
             className="px-4 py-2 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(139,92,246,0.2))', border: '1px solid rgba(255,0,255,0.4)' }}>
             🚀 REQUEST ENTERPRISE (Unlimited)
@@ -261,12 +261,12 @@ const PlanLimitModal = ({ onClose, trialExpired, onRequestUpgrade }) => (
       </p>
       {trialExpired ? (
         <div className="space-y-2 mb-4">
-          <button onClick={() => { onRequestUpgrade(); onClose(); }}
+          <button onClick={() => { onRequestUpgrade('pro'); onClose(); }}
             className="w-full py-3 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.5),rgba(255,0,255,0.3))', border: '1px solid rgba(139,92,246,0.5)' }}>
             ⚡ REQUEST PRO — 5 Numbers
           </button>
-          <button onClick={() => { onRequestUpgrade(); onClose(); }}
+          <button onClick={() => { onRequestUpgrade('enterprise'); onClose(); }}
             className="w-full py-3 rounded-xl font-display text-xs tracking-widest text-white"
             style={{ background: 'linear-gradient(135deg,rgba(255,0,255,0.3),rgba(139,92,246,0.2))', border: '1px solid rgba(255,0,255,0.4)' }}>
             🚀 REQUEST ENTERPRISE — Unlimited
@@ -603,6 +603,12 @@ export default function Dashboard() {
             : (msg || 'Failed to load data')
         );
       }
+      // Hard-logout on auth failure so the user isn't stuck on a dashboard
+      // whose token is dead. Without this every action keeps failing silently.
+      if (status === 401) {
+        try { logout(); } catch { }
+        try { navigate('/login'); } catch { }
+      }
     } finally {
       if (!silent) setLoading(false);
     }
@@ -611,13 +617,17 @@ export default function Dashboard() {
   const fetchAudio = async (silent = false) => {
     try {
       const res = await axios.get('/api/site/audio');
-      const prev = siteAudio.original;
-      const next = res.data.original;
-      setSiteAudio(res.data);
-      // Naya audio upload hua hai → timestamp change karo → cache-bust karo
-      if (next && next !== prev) {
-        setAudioVersion(Date.now());
-      }
+      const next = res.data?.original || '';
+      // Use functional setter so the comparison uses the latest state, not
+      // the value captured when fetchAudio was created. Otherwise the 30s
+      // polling interval (mount-only useEffect) keeps seeing prev='' and
+      // bumps audioVersion every tick, restarting the background music.
+      setSiteAudio(prev => {
+        if (next && next !== (prev?.original || '')) {
+          setAudioVersion(Date.now());
+        }
+        return res.data || prev;
+      });
     } catch { }
   };
 
@@ -710,12 +720,13 @@ export default function Dashboard() {
     finally { setProfileLoading(false); }
   };
 
-  const handleRequestUpgrade = async () => {
+  const handleRequestUpgrade = async (plan = 'pro') => {
+    const wantedPlan = plan === 'enterprise' ? 'enterprise' : 'pro';
     setUpgradeLoading('upgrade');
     try {
-      await axios.post('/api/user/upgrade-request', { plan: 'pro' });
-      toast.success('Upgrade request sent! Admin will review shortly.');
-      const waMsg = encodeURIComponent('I want to upgrade my CYBERSECPRO account. Please review my upgrade request sent via dashboard.');
+      await axios.post('/api/user/upgrade-request', { plan: wantedPlan });
+      toast.success(`Upgrade request sent (${wantedPlan.toUpperCase()})! Admin will review shortly.`);
+      const waMsg = encodeURIComponent(`I want to upgrade my CYBERSECPRO account to ${wantedPlan.toUpperCase()}. Please review my upgrade request sent via dashboard.`);
       window.open('https://wa.me/923417022212?text=' + waMsg, '_blank');
       await fetchData();
     } catch (err) {
@@ -947,7 +958,7 @@ export default function Dashboard() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <StatCard label="TOTAL NUMBERS" value={stats?.total ?? 0} icon="📱" color="#00f5ff"
-                        sub={`${(stats?.limit ?? 1) - (stats?.total ?? 0)} slots left`} />
+                        sub={`${Math.max(0, (stats?.limit ?? 1) - (stats?.total ?? 0))} slots left`} />
                       <StatCard label="ACTIVE BOTS" value={stats?.active ?? 0} icon="⚡" color="#00ff88" />
                       <StatCard label="INACTIVE" value={stats?.inactive ?? 0} icon="💤" color="#ffaa00" />
                       <StatCard label="PLAN LIMIT" value={stats?.limit === 999 ? '∞' : stats?.limit ?? 1} icon="🛡️" color="#8b5cf6"

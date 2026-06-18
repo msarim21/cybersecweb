@@ -140,6 +140,16 @@ router.post('/request', protect, async (req, res) => {
   ensureDir(sessionPath);
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
+  // Drop any stale session creds from the DB. pair.js → ensureSessionRestored()
+  // would otherwise rehydrate the deleted auth folder from these creds, which
+  // marks the socket as already registered and skips pairing-code generation —
+  // causing the request to time out for any number that was previously paired
+  // and later disconnected.
+  try {
+    const { deleteSessionCreds } = require('../../session-db');
+    await deleteSessionCreds(clean);
+  } catch (_) {}
+
   try {
     if (isRemoteWorkerPairingMode()) {
       const code = await waitForDbPairingCode(clean, PAIRING_CODE_WAIT_MS);

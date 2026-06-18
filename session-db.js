@@ -10,8 +10,13 @@ async function _init() {
     require('./server/db');
     const { initDb } = require('./server/db');
     await initDb();
-  } catch (_) {}
-  _ready = true;
+    _ready = true;
+  } catch (err) {
+    // Leave _ready false so the next call retries DB init. Without this, a
+    // transient DB error at boot would silently disable session persistence
+    // (auto-save, cred backup, cred deletion) for the entire process lifetime.
+    console.error('[session-db] _init failed, will retry on next call:', err.message);
+  }
 }
 
 /**

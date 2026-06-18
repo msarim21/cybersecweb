@@ -17,7 +17,17 @@ export const AuthProvider = ({ children }) => {
     const token = localStorage.getItem('csp_token');
     const savedUser = localStorage.getItem('csp_user');
     if (token && savedUser) {
-      setUser(JSON.parse(savedUser));
+      let parsed = null;
+      try {
+        parsed = JSON.parse(savedUser);
+      } catch {
+        // Corrupt csp_user — clear and force re-login instead of crashing the app.
+        localStorage.removeItem('csp_user');
+        localStorage.removeItem('csp_token');
+        setLoading(false);
+        return;
+      }
+      setUser(parsed);
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       // Verify token
       axios.get('/api/user/profile')
