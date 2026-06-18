@@ -38,6 +38,16 @@ services:
         value: "1"
       - key: BOT_ISOLATION
         value: "1"
+      - key: DYNO_TOTAL_RAM_MB
+        value: "1024"
+      - key: BOT_CHILD_HEAP_MB
+        value: "96"
+      - key: MAX_MEM_PERCENT
+        value: "78"
+      - key: MAX_CONCURRENT_BOTS
+        value: "7"
+      - key: BOT_DISABLE_CHAT_STORE
+        value: "1"
       - key: NPM_CONFIG_LEGACY_PEER_DEPS
         value: "true"
       - key: MONGO_URL

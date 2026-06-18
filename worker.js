@@ -244,7 +244,7 @@ async function startWorker() {
   // If RSS > 85%: add more worker dynos:
   //   heroku ps:scale worker=N  (e.g. N=10 for 100 bots)
   //   heroku config:set TOTAL_WORKER_DYNOS=N
-  const DYNO_RAM_MB = parseInt(process.env.DYNO_TOTAL_RAM_MB, 10) || 512;
+  const DYNO_RAM_MB = parseInt(process.env.DYNO_TOTAL_RAM_MB, 10) || 1024;
   setInterval(() => {
     const rss = Math.round(process.memoryUsage().rss / 1024 / 1024);
     const pct = Math.round(rss / DYNO_RAM_MB * 100);

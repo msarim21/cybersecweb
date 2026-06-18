@@ -23,7 +23,7 @@ const chalk       = require('chalk');
 
 const { cleanBotNum, ensureBotWorkspace }  = require('../allfunc/bot-workspace');
 const { getDynoIndex, getTotalWorkerDynos } = require('../allfunc/whatsapp-host');
-const { canSpawnBot, getMemSummary }        = require('./mem-guard');
+const { canSpawnBot, getMemSummary, getMaxConcurrentBots } = require('./mem-guard');
 const {
     createSharedBuffer,
     wrapSlot,
@@ -227,8 +227,7 @@ function _spawnThread(clean, opts = {}) {
         if (code === 0) return;
 
         const hourAgo = Date.now() - 60 * 60 * 1000;
-        const entry2 = threads.get(clean);
-        const recentRestarts = (entry2?.restartTimes || []).filter((t) => t > hourAgo);
+        const recentRestarts = (wasEntry?.restartTimes || []).filter((t) => t > hourAgo);
         if (recentRestarts.length >= MAX_RESTARTS_PER_HOUR) {
             console.log(chalk.red(`[Supervisor] +${clean} thread restart limit — skip`));
             return;
@@ -298,23 +297,27 @@ async function syncBots() {
 
     const { getActiveLinkedNumbers } = require('../session-db');
     const { readStopped }            = require('../allfunc/stopped-bots');
+    const { shardLinkedSet }           = require('../allfunc/dyno-shard');
 
     const linked = (await getActiveLinkedNumbers().catch(() => []))
         .map((n) => cleanBotNum(n)).filter(Boolean);
     const stopped    = new Set(readStopped());
     const linkedSet  = new Set(linked.filter((n) => !stopped.has(n)));
 
-    const dynoIndex  = getDynoIndex();
+    const { getTotalWorkerDynos } = require('../allfunc/whatsapp-host');
     const totalDynos = getTotalWorkerDynos();
-    const sortedLinked = [...linkedSet].sort();
-    const myBots = new Set(sortedLinked.filter((_, i) => i % totalDynos === dynoIndex));
+    const myBots = shardLinkedSet([...linkedSet]);
 
     if (totalDynos > 1) {
+        const dynoIndex = getDynoIndex();
         console.log(chalk.cyan(
             `[Supervisor] 🔀 Dyno ${dynoIndex + 1}/${totalDynos}: managing ${myBots.size}/${linkedSet.size} bots`
         ));
     } else if (linkedSet.size > 0) {
-        console.log(chalk.cyan(`[Supervisor] Managing ${linkedSet.size} bot(s) | ${getMemSummary()}`));
+        const maxConcurrent = getMaxConcurrentBots();
+        console.log(chalk.cyan(
+            `[Supervisor] Managing ${linkedSet.size} bot(s) | max ${maxConcurrent} concurrent | ${getMemSummary()}`
+        ));
     }
 
     const { isConnected } = require('../allfunc/connected-flag');
@@ -373,10 +376,18 @@ async function syncBots() {
         .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
         .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
 
-    const runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
+    let runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
+    const maxConcurrent = getMaxConcurrentBots();
 
     for (const clean of sleepingBots) {
-        const memOk = canSpawnBot();
+        if (runningNow >= maxConcurrent) {
+            console.log(chalk.yellow(
+                `[Supervisor] ⏸ At concurrent cap (${runningNow}/${maxConcurrent}) — ${sleepingBots.length} bot(s) in rotation queue`
+            ));
+            break;
+        }
+
+        const memOk = canSpawnBot(runningNow);
         if (!memOk) {
             if (runningNow === 0 && threads.size === 0) {
                 console.log(chalk.yellow(`[Supervisor] ⚠️ RAM pressure — no threads running, starting first bot anyway`));
@@ -384,15 +395,15 @@ async function syncBots() {
                 const lru = _getLruRunningBot(myBots);
                 if (!lru) {
                     console.log(chalk.yellow(
-                        `[Supervisor] ⚠️ RAM full (${getMemSummary()}) — ${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) queued`
+                        `[Supervisor] ⚠️ RAM full (${getMemSummary(runningNow)}) — ${sleepingBots.length - sleepingBots.indexOf(clean)} bot(s) queued`
                     ));
                     break;
                 }
-                console.log(chalk.yellow(`[Supervisor] 🔄 RAM full — rotating +${lru} out → +${clean} in | ${getMemSummary()}`));
+                console.log(chalk.yellow(`[Supervisor] 🔄 RAM full — rotating +${lru} out → +${clean} in | ${getMemSummary(runningNow)}`));
                 lastActivity.set(lru, 0);
                 killBot(lru, 'SIGTERM');
                 await new Promise((r) => setTimeout(r, 1500));
-                if (!canSpawnBot()) {
+                if (!canSpawnBot(runningNow - 1)) {
                     console.log(chalk.yellow(`[Supervisor] ⚠️ RAM still tight — skipping +${clean}`));
                     continue;
                 }
@@ -400,7 +411,10 @@ async function syncBots() {
         }
 
         const ready = await _ensureBotSessionReady(clean);
-        if (ready) spawnBot(clean);
+        if (ready) {
+            spawnBot(clean);
+            runningNow += 1;
+        }
     }
 
     // 6. LRU rotation (scheduled)

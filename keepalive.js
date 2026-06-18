@@ -250,20 +250,16 @@ async function refreshBotSessions() {
         // Without this, every dyno tries to reconnect ALL bots → Error 440 flood.
         let nums = allNums;
         try {
-            const { getDynoIndex, getTotalWorkerDynos } = require('./allfunc/whatsapp-host');
-            const total = getTotalWorkerDynos();
-            if (total > 1) {
-                const myIdx = getDynoIndex();
-                const bpd = Math.max(1, parseInt(process.env.BOTS_PER_DYNO, 10) || 5);
-                nums = allNums.filter((_, i) => Math.floor(i / bpd) === myIdx);
-            }
+            const { shardLinkedNumbers } = require('./allfunc/dyno-shard');
+            nums = shardLinkedNumbers(allNums);
         } catch (_) {}
 
         const trackerMap = global._rentbotTracker;
-        const trackerSize = (trackerMap && typeof trackerMap.size === 'number') ? trackerMap.size : -1;
+        const hasTracker = Boolean(trackerMap && typeof trackerMap.size === 'number');
+        const trackerSize = hasTracker ? trackerMap.size : 0;
 
-        // If tracker is empty but DB has linked numbers → initial autoload failed
-        if (trackerSize === 0 || trackerSize === -1) {
+        // If tracker exists but is empty while DB has linked numbers → autoload missed bots
+        if (hasTracker && trackerSize === 0) {
             if (nums.length > 0) {
                 console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} assigned number(s) — triggering autoload...`);
                 try {

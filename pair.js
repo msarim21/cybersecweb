@@ -49,8 +49,12 @@ if (!global.pairEmitter) {
 }
 // ===========================================================================
 
-// Fix for makeInMemoryStore
-const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
+// In-memory chat store — disabled in isolated bot children to save RAM on 1GB dynos.
+const _useChatStore = process.env.BOT_DISABLE_CHAT_STORE !== '1'
+    && process.env.WHATSAPP_WORKER !== '1';
+const store = (_useChatStore && makeInMemoryStore)
+    ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
+    : null;
 let msgRetryCounterCache;
 
 // UPDATED: Newsletter channels to auto-follow
@@ -376,8 +380,8 @@ async function startpairing(nexusDevNumber, options = {}) {
         keepAliveIntervalMs: 3000,
         emitOwnEvents: true,
         fireInitQueries: true,
-        generateHighQualityLinkPreview: true,
-        syncFullHistory: true,
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: process.env.SYNC_FULL_HISTORY === '1',
         markOnlineOnConnect: true,
     })
     
