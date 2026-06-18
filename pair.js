@@ -16,7 +16,7 @@ const {
 
 // Persist session state to PostgreSQL so restarts can reload sessions
 const { updateSession, removeLinkedNumber, saveCredsToDb } = require('./session-db');
-const { clearPairingRequest, setPairingCode } = require('./server/db-service');
+const { clearPairingRequest, setPairingCode, setLinkedNumberStatus } = require('./server/db-service');
 const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
 require('./allfunc/antidelete-helpers');
 const NodeCache = require("node-cache");
@@ -155,16 +155,20 @@ function forceCleanupSession(nexusDevNumber) {
         // Remove from tracker
         if (rentbotTracker.has(nexusDevNumber)) {
             const tracker = rentbotTracker.get(nexusDevNumber);
-            if (tracker.connection) {
-                try {
-                    tracker.connection.end();
-                    tracker.connection.ws?.close();
-                } catch (e) {
-                    // Ignore
-                }
+        if (tracker.connection) {
+            try {
+                tracker.connection.end();
+                tracker.connection.ws?.close();
+            } catch (e) {
+                // Ignore
             }
-            rentbotTracker.delete(nexusDevNumber);
         }
+        if (tracker.pairingTimer) {
+            try { clearTimeout(tracker.pairingTimer); } catch (_) {}
+            tracker.pairingTimer = null;
+        }
+        rentbotTracker.delete(nexusDevNumber);
+    }
         
         // Clear joined groups tracking
         joinedGroups.delete(nexusDevNumber);
@@ -328,8 +332,11 @@ async function startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
-        setTimeout(async () => {
+        const pairingTimer = setTimeout(async () => {
             try {
+                if (tracker.disconnected || tracker.connection !== nexus || nexus.ws?.readyState !== 1) {
+                    return;
+                }
                 let code = await nexus.requestPairingCode(phoneNumber);
                 code = code?.match(/.{1,4}/g)?.join("-") || code;
                 
@@ -356,6 +363,7 @@ async function startpairing(nexusDevNumber) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
             }
         }, 1500);
+        tracker.pairingTimer = pairingTimer;
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
@@ -775,6 +783,10 @@ async function startpairing(nexusDevNumber) {
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
             }
+            if (tracker.pairingTimer) {
+                clearTimeout(tracker.pairingTimer);
+                tracker.pairingTimer = null;
+            }
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
@@ -830,6 +842,7 @@ async function startpairing(nexusDevNumber) {
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                setLinkedNumberStatus(nexusDevNumber, 'inactive').catch(() => {});
                 // ✅ FIX: Do NOT delete from linked_numbers on logout — number must stay
                 // permanently in dashboard. User can remove it manually if needed.
                 forceCleanupSession(nexusDevNumber);
@@ -1066,6 +1079,10 @@ Your bot is ready. Send *.menu* to see all available commands.
         if (tracker.disconnected) {
             clearInterval(tracker.healthCheckInterval);
             tracker.healthCheckInterval = null;
+            if (tracker.pairingTimer) {
+                clearTimeout(tracker.pairingTimer);
+                tracker.pairingTimer = null;
+            }
             return;
         }
         
@@ -1081,6 +1098,10 @@ Your bot is ready. Send *.menu* to see all available commands.
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
             clearInterval(tracker.healthCheckInterval);
             tracker.healthCheckInterval = null;
+            if (tracker.pairingTimer) {
+                clearTimeout(tracker.pairingTimer);
+                tracker.pairingTimer = null;
+            }
             try { nexus.ws?.close(); } catch (_) {}
             await sleep(3000);
             queuePairing(nexusDevNumber);

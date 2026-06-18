@@ -951,6 +951,33 @@ async function getPairingState(clean) {
   }
 }
 
+async function setLinkedNumberStatus(phone, status) {
+  const clean = String(phone).replace(/@.*$/, '').replace(/[^0-9]/g, '');
+  if (!clean) return;
+  const safeStatus = status === 'active' ? 'active' : 'inactive';
+  if (isMongoMode()) {
+    const { LinkedNumber } = M();
+    try {
+      await LinkedNumber.findOneAndUpdate(
+        { number: { $regex: `^${clean}` } },
+        { $set: { status: safeStatus, lastActive: new Date() } }
+      );
+    } catch (e) {
+      console.error('[db] setLinkedNumberStatus mongo error:', e.message);
+    }
+    return;
+  }
+  try {
+    await pg().query(
+      `UPDATE linked_numbers SET status=$2, last_active=NOW()
+       WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
+      [clean, safeStatus]
+    );
+  } catch (e) {
+    console.error('[db] setLinkedNumberStatus pg error:', e.message);
+  }
+}
+
 async function clearPairingRequest(clean) {
   const number = String(clean).replace(/[^0-9]/g, '');
   if (!number) return;
@@ -1023,6 +1050,7 @@ module.exports = {
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
+  setLinkedNumberStatus,
   savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers,
   getBotMode, setBotMode,
   upsertBotSession, getActiveBotSessions,
