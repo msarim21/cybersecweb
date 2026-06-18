@@ -9,6 +9,7 @@ const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const PAIRING_JSON = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
 const PAIRING_ACTIVE_MAX_AGE_MS = 5 * 60 * 1000;
+const PAIRING_CODE_WAIT_MS = 75_000;
 
 function ensureDir(p) {
   if (!fsSync.existsSync(p)) fsSync.mkdirSync(p, { recursive: true });
@@ -31,7 +32,7 @@ function isRemoteWorkerPairingMode() {
     && String(process.env.DYNO || '').startsWith('web');
 }
 
-async function waitForDbPairingCode(clean, deadlineMs = 40_000) {
+async function waitForDbPairingCode(clean, deadlineMs = PAIRING_CODE_WAIT_MS) {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     await sleep(500);
@@ -59,7 +60,21 @@ async function isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingS
   try {
     const { getPool } = require('../db');
     const pool = getPool();
-    if (!pool) return true;
+    if (!pool) {
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState !== 1) return false;
+        const BotSession = require('../models/BotSession');
+        const doc = await BotSession.findOne({ number: clean }).select('status lastActive connectedAt').lean();
+        if (!doc || doc.status !== 'active') return false;
+        const lastActive = doc.lastActive ? new Date(doc.lastActive).getTime() : 0;
+        const connectedAt = doc.connectedAt ? new Date(doc.connectedAt).getTime() : 0;
+        const fresh = Math.max(lastActive, connectedAt);
+        return fresh > 0 && (Date.now() - fresh) <= PAIRING_ACTIVE_MAX_AGE_MS;
+      } catch (_) {
+        return false;
+      }
+    }
     const { rows } = await pool.query(
       "SELECT status, last_active, connected_at FROM bot_sessions WHERE number=$1 LIMIT 1",
       [clean]
@@ -71,7 +86,7 @@ async function isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingS
     const fresh = Math.max(lastActive, connectedAt);
     return fresh > 0 && (Date.now() - fresh) <= PAIRING_ACTIVE_MAX_AGE_MS;
   } catch (_) {
-    return true;
+    return false;
   }
 }
 
@@ -119,7 +134,7 @@ router.post('/request', protect, async (req, res) => {
 
   try {
     if (isRemoteWorkerPairingMode()) {
-      const code = await waitForDbPairingCode(clean, 40_000);
+      const code = await waitForDbPairingCode(clean, PAIRING_CODE_WAIT_MS);
       if (!code) {
         return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
       }
@@ -135,7 +150,7 @@ router.post('/request', protect, async (req, res) => {
     });
 
     let code = null;
-    const deadline = Date.now() + 40_000;
+    const deadline = Date.now() + PAIRING_CODE_WAIT_MS;
     while (Date.now() < deadline) {
       await sleep(500);
       try {

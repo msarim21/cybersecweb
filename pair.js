@@ -360,15 +360,11 @@ async function startpairing(nexusDevNumber) {
         
         const pairingTimer = setTimeout(async () => {
             const startedAt = Date.now();
-            const codeDeadline = startedAt + 45_000;
+            const codeDeadline = startedAt + 70_000;
 
             while (Date.now() < codeDeadline) {
                 try {
                     if (tracker.disconnected || tracker.connection !== nexus) return;
-                    if (nexus.ws?.readyState !== 1) {
-                        await sleep(750);
-                        continue;
-                    }
                     if (tracker.pairingCodeRequested) return;
                     tracker.pairingCodeRequested = true;
 
@@ -402,9 +398,10 @@ async function startpairing(nexusDevNumber) {
                         console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
                         return;
                     }
-                    await sleep(750);
+                    await sleep(1000);
                 }
             }
+            console.log(chalk.red(`❌ Pairing code timed out for ${nexusDevNumber}`));
         }, 1500);
         tracker.pairingTimer = pairingTimer;
     }
