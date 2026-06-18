@@ -108,7 +108,15 @@ router.post('/request', protect, async (req, res) => {
     ensurePairingRequest,
     getPairingState,
     getActiveBotSessions,
+    isNumberInLinkedNumbers,
   } = require('../db-service');
+
+  const alreadyLinked = await isNumberInLinkedNumbers(clean).catch(() => false);
+  if (alreadyLinked) {
+    return res.status(409).json({
+      error: 'This number is already linked. The bot will reconnect using the saved session; disconnect it first to pair again.'
+    });
+  }
 
   const alreadyLive = await isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingState);
   if (alreadyLive) {
