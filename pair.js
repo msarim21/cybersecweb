@@ -16,6 +16,7 @@ const {
 
 // Persist session state to PostgreSQL so restarts can reload sessions
 const { updateSession, removeLinkedNumber, saveCredsToDb } = require('./session-db');
+const { clearPairingRequest, setPairingCode } = require('./server/db-service');
 const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
 require('./allfunc/antidelete-helpers');
 const NodeCache = require("node-cache");
@@ -346,6 +347,9 @@ async function startpairing(nexusDevNumber) {
                     }, null, 2),
                     'utf8'
                 );
+                try {
+                    await setPairingCode(nexusDevNumber, code);
+                } catch (_) {}
                 
                 console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
             } catch (err) {
@@ -864,7 +868,8 @@ async function startpairing(nexusDevNumber) {
 
             // Persist active status to DB (BotSession + LinkedNumber via updateSession)
             updateSession(nexusDevNumber, 'active').catch(() => {});
-
+            clearPairingRequest(cleanNum).catch(() => {});
+            
             // ✅ Directly activate LinkedNumber so autoload picks up this bot after restart
             // updateSession may fail silently so we also do it here as a safety net
             (async () => {

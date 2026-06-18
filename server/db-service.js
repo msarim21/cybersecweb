@@ -393,6 +393,84 @@ async function savePairingOwner(number, userId, botName) {
   } catch (_) {}
 }
 
+async function ensurePairingRequest(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  if (isMongoMode()) {
+    const { PairingRequest, BotSession } = M();
+    const existing = await PairingRequest.findOne({ number: clean }).lean().catch(() => null);
+    if (existing && ['requested', 'in_progress', 'code_ready'].includes(existing.status)) {
+      return existing;
+    }
+    const doc = await PairingRequest.findOneAndUpdate(
+      { number: clean },
+      { $set: { status: 'requested', code: null, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true, new: true }
+    );
+    try {
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { status: 'pending', pairingStatus: 'requested', pairingCode: null, lastActive: new Date() } },
+        { upsert: true, new: true }
+      );
+    } catch (_) {}
+    return doc ? { number: doc.number, status: doc.status, code: doc.code } : null;
+  }
+  try {
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, last_active)
+       VALUES ($1, 'pending', 'requested', NULL, NOW())
+       ON CONFLICT (number) DO UPDATE
+         SET pairing_status = CASE
+               WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_status
+               ELSE 'requested'
+             END,
+             pairing_code = CASE
+               WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_code
+               ELSE NULL
+             END,
+             status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
+             last_active = NOW()`,
+      [clean]
+    );
+  } catch (_) {}
+  return { number: clean, status: 'requested', code: null };
+}
+
+async function setPairingCode(number, code) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || !code) return null;
+  if (isMongoMode()) {
+    const { PairingRequest, BotSession } = M();
+    const reqDoc = await PairingRequest.findOneAndUpdate(
+      { number: clean },
+      { $set: { status: 'code_ready', code, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true, new: true }
+    );
+    try {
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { pairingCode: code, pairingStatus: 'code_ready', lastActive: new Date() } },
+        { upsert: true, new: true }
+      );
+    } catch (_) {}
+    return reqDoc ? { number: reqDoc.number, status: reqDoc.status, code: reqDoc.code } : null;
+  }
+  try {
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, pairing_code, pairing_status, last_active)
+       VALUES ($1, 'pending', $2, 'code_ready', NOW())
+       ON CONFLICT (number) DO UPDATE
+         SET pairing_code = $2,
+             pairing_status = 'code_ready',
+             status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
+             last_active = NOW()`,
+      [clean, code]
+    );
+  } catch (_) {}
+  return { number: clean, status: 'code_ready', code };
+}
+
 async function getAndClearPairingOwner(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return null;
@@ -861,13 +939,43 @@ async function getPairingState(clean) {
   try {
     if (!isMongoMode()) return null;
     const { PairingRequest } = M();
-    const doc = await PairingRequest.findOne({ number: clean }).lean();
-    if (!doc) return null;
-    return { code: doc.code, status: doc.status };
+    const reqDoc = await PairingRequest.findOne({ number: clean }).lean();
+    if (reqDoc) return { code: reqDoc.code, status: reqDoc.status };
+    const { BotSession } = M();
+    const botDoc = await BotSession.findOne({ number: clean }).lean().catch(() => null);
+    if (!botDoc) return null;
+    return { code: botDoc.pairingCode || null, status: botDoc.pairingStatus || botDoc.status || null };
   } catch (err) {
     console.error('[db-service] getPairingState:', err.message);
     return null;
   }
+}
+
+async function clearPairingRequest(clean) {
+  const number = String(clean).replace(/[^0-9]/g, '');
+  if (!number) return;
+  if (isMongoMode()) {
+    const { PairingRequest, BotSession } = M();
+    try { await PairingRequest.deleteOne({ number }); } catch (_) {}
+    try {
+      await BotSession.findOneAndUpdate(
+        { number },
+        { $unset: { pairingCode: 1, pairingStatus: 1 }, $set: { lastActive: new Date() } },
+        { upsert: false }
+      );
+    } catch (_) {}
+    return;
+  }
+  try {
+    await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_code = NULL,
+           pairing_status = NULL,
+           last_active = NOW()
+       WHERE number = $1`,
+      [number]
+    );
+  } catch (_) {}
 }
 
 async function clearStalePairingRequests() {
@@ -923,7 +1031,8 @@ module.exports = {
   getSiteSetting, setSiteSetting,
   countAdmins,
   getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
-  markPairingFailed, getPairingState, clearStalePairingRequests,
+  markPairingFailed, getPairingState, clearPairingRequest, ensurePairingRequest,
+  setPairingCode, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices,
   deleteSessionCreds,
   isPlanExpired,

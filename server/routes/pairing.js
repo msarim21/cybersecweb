@@ -6,9 +6,7 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
-const PAIRING_JSON  = path.join(PAIRING_BASE, 'pairing.json');
-
-// Root pair.js — same module bot.js uses
+const PAIRING_JSON = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
 
 function ensureDir(p) {
@@ -17,70 +15,104 @@ function ensureDir(p) {
 
 function deleteFolderRecursive(p) {
   if (!fsSync.existsSync(p)) return;
-  fsSync.readdirSync(p).forEach(f => {
+  fsSync.readdirSync(p).forEach((f) => {
     const cur = path.join(p, f);
     fsSync.lstatSync(cur).isDirectory() ? deleteFolderRecursive(cur) : fsSync.unlinkSync(cur);
   });
   try { fsSync.rmdirSync(p); } catch (_) {}
 }
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── POST /api/pairing/request ─────────────────────────────────────────────────
-// Mirrors exactly what bot.js /pair command does:
-//  1. Call startpairing(jid) from pair.js  (keeps socket alive in background)
-//  2. Wait ~4 s for pair.js to write code to pairing.json
-//  3. Read the code and return it
-//  4. pair.js socket stays alive — when user enters the code WhatsApp
-//     confirms and the full bot boots automatically
+function isRemoteWorkerPairingMode() {
+  return process.env.BOT_ISOLATION === '1'
+    && String(process.env.WHATSAPP_HOST_DYNO || '').toLowerCase() === 'worker'
+    && String(process.env.DYNO || '').startsWith('web');
+}
+
+async function waitForDbPairingCode(clean, deadlineMs = 40_000) {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    await sleep(500);
+    try {
+      const { getPairingState } = require('../db-service');
+      const st = await getPairingState(clean).catch(() => null);
+      if (st?.status === 'code_ready' && st.code) return st.code;
+      if (st?.status === 'active') return null;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// POST /api/pairing/request
 router.post('/request', protect, async (req, res) => {
   const { phoneNumber } = req.body;
   if (!phoneNumber) return res.status(400).json({ error: 'Phone number required.' });
 
   const clean = phoneNumber.replace(/[^0-9]/g, '');
-  if (clean.length < 7 || clean.length > 15)
+  if (clean.length < 7 || clean.length > 15) {
     return res.status(400).json({ error: 'Invalid phone number format.' });
-
-  // ── Save owner info NOW so pair.js can auto-insert into linked_numbers on connect ──
-  try {
-    const { savePairingOwner } = require('../db-service');
-    const botName = req.body.botName || 'CYBER PRO';
-    await savePairingOwner(clean, req.user.id, botName);
-  } catch (_) {}
+  }
 
   const sessionPath = path.join(PAIRING_BASE, clean);
-  // Also handle sessions stored with @s.whatsapp.net suffix (old format)
   const sessionPathAlt = path.join(PAIRING_BASE, clean + '@s.whatsapp.net');
 
-  // Wipe stale session so pair.js always issues a fresh code
+  const {
+    savePairingOwner,
+    ensurePairingRequest,
+    getPairingState,
+    getActiveBotSessions,
+  } = require('../db-service');
+
+  const activeSessions = await getActiveBotSessions().catch(() => []);
+  if (activeSessions.map((n) => String(n).replace(/[^0-9]/g, '')).includes(clean)) {
+    return res.status(409).json({ error: 'This number is already connected. Re-pair only after disconnecting it.' });
+  }
+
+  const existingState = await getPairingState(clean).catch(() => null);
+  if (existingState?.status === 'code_ready' && existingState.code) {
+    return res.json({ code: existingState.code, number: clean, reused: true });
+  }
+
+  try {
+    const botName = req.body.botName || 'CYBER PRO';
+    await savePairingOwner(clean, req.user.id, botName);
+    await ensurePairingRequest(clean);
+  } catch (_) {}
+
   if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
   if (fsSync.existsSync(sessionPathAlt)) deleteFolderRecursive(sessionPathAlt);
   ensureDir(PAIRING_BASE);
   ensureDir(sessionPath);
-
-  // Remove old pairing.json so we don't accidentally return a stale code
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
   try {
-    // Load startpairing from root pair.js — exactly what bot.js does
-    // Clear require cache so a fresh connection is created each time
+    if (isRemoteWorkerPairingMode()) {
+      const code = await waitForDbPairingCode(clean, 40_000);
+      if (!code) {
+        return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
+      }
+      return res.json({ code, number: clean });
+    }
+
     delete require.cache[require.resolve(PAIR_MODULE)];
     const startpairing = require(PAIR_MODULE);
-
     const jid = clean + '@s.whatsapp.net';
 
-    // Fire and forget — pair.js keeps the socket alive in the background
-    startpairing(jid).catch(err => {
+    startpairing(jid).catch((err) => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
 
-    // Wait for pair.js to write pairing.json
-    // pair.js stores number as "263xxx@s.whatsapp.net" so we match digits only
     let code = null;
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
       await sleep(500);
       try {
+        const st = await getPairingState(clean).catch(() => null);
+        if (st?.status === 'code_ready' && st.code) {
+          code = st.code;
+          break;
+        }
         const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
         const obj = JSON.parse(raw);
         const savedNum = (obj.number || '').replace(/[^0-9]/g, '');
@@ -96,23 +128,16 @@ router.post('/request', protect, async (req, res) => {
     }
 
     return res.json({ code, number: clean });
-
   } catch (err) {
     console.error('[Pairing]', err.message);
     return res.status(500).json({ error: err.message || 'Could not generate pairing code. Please try again.' });
   }
 });
 
-// ── GET /api/pairing/status/:number ──────────────────────────────────────────
-// Returns {connected: true} if WhatsApp has confirmed pairing for this number.
-// ⚠️  Heroku runs web + worker on SEPARATE dynos with separate filesystems.
-//     The worker writes connected.flag to its own disk — web dyno never sees it.
-//     Primary check: bot_sessions table in PostgreSQL (shared across all dynos).
-//     Fallback: filesystem flag (works in single-dyno / local dev).
+// GET /api/pairing/status/:number
 router.get('/status/:number', protect, async (req, res) => {
   const clean = req.params.number.replace(/[^0-9]/g, '');
 
-  // ── PRIMARY: Check shared PostgreSQL bot_sessions table ───────────────────
   try {
     const { getPool } = require('../db');
     const pool = getPool();
@@ -127,7 +152,6 @@ router.get('/status/:number', protect, async (req, res) => {
     }
   } catch (_) {}
 
-  // ── FALLBACK: filesystem flag (single-dyno / local dev) ───────────────────
   const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
   if (fsSync.existsSync(flagFile)) {
     try {
