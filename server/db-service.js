@@ -393,14 +393,17 @@ async function savePairingOwner(number, userId, botName) {
   } catch (_) {}
 }
 
-async function ensurePairingRequest(number) {
+async function ensurePairingRequest(number, opts = {}) {
+  const force = opts.force === true;
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return null;
   if (isMongoMode()) {
     const { PairingRequest, BotSession } = M();
-    const existing = await PairingRequest.findOne({ number: clean }).lean().catch(() => null);
-    if (existing && ['requested', 'in_progress', 'code_ready'].includes(existing.status)) {
-      return existing;
+    if (!force) {
+      const existing = await PairingRequest.findOne({ number: clean }).lean().catch(() => null);
+      if (existing && ['requested', 'in_progress', 'code_ready'].includes(existing.status)) {
+        return existing;
+      }
     }
     const doc = await PairingRequest.findOneAndUpdate(
       { number: clean },
@@ -414,25 +417,38 @@ async function ensurePairingRequest(number) {
         { upsert: true, new: true }
       );
     } catch (_) {}
-    return doc ? { number: doc.number, status: doc.status, code: doc.code } : null;
+    return doc ? { number: doc.number, status: doc.status, code: doc.code, updatedAt: doc.updatedAt } : null;
   }
   try {
-    await pg().query(
-      `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, last_active)
-       VALUES ($1, 'pending', 'requested', NULL, NOW())
-       ON CONFLICT (number) DO UPDATE
-         SET pairing_status = CASE
-               WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_status
-               ELSE 'requested'
-             END,
-             pairing_code = CASE
-               WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_code
-               ELSE NULL
-             END,
-             status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
-             last_active = NOW()`,
-      [clean]
-    );
+    if (force) {
+      await pg().query(
+        `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, last_active)
+         VALUES ($1, 'pending', 'requested', NULL, NOW())
+         ON CONFLICT (number) DO UPDATE
+           SET pairing_status = 'requested',
+               pairing_code = NULL,
+               status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
+               last_active = NOW()`,
+        [clean]
+      );
+    } else {
+      await pg().query(
+        `INSERT INTO bot_sessions (number, status, pairing_status, pairing_code, last_active)
+         VALUES ($1, 'pending', 'requested', NULL, NOW())
+         ON CONFLICT (number) DO UPDATE
+           SET pairing_status = CASE
+                 WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_status
+                 ELSE 'requested'
+               END,
+               pairing_code = CASE
+                 WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_code
+                 ELSE NULL
+               END,
+               status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
+               last_active = NOW()`,
+        [clean]
+      );
+    }
   } catch (_) {}
   return { number: clean, status: 'requested', code: null };
 }
@@ -882,11 +898,19 @@ async function disconnectAllUserDevices(userId) {
 
 async function getPendingPairingRequests() {
   try {
-    if (!isMongoMode()) return [];
-    const { PairingRequest } = M();
-    const docs = await PairingRequest.find({ status: 'requested' })
-      .sort({ createdAt: 1 }).limit(5).lean();
-    return docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      const docs = await PairingRequest.find({ status: 'requested' })
+        .sort({ createdAt: 1 }).limit(5).lean();
+      return docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+    }
+    const { rows } = await pg().query(
+      `SELECT number FROM bot_sessions
+       WHERE pairing_status = 'requested'
+       ORDER BY last_active ASC NULLS LAST
+       LIMIT 5`
+    );
+    return rows.map(r => String(r.number).replace(/[^0-9]/g, '')).filter(Boolean);
   } catch (err) {
     console.error('[db-service] getPendingPairingRequests:', err.message);
     return [];
@@ -895,14 +919,22 @@ async function getPendingPairingRequests() {
 
 async function markPairingInProgress(clean) {
   try {
-    if (!isMongoMode()) return false;
-    const { PairingRequest } = M();
-    const res = await PairingRequest.findOneAndUpdate(
-      { number: clean, status: 'requested' },
-      { $set: { status: 'in_progress', updatedAt: new Date() } },
-      { new: false }
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      const res = await PairingRequest.findOneAndUpdate(
+        { number: clean, status: 'requested' },
+        { $set: { status: 'in_progress', updatedAt: new Date() } },
+        { new: false }
+      );
+      return !!res;
+    }
+    const { rowCount } = await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'in_progress', last_active = NOW()
+       WHERE number = $1 AND pairing_status = 'requested'`,
+      [clean]
     );
-    return !!res;
+    return rowCount > 0;
   } catch (err) {
     console.error('[db-service] markPairingInProgress:', err.message);
     return false;
@@ -937,14 +969,36 @@ async function markPairingFailed(clean) {
 
 async function getPairingState(clean) {
   try {
-    if (!isMongoMode()) return null;
-    const { PairingRequest } = M();
-    const reqDoc = await PairingRequest.findOne({ number: clean }).lean();
-    if (reqDoc) return { code: reqDoc.code, status: reqDoc.status };
-    const { BotSession } = M();
-    const botDoc = await BotSession.findOne({ number: clean }).lean().catch(() => null);
-    if (!botDoc) return null;
-    return { code: botDoc.pairingCode || null, status: botDoc.pairingStatus || botDoc.status || null };
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      const reqDoc = await PairingRequest.findOne({ number: clean }).lean();
+      if (reqDoc) {
+        return {
+          code: reqDoc.code,
+          status: reqDoc.status,
+          updatedAt: reqDoc.updatedAt || reqDoc.createdAt || null,
+        };
+      }
+      const { BotSession } = M();
+      const botDoc = await BotSession.findOne({ number: clean }).lean().catch(() => null);
+      if (!botDoc) return null;
+      return {
+        code: botDoc.pairingCode || null,
+        status: botDoc.pairingStatus || botDoc.status || null,
+        updatedAt: botDoc.lastActive || null,
+      };
+    }
+    const { rows } = await pg().query(
+      'SELECT pairing_code, pairing_status, last_active FROM bot_sessions WHERE number=$1 LIMIT 1',
+      [clean]
+    );
+    if (!rows[0]) return null;
+    const row = rows[0];
+    return {
+      code: row.pairing_code || null,
+      status: row.pairing_status || null,
+      updatedAt: row.last_active || null,
+    };
   } catch (err) {
     console.error('[db-service] getPairingState:', err.message);
     return null;

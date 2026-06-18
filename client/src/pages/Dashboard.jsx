@@ -369,11 +369,10 @@ const LinkModal = ({ onClose, onAdd }) => {
   };
 
   const handleRequest = async e => {
-    e.preventDefault();
+    e?.preventDefault();
     if (!form.number || !form.botName) return toast.error('All fields required');
     setStep(2);
     try {
-      // Backend returns { code, number } directly in the POST response
       const { data } = await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
       if (!data.code) throw new Error('No pairing code received from server.');
       setCode(data.code);
@@ -388,6 +387,12 @@ const LinkModal = ({ onClose, onAdd }) => {
         toast.error(err.response?.data?.error || err.message || 'Failed to get pairing code. Try again.');
       }
     }
+  };
+
+  const handleNewCode = async () => {
+    autoSaved.current = false;
+    if (pollRef.current) clearInterval(pollRef.current);
+    await handleRequest();
   };
 
   const handleConfirm = async () => {
@@ -502,7 +507,7 @@ const LinkModal = ({ onClose, onAdd }) => {
                   </p>
                 </div>
                 <div className="flex gap-3">
-                  <button onClick={() => { setStep(1); setTimer(300); }} className="py-3 px-4 rounded-xl font-mono text-xs text-gray-400"
+                  <button onClick={handleNewCode} className="py-3 px-4 rounded-xl font-mono text-xs text-gray-400"
                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>← NEW CODE</button>
                   <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                     onClick={handleConfirm} disabled={saving || timer === 0}

@@ -26,8 +26,7 @@ const {
 } = require('@hapi/boom')
 const EventEmitter = require('events');
 const PhoneNumber = require('awesome-phonenumber')
-let phoneNumber = "923417022212";
-const pairingCode = !!phoneNumber || process.argv.includes("--pairing-code");
+const pairingCode = process.env.BOT_PAIRING === '1' || process.argv.includes('--pairing-code');
 const useMobile = process.argv.includes("--mobile");
 const readline = require("readline");
 const pino = require('pino')
@@ -265,7 +264,10 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
     }
 }
 
-async function startpairing(nexusDevNumber) {
+async function startpairing(nexusDevNumber, options = {}) {
+    const freshPairing = options.freshPairing === true || process.env.BOT_PAIRING === '1';
+    const wantPairingCode = freshPairing || pairingCode;
+
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
     
@@ -283,10 +285,33 @@ async function startpairing(nexusDevNumber) {
     
     const tracker = getTrackerEntry(nexusDevNumber);
 
+    // Fresh pairing retry: tear down dead sockets and reset flags so the
+    // duplicate guard and pairingCodeRequested don't block a new code.
+    if (freshPairing) {
+        tracker.pairingCodeRequested = false;
+        if (tracker.pairingTimer) {
+            clearTimeout(tracker.pairingTimer);
+            tracker.pairingTimer = null;
+        }
+        if (tracker.connection) {
+            try {
+                const wsState = tracker.connection?.ws?.readyState;
+                if (wsState !== 0 && wsState !== 1) {
+                    try { tracker.connection.ev?.removeAllListeners('connection.update'); } catch (_) {}
+                    try { tracker.connection.ws?.terminate(); } catch (_) {}
+                    tracker.connection = null;
+                    tracker.disconnected = true;
+                    tracker.startingAt = 0;
+                }
+            } catch (_) {}
+        }
+    }
+
     // ✅ Duplicate guard: if this number already has an active WA socket, skip.
     // Without this, autoload.js + index.js both start connections for the same
     // number, two instances share the same session key, WhatsApp kicks both → 401
-    if (!tracker.disconnected && tracker.connection) {
+    // Skip when user explicitly requested a fresh pairing code (retry path).
+    if (!freshPairing && !tracker.disconnected && tracker.connection) {
         try {
             const wsState = tracker.connection?.ws?.readyState;
             if (wsState === 0 || wsState === 1 /* CONNECTING or OPEN */) {
@@ -295,7 +320,7 @@ async function startpairing(nexusDevNumber) {
             }
         } catch (_) {}
     }
-    if (!tracker.disconnected && tracker.connection && tracker.startingAt && Date.now() - tracker.startingAt < 60_000) {
+    if (!freshPairing && !tracker.disconnected && tracker.connection && tracker.startingAt && Date.now() - tracker.startingAt < 60_000) {
         console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already starting — skipping duplicate`));
         return tracker.connection;
     }
@@ -317,9 +342,13 @@ async function startpairing(nexusDevNumber) {
     const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
     ensureDirectoryExists(sessionPath);
 
-    // If Heroku/restart wiped local files, hydrate the exact auth folder first.
-    // This keeps saved numbers on the reconnect path instead of falling back to a fresh pairing code.
-    await ensureSessionRestored(nexusDevNumber).catch(() => {});
+    // Fresh pairing must NOT restore old creds — that marks the socket as
+    // already registered and skips requestPairingCode entirely.
+    if (!freshPairing) {
+        // If Heroku/restart wiped local files, hydrate the exact auth folder first.
+        // This keeps saved numbers on the reconnect path instead of falling back to a fresh pairing code.
+        await ensureSessionRestored(nexusDevNumber).catch(() => {});
+    }
     
     const {
         state,
@@ -357,7 +386,7 @@ async function startpairing(nexusDevNumber) {
     
     if (store) store.bind(nexus.ev);
 
-    if (pairingCode && !state.creds.registered) {
+    if (wantPairingCode && !state.creds.registered) {
         if (useMobile) {
             throw new Error('Cannot use pairing code with mobile API');
         }
@@ -1261,6 +1290,11 @@ module.exports.stopBot = function stopBot(number) {
         if (tracker) {
             tracker.disconnected = true;
             tracker.pairingCodeRequested = false;
+            tracker.startingAt = 0;
+            if (tracker.pairingTimer) {
+                clearTimeout(tracker.pairingTimer);
+                tracker.pairingTimer = null;
+            }
             if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
             try { tracker.connection?.ws?.terminate(); } catch (_) {}
             deleteTrackerEntry(key);

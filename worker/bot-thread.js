@@ -75,7 +75,7 @@ function spawnChild(opts = {}) {
     const childEnv = {
         ...env,
         BOT_NUMBER  : botNumber,
-        BOT_PAIRING : opts.pairing ? '1' : '0',
+        BOT_PAIRING : opts.pairing ? '1' : (env.BOT_PAIRING === '1' ? '1' : '0'),
         WHATSAPP_WORKER: '1',
         BOT_ISOLATION  : '1',
     };
