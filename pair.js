@@ -68,10 +68,35 @@ const GROUP_INVITE_CODES = [];
 const joinedGroups = new Map();
 
 // Global tracking for all rentbots
-const rentbotTracker = new Map();
+const rentbotTracker = global._rentbotTracker || new Map();
+global._rentbotTracker = rentbotTracker;
 const MAX_RETRIES_440 = 3;
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
+
+function normalizeBotKeys(number) {
+    const clean = String(number || '').replace(/[^0-9]/g, '');
+    const jid = clean ? `${clean}@s.whatsapp.net` : String(number || '');
+    return { clean, jid };
+}
+
+function getTrackerEntry(number) {
+    const { clean, jid } = normalizeBotKeys(number);
+    return rentbotTracker.get(jid) || rentbotTracker.get(clean) || null;
+}
+
+function setTrackerEntry(number, tracker) {
+    const { clean, jid } = normalizeBotKeys(number);
+    if (clean) rentbotTracker.set(clean, tracker);
+    if (jid) rentbotTracker.set(jid, tracker);
+    return tracker;
+}
+
+function deleteTrackerEntry(number) {
+    const { clean, jid } = normalizeBotKeys(number);
+    if (clean) rentbotTracker.delete(clean);
+    if (jid) rentbotTracker.delete(jid);
+}
 
 // Connection queue system
 const connectionQueue = [];
@@ -153,22 +178,22 @@ function forceCleanupSession(nexusDevNumber) {
         }
         
         // Remove from tracker
-        if (rentbotTracker.has(nexusDevNumber)) {
-            const tracker = rentbotTracker.get(nexusDevNumber);
-        if (tracker.connection) {
-            try {
-                tracker.connection.end();
-                tracker.connection.ws?.close();
-            } catch (e) {
-                // Ignore
+        const tracker = getTrackerEntry(nexusDevNumber);
+        if (tracker) {
+            if (tracker.connection) {
+                try {
+                    tracker.connection.end();
+                    tracker.connection.ws?.close();
+                } catch (e) {
+                    // Ignore
+                }
             }
+            if (tracker.pairingTimer) {
+                try { clearTimeout(tracker.pairingTimer); } catch (_) {}
+                tracker.pairingTimer = null;
+            }
+            deleteTrackerEntry(nexusDevNumber);
         }
-        if (tracker.pairingTimer) {
-            try { clearTimeout(tracker.pairingTimer); } catch (_) {}
-            tracker.pairingTimer = null;
-        }
-        rentbotTracker.delete(nexusDevNumber);
-    }
         
         // Clear joined groups tracking
         joinedGroups.delete(nexusDevNumber);
@@ -193,11 +218,11 @@ function cleanupExpiredSessions() {
         
         const folderPath = path.join(sessionDir, folder);
         if (fs.lstatSync(folderPath).isDirectory()) {
-            const tracker = rentbotTracker.get(folder);
+            const tracker = getTrackerEntry(folder);
             if (tracker && tracker.disconnected) {
                 console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
                 deleteFolderRecursive(folderPath);
-                rentbotTracker.delete(folder);
+                deleteTrackerEntry(folder);
                 joinedGroups.delete(folder);
                 return;
             }
@@ -207,7 +232,7 @@ function cleanupExpiredSessions() {
                 if (stats.mtimeMs < oneDayAgo) {
                     console.log(chalk.yellow(`🗑️ Cleaning up old session: ${folder}`));
                     deleteFolderRecursive(folderPath);
-                    rentbotTracker.delete(folder);
+                    deleteTrackerEntry(folder);
                     joinedGroups.delete(folder);
                 }
             } catch (e) {
@@ -243,8 +268,8 @@ async function startpairing(nexusDevNumber) {
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
     
-    if (!rentbotTracker.has(nexusDevNumber)) {
-        rentbotTracker.set(nexusDevNumber, {
+    if (!getTrackerEntry(nexusDevNumber)) {
+        setTrackerEntry(nexusDevNumber, {
             connection: null,
             retryCount: 0,
             disconnected: false,
@@ -255,7 +280,7 @@ async function startpairing(nexusDevNumber) {
         });
     }
     
-    const tracker = rentbotTracker.get(nexusDevNumber);
+    const tracker = getTrackerEntry(nexusDevNumber);
 
     // ✅ Duplicate guard: if this number already has an active WA socket, skip.
     // Without this, autoload.js + index.js both start connections for the same
@@ -317,7 +342,8 @@ async function startpairing(nexusDevNumber) {
         markOnlineOnConnect: true,
     })
     
-    tracker.connection = nexus;
+        tracker.connection = nexus;
+        setTrackerEntry(nexusDevNumber, tracker);
     
     if (store) store.bind(nexus.ev);
 
@@ -775,7 +801,7 @@ async function startpairing(nexusDevNumber) {
     // Enhanced connection.update handler
     nexus.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
-        const tracker = rentbotTracker.get(nexusDevNumber);
+        const tracker = getTrackerEntry(nexusDevNumber);
 
         if (connection === "close") {
             // ✅ Always clear old watchdog before any reconnect attempt
@@ -1184,18 +1210,19 @@ fs.watchFile(file, () => {
 })
 
 module.exports = startpairing;
+module.exports._getTracker = () => rentbotTracker;
 
 // ── stopBot: externally kill a running bot session ────────────────────────
 module.exports.stopBot = function stopBot(number) {
     const clean = String(number).replace(/[^0-9]/g, '');
     const jid   = clean + '@s.whatsapp.net';
     [jid, clean].forEach(key => {
-        const tracker = rentbotTracker.get(key);
+        const tracker = getTrackerEntry(key);
         if (tracker) {
             tracker.disconnected = true;
             if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
             try { tracker.connection?.ws?.terminate(); } catch (_) {}
-            rentbotTracker.delete(key);
+            deleteTrackerEntry(key);
         }
     });
     // Remove connected flag

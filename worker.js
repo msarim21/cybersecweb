@@ -45,6 +45,21 @@ const { startKeepAlive } = require('./keepalive');
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function getUniqueTrackerCount() {
+  try {
+    const tracker = global._rentbotTracker;
+    if (!tracker?.entries) return 0;
+    const seen = new Set();
+    for (const [, entry] of tracker.entries()) {
+      if (!entry || seen.has(entry)) continue;
+      seen.add(entry);
+    }
+    return seen.size;
+  } catch (_) {
+    return 0;
+  }
+}
+
 const ignoredErrors = [
   'Socket connection timeout', 'EKEYTYPE', 'item-not-found',
   'rate-overlimit', 'Connection Closed', 'Timed Out',
@@ -258,7 +273,7 @@ async function startWorker() {
       const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
       await syncStoppedWithLinkedNumbers();
       const { isRunning } = require('./autoload');
-      if (!isRunning()) {
+      if (!isRunning() && getUniqueTrackerCount() === 0) {
         await autoLoadPairs({ concurrent: true });
       }
     } catch (_) {}

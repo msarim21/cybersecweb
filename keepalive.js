@@ -85,13 +85,25 @@ function _supervisorActive() {
     }
 }
 
+function uniqueTrackerEntries(trackerMap) {
+    const seen = new Set();
+    const rows = [];
+    if (!trackerMap?.entries) return rows;
+    for (const [key, tracker] of trackerMap.entries()) {
+        if (!tracker || seen.has(tracker)) continue;
+        seen.add(tracker);
+        rows.push([key, tracker]);
+    }
+    return rows;
+}
+
 /** Persist antidelete RAM → disk → Mongo so dyno restarts don't lose cache */
 async function backupAntideleteSessions() {
     try {
         const trackerMap = global._rentbotTracker;
         if (!trackerMap?.size) return;
         const { getAntideleteSession } = require('./allfunc/antidelete-session');
-        for (const [key, tracker] of trackerMap.entries()) {
+        for (const [key, tracker] of uniqueTrackerEntries(trackerMap)) {
             if (!tracker || tracker.disconnected) continue;
             const nexus = tracker.connection;
             if (!nexus?.user) continue;
@@ -125,7 +137,7 @@ async function sweepStaleWhatsAppSockets() {
         ensureHot = require('./allfunc/socket-wake').ensureWhatsAppSocketHot;
     } catch (_) { return; }
 
-    for (const [key, tracker] of trackerMap.entries()) {
+    for (const [key, tracker] of uniqueTrackerEntries(trackerMap)) {
         if (!tracker || tracker.disconnected) continue;
         const nexus = tracker.connection;
         if (!nexus?.user) continue;
@@ -443,7 +455,7 @@ function startKeepAlive() {
                     const { backupSessionFolder } = require('./session-db');
                     const tracker = global._rentbotTracker;
                     if (!tracker || !tracker.size) return;
-                    for (const [key, t] of tracker.entries()) {
+                    for (const [key, t] of uniqueTrackerEntries(tracker)) {
                         if (!key.includes('@')) continue;
                         const ws = t?.connection?.ws;
                         if (!ws || ws.readyState !== 1) continue;
