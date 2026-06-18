@@ -1029,6 +1029,59 @@ async function deleteSessionCreds(number) {
   } catch (_) {}
 }
 
+async function hasFirstConnected(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return false;
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      const doc = await BotSession.findOne({ number: clean }).select('firstConnectedAt').lean();
+      return Boolean(doc?.firstConnectedAt);
+    } catch (_) { return false; }
+  }
+  try {
+    const { rows } = await pg().query(
+      'SELECT first_connected_at FROM bot_sessions WHERE number=$1 LIMIT 1',
+      [clean]
+    );
+    return Boolean(rows[0]?.first_connected_at);
+  } catch (_) { return false; }
+}
+
+async function markFirstConnected(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return;
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        [
+          {
+            $set: {
+              number: clean,
+              firstConnectedAt: { $ifNull: ['$firstConnectedAt', new Date()] },
+              lastActive: new Date(),
+            }
+          }
+        ],
+        { upsert: true, new: true }
+      );
+    } catch (_) {}
+    return;
+  }
+  try {
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, first_connected_at, last_active)
+       VALUES ($1, 'active', NOW(), NOW())
+       ON CONFLICT (number) DO UPDATE
+         SET first_connected_at = COALESCE(bot_sessions.first_connected_at, NOW()),
+             last_active = NOW()`,
+      [clean]
+    );
+  } catch (_) {}
+}
+
 // ── isPlanExpired — used by auth middleware & routes ──────────────────────────
 function isPlanExpired(user) {
   if (!user) return false;
@@ -1063,5 +1116,6 @@ module.exports = {
   setPairingCode, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices,
   deleteSessionCreds,
+  hasFirstConnected, markFirstConnected,
   isPlanExpired,
 };

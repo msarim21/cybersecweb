@@ -15,7 +15,7 @@ const {
 } = require("@whiskeysockets/baileys");
 
 // Persist session state to PostgreSQL so restarts can reload sessions
-const { updateSession, removeLinkedNumber, saveCredsToDb } = require('./session-db');
+const { updateSession, removeLinkedNumber, saveCredsToDb, hasFirstConnected, markFirstConnected } = require('./session-db');
 const { clearPairingRequest, setPairingCode, setLinkedNumberStatus } = require('./server/db-service');
 const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
 require('./allfunc/antidelete-helpers');
@@ -101,6 +101,7 @@ function deleteTrackerEntry(number) {
 // Connection queue system
 const connectionQueue = [];
 let activeConnections = 0;
+const connectedMessageDebounce = new Map();
 
 function processQueue() {
     if (activeConnections < MAX_CONCURRENT_CONNECTIONS && connectionQueue.length > 0) {
@@ -288,11 +289,15 @@ async function startpairing(nexusDevNumber) {
     if (!tracker.disconnected && tracker.connection) {
         try {
             const wsState = tracker.connection?.ws?.readyState;
-            if (wsState === 1 /* WebSocket.OPEN */) {
-                console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already connected (ws=OPEN) — skipping duplicate`));
+            if (wsState === 0 || wsState === 1 /* CONNECTING or OPEN */) {
+                console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already starting/connected (ws=${wsState}) — skipping duplicate`));
                 return tracker.connection;
             }
         } catch (_) {}
+    }
+    if (!tracker.disconnected && tracker.connection && tracker.startingAt && Date.now() - tracker.startingAt < 60_000) {
+        console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already starting — skipping duplicate`));
+        return tracker.connection;
     }
 
     // ✅ Clear any existing healthCheckInterval from a previous session
@@ -304,6 +309,7 @@ async function startpairing(nexusDevNumber) {
     tracker.retryCount++;
     tracker.disconnected = false;
     tracker.lastActivity = Date.now();
+    tracker.startingAt = Date.now();
 
     const { version, isLatest } = await fetchLatestBaileysVersion();
     
@@ -828,6 +834,7 @@ async function startpairing(nexusDevNumber) {
                 tracker.pairingTimer = null;
             }
             tracker.pairingCodeRequested = false;
+            tracker.startingAt = 0;
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
@@ -914,6 +921,7 @@ async function startpairing(nexusDevNumber) {
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
             tracker.retryCount = 0;
             tracker.disconnected = false;
+            tracker.startingAt = 0;
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
@@ -958,6 +966,13 @@ async function startpairing(nexusDevNumber) {
             // Send a connected confirmation message to the linked number
             try {
                 const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
+                const alreadyWelcomed = await hasFirstConnected(cleanNum).catch(() => false);
+                const lastWelcomeAt = connectedMessageDebounce.get(cleanNum) || 0;
+                const shouldSendWelcome = !alreadyWelcomed && (Date.now() - lastWelcomeAt > 60_000);
+                if (!shouldSendWelcome) {
+                    console.log(chalk.gray(`ℹ️ Connected message skipped for ${nexusDevNumber} (already welcomed/recent reconnect)`));
+                } else {
+                    connectedMessageDebounce.set(cleanNum, Date.now());
                 const connectedMsg = `╔══════════════════╗
 ║  ✅ *BOT CONNECTED*  ║
 ╚══════════════════╝
@@ -973,7 +988,9 @@ Your bot is ready. Send *.menu* to see all available commands.
 ━━━━━━━━━━━━━━━━━━`;
 
                 await nexus.sendMessage(userJid, { text: connectedMsg });
+                    await markFirstConnected(cleanNum).catch(() => {});
                 console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
+                }
             } catch (msgErr) {
                 console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
             }
