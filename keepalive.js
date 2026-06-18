@@ -322,14 +322,13 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-/** Bot memory restart interval (hours). 0 = off. Isolated children default off. */
+/** Bot memory restart interval (hours). 0 = off. Default 3h — clears per-bot heap leaks. */
 function getBotRestartHours() {
     const bot = Number(process.env.BOT_RESTART_HOURS);
     if (Number.isFinite(bot)) return bot;
-    if (process.env.WHATSAPP_WORKER === '1' || global.__ISOLATED_BOT) return 0;
     const legacy = Number(process.env.AUTO_RESTART_HOURS);
     if (Number.isFinite(legacy) && legacy > 0) return legacy;
-    return 0;
+    return 3;
 }
 
 // ── Per-bot child restart (supervisor mode — web dyno stays up) ─────────────
