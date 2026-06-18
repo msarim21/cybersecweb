@@ -10,6 +10,7 @@ const PAIRING_JSON = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
 const PAIRING_ACTIVE_MAX_AGE_MS = 5 * 60 * 1000;
 const PAIRING_CODE_WAIT_MS = 75_000;
+const PAIRING_CODE_REUSE_MAX_MS = 3 * 60 * 1000;
 
 function ensureDir(p) {
   if (!fsSync.existsSync(p)) fsSync.mkdirSync(p, { recursive: true });
@@ -109,6 +110,8 @@ router.post('/request', protect, async (req, res) => {
     getPairingState,
     getActiveBotSessions,
     isNumberInLinkedNumbers,
+    clearPairingRequest,
+    upsertBotSession,
   } = require('../db-service');
 
   const alreadyLinked = await isNumberInLinkedNumbers(clean).catch(() => false);
@@ -123,15 +126,33 @@ router.post('/request', protect, async (req, res) => {
     return res.status(409).json({ error: 'This number is already connected. Re-pair only after disconnecting it.' });
   }
 
+  // Stop any in-process pairing socket so a retry isn't blocked by the
+  // duplicate guard (dead ws + startingAt within 60s).
+  try {
+    const pairMod = require(PAIR_MODULE);
+    if (typeof pairMod.stopBot === 'function') {
+      pairMod.stopBot(clean);
+      pairMod.stopBot(clean + '@s.whatsapp.net');
+    }
+  } catch (_) {}
+
   const existingState = await getPairingState(clean).catch(() => null);
   if (existingState?.status === 'code_ready' && existingState.code) {
-    return res.json({ code: existingState.code, number: clean, reused: true });
+    const updatedAt = existingState.updatedAt ? new Date(existingState.updatedAt).getTime() : 0;
+    const freshEnough = updatedAt > 0 && (Date.now() - updatedAt) <= PAIRING_CODE_REUSE_MAX_MS;
+    if (freshEnough) {
+      return res.json({ code: existingState.code, number: clean, reused: true });
+    }
+    // Stale code from a failed/expired attempt — wipe and generate a new one.
+    await clearPairingRequest(clean).catch(() => {});
   }
 
   try {
     const botName = req.body.botName || 'CYBER PRO';
     await savePairingOwner(clean, req.user.id, botName);
-    await ensurePairingRequest(clean);
+    await ensurePairingRequest(clean, { force: true });
+    // Mark session inactive so a stale active row doesn't block re-pair.
+    await upsertBotSession(clean, 'inactive').catch(() => {});
   } catch (_) {}
 
   if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
@@ -163,7 +184,7 @@ router.post('/request', protect, async (req, res) => {
     const startpairing = require(PAIR_MODULE);
     const jid = clean + '@s.whatsapp.net';
 
-    startpairing(jid).catch((err) => {
+    startpairing(jid, { freshPairing: true }).catch((err) => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
 
@@ -188,6 +209,11 @@ router.post('/request', protect, async (req, res) => {
     }
 
     if (!code) {
+      await clearPairingRequest(clean).catch(() => {});
+      try {
+        const pairMod = require(PAIR_MODULE);
+        if (typeof pairMod.stopBot === 'function') pairMod.stopBot(clean);
+      } catch (_) {}
       return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
     }
 
