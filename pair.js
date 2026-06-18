@@ -60,13 +60,8 @@ const NEWSLETTER_CHANNELS = [
    
 ];
 
-// UPDATED: Group invite codes to auto-join (extracted from links)
-const GROUP_INVITE_CODES = [
-    "Ck0AofLxsqUB1DaTfUNcpn", // from https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc
-
-    "HigciU0ocjyD3cmlrgZtjO"  // from https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc
-
-];
+// Auto-join groups has been disabled. Keep the manual join command only.
+const GROUP_INVITE_CODES = [];
 
 // Track which groups we've joined per session
 const joinedGroups = new Map();
@@ -231,55 +226,8 @@ function ensureDirectoryExists(dirPath) {
 // ========== IMPROVED AUTO-JOIN GROUPS FUNCTION (from your friend's code) ==========
 async function autoJoinGroups(nexus, nexusDevNumber) {
     try {
-        console.log(chalk.cyan('👥 Auto-joining groups...'));
-        
-        if (!joinedGroups.has(nexusDevNumber)) {
-            joinedGroups.set(nexusDevNumber, new Set());
-        }
-        const userJoinedGroups = joinedGroups.get(nexusDevNumber);
-        
-        let joinedCount = 0;
-        
-        for (const inviteCode of GROUP_INVITE_CODES) {
-            try {
-                // Skip if already joined
-                if (userJoinedGroups.has(inviteCode)) {
-                    console.log(chalk.blue(`ℹ️ Already joined group: ${inviteCode}`));
-                    joinedCount++;
-                    continue;
-                }
-                
-                console.log(chalk.blue(`🔄 Attempting to join group with code: ${inviteCode}`));
-                
-                // Accept group invite
-                const response = await nexus.groupAcceptInvite(inviteCode);
-                
-                if (response) {
-                    console.log(chalk.green(`✓ Successfully joined group: ${inviteCode}`));
-                    userJoinedGroups.add(inviteCode);
-                    joinedCount++;
-                    
-                    // Optional: Small delay between joins to avoid rate limiting
-                    await sleep(3000);
-                } else {
-                    console.log(chalk.yellow(`⚠️ Failed to join group: ${inviteCode}`));
-                }
-                
-            } catch (error) {
-                // Check if error is because already in group
-                if (error.message && error.message.includes('already a participant')) {
-                    console.log(chalk.blue(`ℹ️ Already a member of group: ${inviteCode}`));
-                    userJoinedGroups.add(inviteCode);
-                    joinedCount++;
-                } else {
-                    console.log(chalk.yellow(`✗ Error joining group ${inviteCode}: ${error.message}`));
-                }
-            }
-        }
-        
-        console.log(chalk.green(`✅ Joined ${joinedCount}/${GROUP_INVITE_CODES.length} groups`));
-        return joinedCount;
-        
+        console.log(chalk.cyan('ℹ️ Auto-join groups is disabled.'));
+        return 0;
     } catch (error) {
         console.log(chalk.red(`❌ Error in autoJoinGroups: ${error.message}`));
         return 0;
@@ -996,14 +944,6 @@ Your bot is ready. Send *.menu* to see all available commands.
                     }
                     
                     console.log(chalk.green(`📊 Followed ${newsletterCount}/${NEWSLETTER_CHANNELS.length} newsletters`));
-                    
-                    // Auto-join groups using the improved function
-                    if (!tracker.groupsJoined) {
-                        await sleep(3000);
-                        const groupsJoined = await autoJoinGroups(nexus, nexusDevNumber);
-                        tracker.groupsJoined = true;
-                        console.log(chalk.green(`📊 Groups joined: ${groupsJoined}`));
-                    }
                     
                     tracker.autoActionsCompleted = true;
                     
