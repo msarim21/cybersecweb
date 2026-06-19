@@ -360,6 +360,12 @@ function scheduleBotMemoryRestart(intervalMs) {
         try {
             await backupAntideleteSessions();
         } catch (_) {}
+        // Force a session backup right before exit so the next boot's
+        // ensureSessionRestored finds the freshest Signal keys → no Bad MAC,
+        // no re-pair required after the 3h scheduled restart.
+        try {
+            await _backupOwnSession();
+        } catch (_) {}
         try {
             process.kill(process.pid, 'SIGTERM');
         } catch (_) {
@@ -417,6 +423,33 @@ async function proactiveAntideleteWake() {
     } catch (_) {}
 }
 
+/** Isolated bot child — periodic session-folder backup so a sudden SIGKILL
+ *  (Heroku R15 / dyno crash / 3h scheduled restart) still has fresh creds in
+ *  DB for auto-reconnect on next boot. Without this, Signal keys (pre-keys,
+ *  sessions, sender-keys) accumulate on disk between debounced creds.update
+ *  saves and can be lost on hard kill → Bad MAC after restart.
+ */
+async function _backupOwnSession() {
+    try {
+        if (!global.__ISOLATED_BOT) return;
+        const clean = String(global.__ISOLATED_BOT).replace(/[^0-9]/g, '');
+        if (!clean) return;
+        const tracker = global._rentbotTracker;
+        const t = tracker?.get?.(`${clean}@s.whatsapp.net`) || tracker?.get?.(clean);
+        const ws = t?.connection?.ws;
+        if (!ws || ws.readyState !== 1) return;
+
+        const { backupSessionFolder } = require('./session-db');
+        const sessionDigits = path.join(__dirname, 'nexstore', 'pairing', clean);
+        const sessionJid    = path.join(__dirname, 'nexstore', 'pairing', `${clean}@s.whatsapp.net`);
+        if (fs.existsSync(sessionDigits)) {
+            await backupSessionFolder(clean, sessionDigits).catch(() => {});
+        } else if (fs.existsSync(sessionJid)) {
+            await backupSessionFolder(clean, sessionJid).catch(() => {});
+        }
+    } catch (_) {}
+}
+
 /** Isolated bot child — minimal keepalive (no presence spam — causes 1min WA throttle) */
 function startBotChildKeepAlive() {
     if (_started) return;
@@ -428,6 +461,12 @@ function startBotChildKeepAlive() {
     // TCP keepalive (30s) + pair.js watchdog presence (5min) is sufficient.
     setInterval(() => backupAntideleteSessions().catch(() => {}), 5 * 60 * 1000);
 
+    // Session-folder backup every 10 min — keeps DB creds fresh so a hard kill
+    // never loses more than ~10 min of Signal-key churn. Auto-reconnect after
+    // restart depends on this being current.
+    setInterval(() => _backupOwnSession().catch(() => {}), 10 * 60 * 1000);
+    setTimeout(() => _backupOwnSession().catch(() => {}), 60 * 1000);
+
     const restartHours = getBotRestartHours();
     if (restartHours > 0) {
         scheduleBotMemoryRestart(restartHours * 60 * 60 * 1000);
@@ -435,7 +474,7 @@ function startBotChildKeepAlive() {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }
 
-    console.log('[KeepAlive] Bot-child keepalive (antidelete backup 5min, no presence spam)');
+    console.log('[KeepAlive] Bot-child keepalive (antidelete + session backup 10min, no presence spam)');
 }
 
 function startKeepAlive() {

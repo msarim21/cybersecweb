@@ -15,7 +15,7 @@ const {
 } = require("@whiskeysockets/baileys");
 
 // Persist session state to PostgreSQL so restarts can reload sessions
-const { updateSession, removeLinkedNumber, saveCredsToDb, hasFirstConnected, markFirstConnected, ensureSessionRestored } = require('./session-db');
+const { updateSession, removeLinkedNumber, saveCredsToDb, hasFirstConnected, markFirstConnected, ensureSessionRestored, backupSessionFolder } = require('./session-db');
 const { clearPairingRequest, setPairingCode, setLinkedNumberStatus } = require('./server/db-service');
 const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
 require('./allfunc/antidelete-helpers');
@@ -151,6 +151,12 @@ function teardownTrackerSocket(tracker) {
         clearTimeout(tracker._credsBackupTimer);
         tracker._credsBackupTimer = null;
     }
+
+    // NOTE: Intentionally do NOT delete tracker._sessionFlushKey here.
+    // teardownTrackerSocket runs on every reconnect — if SIGTERM hits between
+    // teardown and the next "open", we still want to flush this bot's session
+    // to DB. The next "open" overwrites the same key, so leaks are impossible.
+    // Logout/stopBot paths explicitly clear the flush entry below.
 
     tracker.connection = null;
 
@@ -1043,6 +1049,12 @@ async function startpairing(nexusDevNumber, options = {}) {
                 // ✅ FIX: Do NOT delete from linked_numbers on logout — number must stay
                 // permanently in dashboard. User can remove it manually if needed.
                 forceCleanupSession(nexusDevNumber);
+                // Deregister session-flush — DB creds will be wiped on logout
+                // and the next SIGTERM should not try to back up a stale folder.
+                try {
+                    const _key = (nexusDevNumber || '').replace(/[^0-9]/g, '');
+                    if (_key && global._sessionFlushFns) global._sessionFlushFns.delete(_key);
+                } catch (_) {}
                 tracker.disconnected = true;
                 tracker.pairingCodeRequested = false;
             } else if (reason === DisconnectReason.connectionClosed || 
@@ -1126,6 +1138,28 @@ async function startpairing(nexusDevNumber, options = {}) {
                 }
               } catch (_) {}
             })();
+
+            // Register a flush function so SIGTERM (worker.js) backs up session
+            // creds (full folder, not just creds.json) to DB before dyno restart.
+            // Without this, Heroku ephemeral disk wipe + 3h scheduled restart
+            // would force users to re-pair every restart.
+            try {
+                if (!global._sessionFlushFns) global._sessionFlushFns = new Map();
+                const _flushKey = cleanNum;
+                const _flush = async () => {
+                    try {
+                        const sessionPath = path.join(__dirname, 'nexstore', 'pairing', cleanNum);
+                        const altPath = path.join(__dirname, 'nexstore', 'pairing', `${cleanNum}@s.whatsapp.net`);
+                        if (fs.existsSync(sessionPath)) {
+                            await backupSessionFolder(cleanNum, sessionPath).catch(() => {});
+                        } else if (fs.existsSync(altPath)) {
+                            await backupSessionFolder(cleanNum, altPath).catch(() => {});
+                        }
+                    } catch (_) {}
+                };
+                global._sessionFlushFns.set(_flushKey, _flush);
+                tracker._sessionFlushKey = _flushKey;
+            } catch (_) {}
 
             global.pairEmitter.emit('connected', nexusDevNumber);
 
@@ -1448,7 +1482,9 @@ module.exports.stopBot = function stopBot(number) {
             deleteTrackerEntry(key);
         }
     });
-    // Remove connected flag
+    try {
+        if (clean && global._sessionFlushFns) global._sessionFlushFns.delete(clean);
+    } catch (_) {}
     try {
         const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
         if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);

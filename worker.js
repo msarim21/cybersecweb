@@ -84,13 +84,25 @@ process.on('uncaughtException', (error) => {
 process.on('SIGTERM', async () => {
   console.log(chalk.yellow('[Worker] SIGTERM received — flushing session keys before shutdown...'));
   try {
-    // Flush Signal key backups before exit — prevents Bad MAC Error on restart.
-    // Signal keys (pre-keys, sessions, sender-keys) change during msg processing
-    // WITHOUT triggering creds.update so they must be force-flushed on shutdown.
+    // ── Supervisor (isolated) mode: ask each worker_thread to SIGTERM its
+    //    bot-runner child gracefully so each child can flush its own session
+    //    folder to DB. Parent's _sessionFlushFns is empty in this mode because
+    //    each bot lives in its own child process.
+    try {
+      const { isSupervisorActive, stopSupervisorGraceful } = require('./worker/supervisor');
+      if (isSupervisorActive()) {
+        await stopSupervisorGraceful(15000).catch(() => {});
+      }
+    } catch (_) {}
+
+    // ── Flat mode (BOT_ISOLATION=0): all bots run in this process.
+    //    Flush registered session-flush fns (registered by pair.js on connect).
+    //    Signal keys (pre-keys, sessions, sender-keys) change during msg
+    //    processing WITHOUT triggering creds.update so they must be
+    //    force-flushed on shutdown — otherwise Bad MAC errors on restart.
     if (global._sessionFlushFns && global._sessionFlushFns.size > 0) {
-      console.log(chalk.yellow('[Worker] Flushing ' + global._sessionFlushFns.size + ' bot sessions to DB...'));
+      console.log(chalk.yellow('[Worker] Flushing ' + global._sessionFlushFns.size + ' in-process bot session(s) to DB...'));
       const _flushJobs = [...global._sessionFlushFns.values()].map(fn => fn().catch(() => {}));
-      // Race: either all complete or 8s max (Heroku gives 30s before SIGKILL)
       await Promise.race([Promise.allSettled(_flushJobs), new Promise(r => setTimeout(r, 8000))]);
       console.log(chalk.green('[Worker] ✅ Sessions flushed — shutting down.'));
     }
