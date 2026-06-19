@@ -412,10 +412,11 @@ async function startpairing(nexusDevNumber, options = {}) {
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 3000,
         emitOwnEvents: true,
-        fireInitQueries: _syncFullHistory && process.env.BOT_FIRE_INIT === '1',
+        fireInitQueries: false,
         generateHighQualityLinkPreview: false,
         syncFullHistory: _syncFullHistory,
-        markOnlineOnConnect: !_isWorkerBot,
+        markOnlineOnConnect: false,
+        retryRequestDelayMs: 5000,
     })
     
         tracker.connection = nexus;
@@ -1001,29 +1002,32 @@ async function startpairing(nexusDevNumber, options = {}) {
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
             tracker.pairingCodeRequested = false;
-            tracker.commandReady = false;
-            tracker.syncing = true;
+            if (tracker.readyTimer) {
+                clearTimeout(tracker.readyTimer);
+                tracker.readyTimer = null;
+            }
 
-            touchBotHeartbeat(cleanNum, {
-                event: 'open',
-                ready: false,
-                syncing: true,
-                wsState: nexus?.ws?.readyState ?? 1,
-            });
-
-            // Persist session row (linked_numbers auto-save) but mark as not command-ready yet
-            updateSession(nexusDevNumber, 'active', { commandReady: false }).catch(() => {});
+            updateSession(nexusDevNumber, 'active').catch(() => {});
             clearPairingRequest(cleanNum).catch(() => {});
 
-            // Without full history sync, bot is ready after a short settle period
-            if (tracker.readyTimer) clearTimeout(tracker.readyTimer);
-            const readyDelayMs = _syncFullHistory ? 90_000 : 3_000;
-            tracker.readyTimer = setTimeout(() => {
-                if (tracker.disconnected || tracker.connection !== nexus) return;
-                markBotCommandReady(nexusDevNumber, nexus);
-            }, readyDelayMs);
-
-            if (_syncFullHistory) {
+            // History sync off (default) → ready after post-connect hook is registered
+            if (!_syncFullHistory) {
+                // defer to end of handler after tracker.onCommandReady is set
+                tracker._markReadyOnOpen = true;
+            } else {
+                tracker.commandReady = false;
+                tracker.syncing = true;
+                touchBotHeartbeat(cleanNum, {
+                    event: 'open',
+                    ready: false,
+                    syncing: true,
+                    wsState: nexus?.ws?.readyState ?? 1,
+                });
+                updateSession(nexusDevNumber, 'active', { commandReady: false, wsState: 1 }).catch(() => {});
+                tracker.readyTimer = setTimeout(() => {
+                    if (tracker.disconnected || tracker.connection !== nexus) return;
+                    markBotCommandReady(nexusDevNumber, nexus);
+                }, 90_000);
                 nexus.ev.once('messaging-history.set', () => {
                     if (tracker.disconnected || tracker.connection !== nexus) return;
                     if (tracker.readyTimer) clearTimeout(tracker.readyTimer);
@@ -1113,6 +1117,10 @@ Your bot is ready. Send *.menu* to see all available commands.
             };
 
             tracker.onCommandReady = _runPostConnectActions;
+            if (tracker._markReadyOnOpen) {
+                tracker._markReadyOnOpen = false;
+                markBotCommandReady(nexusDevNumber, nexus);
+            }
         } else if (connection === "connecting") {
             console.log(chalk.blue(`🔄 Connecting ${nexusDevNumber}...`));
         }
@@ -1231,14 +1239,18 @@ Your bot is ready. Send *.menu* to see all available commands.
         
         const wsState = nexus.ws?.readyState;
         if (wsState === 1) {
-            // WebSocket open — keep alive
             touchBotHeartbeat(nexusDevNumber, {
                 event: 'watchdog',
                 wsState: nexus.ws?.readyState ?? -1,
-                ready: Boolean(tracker.commandReady),
-                syncing: Boolean(tracker.syncing && !tracker.commandReady),
+                ready: true,
+                syncing: false,
             });
-            nexus.sendPresenceUpdate('available').catch(() => {});
+            // Presence every 5 min only — frequent updates can trigger phone "Syncing"
+            const lastPresence = tracker.lastPresencePing || 0;
+            if (Date.now() - lastPresence >= 5 * 60 * 1000) {
+                tracker.lastPresencePing = Date.now();
+                nexus.sendPresenceUpdate('available').catch(() => {});
+            }
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));

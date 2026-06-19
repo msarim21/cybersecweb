@@ -151,9 +151,22 @@ async function sweepStaleWhatsAppSockets() {
         // loading foreign bots in-process via pairMod() below → memory explosion).
         if (_ownBot && clean !== _ownBot) continue;
 
+        const wsState = nexus.ws?.readyState ?? -1;
+
+        // Isolated child: light wake only — never stopBot+pair (causes WA "Syncing" hang)
+        if (_ownBot) {
+            if (wsState === 1) {
+                const silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
+                if (silentMs >= WA_STALE_MS) {
+                    const { lightWakeSocket } = require('./allfunc/socket-wake');
+                    await lightWakeSocket(nexus, tracker).catch(() => false);
+                }
+            }
+            continue;
+        }
+
         const lastWa = tracker.lastWAMessage || tracker.lastActivity || 0;
         const silentMs = Date.now() - lastWa;
-        const wsState = nexus.ws?.readyState ?? -1;
 
         if (wsState === 3 || wsState === -1) {
             // If pair.js is already handling a 440-retry loop, don't interfere —
@@ -409,9 +422,6 @@ function startBotChildKeepAlive() {
     if (_started) return;
     _started = true;
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
-    // First sweep after 2 min — avoid reconnecting during initial handshake
-    setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 2 * 60 * 1000);
-    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 5 * 60 * 1000);
     setInterval(() => proactiveSocketLightWake().catch(() => {}), 90 * 1000);
     setInterval(() => proactiveAntideleteWake().catch(() => {}), 5 * 60 * 1000);
     setInterval(() => backupAntideleteSessions().catch(() => {}), 2 * 60 * 1000);
@@ -423,7 +433,7 @@ function startBotChildKeepAlive() {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }
 
-    console.log(`[KeepAlive] Bot-child keepalive started (socket sweep 5min, antidelete backup 2min, memory restart ${restartHours || 'off'})`);
+    console.log('[KeepAlive] Bot-child keepalive (light wake 3min, no reconnect sweep)');
 }
 
 function startKeepAlive() {

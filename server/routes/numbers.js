@@ -85,7 +85,7 @@ function isTrialExpired(user) {
 router.get('/', protect, async (req, res) => {
   try {
     const numbers = await getNumbersByOwner(req.user.id, req.query.search || null);
-    const { isBotHeartbeatFresh, isBotCommandReady } = require('../../allfunc/bot-heartbeat');
+    const { isBotHeartbeatFresh, isBotCommandReady, readBotHeartbeat } = require('../../allfunc/bot-heartbeat');
     const { getBotSessionsByNumbers } = require('../db-service');
 
     const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000;
@@ -101,13 +101,15 @@ router.get('/', protect, async (req, res) => {
         const hbFresh = isBotHeartbeatFresh(clean);
         const hbReady = isBotCommandReady(clean);
         const dbReady = sess?.commandReady === true;
-        const dbSyncing = sess?.status === 'active' && sess?.commandReady === false;
+        const wsOpen = sess?.wsState === 1 || (hbFresh && readBotHeartbeat(clean)?.wsState === 1);
+        const lastFresh = sess?.lastActive &&
+            (Date.now() - new Date(sess.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS);
 
-        if ((hbFresh && hbReady) || (sess?.status === 'active' && dbReady && sess?.lastActive &&
-            (Date.now() - new Date(sess.lastActive).getTime() <= BOT_ONLINE_MAX_AGE_MS))) {
+        if (wsOpen && lastFresh) return 'online';
+        if ((hbFresh && hbReady) || (sess?.status === 'active' && dbReady && lastFresh)) {
           return 'online';
         }
-        if (dbSyncing || (hbFresh && !hbReady && sess?.status === 'active')) return 'syncing';
+        if (sess?.status === 'active' && sess?.commandReady === false && lastFresh) return 'syncing';
         if (sess?.status === 'active') {
           const connectedAtFresh = sess?.connectedAt &&
             (Date.now() - new Date(sess.connectedAt).getTime() <= BOT_STARTING_GRACE_MS);
