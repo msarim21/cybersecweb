@@ -130,6 +130,40 @@ function deleteTrackerEntry(number) {
     if (jid) rentbotTracker.delete(jid);
 }
 
+/** Tear down old Baileys socket before opening a new one — prevents ghost sockets + 440. */
+function teardownTrackerSocket(tracker) {
+    if (!tracker?.connection) return;
+    const old = tracker.connection;
+
+    if (tracker.healthCheckInterval) {
+        clearInterval(tracker.healthCheckInterval);
+        tracker.healthCheckInterval = null;
+    }
+    if (tracker.readyTimer) {
+        clearTimeout(tracker.readyTimer);
+        tracker.readyTimer = null;
+    }
+    if (tracker.pairingTimer) {
+        clearTimeout(tracker.pairingTimer);
+        tracker.pairingTimer = null;
+    }
+
+    tracker.connection = null;
+
+    try {
+        old.ev?.removeAllListeners('connection.update');
+        old.ev?.removeAllListeners('messages.upsert');
+        old.ev?.removeAllListeners('creds.update');
+        old.ev?.removeAllListeners('messages.delete');
+    } catch (_) {}
+    try { old.end?.(); } catch (_) {}
+    try {
+        old.ws?.terminate?.();
+    } catch (_) {
+        try { old.ws?.close(); } catch (_) {}
+    }
+}
+
 // Connection queue system
 const connectionQueue = [];
 let activeConnections = 0;
@@ -367,6 +401,11 @@ async function startpairing(nexusDevNumber, options = {}) {
         tracker.healthCheckInterval = null;
     }
 
+    // Reconnect path: destroy stale socket so old listeners cannot fire 440 loops
+    if (tracker.connection) {
+        teardownTrackerSocket(tracker);
+    }
+
     tracker.retryCount++;
     tracker.disconnected = false;
     tracker.lastActivity = Date.now();
@@ -584,6 +623,8 @@ async function startpairing(nexusDevNumber, options = {}) {
         if (chatUpdate.type === 'notify') {
             markBotCommandReady(nexusDevNumber, nexus);
         }
+            tracker.lastWAMessage = Date.now();
+            tracker.lastActivity = Date.now();
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             let botNumber = await nexus.decodeJid(nexus.user.id);
             touchBotHeartbeat(nexusDevNumber, { event: 'message', wsState: 1, ready: true });
@@ -1272,11 +1313,7 @@ Your bot is ready. Send *.menu* to see all available commands.
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
             clearInterval(tracker.healthCheckInterval);
             tracker.healthCheckInterval = null;
-            if (tracker.pairingTimer) {
-                clearTimeout(tracker.pairingTimer);
-                tracker.pairingTimer = null;
-            }
-            try { nexus.ws?.close(); } catch (_) {}
+            teardownTrackerSocket(tracker);
             await sleep(3000);
             queuePairing(nexusDevNumber);
         }
