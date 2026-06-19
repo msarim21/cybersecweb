@@ -1113,18 +1113,32 @@ async function startpairing(nexusDevNumber, options = {}) {
                 return;
             } else if (reason === 440) {
                 tracker.err440Retry = (tracker.err440Retry || 0) + 1;
+                if (tracker._stableTimer) { clearTimeout(tracker._stableTimer); tracker._stableTimer = null; }
                 _clearPendingReconnects(tracker);
                 teardownTrackerSocket(tracker);
                 tracker.disconnected = true;
 
-                if (tracker.err440Retry > MAX_RETRIES_440) {
-                    console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} Error 440 attempts for ${nexusDevNumber}`));
+                // Ping-pong guard: a conflict (440) within 30s of a successful open means
+                // another device/session is actively holding this number. Reconnecting just
+                // kicks them off → they reconnect → endless conflict loop. Stop immediately.
+                const sinceOpen = tracker.lastOpenAt ? Date.now() - tracker.lastOpenAt : Infinity;
+                if (sinceOpen < 30_000) {
+                    tracker.conflictPingPong = (tracker.conflictPingPong || 0) + 1;
+                }
+                if (tracker.conflictPingPong >= 2 || tracker.err440Retry > MAX_RETRIES_440) {
+                    console.error(chalk.red.bold(`❌ Error 440 conflict loop for ${nexusDevNumber} — another active session holds this number. Stopping reconnect.`));
                     setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, {
-                        lastErrorMessage: `Duplicate session (440) after ${MAX_RETRIES_440} retries`,
+                        lastErrorMessage: 'Duplicate session conflict (440) — number active on another device. Disconnect there or re-pair.',
                     }).catch(() => {});
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                    forceCleanupSession(nexusDevNumber);
+                    setLinkedNumberStatus(nexusDevNumber, 'inactive').catch(() => {});
                     tracker.disconnected = true;
+                    tracker.connection = null;
+                    tracker.pairingCodeRequested = false;
+                    try {
+                        const _key = (nexusDevNumber || '').replace(/[^0-9]/g, '');
+                        if (_key && global._sessionFlushFns) global._sessionFlushFns.delete(_key);
+                    } catch (_) {}
                     return;
                 }
 
@@ -1138,7 +1152,6 @@ async function startpairing(nexusDevNumber, options = {}) {
                     const t = getTrackerEntry(nexusDevNumber);
                     if (_isTrackerLive(t)) {
                         console.log(chalk.gray(`[pair.js] 440 retry skipped for ${nexusDevNumber} — already connected`));
-                        if (t) t.err440Retry = 0;
                         return;
                     }
                     queuePairing(nexusDevNumber).catch(() => {});
@@ -1223,7 +1236,18 @@ async function startpairing(nexusDevNumber, options = {}) {
             }).catch(() => {});
             _clearPendingReconnects(tracker);
             _dequeuePairing(nexusDevNumber);
-            tracker.err440Retry = 0;
+            tracker.lastOpenAt = Date.now();
+            // Do NOT reset err440Retry immediately — a conflict (440) often fires within
+            // milliseconds of open. Resetting here makes the retry cap unreachable → infinite
+            // loop. Only clear the counter once the connection has stayed stable for 60s.
+            if (tracker._stableTimer) clearTimeout(tracker._stableTimer);
+            tracker._stableTimer = setTimeout(() => {
+                const t = getTrackerEntry(nexusDevNumber);
+                if (_isTrackerLive(t)) {
+                    t.err440Retry = 0;
+                    t.conflictPingPong = 0;
+                }
+            }, 60_000);
             try {
                 if (nexus.user?.id && typeof nexus.decodeJid === 'function') {
                     nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);

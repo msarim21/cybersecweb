@@ -307,6 +307,12 @@ async function refreshBotSessions() {
                 continue;
             }
 
+            // Skip bots that pair.js gave up on (440 conflict loop / re-pair required).
+            // Reconnecting them here just restarts the conflict ping-pong loop.
+            if (tracker.disconnected && (tracker.err440Retry > 0 || tracker.conflictPingPong > 0)) continue;
+            // Skip while pair.js is actively handling a 440 retry.
+            if (tracker.err440Retry > 0) continue;
+
             const ws = tracker.connection && tracker.connection.ws;
             const wsState = ws ? ws.readyState : -1;
             if (wsState === 3 || wsState === -1) {
