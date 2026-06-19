@@ -615,6 +615,84 @@ function stopBotExternal(number) {
 }
 
 // ── Start / Stop ──────────────────────────────────────────────────────────────
+
+/**
+ * Boot reconnect diagnostic — runs ~30s after supervisor start. Prints a
+ * per-number breakdown so the operator can immediately see why any linked
+ * number failed to auto-reconnect after restart:
+ *
+ *   linked  ✓  status=active in linked_numbers
+ *   creds   ✓  session files present in DB or local disk
+ *   stopped ✗  in stopped_bots.json (manually disconnected)
+ *   thread  ✓  supervisor thread spawned
+ *   running ✓  bot-runner reports a healthy WhatsApp socket
+ *
+ * If a number lacks creds in DB + disk, the user MUST re-pair once via the
+ * website — then the new flushFns + periodic backup will keep DB current.
+ */
+async function bootReconnectReport() {
+    try {
+        const { getActiveLinkedNumbers, hasSessionInDb } = require('../session-db');
+        const { readStopped }  = require('../allfunc/stopped-bots');
+        const { isBotHeartbeatFresh } = require('../allfunc/bot-heartbeat');
+
+        const linked  = (await getActiveLinkedNumbers().catch(() => []))
+            .map((n) => cleanBotNum(n)).filter(Boolean);
+        const stopped = new Set(readStopped());
+
+        if (!linked.length) {
+            console.log(chalk.gray('[Supervisor] 📋 Boot report: no linked numbers in DB (paired numbers ka koi record nahi)'));
+            return;
+        }
+
+        console.log(chalk.cyan(`\n[Supervisor] 📋 Boot reconnect report (${linked.length} linked number${linked.length === 1 ? '' : 's'}):`));
+
+        let okCount = 0;
+        let needPairCount = 0;
+        for (const clean of linked) {
+            const isStopped  = stopped.has(clean);
+            const credsLocal = _hasRegisteredCreds(clean);
+            const credsDb    = await hasSessionInDb(clean).catch(() => false);
+            const entry      = threads.get(clean);
+            const threadUp   = Boolean(entry && !entry.pairing);
+            const heartbeat  = isBotHeartbeatFresh(clean, 5 * 60 * 1000);
+            const running    = threadUp && heartbeat;
+
+            const tag = running ? chalk.green('✅ ONLINE')
+                : threadUp     ? chalk.yellow('⏳ CONNECTING')
+                : isStopped    ? chalk.gray('⏸ STOPPED (manual)')
+                : (credsLocal || credsDb) ? chalk.yellow('🔄 PENDING')
+                : chalk.red('❌ NEED RE-PAIR');
+
+            const credsStr = credsLocal ? 'disk' : credsDb ? 'DB' : 'NONE';
+            console.log(chalk.gray(`   +${clean}  ${tag}  creds=${credsStr}  thread=${threadUp ? 'up' : 'down'}`));
+
+            if (running || threadUp) okCount++;
+            if (!credsLocal && !credsDb && !isStopped) needPairCount++;
+        }
+
+        if (needPairCount > 0) {
+            console.log(chalk.red(`[Supervisor] ⚠️  ${needPairCount} number(s) have NO session in DB or disk — pair once via website to enable auto-reconnect`));
+        }
+        console.log(chalk.cyan(`[Supervisor] 📊 Auto-reconnect: ${okCount}/${linked.length} bot(s) online or connecting\n`));
+    } catch (e) {
+        console.log(chalk.yellow(`[Supervisor] bootReconnectReport error: ${e.message}`));
+    }
+}
+
+async function _waitForDbReady(maxWaitMs = 60000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+        try {
+            const { initDb, isDbReady } = require('../server/db');
+            await initDb();
+            if (isDbReady()) return true;
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 1500));
+    }
+    return false;
+}
+
 function startSupervisor() {
     if (_active) return;
     _active = true;
@@ -635,9 +713,26 @@ function startSupervisor() {
     });
 
     const syncMs = getSyncIntervalMs();
-    runSync();
-    [500, 1500, 3500, 7000].forEach((ms) => setTimeout(runSync, ms));
+
+    // ── Wait for DB ready before the first syncBots ──────────────────────
+    // syncBots() reads getActiveLinkedNumbers() — if the DB is still
+    // initializing on cold start it returns [] and no bots are spawned.
+    // Subsequent retries are scheduled below; this just speeds up the FIRST
+    // pass which is what users see in the boot log.
+    (async () => {
+        const ok = await _waitForDbReady(45_000);
+        if (!ok) {
+            console.log(chalk.yellow('[Supervisor] ⚠️  DB not ready after 45s — first syncBots may return 0 numbers (will retry)'));
+        }
+        runSync();
+    })();
+
+    [2000, 5000, 10_000, 20_000].forEach((ms) => setTimeout(runSync, ms));
     _syncTimer = setInterval(runSync, syncMs);
+
+    // One-shot diagnostic ~30s after start so the operator can see exactly
+    // which linked numbers reconnected and which need re-pairing.
+    setTimeout(() => bootReconnectReport().catch(() => {}), 30_000);
 
     try {
         const pairMod = require('../pair');
@@ -674,9 +769,49 @@ function stopSupervisor() {
     console.log(chalk.yellow('[Supervisor] All threads stopped.'));
 }
 
+/**
+ * Graceful shutdown — sends 'shutdown' message to each worker_thread so it can
+ * SIGTERM its bot-runner child and let it flush session creds to DB before
+ * exit. Used by worker.js on SIGTERM (Heroku dyno restart, scheduled
+ * BOT_RESTART_HOURS exit). Without this the children are SIGKILL'd by
+ * thread.terminate() with no chance to backupSessionFolder() — sessions are
+ * lost on ephemeral disk wipe and users must re-pair.
+ *
+ * @param {number} timeoutMs - hard deadline before forcing terminate
+ */
+async function stopSupervisorGraceful(timeoutMs = 9000) {
+    _active = false;
+    if (_syncTimer) clearInterval(_syncTimer);
+
+    const entries = [...threads.entries()];
+    if (!entries.length) return;
+
+    console.log(chalk.yellow(`[Supervisor] Graceful shutdown — flushing ${entries.length} bot session(s) to DB (${timeoutMs}ms max)...`));
+
+    const exitPromises = entries.map(([clean, entry]) => new Promise((resolve) => {
+        try {
+            entry.thread.once('exit', resolve);
+            entry.thread.postMessage({ cmd: 'shutdown' });
+        } catch (_) { resolve(); }
+    }));
+
+    await Promise.race([
+        Promise.all(exitPromises),
+        new Promise((r) => setTimeout(r, timeoutMs)),
+    ]);
+
+    for (const [clean, entry] of threads) {
+        try { entry.thread.terminate(); } catch (_) {}
+        wrapSlot(sharedBuffer, entry.slotIndex).clear();
+    }
+    threads.clear();
+    console.log(chalk.green('[Supervisor] ✅ All threads exited.'));
+}
+
 module.exports = {
     startSupervisor,
     stopSupervisor,
+    stopSupervisorGraceful,
     isSupervisorActive,
     syncBots,
     spawnBot,
@@ -685,6 +820,7 @@ module.exports = {
     handlePairingRequest,
     markBotPromoted,
     promotePairingToNormal,
+    bootReconnectReport,
     getSharedBuffer  : () => sharedBuffer,
     getActiveBotCount: () => getActiveBotCount(sharedBuffer),
 };

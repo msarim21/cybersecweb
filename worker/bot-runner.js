@@ -142,11 +142,17 @@ async function runBot() {
     const jid = `${BOT_NUMBER}@s.whatsapp.net`;
 
     if (!isPairing) {
-        const { readStopped } = require('../allfunc/stopped-bots');
-        if (readStopped().includes(BOT_NUMBER)) {
-            console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Stopped — exiting`));
-            process.exit(0);
-        }
+        // Defensive: if this number is in linked_numbers (status=active) but
+        // also stale-listed in stopped_bots.json, the website-pair was the
+        // user's most recent intent — clear stopped so auto-reconnect works.
+        try {
+            const { syncStoppedWithLinkedNumbers, readStopped } = require('../allfunc/stopped-bots');
+            await syncStoppedWithLinkedNumbers().catch(() => {});
+            if (readStopped().includes(BOT_NUMBER)) {
+                console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Stopped (manual disconnect) — exiting`));
+                process.exit(0);
+            }
+        } catch (_) {}
     }
 
     if (!isPairing) {
@@ -202,13 +208,31 @@ async function runBot() {
 async function shutdown() {
     if (_shuttingDown) return;
     _shuttingDown = true;
-    console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Shutting down...`));
+    console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Shutting down — flushing session to DB...`));
+    // Prefer the registered flush fn (covers BOTH path variants and is set on
+    // each successful "connection.open" via pair.js). Fall back to a manual
+    // backup of either path if the registration is missing.
     try {
-        const { backupSessionFolder } = require('../session-db');
-        const jid = `${BOT_NUMBER}@s.whatsapp.net`;
-        const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', jid);
-        await backupSessionFolder(BOT_NUMBER, sessionPath).catch(() => {});
-    } catch (_) {}
+        if (global._sessionFlushFns && global._sessionFlushFns.has(BOT_NUMBER)) {
+            const fn = global._sessionFlushFns.get(BOT_NUMBER);
+            await Promise.race([
+                fn().catch(() => {}),
+                new Promise((r) => setTimeout(r, 8000)),
+            ]);
+            console.log(chalk.green(`[BotRunner:${BOT_NUMBER}] ✅ Session flushed to DB`));
+        } else {
+            const { backupSessionFolder } = require('../session-db');
+            const sessionDigits = path.join(__dirname, '..', 'nexstore', 'pairing', BOT_NUMBER);
+            const sessionJid    = path.join(__dirname, '..', 'nexstore', 'pairing', `${BOT_NUMBER}@s.whatsapp.net`);
+            if (fs.existsSync(sessionDigits)) {
+                await backupSessionFolder(BOT_NUMBER, sessionDigits).catch(() => {});
+            } else if (fs.existsSync(sessionJid)) {
+                await backupSessionFolder(BOT_NUMBER, sessionJid).catch(() => {});
+            }
+        }
+    } catch (e) {
+        console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] Session flush warning: ${e.message}`));
+    }
     try {
         const pairMod = require('../pair');
         if (typeof pairMod.stopBot === 'function') pairMod.stopBot(BOT_NUMBER);
