@@ -130,6 +130,32 @@ function deleteTrackerEntry(number) {
     if (jid) rentbotTracker.delete(jid);
 }
 
+/** True when tracker has an authenticated, open WebSocket. */
+function _isTrackerLive(tracker) {
+    if (!tracker?.connection) return false;
+    const ws = tracker.connection.ws;
+    return ws?.readyState === 1 && Boolean(tracker.connection.user);
+}
+
+/** Cancel any scheduled 440-retry timer for this tracker. */
+function _clearPendingReconnects(tracker) {
+    if (!tracker) return;
+    if (tracker._440RetryTimer) {
+        clearTimeout(tracker._440RetryTimer);
+        tracker._440RetryTimer = null;
+    }
+}
+
+/** Remove queued startpairing jobs for this number (prevents double-connect). */
+function _dequeuePairing(number) {
+    const { clean } = normalizeBotKeys(number);
+    if (!clean) return;
+    for (let i = connectionQueue.length - 1; i >= 0; i--) {
+        const qClean = normalizeBotKeys(connectionQueue[i].nexusDevNumber).clean;
+        if (qClean === clean) connectionQueue.splice(i, 1);
+    }
+}
+
 /** Tear down old Baileys socket before opening a new one — prevents ghost sockets + 440. */
 function teardownTrackerSocket(tracker) {
     if (!tracker?.connection) return;
@@ -151,6 +177,7 @@ function teardownTrackerSocket(tracker) {
         clearTimeout(tracker._credsBackupTimer);
         tracker._credsBackupTimer = null;
     }
+    _clearPendingReconnects(tracker);
 
     // NOTE: Intentionally do NOT delete tracker._sessionFlushKey here.
     // teardownTrackerSocket runs on every reconnect — if SIGTERM hits between
@@ -200,6 +227,14 @@ function processQueue() {
 
 function queuePairing(nexusDevNumber) {
     return new Promise((resolve, reject) => {
+        const tracker = getTrackerEntry(nexusDevNumber);
+        if (_isTrackerLive(tracker)) {
+            return resolve(tracker.connection);
+        }
+        const { clean } = normalizeBotKeys(nexusDevNumber);
+        if (clean && connectionQueue.some((q) => normalizeBotKeys(q.nexusDevNumber).clean === clean)) {
+            return resolve(tracker?.connection || null);
+        }
         connectionQueue.push({ nexusDevNumber, resolve, reject });
         processQueue();
     });
@@ -351,6 +386,12 @@ async function startpairing(nexusDevNumber, options = {}) {
     }
     
     const tracker = getTrackerEntry(nexusDevNumber);
+
+    // Already live — never open a second socket (causes WhatsApp 440).
+    if (!freshPairing && _isTrackerLive(tracker)) {
+        console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already live — skipping duplicate connect`));
+        return tracker.connection;
+    }
 
     // Fresh pairing retry: tear down dead sockets and reset flags so the
     // duplicate guard and pairingCodeRequested don't block a new code.
@@ -977,6 +1018,16 @@ async function startpairing(nexusDevNumber, options = {}) {
         const tracker = getTrackerEntry(nexusDevNumber);
 
         if (connection === "close") {
+            if (!tracker) return;
+
+            // Ignore close events from superseded sockets. Without this, an old
+            // socket's 440 handler schedules queuePairing() even though a newer
+            // socket is already connected → endless login loop + Error 440 spam.
+            if (tracker.connection && tracker.connection !== nexus) {
+                console.log(chalk.gray(`[pair.js] Ignoring stale close for ${nexusDevNumber} — newer socket active`));
+                return;
+            }
+
             // ✅ Always clear old watchdog before any reconnect attempt
             if (tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
@@ -1024,16 +1075,34 @@ async function startpairing(nexusDevNumber, options = {}) {
                 console.log(chalk.red(`🚫 ${nexusDevNumber} will NOT reconnect. User must re-pair.`));
                 return;
             } else if (reason === 440) {
-                if (tracker.retryCount < MAX_RETRIES_440) {
-                    console.warn(chalk.yellow(`⚠️ Error 440 for ${nexusDevNumber}. Retry ${tracker.retryCount}/${MAX_RETRIES_440}...`));
-                    await sleep(5000);
-                    queuePairing(nexusDevNumber);
-                } else {
-                    console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} attempts for ${nexusDevNumber}`));
+                tracker.err440Retry = (tracker.err440Retry || 0) + 1;
+                _clearPendingReconnects(tracker);
+                teardownTrackerSocket(tracker);
+                tracker.disconnected = true;
+
+                if (tracker.err440Retry > MAX_RETRIES_440) {
+                    console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} Error 440 attempts for ${nexusDevNumber}`));
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
                     forceCleanupSession(nexusDevNumber);
                     tracker.disconnected = true;
+                    return;
                 }
+
+                console.warn(chalk.yellow(
+                    `⚠️ Error 440 for ${nexusDevNumber} (duplicate session). Retry ${tracker.err440Retry}/${MAX_RETRIES_440} in ${tracker.err440Retry * 5}s...`
+                ));
+
+                const delayMs = Math.min(5000 * tracker.err440Retry, 20_000);
+                tracker._440RetryTimer = setTimeout(() => {
+                    tracker._440RetryTimer = null;
+                    const t = getTrackerEntry(nexusDevNumber);
+                    if (_isTrackerLive(t)) {
+                        console.log(chalk.gray(`[pair.js] 440 retry skipped for ${nexusDevNumber} — already connected`));
+                        if (t) t.err440Retry = 0;
+                        return;
+                    }
+                    queuePairing(nexusDevNumber).catch(() => {});
+                }, delayMs);
             } else if (reason === DisconnectReason.badSession) {
                 console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber} — clearing session files, keeping DB record`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
@@ -1064,10 +1133,16 @@ async function startpairing(nexusDevNumber, options = {}) {
                 tracker.dropRetry = (tracker.dropRetry || 0) + 1;
                 console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Connection drop #${tracker.dropRetry}. Reconnecting...`));
                 await sleep(3000);
+                const t = getTrackerEntry(nexusDevNumber);
+                if (t && t.connection !== nexus) return;
+                if (_isTrackerLive(t)) return;
                 queuePairing(nexusDevNumber);
             } else if (reason === DisconnectReason.restartRequired) {
                 console.log(chalk.blue(`🔄 Restart required for ${nexusDevNumber}`));
                 await sleep(2000);
+                const t = getTrackerEntry(nexusDevNumber);
+                if (t && t.connection !== nexus) return;
+                if (_isTrackerLive(t)) return;
                 queuePairing(nexusDevNumber);
             } else {
                 // ✅ Unknown reason — retry with exponential backoff (no give-up)
@@ -1078,6 +1153,9 @@ async function startpairing(nexusDevNumber, options = {}) {
         } else if (connection === "open") {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+            _clearPendingReconnects(tracker);
+            _dequeuePairing(nexusDevNumber);
+            tracker.err440Retry = 0;
             try {
                 if (nexus.user?.id && typeof nexus.decodeJid === 'function') {
                     nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
