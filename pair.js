@@ -463,6 +463,7 @@ async function startpairing(nexusDevNumber, options = {}) {
     }
     
     const tracker = getTrackerEntry(nexusDevNumber);
+    tracker._pairingMode = Boolean(freshPairing || wantPairingCode);
 
     // Already live — never open a second socket (causes WhatsApp 440).
     if (!freshPairing && _isTrackerLive(tracker)) {
@@ -1138,8 +1139,31 @@ async function startpairing(nexusDevNumber, options = {}) {
             logBotEvent(nexusDevNumber, 'connection_lost', { reason, message: errMsg });
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
 
-            // Expired/invalid session — reconnecting with same creds will never work.
-            if (errMsg && /QR refs attempts ended|Intentional Logout|Connection Failure|unable to authenticate|logged out/i.test(errMsg)) {
+            // Expired/invalid session — but during pairing, QR refs ending is normal
+            // (user didn't enter code in time). Do NOT block future pairing attempts.
+            if (errMsg && /QR refs attempts ended/i.test(errMsg)) {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                if (tracker._pairingMode || process.env.BOT_PAIRING === '1') {
+                    console.log(chalk.yellow(`[pair.js] Pairing code expired for ${cleanNum} — request a new code`));
+                    logBotEvent(cleanNum, 'pair_code_expired', errMsg);
+                    try { await clearPairingRequest(cleanNum); } catch (_) {}
+                    try {
+                        const { markPairingFailed } = require('./server/db-service');
+                        await markPairingFailed(cleanNum);
+                    } catch (_) {}
+                    teardownTrackerSocket(tracker);
+                    tracker.disconnected = true;
+                    tracker._pairingMode = false;
+                    if (process.env.BOT_PAIRING === '1') {
+                        setTimeout(() => process.exit(0), 300);
+                    }
+                    return;
+                }
+                markSessionNeedsRepair(nexusDevNumber, `Session expired — re-pair required (${errMsg})`);
+                return;
+            }
+
+            if (errMsg && /Intentional Logout|Connection Failure|unable to authenticate|logged out/i.test(errMsg)) {
                 markSessionNeedsRepair(nexusDevNumber, `Session expired — re-pair required (${errMsg})`);
                 return;
             }

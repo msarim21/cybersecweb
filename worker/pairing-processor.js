@@ -45,7 +45,22 @@ async function processPairingQueue() {
         if (!global._pairingInFlight) global._pairingInFlight = new Set();
 
         for (const clean of pending) {
-            if (!clean || global._pairingInFlight.has(clean)) continue;
+            if (!clean) continue;
+
+            // Supersede stale pairing child when user requests a fresh code.
+            if (global._pairingInFlight.has(clean)) {
+                try {
+                    const { killBot, isSupervisorActive } = require('./supervisor');
+                    if (isSupervisorActive()) {
+                        killBot(clean, 'SIGKILL');
+                    } else if (global._pairingChildPids?.get(clean)) {
+                        try { global._pairingChildPids.get(clean).kill('SIGKILL'); } catch (_) {}
+                        global._pairingChildPids.delete(clean);
+                    }
+                } catch (_) {}
+                global._pairingInFlight.delete(clean);
+                await new Promise((r) => setTimeout(r, 500));
+            }
 
             // Skip if bot is already connected — no new pairing code needed
             try {
@@ -96,7 +111,7 @@ async function processPairingQueue() {
                         if (fs.existsSync(pairingJson)) fs.unlinkSync(pairingJson);
                     } catch (_) {}
 
-                    fork(runner, [clean], {
+                    const child = fork(runner, [clean], {
                         env: {
                             ...process.env,
                             WHATSAPP_WORKER: '1',
@@ -107,6 +122,9 @@ async function processPairingQueue() {
                         stdio: 'inherit',
                         cwd: path.join(__dirname, '..'),
                     });
+                    if (!global._pairingChildPids) global._pairingChildPids = new Map();
+                    global._pairingChildPids.set(clean, child);
+                    child.on('exit', () => global._pairingChildPids?.delete(clean));
 
                     const deadline = Date.now() + 90_000;
                     while (Date.now() < deadline) {
