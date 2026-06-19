@@ -74,6 +74,7 @@ const joinedGroups = new Map();
 const rentbotTracker = global._rentbotTracker || new Map();
 global._rentbotTracker = rentbotTracker;
 const MAX_RETRIES_440 = 3;
+const MAX_RETRIES_408 = 5;
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
 
@@ -1174,8 +1175,19 @@ async function startpairing(nexusDevNumber, options = {}) {
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
                        reason === DisconnectReason.timedOut) {
-                // Reconnect with backoff — temporary disconnect
                 tracker.dropRetry = (tracker.dropRetry || 0) + 1;
+                if (reason === DisconnectReason.timedOut || reason === 408) {
+                    tracker.timeout408Retry = (tracker.timeout408Retry || 0) + 1;
+                    if (tracker.timeout408Retry >= MAX_RETRIES_408) {
+                        const msg = `Connection timeout (408) after ${MAX_RETRIES_408} attempts — session may be corrupt, re-pair required`;
+                        logBotEvent(nexusDevNumber, 'error', msg);
+                        setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, { lastErrorMessage: msg }).catch(() => {});
+                        updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                        forceCleanupSession(nexusDevNumber);
+                        tracker.disconnected = true;
+                        return;
+                    }
+                }
                 setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.DISCONNECTED, {
                     lastErrorMessage: `Connection drop (${reason})`,
                     reconnectAttempts: tracker.dropRetry,
@@ -1224,6 +1236,7 @@ async function startpairing(nexusDevNumber, options = {}) {
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
+            tracker.timeout408Retry = 0;
             tracker.lastActivity = Date.now();
             tracker.pairingCodeRequested = false;
             if (tracker.readyTimer) {
