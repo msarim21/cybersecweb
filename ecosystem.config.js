@@ -43,6 +43,9 @@ module.exports = {
         BOT_MIN_UPTIME_MS: "300000",
         BOT_RESTART_HOURS: "3",
         SYNC_FULL_HISTORY: "0",
+        WA_KEEPALIVE_MS: "30000",
+        WA_MARK_ONLINE: "1",
+        WA_FIRE_INIT_QUERIES: "1",
         RESTART_COUNT: "0"
       },
       error_file: "./logs/error.log",

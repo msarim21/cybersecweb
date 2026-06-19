@@ -417,14 +417,16 @@ async function proactiveAntideleteWake() {
     } catch (_) {}
 }
 
-/** Isolated bot child — wake idle WA socket (no dyno-wide exit) */
+/** Isolated bot child — minimal keepalive (no presence spam — causes 1min WA throttle) */
 function startBotChildKeepAlive() {
     if (_started) return;
     _started = true;
     _noopTimer = setInterval(() => {}, 5 * 60 * 1000);
-    setInterval(() => proactiveSocketLightWake().catch(() => {}), 90 * 1000);
-    setInterval(() => proactiveAntideleteWake().catch(() => {}), 5 * 60 * 1000);
-    setInterval(() => backupAntideleteSessions().catch(() => {}), 2 * 60 * 1000);
+    // NO proactiveSocketLightWake / proactiveAntideleteWake here.
+    // Those send sendPresenceUpdate every 90s which stacks with markOnlineOnConnect
+    // + keepAlive WS pings → WhatsApp rate-overlimit → commands die ~1 min after connect.
+    // TCP keepalive (30s) + pair.js watchdog presence (5min) is sufficient.
+    setInterval(() => backupAntideleteSessions().catch(() => {}), 5 * 60 * 1000);
 
     const restartHours = getBotRestartHours();
     if (restartHours > 0) {
@@ -433,7 +435,7 @@ function startBotChildKeepAlive() {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }
 
-    console.log('[KeepAlive] Bot-child keepalive (light wake 3min, no reconnect sweep)');
+    console.log('[KeepAlive] Bot-child keepalive (antidelete backup 5min, no presence spam)');
 }
 
 function startKeepAlive() {
@@ -485,11 +487,14 @@ function startKeepAlive() {
     setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
 
     const restartHours = getBotRestartHours();
+    const isWebDyno = Boolean(process.env.DYNO?.startsWith('web'));
     if (supervisorMode) {
+        // Full worker dyno restart every BOT_RESTART_HOURS — was only logged before, never scheduled
         if (restartHours > 0) {
-            console.log(`[KeepAlive] Bot-only memory restart every ${restartHours}h (web stays up)`);
+            scheduleAutoRestart(restartHours * 60 * 60 * 1000);
+            console.log(`[KeepAlive] ✅ Full worker dyno restart every ${restartHours}h (supervisor mode)`);
         }
-    } else if (isWhatsAppWorker() && restartHours > 0) {
+    } else if ((isWhatsAppWorker() || isWebDyno) && restartHours > 0) {
         scheduleAutoRestart(restartHours * 60 * 60 * 1000);
     } else if (restartHours <= 0) {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
@@ -527,6 +532,7 @@ module.exports = {
     stopKeepAlive,
     getBotRestartHours,
     scheduleBotMemoryRestart,
+    scheduleAutoRestart,
     sweepStaleWhatsAppSockets,
     backupAntideleteSessions,
     proactiveAntideleteWake,

@@ -520,7 +520,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   server.headersTimeout   = 66000;         // keepAliveTimeout se thoda zyada
 
   console.log(`🚀 CYBERSECPRO API running on port ${PORT}`);
-  if (!process.env.DYNO?.startsWith('web')) startKeepAlive();
+  startKeepAlive();
 
   // Start Telegram bot (OPTIONAL — only if TELEGRAM_BOT_TOKEN is set)
   if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_TOKEN.trim() !== '') {
