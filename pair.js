@@ -470,6 +470,9 @@ async function startpairing(nexusDevNumber, options = {}) {
     // Fresh pairing must NOT restore old creds — that marks the socket as
     // already registered and skips requestPairingCode entirely.
     if (!freshPairing) {
+        const { setBotConnectionStatus, CONNECTION_STATUS, logBotEvent } = require('./allfunc/bot-lifecycle');
+        setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.CONNECTING).catch(() => {});
+        logBotEvent(nexusDevNumber, 'session_restore');
         // If Heroku/restart wiped local files, hydrate the exact auth folder first.
         // This keeps saved numbers on the reconnect path instead of falling back to a fresh pairing code.
         await ensureSessionRestored(nexusDevNumber).catch(() => {});
@@ -581,6 +584,8 @@ async function startpairing(nexusDevNumber, options = {}) {
                     );
                     try {
                         await setPairingCode(nexusDevNumber, code);
+                        const { logBotEvent } = require('./allfunc/bot-lifecycle');
+                        logBotEvent(nexusDevNumber, 'pair_code_generated', { code });
                     } catch (_) {}
 
                     console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
@@ -1011,7 +1016,17 @@ async function startpairing(nexusDevNumber, options = {}) {
     }
 
     async function safeReconnect(attempt = 1) {
+        const { setBotConnectionStatus, CONNECTION_STATUS, logBotEvent, MAX_RECONNECT_ATTEMPTS } = require('./allfunc/bot-lifecycle');
+        if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            const msg = `Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) exceeded`;
+            logBotEvent(nexusDevNumber, 'reconnect_max_exceeded', msg);
+            setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, { lastErrorMessage: msg, reconnectAttempts: attempt });
+            tracker.disconnected = true;
+            return;
+        }
         const delay = getBackoffDelay(attempt);
+        logBotEvent(nexusDevNumber, 'reconnecting', { attempt, delaySec: Math.round(delay / 1000) });
+        setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.DISCONNECTED, { reconnectAttempts: attempt }).catch(() => {});
         console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${attempt})...`));
         await sleep(delay);
         const isValid = await validateSession(nexusDevNumber).catch(() => false);
@@ -1031,6 +1046,7 @@ async function startpairing(nexusDevNumber, options = {}) {
 
         if (connection === "close") {
             if (!tracker) return;
+            const { setBotConnectionStatus, CONNECTION_STATUS, logBotEvent } = require('./allfunc/bot-lifecycle');
 
             // Ignore close events from superseded sockets. Without this, an old
             // socket's 440 handler schedules queuePairing() even though a newer
@@ -1054,6 +1070,7 @@ async function startpairing(nexusDevNumber, options = {}) {
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
+            logBotEvent(nexusDevNumber, 'connection_lost', { reason, message: errMsg });
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
 
             // Network-level errors → always retry with backoff (no give-up)
@@ -1070,12 +1087,19 @@ async function startpairing(nexusDevNumber, options = {}) {
             if (isNetworkError) {
                 console.log(chalk.yellow(`📶 [${nexusDevNumber}] Network error detected. Infinite retry active...`));
                 tracker.networkRetry = (tracker.networkRetry || 0) + 1;
+                setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.DISCONNECTED, {
+                    lastErrorMessage: errMsg || 'Network error',
+                    reconnectAttempts: tracker.networkRetry,
+                }).catch(() => {});
                 safeReconnect(Math.min(tracker.networkRetry, 8));
                 return;
             }
 
             if (reason === 405) {
                 console.log(chalk.red.bold(`❌ Error 405 for ${nexusDevNumber}: Session logged out or invalid`));
+                setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, {
+                    lastErrorMessage: 'Session invalid (405) — re-pair required',
+                }).catch(() => {});
                 console.log(chalk.yellow(`🗑️ Force cleaning session for ${nexusDevNumber}...`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 forceCleanupSession(nexusDevNumber);
@@ -1094,6 +1118,9 @@ async function startpairing(nexusDevNumber, options = {}) {
 
                 if (tracker.err440Retry > MAX_RETRIES_440) {
                     console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} Error 440 attempts for ${nexusDevNumber}`));
+                    setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, {
+                        lastErrorMessage: `Duplicate session (440) after ${MAX_RETRIES_440} retries`,
+                    }).catch(() => {});
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
                     forceCleanupSession(nexusDevNumber);
                     tracker.disconnected = true;
@@ -1117,6 +1144,9 @@ async function startpairing(nexusDevNumber, options = {}) {
                 }, delayMs);
             } else if (reason === DisconnectReason.badSession) {
                 console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber} — clearing session files, keeping DB record`));
+                setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, {
+                    lastErrorMessage: 'Invalid session — re-pair required',
+                }).catch(() => {});
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 // ⚠️ Do NOT removeLinkedNumber here — keeps the number in dashboard
                 // so the user can see it and re-pair manually. Only loggedOut removes.
@@ -1125,6 +1155,9 @@ async function startpairing(nexusDevNumber, options = {}) {
                 tracker.pairingCodeRequested = false;
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
+                setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.LOGGED_OUT, {
+                    lastErrorMessage: 'Logged out from phone — re-pair required',
+                }).catch(() => {});
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 setLinkedNumberStatus(nexusDevNumber, 'inactive').catch(() => {});
                 // ✅ FIX: Do NOT delete from linked_numbers on logout — number must stay
@@ -1141,8 +1174,12 @@ async function startpairing(nexusDevNumber, options = {}) {
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
                        reason === DisconnectReason.timedOut) {
-                // ✅ ALWAYS reconnect — no give-up for connection drops
+                // Reconnect with backoff — temporary disconnect
                 tracker.dropRetry = (tracker.dropRetry || 0) + 1;
+                setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.DISCONNECTED, {
+                    lastErrorMessage: `Connection drop (${reason})`,
+                    reconnectAttempts: tracker.dropRetry,
+                }).catch(() => {});
                 console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Connection drop #${tracker.dropRetry}. Reconnecting...`));
                 await sleep(3000);
                 const t = getTrackerEntry(nexusDevNumber);
@@ -1165,6 +1202,13 @@ async function startpairing(nexusDevNumber, options = {}) {
         } else if (connection === "open") {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+            const { setBotConnectionStatus, CONNECTION_STATUS, logBotEvent, getHostDyno } = require('./allfunc/bot-lifecycle');
+            logBotEvent(cleanNum, 'connection_established');
+            setBotConnectionStatus(cleanNum, CONNECTION_STATUS.CONNECTED, {
+                hostDyno: getHostDyno(),
+                reconnectAttempts: 0,
+                lastErrorMessage: null,
+            }).catch(() => {});
             _clearPendingReconnects(tracker);
             _dequeuePairing(nexusDevNumber);
             tracker.err440Retry = 0;
