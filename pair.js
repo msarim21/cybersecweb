@@ -147,6 +147,10 @@ function teardownTrackerSocket(tracker) {
         clearTimeout(tracker.pairingTimer);
         tracker.pairingTimer = null;
     }
+    if (tracker._credsBackupTimer) {
+        clearTimeout(tracker._credsBackupTimer);
+        tracker._credsBackupTimer = null;
+    }
 
     tracker.connection = null;
 
@@ -272,39 +276,26 @@ function forceCleanupSession(nexusDevNumber) {
     }
 }
 
-// Session cleanup function
+// Session cleanup function — wipes ONLY sessions explicitly marked disconnected
+// (badSession / loggedOut / 405 / 440 max-retry). Old `mtime > 24h` wipe was
+// removed because folder mtime depends on creds.update churn, not on whether
+// the bot is actually paired — long-idle paired bots could lose their creds.
+// Real unlinked-pairing cleanup happens in server/jobs/orphanDisconnectJob.js.
 function cleanupExpiredSessions() {
     const sessionDir = './nexstore/pairing';
     if (!fs.existsSync(sessionDir)) return;
-    
-    const now = Date.now();
-    const oneDayAgo = now - (24 * 60 * 60 * 1000);
-    
     fs.readdirSync(sessionDir).forEach(folder => {
         if (folder === 'pairing.json') return;
-        
         const folderPath = path.join(sessionDir, folder);
-        if (fs.lstatSync(folderPath).isDirectory()) {
-            const tracker = getTrackerEntry(folder);
-            if (tracker && tracker.disconnected) {
-                console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
-                deleteFolderRecursive(folderPath);
-                deleteTrackerEntry(folder);
-                joinedGroups.delete(folder);
-                return;
-            }
-            
-            try {
-                const stats = fs.statSync(folderPath);
-                if (stats.mtimeMs < oneDayAgo) {
-                    console.log(chalk.yellow(`🗑️ Cleaning up old session: ${folder}`));
-                    deleteFolderRecursive(folderPath);
-                    deleteTrackerEntry(folder);
-                    joinedGroups.delete(folder);
-                }
-            } catch (e) {
-                console.log(chalk.red(`❌ Error checking session age: ${e.message}`));
-            }
+        try {
+            if (!fs.lstatSync(folderPath).isDirectory()) return;
+        } catch (_) { return; }
+        const tracker = getTrackerEntry(folder);
+        if (tracker && tracker.disconnected) {
+            console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
+            deleteFolderRecursive(folderPath);
+            deleteTrackerEntry(folder);
+            joinedGroups.delete(folder);
         }
     });
 }
@@ -478,6 +469,18 @@ async function startpairing(nexusDevNumber, options = {}) {
         setTrackerEntry(nexusDevNumber, tracker);
     
     if (store) store.bind(nexus.ev);
+
+    // Helpers attached eagerly so antidelete / socket-wake / heartbeat all
+    // resolve correctly BEFORE the first message arrives. Previously these
+    // were only set lazily on the first message (case.js _cachedBotNumber)
+    // or never at all (_sessionPhoneNumber, _baileysMsgStore) — so any
+    // antidelete event delivered during sync (or during reconnect before a
+    // user message) silently fell back to bare process.env.BOT_NUMBER.
+    try {
+        const _cleanForSock = nexusDevNumber.replace(/[^0-9]/g, '');
+        nexus._sessionPhoneNumber = _cleanForSock;
+        if (store) nexus._baileysMsgStore = store;
+    } catch (_) {}
 
     if (wantPairingCode && !state.creds.registered) {
         if (useMobile) {
@@ -1063,6 +1066,12 @@ async function startpairing(nexusDevNumber, options = {}) {
         } else if (connection === "open") {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+            try {
+                if (nexus.user?.id && typeof nexus.decodeJid === 'function') {
+                    nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
+                }
+                nexus._sessionPhoneNumber = cleanNum;
+            } catch (_) {}
             tracker.retryCount = 0;
             tracker.disconnected = false;
             tracker.startingAt = 0;
@@ -1195,28 +1204,39 @@ Your bot is ready. Send *.menu* to see all available commands.
         }
     });
 
+    // creds.update fires many times per minute during sync. Doing a full
+    // synchronous folder read + JSON.parse on every event blocked the event
+    // loop for hundreds of ms each time → all commands slowed down.
+    // Fix: saveCreds() runs immediately (Baileys keeps creds.json fresh on disk),
+    // but the DB backup is debounced (3s) and uses ASYNC fs.promises so it
+    // never blocks the event loop.
+    let _credsBackupTimer = null;
     nexus.ev.on('creds.update', async () => {
-        saveCreds();
-        // Backup all session files to MongoDB so Heroku restarts can restore them
-        try {
-            const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
-            if (fs.existsSync(sessionPath)) {
+        try { saveCreds(); } catch (_) {}
+        if (_credsBackupTimer) return; // debounce
+        _credsBackupTimer = setTimeout(async () => {
+            _credsBackupTimer = null;
+            try {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const sessionPath = `./nexstore/pairing/${cleanNum}`;
+                let names;
+                try { names = await fs.promises.readdir(sessionPath); } catch (_) { return; }
                 const sessionFiles = {};
-                fs.readdirSync(sessionPath).forEach(file => {
+                await Promise.all(names.map(async (file) => {
                     try {
                         const filePath = path.join(sessionPath, file);
-                        if (fs.lstatSync(filePath).isFile()) {
-                            const raw = fs.readFileSync(filePath, 'utf8');
-                            try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
-                        }
+                        const stat = await fs.promises.lstat(filePath).catch(() => null);
+                        if (!stat || !stat.isFile()) return;
+                        const raw = await fs.promises.readFile(filePath, 'utf8');
+                        try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
                     } catch (_) {}
-                });
+                }));
                 if (Object.keys(sessionFiles).length > 0) {
-                    const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
                     saveCredsToDb(cleanNum, sessionFiles).catch(() => {});
                 }
-            }
-        } catch (_) {}
+            } catch (_) {}
+        }, 3000);
+        if (tracker) tracker._credsBackupTimer = _credsBackupTimer;
     });
 
     // ✅ Deleted-Status Auto-Save — when a status is deleted, send it to bot owner's DM
