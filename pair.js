@@ -394,6 +394,22 @@ async function startpairing(nexusDevNumber, options = {}) {
     const _syncFullHistory = process.env.SYNC_FULL_HISTORY === '1';
     const _isWorkerBot = process.env.WHATSAPP_WORKER === '1' || Boolean(global.__ISOLATED_BOT);
 
+    // ── WhatsApp socket keep-alive (CRITICAL) ────────────────────────────────
+    // WS ping interval. MUST be ~30s. Aggressive values (3s/10s) look like spam
+    // to WhatsApp servers → `rate-overlimit` → server silently stops delivering
+    // messages after ~2-3 min while the socket stays "open" (web shows ONLINE
+    // but commands die). 30s is the Baileys-proven safe default. Env override
+    // only for testing; never set below 15000.
+    const _keepAliveMs = Math.max(15000, Number(process.env.WA_KEEPALIVE_MS) || 30000);
+    // markOnlineOnConnect / fireInitQueries: with both OFF, WhatsApp treats the
+    // device as a passive/unavailable companion and deprioritizes (eventually
+    // stops) real-time message push → "online but no commands". Defaults ON so
+    // the bot registers as an active receiver. These do NOT trigger the phone
+    // "Syncing. Keep app open." hang — that is controlled solely by
+    // syncFullHistory / shouldSyncHistoryMessage below (kept OFF by default).
+    const _markOnline = process.env.WA_MARK_ONLINE !== '0';
+    const _fireInitQueries = process.env.WA_FIRE_INIT_QUERIES !== '0';
+
     const nexus = makeWASocket({
         logger: pino({ level: "silent" }),
         printQRInTerminal: false,
@@ -410,12 +426,12 @@ async function startpairing(nexusDevNumber, options = {}) {
         shouldSyncHistoryMessage: () => _syncFullHistory,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 3000,
+        keepAliveIntervalMs: _keepAliveMs,
         emitOwnEvents: true,
-        fireInitQueries: false,
+        fireInitQueries: _fireInitQueries,
         generateHighQualityLinkPreview: false,
         syncFullHistory: _syncFullHistory,
-        markOnlineOnConnect: false,
+        markOnlineOnConnect: _markOnline,
         retryRequestDelayMs: 5000,
     })
     
