@@ -14,9 +14,9 @@ function deleteFolderRecursive(p) {
 }
 
 /**
- * Worker-only: process DB pairing queue (web dyno cannot run pair.js on Heroku).
- * Only runs in isolated mode (BOT_ISOLATION=1).
- * In flat mode, web dyno handles pairing directly via pairing.js route.
+ * Worker-only: process DB pairing queue.
+ * When WHATSAPP_HOST_DYNO=worker, the web dyno writes pairing requests to DB
+ * and this processor runs pair.js / bot-runner on the worker dyno only.
  */
 function isPairingHost() {
     try {
@@ -29,8 +29,6 @@ function isPairingHost() {
 
 async function processPairingQueue() {
     if (!isPairingHost()) return false;
-    // Flat mode: web dyno handles pairing directly — queue not needed
-    if (process.env.BOT_ISOLATION !== '1') return false;
 
     try {
         const {
@@ -121,11 +119,6 @@ async function processPairingQueue() {
 
 function startPairingProcessor(intervalMs = 150) {
     if (!isPairingHost()) return null;
-    // Flat mode: pairing is handled directly by web dyno's pairing route — no queue needed
-    if (process.env.BOT_ISOLATION !== '1') {
-        console.log('[PairingQueue] Flat mode detected — pairing processor not started (web dyno handles pairing directly)');
-        return null;
-    }
 
     const tick = async () => {
         const hadWork = await processPairingQueue().catch(() => false);

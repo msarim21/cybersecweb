@@ -41,6 +41,11 @@ function canHostWhatsAppSessions() {
     return shouldRunWhatsAppSupervisor();
 }
 
+/** Web dyno serving API only — WhatsApp bots run on worker (or another host dyno). */
+function isWebApiOnlyDyno() {
+    return isWebDyno() && getWhatsAppHostDyno() === 'worker';
+}
+
 /**
  * Returns this dyno's 0-based index.
  * $DYNO="worker.1" → 0, "worker.2" → 1, "worker.3" → 2, etc.
@@ -67,6 +72,7 @@ module.exports = {
     getWhatsAppHostDyno,
     shouldRunWhatsAppSupervisor,
     canHostWhatsAppSessions,
+    isWebApiOnlyDyno,
     isWebDyno,
     isWorkerDyno,
     getDynoIndex,

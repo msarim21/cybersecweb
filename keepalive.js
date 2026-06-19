@@ -120,6 +120,9 @@ async function backupAntideleteSessions() {
 
 /** Wake idle WhatsApp sockets so first command/delete after silence is instant */
 async function sweepStaleWhatsAppSockets() {
+    // Never open or reconnect WhatsApp sockets on the web/API dyno when bots
+    // are hosted on worker — doing so causes Error 440 (duplicate session).
+    if (!isWhatsAppWorker()) return;
     // In supervisor mode the parent process must never open WhatsApp sockets.
     // Each bot runs as an isolated child (bot-runner.js) that manages its own socket.
     // Calling pair() here from the parent would load every bot in-process → R14/R15.
@@ -482,38 +485,40 @@ function startKeepAlive() {
     _started = true;
 
     const supervisorMode = _supervisorActive();
+    const waHost = isWhatsAppWorker();
 
     // Website ping every 8 min — Heroku Eco sleeps ~30min without HTTP traffic
     _timer = setInterval(selfPing, 8 * 60 * 1000);
 
-    if (!supervisorMode) {
-        // Legacy single-process: parent owns WhatsApp sockets
+    if (!supervisorMode && waHost) {
+        // Legacy single-process on the WhatsApp host dyno only
         setInterval(async () => {
             await sweepStaleWhatsAppSockets().catch(() => {});
             await refreshBotSessions().catch(() => {});
         }, 90 * 1000);
         setInterval(() => proactiveSocketLightWake().catch(() => {}), 60 * 1000);
         setInterval(() => proactiveAntideleteWake().catch(() => {}), 4 * 60 * 1000);
-        if (isWhatsAppWorker()) {
-            setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
-        }
-        if (isWhatsAppWorker()) {
-            setInterval(async () => {
-                try {
-                    const { backupSessionFolder } = require('./session-db');
-                    const tracker = global._rentbotTracker;
-                    if (!tracker || !tracker.size) return;
-                    for (const [key, t] of uniqueTrackerEntries(tracker)) {
-                        if (!key.includes('@')) continue;
-                        const ws = t?.connection?.ws;
-                        if (!ws || ws.readyState !== 1) continue;
-                        const clean = key.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-                        await backupSessionFolder(clean, require('path').join(__dirname, 'nexstore', 'pairing', key));
-                    }
-                } catch (_) {}
-            }, 5 * 60 * 1000);
-        }
+        setInterval(() => backupAntideleteSessions().catch(() => {}), 10 * 60 * 1000);
+        setInterval(async () => {
+            try {
+                const { backupSessionFolder } = require('./session-db');
+                const tracker = global._rentbotTracker;
+                if (!tracker || !tracker.size) return;
+                for (const [key, t] of uniqueTrackerEntries(tracker)) {
+                    if (!key.includes('@')) continue;
+                    const ws = t?.connection?.ws;
+                    if (!ws || ws.readyState !== 1) continue;
+                    const clean = key.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+                    await backupSessionFolder(clean, require('path').join(__dirname, 'nexstore', 'pairing', key));
+                }
+            } catch (_) {}
+        }, 5 * 60 * 1000);
         setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 25_000);
+    } else if (!supervisorMode && !waHost) {
+        try {
+            const { getWhatsAppHostDyno } = require('./allfunc/whatsapp-host');
+            console.log(`[KeepAlive] Web/API dyno — website ping only (WhatsApp on ${getWhatsAppHostDyno()} dyno, no socket sweep)`);
+        } catch (_) {}
     } else {
         console.log('[KeepAlive] Supervisor mode — parent only pings website (bots managed in child processes)');
     }
@@ -526,14 +531,13 @@ function startKeepAlive() {
     setInterval(warmupPrinceAPIs, 20 * 60 * 1000);
 
     const restartHours = getBotRestartHours();
-    const isWebDyno = Boolean(process.env.DYNO?.startsWith('web'));
     if (supervisorMode) {
-        // Full worker dyno restart every BOT_RESTART_HOURS — was only logged before, never scheduled
+        // Full worker dyno restart every BOT_RESTART_HOURS
         if (restartHours > 0) {
             scheduleAutoRestart(restartHours * 60 * 60 * 1000);
             console.log(`[KeepAlive] ✅ Full worker dyno restart every ${restartHours}h (supervisor mode)`);
         }
-    } else if ((isWhatsAppWorker() || isWebDyno) && restartHours > 0) {
+    } else if (waHost && restartHours > 0) {
         scheduleAutoRestart(restartHours * 60 * 60 * 1000);
     } else if (restartHours <= 0) {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
@@ -541,7 +545,8 @@ function startKeepAlive() {
 
     const appUrl = getAppUrl();
     if (appUrl) {
-        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 8 min | WA socket wake every 90s`);
+        const waNote = waHost ? 'WA socket wake every 90s' : 'website ping only (no WhatsApp on this dyno)';
+        console.log(`[KeepAlive] 🔄 Started — pinging ${appUrl} every 8 min | ${waNote}`);
     } else {
         console.log('[KeepAlive] ⚠️  Started but NO APP_URL detected.');
         console.log('[KeepAlive] 👉 Config Vars mein APP_URL=https://your-app.com set karo');
@@ -549,13 +554,6 @@ function startKeepAlive() {
 
     // First ping 5 second baad
     setTimeout(selfPing, 5000);
-    // Only sweep sockets in legacy single-process mode.
-    // In supervisor mode all bots run as isolated children — calling
-    // sweepStaleWhatsAppSockets here would load every bot DIRECTLY into the
-    // parent process as well, doubling memory (parent + child per bot → R14/R15).
-    if (!supervisorMode) {
-        setTimeout(() => sweepStaleWhatsAppSockets().catch(() => {}), 25_000);
-    }
 }
 
 function stopKeepAlive() {

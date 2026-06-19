@@ -28,8 +28,10 @@ function deleteFolderRecursive(p) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function isRemoteWorkerPairingMode() {
-  return process.env.BOT_ISOLATION === '1'
-    && String(process.env.WHATSAPP_HOST_DYNO || '').toLowerCase() === 'worker'
+  // When bots run on worker, web dyno must NEVER call pair.js — it would
+  // open a WhatsApp socket on web and fight the worker (Error 440).
+  // Works for both BOT_ISOLATION=0 (flat) and BOT_ISOLATION=1 (supervisor).
+  return String(process.env.WHATSAPP_HOST_DYNO || '').toLowerCase() === 'worker'
     && String(process.env.DYNO || '').startsWith('web');
 }
 
