@@ -8672,6 +8672,11 @@ break;
 // Place this function outside of your case blocks, likely in a main handler
 // This listens for new group participants
 // =========================================================================
+// CRITICAL FIX: case.js is invoked PER MESSAGE — without this dedup flag,
+// every incoming message attached a NEW group-participants.update listener
+// → after N messages each join fired N welcome messages + listener leak.
+if (!devtrust._welcomeListenerAttached) {
+devtrust._welcomeListenerAttached = true;
 devtrust.ev.on('group-participants.update', async (update) => {
     const { id, participants, action } = update;
 
@@ -8722,6 +8727,7 @@ devtrust.ev.on('group-participants.update', async (update) => {
         }
     }
 });
+} // end if (!devtrust._welcomeListenerAttached)
 
 case 'ffstalk': {
     if (!args[0]) return reply(`🎮 *Usage:* ${command} FF_ID\nExample: ${command} 8533270051`);
