@@ -616,18 +616,26 @@ async function startpairing(nexusDevNumber, options = {}) {
         // ✅ GUARD: Skip if socket not authenticated yet
         if (!nexus.user) return;
 
-        const nexusboijid = chatUpdate.messages[0];
-        if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
+        if (!Array.isArray(chatUpdate.messages) || !chatUpdate.messages.length) return;
 
         // First live notify message → bot is ready to process commands
         if (chatUpdate.type === 'notify') {
             markBotCommandReady(nexusDevNumber, nexus);
         }
-            tracker.lastWAMessage = Date.now();
-            tracker.lastActivity = Date.now();
+        tracker.lastWAMessage = Date.now();
+        tracker.lastActivity = Date.now();
+        let botNumber = await nexus.decodeJid(nexus.user.id);
+        touchBotHeartbeat(nexusDevNumber, { event: 'message', wsState: 1, ready: true });
+
+        // Process EVERY message in the batch. WhatsApp delivers multiple messages
+        // in a single upsert (especially after idle/reconnect or rapid sends).
+        // Previously only messages[0] was handled → remaining commands were ignored
+        // AND their antidelete caches were never written ("slow/missed commands" +
+        // "deleted messages not cached").
+        for (const nexusboijid of chatUpdate.messages) {
+          try {
+            if (!nexusboijid?.message || !Object.keys(nexusboijid.message).length) continue;
             nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
-            let botNumber = await nexus.decodeJid(nexus.user.id);
-            touchBotHeartbeat(nexusDevNumber, { event: 'message', wsState: 1, ready: true });
             try {
                 if (!nexusboijid.message?.protocolMessage && typeof global._cacheMessageForAntidelete === 'function') {
                     global._cacheMessageForAntidelete(nexusboijid, nexus);
@@ -769,13 +777,17 @@ async function startpairing(nexusDevNumber, options = {}) {
               } catch (_) {}
             })();
 
-            if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
+            if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) continue;
             nexusboiConnect = nexus
             mek = smsg(nexusboiConnect, nexusboijid, store);
             require("./case")(nexusboiConnect, mek, chatUpdate, store);
-        } catch (err) {
-            console.log(err);
+          } catch (errInner) {
+            console.log(errInner);
+          }
         }
+    } catch (err) {
+        console.log(err);
+    }
     });
 
     nexus.sendFromOwner = async (jid, text, quoted, options = {}) => {
