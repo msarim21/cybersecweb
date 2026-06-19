@@ -168,6 +168,81 @@ async function runAutoLoadWithRetries(maxAttempts = 5) {
   return lastResult;
 }
 
+/**
+ * FLAT-mode boot reconnect diagnostic. For each linked+active number, prints
+ * whether the bot is ONLINE / CONNECTING / STOPPED / PENDING / NEED RE-PAIR,
+ * with the source of its session creds (disk / DB / NONE). Mirrors the
+ * supervisor's bootReconnectReport so operators get the same clarity
+ * regardless of BOT_ISOLATION mode.
+ */
+async function flatBootReconnectReport() {
+  try {
+    const path = require('path');
+    const { getActiveLinkedNumbers, hasSessionInDb } = require('./session-db');
+    const { readStopped } = require('./allfunc/stopped-bots');
+
+    const linked = (await getActiveLinkedNumbers().catch(() => []))
+      .map(n => String(n).replace(/[^0-9]/g, '')).filter(Boolean);
+    const stopped = new Set(readStopped());
+
+    if (!linked.length) {
+      console.log(chalk.gray('[Worker] 📋 Boot report: no linked numbers in DB'));
+      return;
+    }
+
+    const tracker = global._rentbotTracker;
+    const hasValidLocalCreds = (clean) => {
+      for (const dir of [
+        path.join(__dirname, 'nexstore', 'pairing', clean),
+        path.join(__dirname, 'nexstore', 'pairing', `${clean}@s.whatsapp.net`),
+      ]) {
+        try {
+          const credsFile = path.join(dir, 'creds.json');
+          if (!require('fs').existsSync(credsFile)) continue;
+          const creds = JSON.parse(require('fs').readFileSync(credsFile, 'utf8'));
+          if (creds?.registered || creds?.me?.id) return true;
+        } catch (_) {}
+      }
+      return false;
+    };
+
+    console.log(chalk.cyan(`\n[Worker] 📋 Boot reconnect report (${linked.length} linked number${linked.length === 1 ? '' : 's'}):`));
+
+    let onlineCount = 0;
+    let needPairCount = 0;
+    for (const clean of linked) {
+      const isStopped = stopped.has(clean);
+      const credsLocal = hasValidLocalCreds(clean);
+      const credsDb = await hasSessionInDb(clean).catch(() => false);
+      const t = tracker?.get?.(`${clean}@s.whatsapp.net`) || tracker?.get?.(clean);
+      const ws = t?.connection?.ws;
+      const wsOpen = ws?.readyState === 1;
+      const ready = Boolean(t?.commandReady);
+      const live = wsOpen && Boolean(t?.connection?.user);
+
+      const tag = (live && ready) ? chalk.green('✅ ONLINE & READY')
+        : live                    ? chalk.yellow('⏳ ONLINE (syncing/not ready)')
+        : t?.connection           ? chalk.yellow('🔄 CONNECTING')
+        : isStopped               ? chalk.gray('⏸ STOPPED (manual)')
+        : (credsLocal || credsDb) ? chalk.yellow('🔄 PENDING (creds present)')
+        : chalk.red('❌ NEED RE-PAIR');
+
+      const credsStr = credsLocal ? 'disk' : credsDb ? 'DB' : 'NONE';
+      console.log(chalk.gray(`   +${clean}  ${tag}  creds=${credsStr}  ws=${ws ? ws.readyState : 'none'}  ready=${ready}`));
+
+      if (live) onlineCount++;
+      if (!credsLocal && !credsDb && !isStopped) needPairCount++;
+    }
+
+    if (needPairCount > 0) {
+      console.log(chalk.red(`[Worker] ⚠️  ${needPairCount} number(s) have NO session in DB or disk — pair once via website to enable auto-reconnect`));
+    }
+    console.log(chalk.cyan(`[Worker] 📊 Auto-reconnect: ${onlineCount}/${linked.length} bot(s) online\n`));
+  } catch (e) {
+    console.log(chalk.yellow(`[Worker] flatBootReconnectReport error: ${e.message}`));
+  }
+}
+
 async function startWorker() {
   console.log(chalk.cyan('\n╔══════════════════════════════════╗'));
   console.log(chalk.cyan('║   CYBER PRO — BOT WORKER DYNO   ║'));
@@ -241,6 +316,12 @@ async function startWorker() {
 
   startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — ALL bots live, 24/7'));
+
+  // One-shot boot reconnect diagnostic ~35s after autoload — shows per-number
+  // status so we can see exactly which linked numbers reconnected and which
+  // need re-pairing after a restart (FLAT mode equivalent of the supervisor
+  // bootReconnectReport).
+  setTimeout(() => flatBootReconnectReport().catch(() => {}), 35_000);
 
   // ── Auto-scaler: RAM > 85% → spin up extra worker dyno automatically ──────
   // Requires HEROKU_API_KEY + HEROKU_APP_NAME in Heroku config vars.
