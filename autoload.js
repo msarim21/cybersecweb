@@ -44,8 +44,8 @@ function hasValidCreds(sessionPath) {
   const credsFile = path.join(sessionPath, 'creds.json');
   if (!fs.existsSync(credsFile)) return false;
   try {
-    JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-    return true;
+    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return Boolean(creds?.me?.id) && creds?.registered !== false;
   } catch {
     return false;
   }
@@ -69,6 +69,14 @@ async function restoreSessionBeforeConnect(number) {
       const { logBotEvent } = require('./allfunc/bot-lifecycle');
       logBotEvent(clean, 'session_restored', { source: 'autoload' });
       console.log(chalk.green(`[AutoLoad] ✅ Session restored from DB: ${clean}`));
+      if (!hasValidCreds(sessionPath) && !hasValidCreds(altPath)) {
+        console.log(chalk.red(`[AutoLoad] ❌ Restored creds invalid for ${clean} — re-pair required`));
+        try {
+          const { deleteSessionCreds } = require('./session-db');
+          await deleteSessionCreds(clean);
+        } catch (_) {}
+        return false;
+      }
     } else {
       console.log(chalk.yellow(`[AutoLoad] ⚠️  No DB session found for ${clean} — fresh connect`));
     }
@@ -125,12 +133,22 @@ async function processUser(user, index, total) {
     return { skipped: true, user };
   }
 
+  const clean = user.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+
+  try {
+    const pairMod = require('./pair');
+    if (typeof pairMod.isReconnectBlocked === 'function' && pairMod.isReconnectBlocked(clean)) {
+      throw new Error(`Session expired for ${clean} — re-pair via dashboard`);
+    }
+  } catch (e) {
+    if (e.message?.includes('re-pair')) throw e;
+  }
+
   console.log(chalk.blue(`⌛ Connecting ${index + 1}/${total}: ${user}`));
 
   // Restore creds from MongoDB before handing off to pair.js
   await restoreSessionBeforeConnect(user);
 
-  const clean = user.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
   const sessionPath = path.join(__dirname, 'nexstore', 'pairing', user);
   const altPath = path.join(__dirname, 'nexstore', 'pairing', clean);
   if (!hasValidCreds(sessionPath) && !hasValidCreds(altPath)) {

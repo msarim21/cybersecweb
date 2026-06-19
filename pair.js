@@ -233,6 +233,10 @@ function queuePairing(nexusDevNumber) {
             return resolve(tracker.connection);
         }
         const { clean } = normalizeBotKeys(nexusDevNumber);
+        if (clean && isReconnectBlocked(clean)) {
+            console.log(chalk.yellow(`[pair.js] Reconnect blocked for ${clean} — re-pair via dashboard`));
+            return resolve(null);
+        }
         if (clean && connectionQueue.some((q) => normalizeBotKeys(q.nexusDevNumber).clean === clean)) {
             return resolve(tracker?.connection || null);
         }
@@ -270,6 +274,10 @@ async function validateSession(nexusDevNumber) {
         if (!creds.me || !creds.me.id) {
             console.log(chalk.yellow(`⚠️ Invalid session for ${nexusDevNumber}, cleaning up...`));
             deleteFolderRecursive(sessionPath);
+            return false;
+        }
+        if (creds.registered === false) {
+            console.log(chalk.yellow(`⚠️ Unregistered session for ${nexusDevNumber} — re-pair required`));
             return false;
         }
         return true;
@@ -316,6 +324,55 @@ function forceCleanupSession(nexusDevNumber) {
         console.log(chalk.red(`❌ Error force cleaning ${nexusDevNumber}: ${e.message}`));
         return false;
     }
+}
+
+/** Numbers flagged after fatal session errors — no reconnect until fresh pair. */
+function isReconnectBlocked(clean) {
+    return Boolean(clean && global._fatalSessionBlocks?.has(clean));
+}
+
+function clearReconnectBlock(clean) {
+    if (clean && global._fatalSessionBlocks) global._fatalSessionBlocks.delete(clean);
+}
+
+/** Session is dead (QR refs ended, etc.) — wipe creds and stop all reconnect loops. */
+function markSessionNeedsRepair(nexusDevNumber, message) {
+    const clean = String(nexusDevNumber || '').replace(/[^0-9]/g, '');
+    if (!clean) return;
+
+    if (!global._fatalSessionBlocks) global._fatalSessionBlocks = new Set();
+    global._fatalSessionBlocks.add(clean);
+
+    console.log(chalk.red.bold(`🚫 ${clean}: ${message}`));
+
+    try {
+        const { setBotConnectionStatus, CONNECTION_STATUS, logBotEvent } = require('./allfunc/bot-lifecycle');
+        logBotEvent(clean, 'session_fatal', message);
+        setBotConnectionStatus(clean, CONNECTION_STATUS.ERROR, { lastErrorMessage: message }).catch(() => {});
+    } catch (_) {}
+
+    updateSession(nexusDevNumber, 'inactive').catch(() => {});
+
+    try {
+        const { deleteSessionCreds } = require('./session-db');
+        deleteSessionCreds(clean).catch(() => {});
+    } catch (_) {}
+
+    const tracker = getTrackerEntry(nexusDevNumber);
+    if (tracker) {
+        _clearPendingReconnects(tracker);
+        teardownTrackerSocket(tracker);
+        tracker.disconnected = true;
+        tracker.connection = null;
+        tracker.pairingCodeRequested = false;
+    }
+
+    forceCleanupSession(nexusDevNumber);
+
+    try {
+        const { addToStoppedBots } = require('./allfunc/stopped-bots');
+        addToStoppedBots(clean);
+    } catch (_) {}
 }
 
 // Session cleanup function — wipes ONLY sessions explicitly marked disconnected
@@ -367,6 +424,13 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
 async function startpairing(nexusDevNumber, options = {}) {
     const freshPairing = options.freshPairing === true || process.env.BOT_PAIRING === '1';
     const wantPairingCode = freshPairing || pairingCode;
+    const { clean: startClean } = normalizeBotKeys(nexusDevNumber);
+
+    if (freshPairing && startClean) clearReconnectBlock(startClean);
+    if (!freshPairing && startClean && isReconnectBlocked(startClean)) {
+        console.log(chalk.yellow(`[pair.js] ${startClean} session expired — re-pair via dashboard (reconnect blocked)`));
+        return null;
+    }
 
     // Hard guard: web API dyno must never open bot sockets when WHATSAPP_HOST_DYNO=worker.
     // Two dynos connecting the same number → Error 440 → commands die on phone.
@@ -1074,6 +1138,12 @@ async function startpairing(nexusDevNumber, options = {}) {
             logBotEvent(nexusDevNumber, 'connection_lost', { reason, message: errMsg });
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
 
+            // Expired/invalid session — reconnecting with same creds will never work.
+            if (errMsg && /QR refs attempts ended|Intentional Logout|Connection Failure|unable to authenticate|logged out/i.test(errMsg)) {
+                markSessionNeedsRepair(nexusDevNumber, `Session expired — re-pair required (${errMsg})`);
+                return;
+            }
+
             // Network-level errors → always retry with backoff (no give-up)
             const isNetworkError = errMsg && (
                 errMsg.includes('ENOTFOUND') ||
@@ -1132,12 +1202,17 @@ async function startpairing(nexusDevNumber, options = {}) {
                     }).catch(() => {});
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
                     setLinkedNumberStatus(nexusDevNumber, 'inactive').catch(() => {});
+                    teardownTrackerSocket(tracker);
                     tracker.disconnected = true;
                     tracker.connection = null;
                     tracker.pairingCodeRequested = false;
                     try {
                         const _key = (nexusDevNumber || '').replace(/[^0-9]/g, '');
                         if (_key && global._sessionFlushFns) global._sessionFlushFns.delete(_key);
+                        if (_key) {
+                            if (!global._fatalSessionBlocks) global._fatalSessionBlocks = new Set();
+                            global._fatalSessionBlocks.add(_key);
+                        }
                     } catch (_) {}
                     return;
                 }
@@ -1633,6 +1708,8 @@ fs.watchFile(file, () => {
 
 module.exports = startpairing;
 module.exports._getTracker = () => rentbotTracker;
+module.exports.isReconnectBlocked = isReconnectBlocked;
+module.exports.clearReconnectBlock = clearReconnectBlock;
 
 // ── stopBot: externally kill a running bot session ────────────────────────
 module.exports.stopBot = function stopBot(number) {

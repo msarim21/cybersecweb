@@ -108,6 +108,11 @@ router.post('/request', protect, async (req, res) => {
     logBotEvent(clean, 'pair_request_received', { userId: req.user?.id });
   } catch (_) {}
 
+  try {
+    const pairMod = require('../../pair');
+    if (typeof pairMod.clearReconnectBlock === 'function') pairMod.clearReconnectBlock(clean);
+  } catch (_) {}
+
   const sessionPath = path.join(PAIRING_BASE, clean);
   const sessionPathAlt = path.join(PAIRING_BASE, clean + '@s.whatsapp.net');
 
