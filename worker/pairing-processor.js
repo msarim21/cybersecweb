@@ -47,11 +47,25 @@ async function processPairingQueue() {
         for (const clean of pending) {
             if (!clean || global._pairingInFlight.has(clean)) continue;
 
+            // Skip if bot is already connected — no new pairing code needed
+            try {
+                const { getBotSessionsByNumbers, clearPairingRequest } = require('../server/db-service');
+                const sessMap = await getBotSessionsByNumbers([clean]).catch(() => ({}));
+                const sess = sessMap[clean];
+                if (sess?.connectionStatus === 'CONNECTED' && sess?.status === 'active') {
+                    await clearPairingRequest(clean).catch(() => {});
+                    continue;
+                }
+            } catch (_) {}
+
             const claimed = await markPairingInProgress(clean).catch(() => false);
             if (!claimed) continue;
 
             (async () => {
                 try {
+                    const { logBotEvent } = require('../allfunc/bot-lifecycle');
+                    logBotEvent(clean, 'pair_request_received', { source: 'pairing-processor' });
+
                     // Isolated mode: supervisor spawns a dedicated pairing child
                     const { isSupervisorActive, handlePairingRequest } = require('./supervisor');
                     if (isSupervisorActive()) {

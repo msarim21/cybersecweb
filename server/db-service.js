@@ -636,9 +636,49 @@ async function getAllNumbers() {
   }));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// BOT SESSION METHODS
-// ════════════════════════════════════════════════════════════════════════════
+/** Persist WhatsApp socket connection state for dashboard + recovery. */
+async function setBotConnectionStatus(number, connectionStatus, meta = {}) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || !connectionStatus) return;
+  const now = new Date();
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const $set = { connectionStatus, lastActive: now };
+    if (meta.lastErrorMessage !== undefined) $set.lastErrorMessage = meta.lastErrorMessage;
+    if (meta.reconnectAttempts !== undefined) $set.reconnectAttempts = meta.reconnectAttempts;
+    if (meta.hostDyno !== undefined) $set.hostDyno = meta.hostDyno;
+    if (connectionStatus === 'CONNECTED') {
+      $set.connectedAt = now;
+      if (meta.lastErrorMessage === null) $set.lastErrorMessage = null;
+      if (meta.reconnectAttempts === 0) $set.reconnectAttempts = 0;
+    }
+    await BotSession.findOneAndUpdate({ number: clean }, { $set }, { upsert: true });
+    return;
+  }
+  try {
+    const errMsg = meta.lastErrorMessage !== undefined ? meta.lastErrorMessage : null;
+    const attempts = meta.reconnectAttempts !== undefined ? meta.reconnectAttempts : null;
+    const hostDyno = meta.hostDyno !== undefined ? meta.hostDyno : null;
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, connection_status, last_error_message, reconnect_attempts, host_dyno, connected_at, last_active)
+       VALUES ($1, 'pending', $2, $3, COALESCE($4, 0), $5, CASE WHEN $2 = 'CONNECTED' THEN NOW() ELSE NULL END, NOW())
+       ON CONFLICT (number) DO UPDATE SET
+         connection_status = $2,
+         last_error_message = CASE
+           WHEN $2 = 'CONNECTED' THEN NULL
+           WHEN $3 IS NOT NULL THEN $3
+           ELSE bot_sessions.last_error_message
+         END,
+         reconnect_attempts = COALESCE($4, bot_sessions.reconnect_attempts),
+         host_dyno = COALESCE($5, bot_sessions.host_dyno),
+         connected_at = CASE WHEN $2 = 'CONNECTED' THEN NOW() ELSE bot_sessions.connected_at END,
+         last_active = NOW()`,
+      [clean, connectionStatus, errMsg, attempts, hostDyno]
+    );
+  } catch (err) {
+    console.error('[db-service] setBotConnectionStatus:', err.message);
+  }
+}
 
 async function upsertBotSession(number, status, meta = {}) {
   const clean = number.replace(/[^0-9]/g, '');
@@ -711,7 +751,7 @@ async function getBotSessionsByNumbers(numbers) {
   if (isMongoMode()) {
     const { BotSession } = M();
     const docs = await BotSession.find({ number: { $in: cleans } })
-      .select('number status lastActive connectedAt commandReady wsState')
+      .select('number status lastActive connectedAt commandReady wsState connectionStatus lastErrorMessage reconnectAttempts hostDyno')
       .lean();
     for (const s of docs) {
       map[s.number] = s;
@@ -720,7 +760,9 @@ async function getBotSessionsByNumbers(numbers) {
   }
   const { rows } = await pg().query(
     `SELECT number, status, last_active AS "lastActive", connected_at AS "connectedAt",
-            command_ready AS "commandReady", ws_state AS "wsState"
+            command_ready AS "commandReady", ws_state AS "wsState",
+            connection_status AS "connectionStatus", last_error_message AS "lastErrorMessage",
+            reconnect_attempts AS "reconnectAttempts", host_dyno AS "hostDyno"
      FROM bot_sessions WHERE number = ANY($1::text[])`,
     [cleans]
   );
@@ -1463,7 +1505,7 @@ module.exports = {
   setLinkedNumberStatus,
   savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers,
   getBotMode, setBotMode,
-  upsertBotSession, getActiveBotSessions, getBotSessionsByNumbers,
+  upsertBotSession, getActiveBotSessions, getBotSessionsByNumbers, setBotConnectionStatus,
   getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,

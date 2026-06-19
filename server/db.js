@@ -188,6 +188,10 @@ const initDb = async () => {
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS command_ready BOOLEAN DEFAULT false`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS ws_state INTEGER DEFAULT -1`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS connection_status VARCHAR(20)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS last_error_message TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS reconnect_attempts INTEGER DEFAULT 0`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS host_dyno VARCHAR(64)`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_messages (

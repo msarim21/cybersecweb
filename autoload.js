@@ -66,6 +66,8 @@ async function restoreSessionBeforeConnect(number) {
     let restored = await restoreCredsFromDb(clean, sessionPath);
     if (!restored) restored = await restoreCredsFromDb(clean, altPath);
     if (restored) {
+      const { logBotEvent } = require('./allfunc/bot-lifecycle');
+      logBotEvent(clean, 'session_restored', { source: 'autoload' });
       console.log(chalk.green(`[AutoLoad] ✅ Session restored from DB: ${clean}`));
     } else {
       console.log(chalk.yellow(`[AutoLoad] ⚠️  No DB session found for ${clean} — fresh connect`));

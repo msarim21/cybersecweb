@@ -103,6 +103,11 @@ router.post('/request', protect, async (req, res) => {
     return res.status(400).json({ error: 'Invalid phone number format.' });
   }
 
+  try {
+    const { logBotEvent } = require('../../allfunc/bot-lifecycle');
+    logBotEvent(clean, 'pair_request_received', { userId: req.user?.id });
+  } catch (_) {}
+
   const sessionPath = path.join(PAIRING_BASE, clean);
   const sessionPathAlt = path.join(PAIRING_BASE, clean + '@s.whatsapp.net');
 
@@ -175,11 +180,8 @@ router.post('/request', protect, async (req, res) => {
 
   try {
     if (isRemoteWorkerPairingMode()) {
-      const code = await waitForDbPairingCode(clean, PAIRING_CODE_WAIT_MS);
-      if (!code) {
-        return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
-      }
-      return res.json({ code, number: clean });
+      // Worker generates the code asynchronously — dashboard polls GET /api/pairing/code/:number
+      return res.json({ accepted: true, async: true, number: clean, status: 'requested' });
     }
 
     delete require.cache[require.resolve(PAIR_MODULE)];
@@ -254,6 +256,31 @@ router.get('/status/:number', protect, async (req, res) => {
   } catch (_) {}
 
   res.json({ connected: false });
+});
+
+// GET /api/pairing/code/:number — poll pairing code from worker (async flow)
+router.get('/code/:number', protect, async (req, res) => {
+  const clean = req.params.number.replace(/[^0-9]/g, '');
+  if (!clean) return res.status(400).json({ error: 'Invalid number' });
+
+  try {
+    const { getPairingState } = require('../db-service');
+    const st = await getPairingState(clean).catch(() => null);
+
+    if (st?.status === 'failed') {
+      return res.status(500).json({ error: 'Pairing failed on worker. Try again.', status: 'failed' });
+    }
+    if (st?.status === 'code_ready' && st.code) {
+      return res.json({ code: st.code, number: clean, status: 'code_ready' });
+    }
+    return res.json({
+      code: null,
+      number: clean,
+      status: st?.status || 'pending',
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Could not fetch pairing code' });
+  }
 });
 
 module.exports = router;

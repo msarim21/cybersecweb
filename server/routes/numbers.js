@@ -81,6 +81,14 @@ function isTrialExpired(user) {
   return new Date(user.trial_expires_at) < new Date();
 }
 
+function deriveSessionHealth(connStatus, botPhase) {
+  if (connStatus === 'ERROR' || connStatus === 'LOGGED_OUT') return 'critical';
+  if (connStatus === 'CONNECTED' && botPhase === 'online') return 'healthy';
+  if (botPhase === 'syncing' || botPhase === 'starting' || connStatus === 'CONNECTING') return 'recovering';
+  if (connStatus === 'DISCONNECTED') return 'degraded';
+  return 'unknown';
+}
+
 // GET /api/numbers
 router.get('/', protect, async (req, res) => {
   try {
@@ -120,10 +128,23 @@ router.get('/', protect, async (req, res) => {
         return 'offline';
       })();
       const botOnline = botPhase === 'online';
+      const waConnStatus = sess?.connectionStatus || null;
+      const sessionHealth = deriveSessionHealth(waConnStatus, botPhase);
       // Keep the badge tied to the user's linked record. Short WhatsApp
       // reconnects should not make a successfully paired number look inactive;
       // botOnline carries the live connection signal separately.
-      return { ...n, status: n.status, botOnline, botPhase, connectionStatus: sess?.status || null };
+      return {
+        ...n,
+        status: n.status,
+        botOnline,
+        botPhase,
+        connectionStatus: waConnStatus,
+        lastError: sess?.lastErrorMessage || null,
+        hostDyno: sess?.hostDyno || null,
+        lastConnectedAt: sess?.connectedAt || null,
+        sessionHealth,
+        reconnectAttempts: sess?.reconnectAttempts ?? 0,
+      };
     });
     res.json(enriched);
   } catch (err) {

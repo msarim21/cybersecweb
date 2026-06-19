@@ -37,6 +37,24 @@ const StatCard = ({ label, value, icon, color, sub }) => (
 );
 
 const getBotPresence = (n) => {
+  if (n?.connectionStatus === 'ERROR') {
+    return {
+      label: 'ERROR',
+      dot: '✕',
+      textClass: 'text-[#ff4444]',
+      bg: 'rgba(255,68,68,0.1)',
+      border: 'rgba(255,68,68,0.35)',
+    };
+  }
+  if (n?.connectionStatus === 'LOGGED_OUT') {
+    return {
+      label: 'LOGGED OUT',
+      dot: '⊘',
+      textClass: 'text-[#ff8844]',
+      bg: 'rgba(255,136,68,0.1)',
+      border: 'rgba(255,136,68,0.35)',
+    };
+  }
   if (n?.status !== 'active') {
     return {
       label: 'OFFLINE',
@@ -44,6 +62,16 @@ const getBotPresence = (n) => {
       textClass: 'text-[#ffaa00]',
       bg: 'rgba(255,170,0,0.08)',
       border: 'rgba(255,170,0,0.3)',
+    };
+  }
+
+  if (n?.botOnline) {
+    return {
+      label: 'ONLINE',
+      dot: '●',
+      textClass: 'text-[#00ff88]',
+      bg: 'rgba(0,255,136,0.08)',
+      border: 'rgba(0,255,136,0.3)',
     };
   }
 
@@ -67,13 +95,13 @@ const getBotPresence = (n) => {
     };
   }
 
-  if (n?.botOnline) {
+  if (n?.connectionStatus === 'DISCONNECTED' || n?.connectionStatus === 'CONNECTING') {
     return {
-      label: 'ONLINE',
-      dot: '●',
-      textClass: 'text-[#00ff88]',
-      bg: 'rgba(0,255,136,0.08)',
-      border: 'rgba(0,255,136,0.3)',
+      label: n?.connectionStatus === 'CONNECTING' ? 'CONNECTING' : 'RECONNECTING',
+      dot: '↻',
+      textClass: 'text-[#ffe066]',
+      bg: 'rgba(255,224,102,0.08)',
+      border: 'rgba(255,224,102,0.28)',
     };
   }
 
@@ -300,12 +328,14 @@ const LinkModal = ({ onClose, onAdd }) => {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ number: '', botName: '' });
   const [code, setCode] = useState('');
+  const [pairStatus, setPairStatus] = useState('');
   const [copied, setCopied] = useState(false);
   const [timer, setTimer] = useState(300);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const timerRef   = useRef(null);
   const pollRef    = useRef(null);
+  const codePollRef = useRef(null);
   const autoSaved  = useRef(false);
   const linkingRef = useRef(false);
 
@@ -386,6 +416,56 @@ const LinkModal = ({ onClose, onAdd }) => {
     };
   }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll worker for pairing code (async flow — web enqueues, worker generates)
+  useEffect(() => {
+    if (step !== 2) {
+      if (codePollRef.current) {
+        clearInterval(codePollRef.current);
+        codePollRef.current = null;
+      }
+      return;
+    }
+    const cleanNum = form.number.replace(/\D/g, '');
+    if (!cleanNum) return;
+
+    let cancelled = false;
+    const pollCode = async () => {
+      if (cancelled) return;
+      try {
+        const { data } = await axios.get(`/api/pairing/code/${cleanNum}`);
+        setPairStatus(data.status || 'in_progress');
+        if (data.code) {
+          setCode(data.code);
+          setTimer(300);
+          setStep(3);
+          if (codePollRef.current) clearInterval(codePollRef.current);
+        }
+      } catch (err) {
+        if (err.response?.data?.status === 'failed') {
+          setStep(1);
+          toast.error(err.response?.data?.error || 'Pairing failed on worker');
+          if (codePollRef.current) clearInterval(codePollRef.current);
+        }
+      }
+    };
+
+    pollCode();
+    codePollRef.current = setInterval(pollCode, 1000);
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        setStep(1);
+        toast.error('Timed out waiting for pairing code. Try again.');
+        if (codePollRef.current) clearInterval(codePollRef.current);
+      }
+    }, 90000);
+
+    return () => {
+      cancelled = true;
+      if (codePollRef.current) clearInterval(codePollRef.current);
+      clearTimeout(timeout);
+    };
+  }, [step, form.number]);
+
   const fmt = s => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
 
   const handleCopy = () => {
@@ -399,13 +479,21 @@ const LinkModal = ({ onClose, onAdd }) => {
   const handleRequest = async e => {
     e?.preventDefault();
     if (!form.number || !form.botName) return toast.error('All fields required');
+    setPairStatus('requested');
     setStep(2);
     try {
       const { data } = await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
-      if (!data.code) throw new Error('No pairing code received from server.');
-      setCode(data.code);
-      setTimer(300);
-      setStep(3);
+      if (data.code) {
+        setCode(data.code);
+        setTimer(300);
+        setStep(3);
+        return;
+      }
+      if (data.async) {
+        setPairStatus(data.status || 'requested');
+        return;
+      }
+      throw new Error('No pairing code received from server.');
     } catch (err) {
       setStep(1);
       const errCode = err.response?.data?.error;
@@ -495,7 +583,12 @@ const LinkModal = ({ onClose, onAdd }) => {
                 <div className="text-center">
                   <div className="font-display text-sm text-[#00f5ff] tracking-widest mb-1">CONNECTING TO WHATSAPP</div>
                   <div className="font-mono text-[10px] text-gray-500">Requesting pairing code for {form.number}…</div>
-                  <div className="font-mono text-[10px] text-gray-600 mt-1">Usually 5–10 seconds — please wait</div>
+                  <div className="font-mono text-[10px] text-gray-600 mt-1">
+                    {pairStatus === 'code_ready' ? 'Code ready…' :
+                     pairStatus === 'in_progress' ? 'Worker generating code…' :
+                     pairStatus === 'requested' ? 'Queued on worker dyno…' :
+                     'Usually 5–10 seconds — please wait'}
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1136,6 +1229,31 @@ export default function Dashboard() {
                             <div className="font-mono text-sm text-white truncate">{n.number}</div>
                             <div className="font-mono text-[10px] text-[#00f5ff] mt-0.5">{n.botName}</div>
                             <div className="font-mono text-[10px] text-gray-600 mt-0.5">Added {new Date(n.createdAt).toLocaleDateString()}</div>
+                            {n.status === 'active' && (
+                              <div className="mt-2 space-y-0.5">
+                                {n.connectionStatus && (
+                                  <div className="font-mono text-[9px] text-gray-500">
+                                    WA: <span className="text-[#00f5ff]">{n.connectionStatus}</span>
+                                    {n.sessionHealth && n.sessionHealth !== 'unknown' && (
+                                      <span className="ml-2 text-gray-600">· {n.sessionHealth}</span>
+                                    )}
+                                  </div>
+                                )}
+                                {n.lastConnectedAt && (
+                                  <div className="font-mono text-[9px] text-gray-600">
+                                    Last connected: {new Date(n.lastConnectedAt).toLocaleString()}
+                                  </div>
+                                )}
+                                {n.hostDyno && (
+                                  <div className="font-mono text-[9px] text-gray-600">Worker: {n.hostDyno}</div>
+                                )}
+                                {n.lastError && (
+                                  <div className="font-mono text-[9px] text-red-400 truncate" title={n.lastError}>
+                                    Error: {n.lastError}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 ml-3 flex-shrink-0">
                             {n.status === 'active' && (() => {
