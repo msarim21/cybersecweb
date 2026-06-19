@@ -645,7 +645,10 @@ async function upsertBotSession(number, status, meta = {}) {
   if (!clean) return;
   const now = new Date();
   const setFields = { status, lastActive: now };
-  if (meta.commandReady !== undefined) setFields.commandReady = meta.commandReady;
+  if (meta.commandReady !== undefined) {
+    if (meta.commandReady === true) setFields.commandReady = true;
+    // Never downgrade commandReady to false on reconnect
+  }
   if (meta.wsState !== undefined) setFields.wsState = meta.wsState;
   if (status === 'active' && meta.commandReady === true) {
     setFields.connectedAt = now;
@@ -675,7 +678,7 @@ async function upsertBotSession(number, status, meta = {}) {
      ON CONFLICT (number) DO UPDATE
        SET status = $2,
            last_active = NOW(),
-           command_ready = COALESCE($4, bot_sessions.command_ready),
+           command_ready = CASE WHEN $4 IS TRUE THEN TRUE ELSE bot_sessions.command_ready END,
            ws_state = COALESCE($5, bot_sessions.ws_state),
            connected_at = CASE
              WHEN $2='active' AND $4 IS TRUE THEN NOW()

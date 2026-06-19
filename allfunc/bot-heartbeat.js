@@ -52,10 +52,10 @@ function touchBotHeartbeat(botNum, extra = {}) {
         try {
             const { upsertBotSession } = require('../server/db-service');
             const meta = {};
-            if (extra.ready !== undefined) meta.commandReady = extra.ready;
+            if (extra.ready === true) meta.commandReady = true;
             if (extra.wsState !== undefined) meta.wsState = extra.wsState;
-            const status = extra.ready === false ? 'active' : 'active';
-            await upsertBotSession(clean, status, meta);
+            if (extra.ready === false) return;
+            await upsertBotSession(clean, 'active', meta);
         } catch (_) {}
     });
 }
