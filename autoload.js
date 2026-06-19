@@ -308,6 +308,12 @@ async function buildUserList() {
       return shardJids(jids);
     }
     console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 5 attempts — falling back to filesystem'));
+    // On Heroku/production, trust DB only — filesystem fallback reconnects numbers
+    // the user disconnected (web dyno stopped_bots.json is not shared with worker).
+    if (process.env.HEROKU_APP_NAME || process.env.NODE_ENV === 'production') {
+      console.log(chalk.yellow('[AutoLoad] Production mode — skipping filesystem fallback (DB is source of truth)'));
+      return [];
+    }
   } catch (err) {
     console.error(`[AutoLoad] ⚠️  DB query failed (${err.message}) — falling back to filesystem`);
   }

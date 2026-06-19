@@ -7061,6 +7061,7 @@ case 'CYBERsticker': {
 break;
 
 case 'toolmenu':
+case 'toolsmenu':
 case 'CYBERtool': {
     autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
     await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
