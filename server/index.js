@@ -576,8 +576,10 @@ initDb()
       if (startWhatsAppStack()) {
         console.log(`✅ WhatsApp bots started on web dyno (WHATSAPP_HOST_DYNO=${getWhatsAppHostDyno()})`);
       } else if (!shouldRunWhatsAppSupervisor()) {
-        const { startKeepAlive } = require('../keepalive');
-        startKeepAlive();
+        const { isWebDyno } = require('../allfunc/whatsapp-host');
+        if (isWebDyno()) {
+          console.log(`ℹ️  Web dyno: API + website ping only — WhatsApp bots on ${getWhatsAppHostDyno()} dyno`);
+        }
       }
     } catch (err) {
       console.log('ℹ️  WhatsApp supervisor on web:', err.message);

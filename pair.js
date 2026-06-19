@@ -367,6 +367,18 @@ async function startpairing(nexusDevNumber, options = {}) {
     const freshPairing = options.freshPairing === true || process.env.BOT_PAIRING === '1';
     const wantPairingCode = freshPairing || pairingCode;
 
+    // Hard guard: web API dyno must never open bot sockets when WHATSAPP_HOST_DYNO=worker.
+    // Two dynos connecting the same number → Error 440 → commands die on phone.
+    try {
+        const { canHostWhatsAppSessions, isWebDyno, getWhatsAppHostDyno } = require('./allfunc/whatsapp-host');
+        if (isWebDyno() && !canHostWhatsAppSessions()) {
+            console.log(chalk.yellow(
+                `[pair.js] Blocked connect on web dyno for ${nexusDevNumber} — WhatsApp runs on ${getWhatsAppHostDyno()} dyno`
+            ));
+            return null;
+        }
+    } catch (_) {}
+
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
     
