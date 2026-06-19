@@ -160,6 +160,11 @@ router.post('/request', protect, async (req, res) => {
   }
 
   try {
+    const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
+    removeFromStoppedBots(clean);
+  } catch (_) {}
+
+  try {
     const botName = req.body.botName || 'CYBER PRO';
     await savePairingOwner(clean, req.user.id, botName);
     await ensurePairingRequest(clean, { force: true });

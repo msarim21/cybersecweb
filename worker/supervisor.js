@@ -561,7 +561,14 @@ async function handlePairingRequest(clean) {
     const num = cleanBotNum(clean);
     if (!num) return;
     if (!global._pairingInFlight) global._pairingInFlight = new Set();
-    if (global._pairingInFlight.has(num)) return;
+
+    // User requested a fresh code — supersede any in-flight pairing child.
+    if (global._pairingInFlight.has(num)) {
+        console.log(chalk.yellow(`[Supervisor] Superseding in-flight pairing for +${num}`));
+        killBot(num, 'SIGKILL');
+        global._pairingInFlight.delete(num);
+        await new Promise((r) => setTimeout(r, 800));
+    }
     global._pairingInFlight.add(num);
 
     console.log(chalk.cyan(`[Supervisor] 🔗 Pairing +${num} — spawning isolated thread`));
