@@ -366,7 +366,10 @@ async function startWorker() {
       const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
       await syncStoppedWithLinkedNumbers();
       const { isRunning } = require('./autoload');
-      if (!isRunning() && getUniqueTrackerCount() === 0) {
+      // Skip autoload if bots are running in pairing child processes (prevents Error 440)
+      const hasPairingChildren = global._pairingChildPids && global._pairingChildPids.size > 0
+        && [...global._pairingChildPids.values()].some(c => c && c.exitCode === null);
+      if (!isRunning() && getUniqueTrackerCount() === 0 && !hasPairingChildren) {
         await autoLoadPairs({ concurrent: true });
       }
     } catch (_) {}
