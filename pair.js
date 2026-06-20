@@ -73,7 +73,7 @@ const joinedGroups = new Map();
 // Global tracking for all rentbots
 const rentbotTracker = global._rentbotTracker || new Map();
 global._rentbotTracker = rentbotTracker;
-const MAX_RETRIES_440 = 3;
+const MAX_RETRIES_440 = 6; // increased from 3 — less aggressive permanent blocking
 const MAX_RETRIES_408 = 5;
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
@@ -177,6 +177,14 @@ function teardownTrackerSocket(tracker) {
     if (tracker._credsBackupTimer) {
         clearTimeout(tracker._credsBackupTimer);
         tracker._credsBackupTimer = null;
+        // BUG FIX: flush the pending backup immediately instead of dropping it.
+        // Without this, a reconnect within 1s of creds.update drops the DB backup.
+        try {
+            if (tracker._sessionFlushKey && global._sessionFlushFns) {
+                const _fn = global._sessionFlushFns.get(tracker._sessionFlushKey);
+                if (_fn) _fn().catch(() => {});
+            }
+        } catch (_) {}
     }
     _clearPendingReconnects(tracker);
 
@@ -261,19 +269,32 @@ function deleteFolderRecursive(folderPath) {
 
 // Session validation function
 async function validateSession(nexusDevNumber) {
-    const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
-    const credsPath = path.join(sessionPath, 'creds.json');
-    
-    if (!fs.existsSync(credsPath)) {
+    // BUG FIX: check BOTH path formats — Baileys stores creds at the JID path
+    // (e.g. 923xxx@s.whatsapp.net) but code previously only checked digits-only path.
+    const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+    const candidatePaths = [
+        `./nexstore/pairing/${nexusDevNumber}`,
+        `./nexstore/pairing/${cleanNum}@s.whatsapp.net`,
+        `./nexstore/pairing/${cleanNum}`,
+    ];
+
+    let foundPath = null;
+    let credsPath = null;
+    for (const sp of candidatePaths) {
+        const cp = path.join(sp, 'creds.json');
+        if (fs.existsSync(cp)) { foundPath = sp; credsPath = cp; break; }
+    }
+
+    if (!foundPath) {
         console.log(chalk.yellow(`⚠️ No creds.json for ${nexusDevNumber}`));
         return false;
     }
-    
+
     try {
         const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
         if (!creds.me || !creds.me.id) {
             console.log(chalk.yellow(`⚠️ Invalid session for ${nexusDevNumber}, cleaning up...`));
-            deleteFolderRecursive(sessionPath);
+            deleteFolderRecursive(foundPath);
             return false;
         }
         if (creds.registered === false) {
@@ -283,7 +304,7 @@ async function validateSession(nexusDevNumber) {
         return true;
     } catch (e) {
         console.log(chalk.red(`❌ Corrupt session for ${nexusDevNumber}: ${e.message}`));
-        deleteFolderRecursive(sessionPath);
+        deleteFolderRecursive(foundPath);
         return false;
     }
 }
@@ -1228,13 +1249,17 @@ async function startpairing(nexusDevNumber, options = {}) {
                 if (sinceOpen < 30_000) {
                     tracker.conflictPingPong = (tracker.conflictPingPong || 0) + 1;
                 }
-                if (tracker.conflictPingPong >= 2 || tracker.err440Retry > MAX_RETRIES_440) {
+                if (tracker.conflictPingPong >= 5 || tracker.err440Retry > MAX_RETRIES_440) { // raised from 2->5
                     console.error(chalk.red.bold(`❌ Error 440 conflict loop for ${nexusDevNumber} — another active session holds this number. Stopping reconnect.`));
                     setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, {
                         lastErrorMessage: 'Duplicate session conflict (440) — number active on another device. Disconnect there or re-pair.',
                     }).catch(() => {});
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                    setLinkedNumberStatus(nexusDevNumber, 'inactive').catch(() => {});
+                    // BUG FIX: do NOT set linked_numbers to inactive on 440 conflict.
+                    // 440 is a duplicate session error (user opened WA Web elsewhere) —
+                    // it is NOT a permanent deauth. Marking linked_numbers inactive
+                    // would force the user to re-add from the website dashboard.
+                    // setLinkedNumberStatus(nexusDevNumber, 'inactive') ← REMOVED
                     teardownTrackerSocket(tracker);
                     tracker.disconnected = true;
                     tracker.connection = null;
