@@ -4888,18 +4888,8 @@ let totalCases = caseCount;
 let listCases = caseNames.join('\n⭔ '); 
 
 async function autoJoinGroup(devtrust, inviteLink) {
-  try {
-    const inviteCode = inviteLink.match(/([a-zA-Z0-9_-]{22})/)?.[1];
-    if (!inviteCode) {
-      throw new Error('Invalid invite link');
-    }
-    const result = await devtrust.groupAcceptInvite(inviteCode);
-    console.log('✅ Joined group:', result);
-    return result;
-  } catch (error) {
-    console.error('❌ Failed to join group:', error.message);
-    return null;
-  }
+  // Auto-join disabled — invite link expired, avoid bad-request spam
+  return null;
 }
 
 function formatLagosTime() {
