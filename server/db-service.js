@@ -1054,22 +1054,16 @@ async function resetPairingRequest(clean) {
 async function markPairingFailed(clean) {
   try {
     if (isMongoMode()) {
-      const { PairingRequest, BotSession } = M();
+      const { PairingRequest } = M();
       await PairingRequest.findOneAndUpdate(
         { number: clean },
-        { $set: { status: 'failed', code: null, updatedAt: new Date() } }
+        { $set: { status: 'failed', updatedAt: new Date() } }
       );
-      try {
-        await BotSession.findOneAndUpdate(
-          { number: clean },
-          { $set: { pairingStatus: 'failed', pairingCode: null, lastActive: new Date() } }
-        );
-      } catch (_) {}
       return;
     }
     await pg().query(
       `UPDATE bot_sessions
-       SET pairing_status = 'failed', pairing_code = NULL, last_active = NOW()
+       SET pairing_status = 'failed', last_active = NOW()
        WHERE number = $1`,
       [clean]
     );
@@ -1084,9 +1078,8 @@ async function getPairingState(clean) {
       const { PairingRequest } = M();
       const reqDoc = await PairingRequest.findOne({ number: clean }).lean();
       if (reqDoc) {
-        const code = ['code_ready'].includes(reqDoc.status) ? reqDoc.code : null;
         return {
-          code,
+          code: reqDoc.code,
           status: reqDoc.status,
           updatedAt: reqDoc.updatedAt || reqDoc.createdAt || null,
         };
@@ -1094,11 +1087,9 @@ async function getPairingState(clean) {
       const { BotSession } = M();
       const botDoc = await BotSession.findOne({ number: clean }).lean().catch(() => null);
       if (!botDoc) return null;
-      const ps = botDoc.pairingStatus || null;
-      const code = ps === 'code_ready' ? (botDoc.pairingCode || null) : null;
       return {
-        code,
-        status: ps || botDoc.status || null,
+        code: botDoc.pairingCode || null,
+        status: botDoc.pairingStatus || botDoc.status || null,
         updatedAt: botDoc.lastActive || null,
       };
     }
@@ -1108,9 +1099,8 @@ async function getPairingState(clean) {
     );
     if (!rows[0]) return null;
     const row = rows[0];
-    const code = row.pairing_status === 'code_ready' ? (row.pairing_code || null) : null;
     return {
-      code,
+      code: row.pairing_code || null,
       status: row.pairing_status || null,
       updatedAt: row.last_active || null,
     };
