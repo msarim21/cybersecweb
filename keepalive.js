@@ -73,8 +73,8 @@ function isWhatsAppWorker() {
     return false;
 }
 
-const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 3 * 60 * 1000; // reduced from 10min to 3min for faster dead-socket detection
-const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 15 * 60 * 1000; // reduced from 45min to 15min
+const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 10 * 60 * 1000;
+const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 45 * 60 * 1000;
 
 function _supervisorActive() {
     try {
@@ -172,21 +172,14 @@ async function sweepStaleWhatsAppSockets() {
         const silentMs = Date.now() - lastWa;
 
         if (wsState === 3 || wsState === -1) {
-            // pair.js already handling a 440-retry — don't interfere
+            // If pair.js is already handling a 440-retry loop, don't interfere —
+            // a second reconnect attempt would cause another 440 and extend the loop.
             if (tracker.err440Retry > 0) continue;
 
-            // pair.js already set disconnected=true and is reconnecting — skip
-            if (tracker.disconnected) continue;
-
-            // Bot connected recently (<120s) — ws can briefly be null during
-            // Baileys internal teardown right before pair.js's connection.update
-            // handler fires. Triggering stopBot here creates a double reconnect.
-            if (tracker.lastOpenAt && Date.now() - tracker.lastOpenAt < 120_000) continue;
-
-            // Cooldown: skip reconnect if we already tried within last 90s
+            // Cooldown: skip reconnect if we already tried within last 45s
             if (!global._socketKACooldown) global._socketKACooldown = new Map();
             const lastTry = global._socketKACooldown.get(clean) || 0;
-            if (Date.now() - lastTry < 90_000) continue;
+            if (Date.now() - lastTry < 45_000) continue;
             global._socketKACooldown.set(clean, Date.now());
             console.log(`[SocketKeepAlive] ${clean} ws closed (${wsState}) — reconnecting`);
             try {
@@ -284,19 +277,6 @@ async function refreshBotSessions() {
         // If tracker exists but is empty while DB has linked numbers → autoload missed bots
         if (hasTracker && trackerSize === 0) {
             if (nums.length > 0) {
-                // Safety: skip autoload if bot already runs in a pairing child process.
-                // In flat mode, pairing-processor forks a child that hosts the bot.
-                // Parent tracker is empty while child is alive — without this check,
-                // autoload opens a second socket for same number → WhatsApp Error 440.
-                const hasActivePairingChild = nums.some(n => {
-                    const clean = String(n).replace(/[^0-9]/g, '');
-                    const child = global._pairingChildPids?.get(clean);
-                    return child && child.exitCode === null;
-                });
-                if (hasActivePairingChild) {
-                    console.log('[KeepAlive] ℹ️ Bot running in pairing child — skipping autoload (prevents Error 440)');
-                    return;
-                }
                 console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} assigned number(s) — triggering autoload...`);
                 try {
                     const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
@@ -328,13 +308,10 @@ async function refreshBotSessions() {
             }
 
             // Skip bots that pair.js gave up on (440 conflict loop / re-pair required).
+            // Reconnecting them here just restarts the conflict ping-pong loop.
             if (tracker.disconnected && (tracker.err440Retry > 0 || tracker.conflictPingPong > 0)) continue;
-            if (tracker.err440Retry > 0 || tracker.conflictPingPong > 0) continue;
-            try {
-                const pairMod = require('./pair');
-                const cleanCheck = String(clean);
-                if (typeof pairMod.isReconnectBlocked === 'function' && pairMod.isReconnectBlocked(cleanCheck)) continue;
-            } catch (_) {}
+            // Skip while pair.js is actively handling a 440 retry.
+            if (tracker.err440Retry > 0) continue;
 
             const ws = tracker.connection && tracker.connection.ws;
             const wsState = ws ? ws.readyState : -1;
