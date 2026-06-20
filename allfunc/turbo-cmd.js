@@ -75,7 +75,11 @@ async function tryTurboCommand(devtrust, m, ctx) {
         try {
             return await devtrust.sendMessage(chat, payload, { quoted: m });
         } catch (_sendErr) {
-            return await devtrust.sendMessage(chat, payload);
+            try {
+                return await devtrust.sendMessage(chat, payload);
+            } catch (_sendErr2) {
+                console.error('[TURBO-SEND] msg failed:', _sendErr2?.message || _sendErr2);
+            }
         }
     };
 
