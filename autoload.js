@@ -305,15 +305,15 @@ async function buildUserList() {
     const { getActiveLinkedNumbers } = require('./session-db');
     const { removeFromStoppedBots } = require('./allfunc/stopped-bots');
     let dbNumbers = [];
-    for (let attempt = 1; attempt <= 5; attempt++) {
+    for (let attempt = 1; attempt <= 12; attempt++) {
       try {
         dbNumbers = await getActiveLinkedNumbers();
       } catch (e) {
-        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt ${attempt}/5: ${e.message}`));
+        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt /12: ${e.message}`));
       }
       if (dbNumbers && dbNumbers.length > 0) break;
-      if (attempt < 5) {
-        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt ${attempt}/5) — retrying in 5s...`));
+      if (attempt < 12) {
+        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt /12) — retrying in 5s...`));
         await delay(5000);
       }
     }
@@ -335,7 +335,7 @@ async function buildUserList() {
       console.log(chalk.green(`[AutoLoad] 📦 DB source: found ${jids.length} linked numbers`));
       return shardJids(jids);
     }
-    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 5 attempts — falling back to filesystem'));
+    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 12 attempts — falling back to filesystem'));
     // On Heroku/production, trust DB only — filesystem fallback reconnects numbers
     // the user disconnected (web dyno stopped_bots.json is not shared with worker).
     if (process.env.HEROKU_APP_NAME || process.env.NODE_ENV === 'production') {
