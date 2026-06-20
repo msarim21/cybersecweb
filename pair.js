@@ -1429,18 +1429,46 @@ async function startpairing(nexusDevNumber, options = {}) {
                 const _flushKey = cleanNum;
                 const _flush = async () => {
                     try {
-                        const sessionPath = path.join(__dirname, 'nexstore', 'pairing', cleanNum);
-                        const altPath = path.join(__dirname, 'nexstore', 'pairing', `${cleanNum}@s.whatsapp.net`);
-                        if (fs.existsSync(sessionPath)) {
-                            await backupSessionFolder(cleanNum, sessionPath).catch(() => {});
-                        } else if (fs.existsSync(altPath)) {
-                            await backupSessionFolder(cleanNum, altPath).catch(() => {});
+                        // BUG FIX: try BOTH paths — whichever has creds.json wins.
+                        // if/else-if meant an empty cleanNum dir would block altPath backup.
+                        const _flushPaths = [
+                            path.join(__dirname, 'nexstore', 'pairing', nexusDevNumber),
+                            path.join(__dirname, 'nexstore', 'pairing', `${cleanNum}@s.whatsapp.net`),
+                            path.join(__dirname, 'nexstore', 'pairing', cleanNum),
+                        ];
+                        let flushed = false;
+                        for (const sp of _flushPaths) {
+                            try {
+                                if (fs.existsSync(path.join(sp, 'creds.json'))) {
+                                    await backupSessionFolder(cleanNum, sp).catch(() => {});
+                                    flushed = true;
+                                    break;
+                                }
+                            } catch (_) {}
                         }
                     } catch (_) {}
                 };
                 global._sessionFlushFns.set(_flushKey, _flush);
                 tracker._sessionFlushKey = _flushKey;
             } catch (_) {}
+
+            // IMMEDIATE session backup on connect — belt-and-suspenders so
+            // even if SIGTERM fires before the 1-second debounce, creds are in DB.
+            setImmediate(async () => {
+                try {
+                    const _immPaths = [
+                        path.join(__dirname, 'nexstore', 'pairing', nexusDevNumber),
+                        path.join(__dirname, 'nexstore', 'pairing', `${cleanNum}@s.whatsapp.net`),
+                        path.join(__dirname, 'nexstore', 'pairing', cleanNum),
+                    ];
+                    for (const sp of _immPaths) {
+                        if (fs.existsSync(path.join(sp, 'creds.json'))) {
+                            await backupSessionFolder(cleanNum, sp).catch(() => {});
+                            break;
+                        }
+                    }
+                } catch (_) {}
+            });
 
             global.pairEmitter.emit('connected', nexusDevNumber);
 
@@ -1533,13 +1561,26 @@ Your bot is ready. Send *.menu* to see all available commands.
             _credsBackupTimer = null;
             try {
                 const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                const sessionPath = `./nexstore/pairing/${cleanNum}`;
-                let names;
-                try { names = await fs.promises.readdir(sessionPath); } catch (_) { return; }
+                // BUG FIX: try BOTH path formats — Baileys stores creds in
+                // ./nexstore/pairing/<JID>/ (e.g. 923xxx@s.whatsapp.net)
+                // but previous code only tried ./nexstore/pairing/<digits>/ which is EMPTY.
+                const candidatePaths = [
+                    `./nexstore/pairing/${nexusDevNumber}`,
+                    `./nexstore/pairing/${cleanNum}`,
+                ];
+                let names = null;
+                let usedPath = null;
+                for (const sp of candidatePaths) {
+                    try {
+                        const _names = await fs.promises.readdir(sp);
+                        if (_names.some(f => f === 'creds.json')) { names = _names; usedPath = sp; break; }
+                    } catch (_) {}
+                }
+                if (!names || !usedPath) return;
                 const sessionFiles = {};
                 await Promise.all(names.map(async (file) => {
                     try {
-                        const filePath = path.join(sessionPath, file);
+                        const filePath = path.join(usedPath, file);
                         const stat = await fs.promises.lstat(filePath).catch(() => null);
                         if (!stat || !stat.isFile()) return;
                         const raw = await fs.promises.readFile(filePath, 'utf8');
@@ -1550,7 +1591,7 @@ Your bot is ready. Send *.menu* to see all available commands.
                     saveCredsToDb(cleanNum, sessionFiles).catch(() => {});
                 }
             } catch (_) {}
-        }, 3000);
+        }, 1000);
         if (tracker) tracker._credsBackupTimer = _credsBackupTimer;
     });
 
