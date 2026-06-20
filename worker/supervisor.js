@@ -575,7 +575,9 @@ async function handlePairingRequest(clean) {
 
     try {
         const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
+        const { clearPairingRequest } = require('../server/db-service');
         removeFromStoppedBots(num);
+        await clearPairingRequest(num).catch(() => {});
         killBot(num, 'SIGKILL');
 
         // pair.js writes auth to nexstore/pairing/<digits>; some legacy paths

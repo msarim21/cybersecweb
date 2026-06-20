@@ -336,6 +336,7 @@ const LinkModal = ({ onClose, onAdd }) => {
   const timerRef   = useRef(null);
   const pollRef    = useRef(null);
   const codePollRef = useRef(null);
+  const requestStartedAtRef = useRef(0);
   const autoSaved  = useRef(false);
   const linkingRef = useRef(false);
 
@@ -434,9 +435,18 @@ const LinkModal = ({ onClose, onAdd }) => {
       try {
         const { data } = await axios.get(`/api/pairing/code/${cleanNum}`);
         setPairStatus(data.status || 'in_progress');
+        if (data.status === 'expired') {
+          setCode('');
+          toast.error(data.error || 'Code expired — tap NEW CODE');
+          return;
+        }
         if (data.code) {
+          const codeTime = data.updatedAt ? new Date(data.updatedAt).getTime() : Date.now();
+          if (requestStartedAtRef.current && codeTime < requestStartedAtRef.current - 2000) {
+            return;
+          }
           setCode(data.code);
-          setTimer(300);
+          setTimer(data.expiresInSec != null ? data.expiresInSec : 120);
           setStep(3);
           if (codePollRef.current) clearInterval(codePollRef.current);
         }
@@ -479,18 +489,20 @@ const LinkModal = ({ onClose, onAdd }) => {
   const handleRequest = async e => {
     e?.preventDefault();
     if (!form.number || !form.botName) return toast.error('All fields required');
+    setCode('');
     setPairStatus('requested');
-    setStep(2);
+    requestStartedAtRef.current = Date.now();
     try {
       const { data } = await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
       if (data.code) {
         setCode(data.code);
-        setTimer(300);
+        setTimer(120);
         setStep(3);
         return;
       }
       if (data.async) {
         setPairStatus(data.status || 'requested');
+        setStep(2);
         return;
       }
       throw new Error('No pairing code received from server.');
@@ -596,7 +608,13 @@ const LinkModal = ({ onClose, onAdd }) => {
               <motion.div key="code" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-4">
                 <div className="rounded-2xl p-5 text-center"
                   style={{ background: 'rgba(0,245,255,0.06)', border: '1px solid rgba(0,245,255,0.3)', boxShadow: '0 0 30px rgba(0,245,255,0.08)' }}>
-                  <div className="font-mono text-[10px] text-gray-400 tracking-widest mb-3">YOUR PAIRING CODE</div>
+                  <div className="font-mono text-[10px] text-gray-400 tracking-widest mb-1">YOUR PAIRING CODE</div>
+                  <div className="font-mono text-[10px] text-[#00f5ff] mb-3">
+                    For WhatsApp number: <span className="font-bold">{form.number.replace(/\D/g, '')}</span>
+                  </div>
+                  <div className="font-mono text-[9px] text-gray-600 mb-3">
+                    Phone par wahi number hona chahiye — code 2 min mein expire hota hai
+                  </div>
                   <div className="font-display font-black text-4xl sm:text-5xl tracking-[10px] mb-4"
                     style={{ color: '#00f5ff', textShadow: '0 0 30px rgba(0,245,255,0.9)', letterSpacing: '0.2em' }}>{code}</div>
                   <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={handleCopy}
