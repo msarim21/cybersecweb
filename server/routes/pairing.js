@@ -8,7 +8,7 @@ const fsSync = require('fs');
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const PAIRING_JSON = path.join(PAIRING_BASE, 'pairing.json');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
-const PAIRING_ACTIVE_MAX_AGE_MS = 5 * 60 * 1000;
+const PAIRING_ACTIVE_MAX_AGE_MS = 90 * 1000; // reduced from 5min — allow re-pair if bot silent for 90s
 const PAIRING_CODE_WAIT_MS = 75_000;
 const PAIRING_CODE_REUSE_MAX_MS = 3 * 60 * 1000;
 /** WhatsApp pairing codes expire ~160s — never show older codes */
@@ -140,7 +140,22 @@ router.post('/request', protect, async (req, res) => {
 
   const alreadyLive = await isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingState);
   if (alreadyLive) {
-    return res.status(409).json({ error: 'This number is already connected. Re-pair only after disconnecting it.' });
+    // FIX: instead of hard-blocking, auto-stop the existing session and let re-pair proceed.
+    // The user explicitly clicked "GET PAIRING CODE" — honour that intent.
+    // On Heroku worker dyno, pair.js is in-process so stopBot works directly.
+    // On web dyno (remote worker mode), stopBot is a no-op — OK, upsertBotSession('inactive') below handles it.
+    try {
+      const pairMod = require(PAIR_MODULE);
+      if (typeof pairMod.stopBot === 'function') {
+        pairMod.stopBot(clean);
+        pairMod.stopBot(clean + '@s.whatsapp.net');
+      }
+    } catch (_) {}
+    // Mark DB inactive so isFreshlyConnectedNumber won't block the retry
+    const { upsertBotSession } = require('../db-service');
+    await upsertBotSession(clean, 'inactive').catch(() => {});
+    // Brief pause for socket teardown
+    await sleep(800);
   }
 
   // Stop any in-process pairing socket so a retry isn't blocked by the
