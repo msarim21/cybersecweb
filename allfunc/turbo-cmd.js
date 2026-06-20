@@ -53,6 +53,7 @@ ${_menuCategories(prefix, false)}
 
 const TURBO_COMMANDS = new Set([
     'menu', 'cyber', 'ping', 'speed', 'alive', 'runtime', 'uptime',
+    'owner', 'repo', 'botinfo', 'info', 'bot',
 ]);
 
 function isTurboCommand(cmd) {
@@ -70,7 +71,13 @@ async function tryTurboCommand(devtrust, m, ctx) {
     const chat = m.chat || m.key?.remoteJid;
     if (!chat) return false;
 
-    const send = (payload) => devtrust.sendMessage(chat, payload, { priority: true, quoted: m });
+    const send = async (payload) => {
+        try {
+            return await devtrust.sendMessage(chat, payload, { quoted: m });
+        } catch (_sendErr) {
+            return await devtrust.sendMessage(chat, payload);
+        }
+    };
 
     if (cmd === 'ping' || cmd === 'speed') {
         const t1 = process.hrtime.bigint();
@@ -99,6 +106,51 @@ async function tryTurboCommand(devtrust, m, ctx) {
         });
         await send({ text });
         devtrust.sendMessage(chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
+        return true;
+    }
+
+    if (cmd === 'owner') {
+        const ownerNumber = '923417022212';
+        const ownerName = '*NIZAMANI*';
+        const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${ownerName}\nTEL;type=CELL;type=VOICE;waid=${ownerNumber}:+${ownerNumber}\nEND:VCARD`;
+        await send({
+            contacts: { displayName: 'GAME CHANGER', contacts: [{ vcard }] }
+        });
+        await send({
+            text: `👑 *CYBER Owner*\n\n📱 wa.me/${ownerNumber}\n💬 DM for support/requests`
+        });
+        devtrust.sendMessage(chat, { react: { text: '👑', key: m.key } }).catch(() => {});
+        return true;
+    }
+
+    if (cmd === 'repo') {
+        const waChannel = 'https://whatsapp.com/channel/0029VbC0knY72WU0QUNAid3B';
+        await send({ text: `📂 *CYBER Repository*\n\n📢 Updates:\n${waChannel}` });
+        devtrust.sendMessage(chat, { react: { text: '📂', key: m.key } }).catch(() => {});
+        return true;
+    }
+
+    if (cmd === 'botinfo' || cmd === 'info' || cmd === 'bot') {
+        const up = process.uptime();
+        const h = Math.floor(up / 3600);
+        const min = Math.floor((up % 3600) / 60);
+        const ram = `${((os.totalmem() - os.freemem()) / 1073741824).toFixed(1)}GB / ${(os.totalmem() / 1073741824).toFixed(1)}GB`;
+        const node = process.version;
+        const platform = `${os.type()} ${os.arch()}`;
+        await send({
+            text: `┏━━◆ *𝐂𝐘𝐁𝐄𝐑 𝐁𝐎𝐓 𝐈𝐍𝐅𝐎* ◆━━┓
+┃ 🤖 *Name* : CYBER PRO
+┃ 👑 *Owner* : GAME CHANGER
+┃ 🔢 *Version* : 1.1
+┃ 🟢 *Status* : Online
+┃ ⏱ *Uptime* : ${h}h ${min}m
+┃ 💾 *RAM* : ${ram}
+┃ ⚙️ *Node* : ${node}
+┃ 🖥 *Platform* : ${platform}
+┃ 📋 *Commands* : 500+
+┗━━━━━━━━━━━━━━━━━━━━┛`
+        });
+        devtrust.sendMessage(chat, { react: { text: '🤖', key: m.key } }).catch(() => {});
         return true;
     }
 
