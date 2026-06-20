@@ -98,17 +98,24 @@ function getLiveTracker(clean) {
   }
 }
 
-async function waitForBotReady(clean, timeoutMs = 90_000) {
+async function waitForBotReady(clean, timeoutMs = 150_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tracker = getLiveTracker(clean);
     const wsState = tracker?.connection?.ws?.readyState;
+    // Primary check: socket open AND authenticated
     if (tracker?.connection?.user && wsState === 1) return true;
 
+    // Heartbeat fallback
     try {
       const { isBotHeartbeatFresh } = require('./allfunc/bot-heartbeat');
       if (isBotHeartbeatFresh(clean, 5 * 60 * 1000)) return true;
     } catch (_) {}
+
+    // Fallback: socket is open even if user not yet set (still authenticating)
+    // — return true after 30s so we don't block other bots indefinitely.
+    const elapsed = timeoutMs - (deadline - Date.now());
+    if (elapsed > 30_000 && tracker?.connection && wsState === 1) return true;
 
     await delay(1000);
   }
@@ -177,9 +184,12 @@ async function processUser(user, index, total) {
     const sock = await connectWithTimeout();
     if (!sock) throw new Error('Connection skipped (stopped or duplicate socket)');
 
-    const ready = await waitForBotReady(clean, 90_000);
+    const ready = await waitForBotReady(clean, 150_000);
     if (!ready) {
-      throw new Error(`Bot did not become ready after connect for ${clean}`);
+      // BUG FIX: don't throw — bot is connecting in background (history sync).
+      // Hard throw caused autoload to report "failed" while bot was actually live.
+      // Startup sweep will pick it up within 2 minutes if truly stuck.
+      console.log(chalk.yellow(`[AutoLoad] ⚠️  ${clean} not ready in 150s — may still be syncing history. Continuing...`));
     }
 
     console.log(chalk.green(`✅ Connected: ${user}`));
