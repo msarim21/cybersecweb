@@ -508,11 +508,12 @@ const LinkModal = ({ onClose, onAdd }) => {
       throw new Error('No pairing code received from server.');
     } catch (err) {
       setStep(1);
+      setPairStatus('');
       const errCode = err.response?.data?.error;
       if (errCode === 'PLAN_LIMIT_REACHED' || errCode === 'TRIAL_EXPIRED') {
         toast.error(err.response?.data?.message || 'Limit reached'); onClose();
       } else {
-        toast.error(err.response?.data?.error || err.message || 'Failed to get pairing code. Try again.');
+        toast.error(err.response?.data?.error || err.message || 'Failed to get pairing code. Try again.', { id: 'pair-req-err' });
       }
     }
   };
@@ -577,9 +578,10 @@ const LinkModal = ({ onClose, onAdd }) => {
                     className="input-neon rounded-xl w-full" placeholder="MY_BOT_ALPHA" />
                 </div>
                 <button type="submit"
-                  className="w-full py-3 rounded-xl font-display text-sm tracking-widest text-white"
+                  disabled={pairStatus === 'requested'}
+                  className="w-full py-3 rounded-xl font-display text-sm tracking-widest text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ background: 'linear-gradient(135deg,rgba(0,245,255,0.3),rgba(139,92,246,0.3))', border: '1px solid rgba(0,245,255,0.5)', boxShadow: '0 0 20px rgba(0,245,255,0.2)' }}>
-                  ⚡ GET PAIRING CODE
+                  {pairStatus === 'requested' ? '⏳ CONNECTING...' : '⚡ GET PAIRING CODE'}
                 </button>
               </motion.form>
             )}
