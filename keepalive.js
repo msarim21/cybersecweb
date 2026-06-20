@@ -172,14 +172,21 @@ async function sweepStaleWhatsAppSockets() {
         const silentMs = Date.now() - lastWa;
 
         if (wsState === 3 || wsState === -1) {
-            // If pair.js is already handling a 440-retry loop, don't interfere —
-            // a second reconnect attempt would cause another 440 and extend the loop.
+            // pair.js already handling a 440-retry — don't interfere
             if (tracker.err440Retry > 0) continue;
 
-            // Cooldown: skip reconnect if we already tried within last 45s
+            // pair.js already set disconnected=true and is reconnecting — skip
+            if (tracker.disconnected) continue;
+
+            // Bot connected recently (<120s) — ws can briefly be null during
+            // Baileys internal teardown right before pair.js's connection.update
+            // handler fires. Triggering stopBot here creates a double reconnect.
+            if (tracker.lastOpenAt && Date.now() - tracker.lastOpenAt < 120_000) continue;
+
+            // Cooldown: skip reconnect if we already tried within last 90s
             if (!global._socketKACooldown) global._socketKACooldown = new Map();
             const lastTry = global._socketKACooldown.get(clean) || 0;
-            if (Date.now() - lastTry < 45_000) continue;
+            if (Date.now() - lastTry < 90_000) continue;
             global._socketKACooldown.set(clean, Date.now());
             console.log(`[SocketKeepAlive] ${clean} ws closed (${wsState}) — reconnecting`);
             try {
