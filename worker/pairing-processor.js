@@ -97,6 +97,31 @@ async function processPairingQueue() {
 
                     // Use clean digits only — no @s.whatsapp.net suffix
                     const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', clean);
+
+                    // RECONNECT LOOP FIX: Before wiping creds, check if valid session
+                    // creds exist in DB. If they do, restart bot via autoload instead of
+                    // doing a destructive fresh pairing (which causes infinite reconnect loops).
+                    let hasValidDbCreds = false;
+                    try {
+                        const { restoreCredsFromDb } = require('../session-db');
+                        hasValidDbCreds = await restoreCredsFromDb(clean, sessionPath).catch(() => false);
+                    } catch (_) {}
+
+                    if (hasValidDbCreds) {
+                        console.log(`[PairingQueue] ${clean} has valid session creds in DB — restarting bot instead of fresh pairing`);
+                        try {
+                            const { clearPairingRequest } = require('../server/db-service');
+                            await clearPairingRequest(clean).catch(() => {});
+                        } catch (_) {}
+                        global._pairingInFlight.delete(clean);
+                        try {
+                            const { autoLoadPairs } = require('../autoload');
+                            await autoLoadPairs({ concurrent: true }).catch(() => {});
+                        } catch (_) {}
+                        return;
+                    }
+
+                    // No valid creds in DB — proceed with destructive fresh pairing
                     if (fs.existsSync(sessionPath)) {
                         deleteFolderRecursive(sessionPath);
                     }
