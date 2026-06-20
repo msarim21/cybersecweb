@@ -11,6 +11,8 @@ const PAIR_MODULE = path.join(__dirname, '../../pair');
 const PAIRING_ACTIVE_MAX_AGE_MS = 5 * 60 * 1000;
 const PAIRING_CODE_WAIT_MS = 75_000;
 const PAIRING_CODE_REUSE_MAX_MS = 3 * 60 * 1000;
+/** WhatsApp pairing codes expire ~160s — never show older codes */
+const PAIRING_CODE_LIVE_MS = 120 * 1000;
 
 function ensureDir(p) {
   if (!fsSync.existsSync(p)) fsSync.mkdirSync(p, { recursive: true });
@@ -126,6 +128,9 @@ router.post('/request', protect, async (req, res) => {
     upsertBotSession,
   } = require('../db-service');
 
+  // Wipe stale codes FIRST — prevents dashboard poll from returning dead code
+  await clearPairingRequest(clean).catch(() => {});
+
   const alreadyLinked = await isNumberInLinkedNumbers(clean).catch(() => false);
   if (alreadyLinked) {
     return res.status(409).json({
@@ -149,7 +154,8 @@ router.post('/request', protect, async (req, res) => {
   } catch (_) {}
 
   const existingState = await getPairingState(clean).catch(() => null);
-  if (existingState?.status === 'code_ready' && existingState.code) {
+  // Never reuse codes in worker mode — stale code = "Couldn't link device" on phone
+  if (!isRemoteWorkerPairingMode() && existingState?.status === 'code_ready' && existingState.code) {
     const updatedAt = existingState.updatedAt ? new Date(existingState.updatedAt).getTime() : 0;
     const freshEnough = updatedAt > 0 && (Date.now() - updatedAt) <= PAIRING_CODE_REUSE_MAX_MS;
     if (freshEnough) {
@@ -274,15 +280,29 @@ router.get('/code/:number', protect, async (req, res) => {
   if (!clean) return res.status(400).json({ error: 'Invalid number' });
 
   try {
-    const { getPairingState } = require('../db-service');
+    const { getPairingState, clearPairingRequest } = require('../db-service');
     const st = await getPairingState(clean).catch(() => null);
 
     if (st?.status === 'failed') {
       return res.status(500).json({ error: 'Pairing failed on worker. Try again.', status: 'failed' });
     }
+
     if (st?.status === 'code_ready' && st.code) {
-      return res.json({ code: st.code, number: clean, status: 'code_ready' });
+      const updatedAt = st.updatedAt ? new Date(st.updatedAt).getTime() : 0;
+      const ageMs = updatedAt > 0 ? Date.now() - updatedAt : Infinity;
+      if (ageMs > PAIRING_CODE_LIVE_MS) {
+        await clearPairingRequest(clean).catch(() => {});
+        return res.json({ code: null, number: clean, status: 'expired', error: 'Code expired — request a new one.' });
+      }
+      return res.json({
+        code: st.code,
+        number: clean,
+        status: 'code_ready',
+        updatedAt: st.updatedAt,
+        expiresInSec: Math.max(0, Math.floor((PAIRING_CODE_LIVE_MS - ageMs) / 1000)),
+      });
     }
+
     return res.json({
       code: null,
       number: clean,
