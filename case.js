@@ -4327,7 +4327,10 @@ if (devtrust.public === false) {
     // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
     const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
     const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
+    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) {
+        console.log(`[PRIVATE-BLOCKED] sender=${m.sender} isCreator=${isCreator} fromMe=${m.key?.fromMe} cmd=${command||body||m.mtype}`);
+        return;
+    }
 }
 
 // Linked-user / owner commands — skip auto-react, status hooks, group moderation
