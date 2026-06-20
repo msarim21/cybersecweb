@@ -15927,10 +15927,5 @@ default:
 }
 }
 
-let file = require.resolve(__filename);
-require('fs').watchFile(file, () => {
-    require('fs').unwatchFile(file);
-    console.log('\x1b[0;32m' + __filename + ' \x1b[1;32mupdated!\x1b[0m');
-    delete require.cache[file];
-    require(file);
-});
+// watchFile removed — re-requiring case.js in a multi-bot environment
+// causes duplicate global state and re-registers event handlers for all bots
