@@ -13,7 +13,14 @@
     "test:antidelete": "node scripts/test-antidelete.js",
     "heroku-postbuild": "npm run build && (pip install pytubefix --quiet 2>/dev/null || true)"
   },
-  "keywords": ["whiskeysockets","multi-device","whatsapp-bot","telegram-bot","multi-session","pairing-bot"],
+  "keywords": [
+    "whiskeysockets",
+    "multi-device",
+    "whatsapp-bot",
+    "telegram-bot",
+    "multi-session",
+    "pairing-bot"
+  ],
   "author": "Nexus",
   "license": "MIT",
   "engines": {
@@ -27,7 +34,7 @@
     "@hapi/boom": "^10.0.0",
     "@vitalets/google-translate-api": "^9.2.0",
     "@vreden/youtube_scraper": "^1.2.0",
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@whiskeysockets/baileys": "^6.7.23",
     "api-dylux": "^1.4.4",
     "awesome-phonenumber": "^2.64.0",
     "axios": "^1.7.7",
@@ -109,6 +116,11 @@
   "devDependencies": {
     "nodemon": "^3.1.7"
   },
-  "repository": { "type": "git", "url": "https://github.com/msarim21/cybersecweb" },
-  "bugs": { "url": "https://github.com/msarim21/cybersecweb/issues" }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/msarim21/cybersecweb"
+  },
+  "bugs": {
+    "url": "https://github.com/msarim21/cybersecweb/issues"
+  }
 }
