@@ -126,11 +126,36 @@ async function processPairingQueue() {
                     global._pairingChildPids.set(clean, child);
                     child.on('exit', () => global._pairingChildPids?.delete(clean));
 
-                    const deadline = Date.now() + 90_000;
-                    while (Date.now() < deadline) {
+                    // Phase 1: Wait for pairing code (max 90s)
+                    const codeDeadline = Date.now() + 90_000;
+                    while (Date.now() < codeDeadline) {
                         const st = await getPairingState(clean).catch(() => null);
-                        if (st?.code) break;
+                        if (st?.code || st?.status === 'active') break;
                         await new Promise((r) => setTimeout(r, 400));
+                    }
+
+                    // Phase 2: Wait for user to enter code → bot becomes active (max 3 min)
+                    // Once active, kill the pairing child so the parent process manages the
+                    // bot via autoload. Running in the parent avoids Error 440 caused by
+                    // the parent keepalive triggering autoload on an already-connected child.
+                    const connectDeadline = Date.now() + 180_000;
+                    while (Date.now() < connectDeadline) {
+                        const st = await getPairingState(clean).catch(() => null);
+                        if (st?.status === 'active') {
+                            // Give child 8s to flush Signal keys to DB before SIGTERM
+                            await new Promise(r => setTimeout(r, 8000));
+                            try { child.kill('SIGTERM'); } catch (_) {}
+                            // Give parent autoload time to pick it up
+                            await new Promise(r => setTimeout(r, 5000));
+                            try {
+                                const { autoLoadPairs } = require('../autoload');
+                                autoLoadPairs({ concurrent: true }).catch(() => {});
+                            } catch (_) {}
+                            break;
+                        }
+                        // Bot session expired or failed — stop waiting
+                        if (st?.status === 'failed' || !st) break;
+                        await new Promise((r) => setTimeout(r, 1000));
                     }
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
