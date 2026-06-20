@@ -73,8 +73,8 @@ function isWhatsAppWorker() {
     return false;
 }
 
-const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 10 * 60 * 1000;
-const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 45 * 60 * 1000;
+const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 3 * 60 * 1000; // reduced from 10min to 3min for faster dead-socket detection
+const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 15 * 60 * 1000; // reduced from 45min to 15min
 
 function _supervisorActive() {
     try {
