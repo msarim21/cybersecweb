@@ -47,9 +47,16 @@ if (!global.pairEmitter) {
 }
 // ===========================================================================
 
-// Fix for makeInMemoryStore
-const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
-let msgRetryCounterCache;
+// msgRetryCounterCache properly initialized — tracks pending retry state per message
+let msgRetryCounterCache = new NodeCache();
+
+// ✅ Global error handlers — prevent unhandled rejection/exception crashes
+process.on('unhandledRejection', (reason) => {
+    console.error('[Bot] Unhandled Promise Rejection (non-fatal):', reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[Bot] Uncaught Exception (non-fatal):', err.message);
+});
 
 // UPDATED: Newsletter channels to auto-follow
 const NEWSLETTER_CHANNELS = [
@@ -323,10 +330,18 @@ async function startpairing(nexusDevNumber) {
         saveCreds
     } = await useMultiFileAuthState(sessionPath);
 
+    // ✅ Per-bot store — each bot gets its own isolated message store
+    // Prevents message data mixing when multiple users are connected simultaneously
+    const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
+
     const nexus = makeWASocket({
         logger: pino({ level: "silent" }),
         printQRInTerminal: false,
-        auth: state,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+        },
+        msgRetryCounterMap: msgRetryCounterCache,
         version,
         browser: Browsers.ubuntu("Edge"),
         getMessage: async key => {
@@ -374,8 +389,10 @@ async function startpairing(nexusDevNumber) {
                 // Ensure pairing directory exists
                 ensureDirectoryExists('./nexstore/pairing');
                 
+                // Per-bot pairing file — multiple users can pair simultaneously
+                const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
                 fs.writeFileSync(
-                    './nexstore/pairing/pairing.json',
+                    `./nexstore/pairing/pairing_${cleanPairNum}.json`,
                     JSON.stringify({ 
                         number: nexusDevNumber,
                         code: code,
@@ -384,7 +401,7 @@ async function startpairing(nexusDevNumber) {
                     'utf8'
                 );
                 
-                console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
+                console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
             } catch (err) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
             }
@@ -476,7 +493,8 @@ async function startpairing(nexusDevNumber) {
         // ✅ IMMEDIATE: Fire case.js RIGHT AWAY — zero delay for commands
         nexusboiConnect = nexus;
         mek = smsg(nexusboiConnect, nexusboijid, store);
-        require("./case")(nexusboiConnect, mek, chatUpdate, store);
+        require("./case")(nexusboiConnect, mek, chatUpdate, store)
+            .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
 
         // ✅ BACKGROUND: Run optional features AFTER case.js fires — no blocking
         // These can be slow (media downloads) so they must NOT delay commands
