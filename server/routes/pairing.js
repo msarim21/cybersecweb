@@ -133,9 +133,28 @@ router.post('/request', protect, async (req, res) => {
 
   const alreadyLinked = await isNumberInLinkedNumbers(clean).catch(() => false);
   if (alreadyLinked) {
-    return res.status(409).json({
-      error: 'This number is already linked. The bot will reconnect using the saved session; disconnect it first to pair again.'
-    });
+    // FIX: Don't hard-block — check if bot is ACTUALLY connected.
+    // If linked but no active session (creds lost, 440 wiped session, etc.),
+    // auto-stop and allow re-pair. Only block if truly live.
+    const activeSessions = await getActiveBotSessions().catch(() => []);
+    const isActuallyConnected = activeSessions
+      .map(n => String(n).replace(/[^0-9]/g, ''))
+      .includes(clean);
+    if (isActuallyConnected) {
+      // Bot is genuinely live — don't interrupt it
+      return res.status(409).json({
+        error: 'This number is already connected and running. Disconnect it first to re-pair.'
+      });
+    }
+    // Linked but NOT connected (session lost) — auto-stop and allow re-pair
+    try {
+      const pairMod = require(PAIR_MODULE);
+      if (typeof pairMod.stopBot === 'function') {
+        pairMod.stopBot(clean);
+        pairMod.stopBot(clean + '@s.whatsapp.net');
+      }
+    } catch (_) {}
+    // Will proceed to re-pair below
   }
 
   const alreadyLive = await isFreshlyConnectedNumber(clean, getActiveBotSessions, getPairingState);
