@@ -6,6 +6,10 @@ const { ANTIDELETE_RETENTION_MS } = require('./antidelete-retention');
 const ANTIDELETE_PENDING_FILE = './database/antidelete_pending.json';
 const ANTIDELETE_PENDING_MAX = 500;
 const ANTIDELETE_MONGO_TTL_MS = ANTIDELETE_RETENTION_MS;
+/** Bot message cache in Mongo fills Atlas quota — disk/RAM only unless ANTIDELETE_MONGO=1 */
+function _adMongoEnabled() {
+    return String(process.env.ANTIDELETE_MONGO || '0').trim() === '1';
+}
 const ANTIDELETE_MEDIA_B64_MAX = 8 * 1024 * 1024; // 8MB — store inline for reliable recovery
 const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
 
@@ -38,12 +42,40 @@ function _adResolveBotNum(sock, hint = '') {
     return '';
 }
 
+function _adNormJid(jid) {
+    if (!jid) return '';
+    const s = String(jid);
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        return jidNormalizedUser(s);
+    } catch (_) {
+        return s;
+    }
+}
+
+/** Primary chat JID — Baileys LID era often puts chat only in remoteJidAlt */
+function _adChatIdFromKey(key = {}) {
+    return String(key.remoteJid || key.remoteJidAlt || '').trim();
+}
+
 function _adChatIdsFromKey(key) {
     const ids = new Set();
-    if (key?.remoteJid) ids.add(String(key.remoteJid));
-    if (key?.remoteJidAlt) ids.add(String(key.remoteJidAlt));
-    if (key?.participant && !String(key.remoteJid || '').endsWith('@g.us')) {
+    const primary = _adChatIdFromKey(key);
+    if (primary) {
+        ids.add(primary);
+        ids.add(_adNormJid(primary));
+    }
+    if (key?.remoteJid) {
+        ids.add(String(key.remoteJid));
+        ids.add(_adNormJid(key.remoteJid));
+    }
+    if (key?.remoteJidAlt) {
+        ids.add(String(key.remoteJidAlt));
+        ids.add(_adNormJid(key.remoteJidAlt));
+    }
+    if (key?.participant && !String(primary).endsWith('@g.us')) {
         ids.add(String(key.participant));
+        ids.add(_adNormJid(key.participant));
     }
     return [...ids].filter(Boolean);
 }
@@ -66,6 +98,203 @@ function _adExpandChatIds(sock, chatId, altChatIds = []) {
         if (domain !== 's.whatsapp.net') ids.add(`${head}@s.whatsapp.net`);
     }
     return [...ids].filter(Boolean);
+}
+
+function _adValidMentions(...jids) {
+    return [...new Set(jids.filter((j) => j && String(j).includes('@')))];
+}
+
+/** Bot user's own JID (Message Yourself / saved messages) */
+function _adBotUserSelfJid(sock, clean) {
+    const cached = sock?._cachedBotNumber;
+    if (cached && String(cached).includes('@')) return String(cached);
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') {
+            const decoded = sock.decodeJid(raw);
+            if (decoded?.includes('@')) return decoded;
+        }
+    } catch (_) {}
+    const raw = String(sock?.user?.id || sock?.authState?.creds?.me?.id || '');
+    if (raw.includes('@')) {
+        const head = raw.split(':')[0];
+        const domain = raw.split('@').slice(1).join('@') || 's.whatsapp.net';
+        return `${head}@${domain}`;
+    }
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+/**
+ * Ordered self-chat JIDs — try best first, @lid only as last resort.
+ * Sends only ONE message (first success), avoids duplicate Unknown user + You chats.
+ */
+function _adSelfJidOrderedTries(sock, clean) {
+    const ordered = [];
+    const seen = new Set();
+    const add = (j) => {
+        const s = j ? String(j).trim() : '';
+        if (!s.includes('@')) return;
+        const key = s.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        ordered.push(s);
+    };
+    add(sock?._cachedBotNumber);
+    try {
+        const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw) add(jidNormalizedUser(raw));
+        if (clean) add(jidNormalizedUser(`${clean}@s.whatsapp.net`));
+    } catch (_) {}
+    if (clean) add(`${clean}@s.whatsapp.net`);
+    add(_adBotUserSelfJid(sock, clean));
+    try {
+        const raw = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        if (raw && typeof sock?.decodeJid === 'function') add(sock.decodeJid(raw));
+    } catch (_) {}
+    if (clean) add(`${clean}@lid`);
+    return ordered.sort((a, b) => {
+        const rank = (j) => (String(j).includes('@s.whatsapp.net') ? 0 : String(j).includes('@lid') ? 2 : 1);
+        return rank(a) - rank(b);
+    });
+}
+
+function _adPerBotCfgPaths(botNum) {
+    const clean = cleanBotNum(botNum);
+    const paths = [];
+    try {
+        const { isBotIsolated, getBotConfigPaths } = require('./bot-workspace');
+        if (isBotIsolated() && clean) {
+            const isolated = getBotConfigPaths(clean);
+            if (isolated?.antidelete) paths.push(isolated.antidelete);
+        }
+    } catch (_) {}
+    if (clean) paths.push(`./database/antidelete_config_${clean}.json`);
+    return [...new Set(paths.filter(Boolean))];
+}
+
+function _adCfgFilePaths(botNum) {
+    return [..._adPerBotCfgPaths(botNum), './database/antidelete_config.json'];
+}
+
+/** Bot user Message Yourself — one delivery slot (fallbacks tried inside deliver) */
+function _adMessageYourselfTargets(sock, clean) {
+    const tries = _adSelfJidOrderedTries(sock, clean);
+    return tries.length ? [tries[0]] : (clean ? [`${clean}@s.whatsapp.net`] : []);
+}
+
+function _adLoadPlatformOwners() {
+    try {
+        if (!global._ownerCache) {
+            global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json', 'utf-8'));
+        }
+        return Array.isArray(global._ownerCache) ? global._ownerCache : [];
+    } catch (_) { return []; }
+}
+
+function _adJidToNum(jid) {
+    return cleanBotNum(String(jid || '').split(':')[0].split('@')[0]);
+}
+
+function _adCollectJidsByNum(jids) {
+    const byNum = new Map();
+    const add = (jid) => {
+        const s = jid ? String(jid).trim() : '';
+        let full = s;
+        if (s && !s.includes('@')) {
+            const digits = cleanBotNum(s);
+            if (!digits) return;
+            full = `${digits}@s.whatsapp.net`;
+        }
+        if (!full.includes('@')) return;
+        const num = cleanBotNum(full);
+        if (!num) return;
+        const prev = byNum.get(num);
+        if (!prev || (full.includes('@s.whatsapp.net') && prev.includes('@lid'))) {
+            byNum.set(num, full);
+        }
+    };
+    for (const j of jids) add(j);
+    return byNum;
+}
+
+/** Owner numbers from owner.json (exclude paired bot user) */
+function _adOwnerPhoneSet(cleanBotUserNum) {
+    const set = new Set();
+    for (const j of _adLoadPlatformOwners()) {
+        const num = _adJidToNum(j);
+        if (num && num !== cleanBotUserNum) set.add(num);
+    }
+    return set;
+}
+
+function _adTargetsForOwnerNums(ownerNums) {
+    const jids = [];
+    for (const num of ownerNums) {
+        jids.push(`${num}@s.whatsapp.net`);
+        for (const j of _adLoadPlatformOwners()) {
+            if (_adJidToNum(j) === num && !String(j).includes('@lid')) jids.push(j);
+        }
+    }
+    return [..._adCollectJidsByNum(jids).values()];
+}
+
+/** Owner DM or group where owner is a member */
+async function _adIsOwnerInvolvedChat(sock, chatId, clean) {
+    const owners = _adOwnerPhoneSet(clean);
+    if (!owners.size || !chatId) return { ownerChat: false, ownerNums: [] };
+
+    const isGroup = String(chatId).endsWith('@g.us');
+    if (!isGroup) {
+        const chatNum = _adJidToNum(chatId);
+        if (owners.has(chatNum)) {
+            return { ownerChat: true, ownerNums: [chatNum] };
+        }
+        return { ownerChat: false, ownerNums: [] };
+    }
+
+    try {
+        const meta = await sock.groupMetadata(chatId);
+        const found = [];
+        for (const p of meta?.participants || []) {
+            const pNum = _adJidToNum(p.id || p.jid || p);
+            if (owners.has(pNum)) found.push(pNum);
+        }
+        if (found.length) {
+            return { ownerChat: true, ownerNums: [...new Set(found)] };
+        }
+    } catch (_) {}
+    return { ownerChat: false, ownerNums: [] };
+}
+
+/**
+ * Private-mode routing:
+ * - User chats → bot user Message Yourself only
+ * - Owner DM → owner Message Yourself only
+ * - Group with owner member → bot user + owner Message Yourself (both)
+ */
+async function _adPrivateReportTargets(sock, clean, chatId) {
+    const route = await _adIsOwnerInvolvedChat(sock, chatId, clean);
+    const isGroup = String(chatId || '').endsWith('@g.us');
+
+    if (route.ownerChat && isGroup && route.ownerNums.length) {
+        const byNum = _adCollectJidsByNum([
+            ..._adMessageYourselfTargets(sock, clean),
+            ..._adTargetsForOwnerNums(route.ownerNums),
+        ]);
+        const targets = [...byNum.values()];
+        console.log(`[ANTIDELETE][${clean}] owner-group route (user+owner) → ${targets.join(', ')}`);
+        return targets;
+    }
+
+    const targets = _adMessageYourselfTargets(sock, clean);
+    console.log(`[ANTIDELETE][${clean}] user-chat route → ${targets[0] || '?'}`);
+    return targets;
+}
+
+function _adDeliveryTarget(mode, chatId, sock, clean) {
+    if (mode === 'chat' || mode === 'chat_groups') return chatId;
+    return _adBotUserSelfJid(sock, clean) || `${clean}@s.whatsapp.net`;
 }
 
 function _adSanitizeEntryForPersistence(entry) {
@@ -108,6 +337,7 @@ function _adMarkDeleteProcessed(botNum, chatId, msgId) {
     const k = _adDeleteDedupKey(botNum, chatId, msgId);
     const now = Date.now();
     global._adDeleteDedup.set(k, now);
+    if (global._adDeleteInflight) global._adDeleteInflight.delete(k);
     if (global._adDeleteDedup.size > 8000) {
         for (const [dk, ts] of global._adDeleteDedup) {
             if (now - ts > ANTIDELETE_DELETE_DEDUP_MS) global._adDeleteDedup.delete(dk);
@@ -115,24 +345,83 @@ function _adMarkDeleteProcessed(botNum, chatId, msgId) {
     }
 }
 
+function _adTryClaimDelete(botNum, chatId, msgId) {
+    if (_adCheckDeleteProcessed(botNum, chatId, msgId)) return false;
+    if (!global._adDeleteInflight) global._adDeleteInflight = new Map();
+    const k = _adDeleteDedupKey(botNum, chatId, msgId);
+    if (global._adDeleteInflight.has(k)) return false;
+    global._adDeleteInflight.set(k, Date.now());
+    return true;
+}
+
+function _adReleaseDeleteClaim(botNum, chatId, msgId) {
+    global._adDeleteInflight?.delete(_adDeleteDedupKey(botNum, chatId, msgId));
+}
+
+function _adClaimMissReport(botNum, chatId, msgId) {
+    if (!global._adMissReportDedup) global._adMissReportDedup = new Map();
+    const k = _adDeleteDedupKey(botNum, chatId, msgId);
+    const prev = global._adMissReportDedup.get(k);
+    if (prev && Date.now() - prev < 60 * 1000) return false;
+    global._adMissReportDedup.set(k, Date.now());
+    return true;
+}
+
+function _adNormalizeCfg(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    if (raw.mode === 'off') return { mode: 'off', enabled: false };
+    const valid = ['private', 'private_pm', 'private_groups', 'chat', 'chat_groups', 'off'];
+    if (raw.mode && valid.includes(raw.mode)) {
+        return { ...raw, mode: raw.mode, enabled: raw.enabled !== false };
+    }
+    if (raw.enabled === true || raw.enabled === undefined) {
+        return { mode: 'private', enabled: true, autoEnabled: true };
+    }
+    return { mode: 'private', enabled: true, autoEnabled: true };
+}
+
+/** Ensure per-bot antidelete defaults to private unless user saved mode: off */
+function ensureAntideletePrivateDefault(botNum) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return { mode: 'private', enabled: true };
+    const cfgFiles = _adPerBotCfgPaths(clean);
+    let cfg = null;
+    let writeFile = cfgFiles[0] || `./database/antidelete_config_${clean}.json`;
+    for (const cfgFile of cfgFiles) {
+        if (!fs.existsSync(cfgFile)) continue;
+        try {
+            cfg = _adNormalizeCfg(JSON.parse(fs.readFileSync(cfgFile, 'utf-8')));
+            writeFile = cfgFile;
+            break;
+        } catch (_) {}
+    }
+    if (!cfg) {
+        cfg = { mode: 'private', enabled: true, autoEnabled: true, ts: Date.now() };
+        _adEnsureDbDir();
+        fs.writeFileSync(writeFile, JSON.stringify(cfg, null, 2));
+    }
+    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+    global._antideleteConfigs[clean] = cfg;
+    return cfg;
+}
+
 function loadAntideleteCfg(botNum) {
     const clean = cleanBotNum(botNum);
     if (!global._antideleteConfigs) global._antideleteConfigs = {};
     if (clean && global._antideleteConfigs[clean]) return global._antideleteConfigs[clean];
-    const paths = clean
-        ? [`./database/antidelete_config_${clean}.json`, './database/antidelete_config.json']
-        : ['./database/antidelete_config.json'];
+    const paths = clean ? _adCfgFilePaths(clean) : ['./database/antidelete_config.json'];
     for (const p of paths) {
         try {
             if (fs.existsSync(p)) {
-                const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private', enabled: true } : { mode: 'off' });
-                if (clean) global._antideleteConfigs[clean] = result;
-                return result;
+                const result = _adNormalizeCfg(JSON.parse(fs.readFileSync(p, 'utf-8')));
+                if (result) {
+                    if (clean) global._antideleteConfigs[clean] = result;
+                    return result;
+                }
             }
         } catch (_) {}
     }
-    const _default = { mode: 'private', enabled: true };
+    const _default = { mode: 'private', enabled: true, autoEnabled: true };
     if (clean) global._antideleteConfigs[clean] = _default;
     return _default;
 }
@@ -329,6 +618,7 @@ async function _adFlushMongoSavesNow() {
 
 async function _adFlushMongoSaves() {
     _adMongoFlushTimer = null;
+    if (!_adMongoEnabled()) return;
     if (!(await _adEnsureMongoReady())) return;
     const batch = [..._adMongoSaveQueue.values()];
     _adMongoSaveQueue.clear();
@@ -354,6 +644,7 @@ async function _adFlushMongoSaves() {
 }
 
 function _adScheduleMongoFlush() {
+    if (!_adMongoEnabled()) return;
     if (_adMongoFlushTimer) return;
     _adMongoFlushTimer = setTimeout(() => {
         _adFlushMongoSaves().catch(() => {});
@@ -362,6 +653,7 @@ function _adScheduleMongoFlush() {
 
 async function _adMongoGet(botNum, chatId, msgId) {
     try {
+        if (!_adMongoEnabled()) return null;
         if (!(await _adEnsureMongoReady())) return null;
         const AntideleteCache = require('../server/models/AntideleteCache');
         const clean = cleanBotNum(botNum);
@@ -374,6 +666,7 @@ async function _adMongoGet(botNum, chatId, msgId) {
 }
 
 function _adMongoSave(botNum, chatId, msgId, entry) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -383,6 +676,7 @@ function _adMongoSave(botNum, chatId, msgId, entry) {
 }
 
 function _adMongoDelete(botNum, chatId, msgId) {
+    if (!_adMongoEnabled()) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -427,8 +721,11 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
                 session.set(primaryChat, msgId, ex);
                 _adMongoSave(botNum, primaryChat, msgId, ex);
             }
-            session.saveDiskNow();
+            session.scheduleDiskSave();
         } catch (e) {
+            // Silently skip known WhatsApp media key errors (message deleted before key was cached)
+            const _knownSkip = ['Cannot derive from empty media key', 'no mediaKey', 'media key is null', 'failed to decrypt'];
+            if (_knownSkip.some(s => e.message?.includes(s))) return;
             console.error(`[ANTIDELETE][${botNum}] prefetch ${mtype}:`, e.message);
         }
     })();
@@ -478,10 +775,10 @@ function _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state) {
  */
 function cacheMessageForAntidelete(rawMsg, sock) {
     try {
-        if (!rawMsg?.key?.id || !rawMsg?.key?.remoteJid) return;
+        const chatId = _adChatIdFromKey(rawMsg?.key);
+        if (!rawMsg?.key?.id || !chatId) return;
         if (rawMsg.message?.protocolMessage) return;
 
-        const chatId = rawMsg.key.remoteJid;
         const msgId = rawMsg.key.id;
         const aliasChatIds = _adChatIdsFromKey(rawMsg.key).filter((id) => id !== chatId);
         const botNum = _adResolveBotNum(sock);
@@ -492,7 +789,7 @@ function cacheMessageForAntidelete(rawMsg, sock) {
 
         const rawMessage = rawMsg.message || {};
         const unwrapped = unwrapWaMessage(rawMessage);
-        const sender = rawMsg.key.participant || rawMsg.key.remoteJid;
+        const sender = rawMsg.key.participant || rawMsg.key.remoteJid || rawMsg.key.remoteJidAlt || chatId;
         const existing = session.get(chatId, msgId);
 
         const state = {
@@ -526,7 +823,12 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             botNum,
         };
 
-        session.set(chatId, msgId, entry, aliasChatIds);
+        const allAliases = [...new Set([
+            ...aliasChatIds,
+            _adNormJid(chatId),
+            ...aliasChatIds.map(_adNormJid),
+        ].filter(Boolean))];
+        session.set(chatId, msgId, entry, allAliases);
         _adMongoSave(botNum, chatId, msgId, entry);
         session.scheduleDiskSave();
     } catch (e) {
@@ -660,23 +962,61 @@ function _adQueuePendingReport(botNum, report) {
     }
 }
 
-async function _adDeliverAntideleteReport(sock, { targetJid, text, mediaOriginal, sender, deletedBy, botNum }) {
-    if (!sock || !targetJid || !text) return false;
-    const mentions = [deletedBy, sender].filter(Boolean);
-    try {
-        await sock.sendMessage(targetJid, { text, mentions });
+async function _adDeliverAntideleteReport(sock, {
+    targetJid, text, mediaOriginal, sender, deletedBy, botNum, useMessageYourself = false, chatId = '',
+}) {
+    if (!sock || !text) return false;
+    const clean = cleanBotNum(botNum);
+    const mentions = _adValidMentions(deletedBy, sender);
+    const sendOpts = { priority: true, _cmdReply: true };
+    const candidates = useMessageYourself
+        ? await _adPrivateReportTargets(sock, clean, chatId || targetJid)
+        : (targetJid ? [String(targetJid)] : []);
+    if (!candidates.length) return false;
+
+    let sentAny = false;
+    const deliveredNums = new Set();
+    const botSelfNums = new Set([clean, _adJidToNum(sock?._cachedBotNumber), _adJidToNum(sock?.user?.id)].filter(Boolean));
+
+    for (let i = 0; i < candidates.length; i++) {
+        const primary = candidates[i];
+        const num = _adJidToNum(primary);
+        if (num && deliveredNums.has(num)) continue;
+
+        const isBotSelf = Boolean(useMessageYourself && num && botSelfNums.has(num));
+        const tries = isBotSelf
+            ? _adSelfJidOrderedTries(sock, clean)
+            : [primary, `${num}@s.whatsapp.net`].filter((j, idx, arr) => j && j.includes('@') && arr.indexOf(j) === idx);
+
+        let deliveredJid = null;
+        for (const jid of tries) {
+            try {
+                await sock.sendMessage(jid, { text, mentions }, sendOpts);
+                deliveredJid = jid;
+                break;
+            } catch (e) {
+                console.error(`[ANTIDELETE][${clean || '?'}] deliver to ${jid} failed:`, e.message);
+            }
+        }
+        if (!deliveredJid) continue;
+
+        if (num) deliveredNums.add(num);
         if (mediaOriginal) {
-            await _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum);
-            await _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender);
+            const keepFile = i < candidates.length - 1;
+            await _adForwardDeletedMedia(sock, deliveredJid, mediaOriginal, sender, botNum, { keepFile });
+            await _adForwardDeletedExtras(sock, deliveredJid, mediaOriginal, sender);
         }
-        return true;
-    } catch (e) {
-        console.error(`[ANTIDELETE][${botNum}] deliver failed, queuing:`, e.message);
-        if (botNum) {
-            _adQueuePendingReport(botNum, { targetJid, text, mediaOriginal, sender, deletedBy });
-        }
-        return false;
+        console.log(`[ANTIDELETE][${clean || '?'}] Report delivered → ${deliveredJid}`);
+        sentAny = true;
     }
+
+    if (!sentAny) {
+        console.error(`[ANTIDELETE][${clean || '?'}] all deliver targets failed, queuing`);
+        if (botNum) {
+            _adQueuePendingReport(botNum, { targetJid: candidates[0], text, mediaOriginal, sender, deletedBy });
+        }
+    }
+    return sentAny;
 }
 
 async function _adFlushPendingReports(sock, botNum, botJid) {
@@ -692,18 +1032,27 @@ async function _adFlushPendingReports(sock, botNum, botJid) {
     const remaining = pending.filter(p => cleanBotNum(p.botNum) !== clean);
     let flushed = 0;
 
+    const selfTries = _adSelfJidOrderedTries(sock, clean);
     for (const item of mine) {
-        const target = item.targetJid || botJid;
-        if (!target) continue;
-        try {
-            const mentions = [item.deletedBy, item.sender].filter(Boolean);
-            await sock.sendMessage(target, { text: item.text, mentions });
-            if (item.mediaOriginal) {
-                await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
-                await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
+        const tries = [...new Set([item.targetJid, botJid, ...selfTries].filter((j) => j && String(j).includes('@')))];
+        if (!tries.length) continue;
+        let delivered = false;
+        for (const target of tries) {
+            try {
+                const mentions = _adValidMentions(item.deletedBy, item.sender);
+                await sock.sendMessage(target, { text: item.text, mentions }, { priority: true, _cmdReply: true });
+                if (item.mediaOriginal) {
+                    await _adForwardDeletedMedia(sock, target, item.mediaOriginal, item.sender, clean);
+                    await _adForwardDeletedExtras(sock, target, item.mediaOriginal, item.sender);
+                }
+                delivered = true;
+                flushed++;
+                break;
+            } catch (e) {
+                console.error(`[ANTIDELETE][${clean}] pending flush to ${target}:`, e.message);
             }
-            flushed++;
-        } catch (e) {
+        }
+        if (!delivered) {
             item.attempts = (item.attempts || 0) + 1;
             if (item.attempts < 15) remaining.push(item);
         }
@@ -814,7 +1163,7 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
     }
 }
 
-async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum) {
+async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, botNum, opts = {}) {
     if (!sock || !targetJid || !mediaOriginal) return;
     const _info = _adResolveMediaInfo(mediaOriginal);
     const _hasFile = mediaOriginal.mediaPath && mediaOriginal.mediaPath !== '__redownload__' && fs.existsSync(mediaOriginal.mediaPath);
@@ -890,7 +1239,7 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
     } catch (e) {
         console.error(`[ANTIDELETE][${botNum || '?'}] media send error:`, e.message);
     }
-    if (_hasFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
+    if (_hasFile && !opts.keepFile) { try { fs.unlinkSync(mediaOriginal.mediaPath); } catch (_) {} }
 }
 
 async function _adForwardDeletedExtras(sock, targetJid, mediaOriginal, sender) {
@@ -940,12 +1289,11 @@ async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
         await Promise.race([prefetch, new Promise((r) => setTimeout(r, 2000))]);
     }
 
-    const deadline = Date.now() + 2800;
+    const deadline = Date.now() + 5000;
     let orig = null;
     while (Date.now() < deadline) {
         try {
-            const session = getAntideleteSession(clean);
-            session?.saveDiskNow();
+            getAntideleteSession(clean)?.refreshFromDisk();
         } catch (_) {}
 
         orig = await _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
@@ -961,6 +1309,47 @@ async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
     return orig || _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
 }
 
+/** Build delete context from upsert key + revoked message key (handles @lid / remoteJidAlt) */
+function _adResolveDeleteContext(sock, key = {}, protoKey = {}) {
+    const chatId = _adChatIdFromKey(protoKey) || _adChatIdFromKey(key);
+    const msgId = protoKey.id || key.id || '';
+    const altBase = [
+        ..._adChatIdsFromKey(key),
+        ..._adChatIdsFromKey(protoKey),
+    ];
+    const altChatIds = _adExpandChatIds(sock, chatId, altBase);
+    return {
+        botNum: _adResolveBotNum(sock),
+        chatId,
+        msgId,
+        altChatIds,
+        deletedBy: key.participant || protoKey.participant || key.remoteJid || protoKey.remoteJid || '',
+        fromMeDelete: Boolean(key.fromMe ?? protoKey.fromMe),
+    };
+}
+
+/** Primary entry for delete/revoke — immediate + optional delayed retry */
+async function _adInvokeDeleteHandler(sock, opts = {}) {
+    const { key = {}, protoKey = {}, tracker = null, reportMiss = true, retryMs = 0 } = opts;
+    const ctx = _adResolveDeleteContext(sock, key, protoKey);
+    if (!sock || !ctx.chatId || !ctx.msgId) {
+        console.error('[ANTIDELETE] skip invoke — missing chatId/msgId', {
+            keyJid: _adChatIdFromKey(key),
+            protoJid: _adChatIdFromKey(protoKey),
+            msgId: protoKey?.id || key?.id,
+        });
+        return false;
+    }
+
+    const run = () => _adHandleMessageDelete(sock, { ...ctx, tracker, reportMiss });
+    let result = await run();
+    if (!result && retryMs > 0) {
+        await new Promise((r) => setTimeout(r, retryMs));
+        result = await run();
+    }
+    return result;
+}
+
 async function _adHandleMessageDelete(sock, opts = {}) {
     const {
         botNum,
@@ -970,10 +1359,12 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         fromMeDelete = false,
         altChatIds = [],
         tracker = null,
+        reportMiss = true,
     } = opts;
     const clean = _adResolveBotNum(sock, botNum);
     if (!sock || !clean || !chatId || !msgId) return false;
-    if (_adCheckDeleteProcessed(clean, chatId, msgId)) return false;
+    if (!_adTryClaimDelete(clean, chatId, msgId)) return false;
+    console.log(`[ANTIDELETE][${clean}] delete event chat=${chatId.split('@')[0]} msg=${String(msgId).slice(0, 12)}`);
 
     let _tracker = tracker;
     if (!_tracker) {
@@ -985,29 +1376,37 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
     try {
         const { ensureWhatsAppSocketHot } = require('./socket-wake');
-        await ensureWhatsAppSocketHot(sock, _tracker, { force: true });
+        await ensureWhatsAppSocketHot(sock, _tracker, { force: true, light: true });
     } catch (_) {}
 
     const cfg = loadAntideleteCfg(clean);
     const mode = cfg.mode || 'off';
-    if (mode === 'off') return false;
+    if (mode === 'off') {
+        _adReleaseDeleteClaim(clean, chatId, msgId);
+        return false;
+    }
 
     const isGroup = String(chatId).endsWith('@g.us');
-    if (mode === 'private_pm' && isGroup) return false;
-    if (mode === 'private_groups' && !isGroup) return false;
-    if (mode === 'chat' && isGroup) return false;
-    if (mode === 'chat_groups' && !isGroup) return false;
+    if (mode === 'private_pm' && isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
+    if (mode === 'private_groups' && !isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
+    if (mode === 'chat' && isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
+    if (mode === 'chat_groups' && !isGroup) { _adReleaseDeleteClaim(clean, chatId, msgId); return false; }
 
     const deletedByNum = cleanBotNum(String(deletedBy).split(':')[0].split('@')[0] || deletedBy);
     if (fromMeDelete && deletedByNum === clean) {
         _adRemoveCachedMessage(clean, chatId, msgId);
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
 
-    const altIds = [...new Set(altChatIds.filter(Boolean))];
+    const altIds = [...new Set([
+        ...altChatIds.filter(Boolean),
+        ..._adExpandChatIds(sock, chatId, altChatIds),
+    ])];
     const orig = await _adLookupWithRetry(sock, clean, chatId, msgId, altIds);
 
-    const ownerJid = `${clean}@s.whatsapp.net`;
+    const useMessageYourself = !(mode === 'chat' || mode === 'chat_groups');
+    const target = _adDeliveryTarget(mode, chatId, sock, clean);
     const timeStr = new Date().toLocaleString('en-US', {
         timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
         hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -1019,9 +1418,11 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         try { groupName = (await sock.groupMetadata(chatId)).subject; } catch (_) {}
     }
 
-    const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
-
     if (!orig) {
+        if (reportMiss === false || !_adClaimMissReport(clean, chatId, msgId)) {
+            _adReleaseDeleteClaim(clean, chatId, msgId);
+            return false;
+        }
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
             `*🕒 Time:* ${timeStr}\n` +
@@ -1034,8 +1435,10 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             sender: deletedBy,
             deletedBy,
             botNum: clean,
+            useMessageYourself,
+            chatId,
         });
-        // Do NOT mark dedup on cache miss — messages.delete handler may retry with warm socket
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
 
@@ -1045,10 +1448,12 @@ async function _adHandleMessageDelete(sock, opts = {}) {
 
     if (orig.fromMe && fromMeDelete && deletedByNum === clean) {
         _adRemoveCachedMessage(clean, chatId, msgId);
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
     if (senderNumClean === clean && orig.fromMe) {
         _adRemoveCachedMessage(clean, chatId, msgId);
+        _adReleaseDeleteClaim(clean, chatId, msgId);
         return false;
     }
 
@@ -1074,17 +1479,24 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         sender,
         deletedBy,
         botNum: clean,
+        useMessageYourself,
+        chatId,
     });
     if (sent) {
         _adMarkDeleteProcessed(clean, chatId, msgId);
         _adRemoveCachedMessage(clean, chatId, msgId);
+    } else {
+        _adReleaseDeleteClaim(clean, chatId, msgId);
     }
     return sent;
 }
 
 global._serializeRawMedia = _serializeRawMedia;
 global._adHandleMessageDelete = _adHandleMessageDelete;
+global._adInvokeDeleteHandler = _adInvokeDeleteHandler;
+global._adChatIdFromKey = _adChatIdFromKey;
 global.loadAntideleteCfg = loadAntideleteCfg;
+global.ensureAntideletePrivateDefault = ensureAntideletePrivateDefault;
 global._adResolveBotNum = _adResolveBotNum;
 global._adExpandChatIds = _adExpandChatIds;
 global._adChatIdsFromKey = _adChatIdsFromKey;
@@ -1103,7 +1515,15 @@ global.getAntideleteSession = getAntideleteSession;
 
 module.exports = {
     _adHandleMessageDelete,
+    _adInvokeDeleteHandler,
+    _adResolveDeleteContext,
+    _adChatIdFromKey,
     loadAntideleteCfg,
+    ensureAntideletePrivateDefault,
+    _adNormalizeCfg,
+    _adPrivateReportTargets,
+    _adSelfJidOrderedTries,
+    _adDeliverAntideleteReport,
     _adResolveBotNum,
     _adExpandChatIds,
     _adChatIdsFromKey,
@@ -1111,7 +1531,6 @@ module.exports = {
     _adResolveMediaInfo,
     _adForwardDeletedMedia,
     _adLookupCachedMessage,
-    _adDeliverAntideleteReport,
     _adFlushPendingReports,
     _adQueuePendingReport,
     cacheMessageForAntidelete,
