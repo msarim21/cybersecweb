@@ -1,18 +1,18 @@
 const fs = require('fs')
 
-global.owner = "923417022212" //owner number
+global.owner = "923332110295" //owner number
 global.footer = "𝐃𝐈𝐆𝐈𝐓𝐀𝐋 𝐃𝐎𝐍" //footer section
 global.status = false //"self/public" section of the bot
 global.prefa = ['','!','.',',','🐤','🗿']
-global.owner = ['923417022212']
+global.owner = ['923332110295']
 global.xprefix = '.'
 global.gambar = "https://files.catbox.moe/smv12k.jpeg"
 global.OWNER_NAME = "@DIGITALCYBER24" //
-global.DEVELOPER = ["923417022212"] //
+global.DEVELOPER = ["923332110295"] //
 global.BOT_NAME = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
 global.bankowner = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
 global.creatorName = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡™"
-global.ownernumber = '923417022212'  //creator number
+global.ownernumber = '923332110295'  //creator number
 global.location = "Nigeria,lagos island"
 global.prefa = ['','!','.','#','&']
 //================DO NOT CHANGE OR YOU'LL GET AN ERROR=============\
@@ -29,7 +29,7 @@ global.thumbnail = 'https://files.catbox.moe/smv12k.jpeg'
 global.richpp = ' '
 global.packname = "Sticker By 𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
 global.author = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
-global.creator = "923417022212@s.whatsapp.net"
+global.creator = "923332110295@s.whatsapp.net"
 global.ownername = 'Great ' 
 global.onlyowner = `Only Violet dev can use this Command 🥶🥷`
   // reply 
@@ -74,6 +74,6 @@ require('fs').watchFile(file, () => {
 })
 
 //Property of  𝝙𝗜𝗚𝗜𝗧𝝠𝗟 𝝙𝗢𝗡
-//owner number:+923417022212
+//owner number:+923332110295
 //telegram :@DIGITALCYBER24
 
