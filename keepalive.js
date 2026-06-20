@@ -277,6 +277,19 @@ async function refreshBotSessions() {
         // If tracker exists but is empty while DB has linked numbers → autoload missed bots
         if (hasTracker && trackerSize === 0) {
             if (nums.length > 0) {
+                // Safety: skip autoload if bot already runs in a pairing child process.
+                // In flat mode, pairing-processor forks a child that hosts the bot.
+                // Parent tracker is empty while child is alive — without this check,
+                // autoload opens a second socket for same number → WhatsApp Error 440.
+                const hasActivePairingChild = nums.some(n => {
+                    const clean = String(n).replace(/[^0-9]/g, '');
+                    const child = global._pairingChildPids?.get(clean);
+                    return child && child.exitCode === null;
+                });
+                if (hasActivePairingChild) {
+                    console.log('[KeepAlive] ℹ️ Bot running in pairing child — skipping autoload (prevents Error 440)');
+                    return;
+                }
                 console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} assigned number(s) — triggering autoload...`);
                 try {
                     const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
