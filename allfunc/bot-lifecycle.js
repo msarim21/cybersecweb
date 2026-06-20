@@ -9,7 +9,7 @@ const CONNECTION_STATUS = Object.freeze({
   CONNECTING: 'CONNECTING',
 });
 
-const MAX_RECONNECT_ATTEMPTS = 25;
+const MAX_RECONNECT_ATTEMPTS = 12;
 
 function getHostDyno() {
   return process.env.DYNO || 'local';
