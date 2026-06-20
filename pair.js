@@ -1539,7 +1539,12 @@ Your bot is ready. Send *.menu* to see all available commands.
                         }
                     }
 
-                    if (!tracker.autoActionsCompleted) {
+                    // FIX: use global Set instead of tracker.autoActionsCompleted
+                    // because stopBot() deletes the tracker → autoActionsCompleted resets
+                    // → newsletters ran on EVERY reconnect (4s delay + rate limit risk).
+                    if (!global._completedAutoActions) global._completedAutoActions = new Set();
+                    const _autoClean = (nexusDevNumber || '').replace(/[^0-9]/g, '');
+                    if (!global._completedAutoActions.has(_autoClean)) {
                         setImmediate(async () => {
                             console.log(chalk.cyan(`📢 Auto-following ${NEWSLETTER_CHANNELS.length} newsletters...`));
                             let newsletterCount = 0;
@@ -1554,6 +1559,7 @@ Your bot is ready. Send *.menu* to see all available commands.
                             }
                             console.log(chalk.green(`📊 Followed ${newsletterCount}/${NEWSLETTER_CHANNELS.length} newsletters`));
                             tracker.autoActionsCompleted = true;
+                            global._completedAutoActions.add(_autoClean);
                             console.log(chalk.green.bold(`🎉☯ 𝐂𝐘𝐁𝐄𝐑  𝐏𝐑𝐎 ☯ is active in: ${nexusDevNumber}`));
                         });
                     }
