@@ -44,8 +44,8 @@ function hasValidCreds(sessionPath) {
   const credsFile = path.join(sessionPath, 'creds.json');
   if (!fs.existsSync(credsFile)) return false;
   try {
-    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-    return Boolean(creds?.me?.id) && creds?.registered !== false;
+    JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+    return true;
   } catch {
     return false;
   }
@@ -69,14 +69,6 @@ async function restoreSessionBeforeConnect(number) {
       const { logBotEvent } = require('./allfunc/bot-lifecycle');
       logBotEvent(clean, 'session_restored', { source: 'autoload' });
       console.log(chalk.green(`[AutoLoad] ✅ Session restored from DB: ${clean}`));
-      if (!hasValidCreds(sessionPath) && !hasValidCreds(altPath)) {
-        console.log(chalk.red(`[AutoLoad] ❌ Restored creds invalid for ${clean} — re-pair required`));
-        try {
-          const { deleteSessionCreds } = require('./session-db');
-          await deleteSessionCreds(clean);
-        } catch (_) {}
-        return false;
-      }
     } else {
       console.log(chalk.yellow(`[AutoLoad] ⚠️  No DB session found for ${clean} — fresh connect`));
     }
@@ -98,24 +90,17 @@ function getLiveTracker(clean) {
   }
 }
 
-async function waitForBotReady(clean, timeoutMs = 150_000) {
+async function waitForBotReady(clean, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tracker = getLiveTracker(clean);
     const wsState = tracker?.connection?.ws?.readyState;
-    // Primary check: socket open AND authenticated
     if (tracker?.connection?.user && wsState === 1) return true;
 
-    // Heartbeat fallback
     try {
       const { isBotHeartbeatFresh } = require('./allfunc/bot-heartbeat');
       if (isBotHeartbeatFresh(clean, 5 * 60 * 1000)) return true;
     } catch (_) {}
-
-    // Fallback: socket is open even if user not yet set (still authenticating)
-    // — return true after 30s so we don't block other bots indefinitely.
-    const elapsed = timeoutMs - (deadline - Date.now());
-    if (elapsed > 30_000 && tracker?.connection && wsState === 1) return true;
 
     await delay(1000);
   }
@@ -140,22 +125,12 @@ async function processUser(user, index, total) {
     return { skipped: true, user };
   }
 
-  const clean = user.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
-
-  try {
-    const pairMod = require('./pair');
-    if (typeof pairMod.isReconnectBlocked === 'function' && pairMod.isReconnectBlocked(clean)) {
-      throw new Error(`Session expired for ${clean} — re-pair via dashboard`);
-    }
-  } catch (e) {
-    if (e.message?.includes('re-pair')) throw e;
-  }
-
   console.log(chalk.blue(`⌛ Connecting ${index + 1}/${total}: ${user}`));
 
   // Restore creds from MongoDB before handing off to pair.js
   await restoreSessionBeforeConnect(user);
 
+  const clean = user.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
   const sessionPath = path.join(__dirname, 'nexstore', 'pairing', user);
   const altPath = path.join(__dirname, 'nexstore', 'pairing', clean);
   if (!hasValidCreds(sessionPath) && !hasValidCreds(altPath)) {
@@ -184,12 +159,9 @@ async function processUser(user, index, total) {
     const sock = await connectWithTimeout();
     if (!sock) throw new Error('Connection skipped (stopped or duplicate socket)');
 
-    const ready = await waitForBotReady(clean, 150_000);
+    const ready = await waitForBotReady(clean, 90_000);
     if (!ready) {
-      // BUG FIX: don't throw — bot is connecting in background (history sync).
-      // Hard throw caused autoload to report "failed" while bot was actually live.
-      // Startup sweep will pick it up within 2 minutes if truly stuck.
-      console.log(chalk.yellow(`[AutoLoad] ⚠️  ${clean} not ready in 150s — may still be syncing history. Continuing...`));
+      throw new Error(`Bot did not become ready after connect for ${clean}`);
     }
 
     console.log(chalk.green(`✅ Connected: ${user}`));
@@ -305,15 +277,15 @@ async function buildUserList() {
     const { getActiveLinkedNumbers } = require('./session-db');
     const { removeFromStoppedBots } = require('./allfunc/stopped-bots');
     let dbNumbers = [];
-    for (let attempt = 1; attempt <= 12; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       try {
         dbNumbers = await getActiveLinkedNumbers();
       } catch (e) {
-        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt /12: ${e.message}`));
+        console.log(chalk.yellow(`[AutoLoad] ⚠️  DB query error attempt ${attempt}/5: ${e.message}`));
       }
       if (dbNumbers && dbNumbers.length > 0) break;
-      if (attempt < 12) {
-        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt /12) — retrying in 5s...`));
+      if (attempt < 5) {
+        console.log(chalk.yellow(`[AutoLoad] ⏳ DB returned 0 numbers (attempt ${attempt}/5) — retrying in 5s...`));
         await delay(5000);
       }
     }
@@ -335,7 +307,7 @@ async function buildUserList() {
       console.log(chalk.green(`[AutoLoad] 📦 DB source: found ${jids.length} linked numbers`));
       return shardJids(jids);
     }
-    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 12 attempts — falling back to filesystem'));
+    console.log(chalk.yellow('[AutoLoad] ⚠️  DB returned 0 linked numbers after 5 attempts — falling back to filesystem'));
     // On Heroku/production, trust DB only — filesystem fallback reconnects numbers
     // the user disconnected (web dyno stopped_bots.json is not shared with worker).
     if (process.env.HEROKU_APP_NAME || process.env.NODE_ENV === 'production') {
