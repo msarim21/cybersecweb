@@ -605,18 +605,20 @@ const verifyMembership = async (userId) => {
           result.verified = false;
           result.missing.push(channel.name);
         }
-      } catch {
-        result.verified = false;
-        result.missing.push(channel.name);
+      } catch (err) {
+        // Fail-open: if we can't check membership (bot not admin, channel not found, etc.)
+        // don't block the user — only block on confirmed 'left' or 'kicked' status
+        console.log('[MemberCheck] Could not check channel', channel.name, '-', err.message, '— allowing user');
       }
     }
     
     return result;
   } catch (error) {
     console.error('ᴍᴇᴍʙᴇʀsʜɪᴘ ᴄʜᴇᴄᴋ ᴇʀʀᴏʀ:', error.message);
+    // Fail-open: if overall check fails, allow user through
     return {
-      verified: false,
-      missing: REQUIRED_CHANNELS.map(c => c.name)
+      verified: true,
+      missing: []
     };
   }
 };
@@ -2458,14 +2460,14 @@ bot.onText(/\/maintenance(?:\s+(.+))?/, async (msg, match) => {
     );
   }
 
-  if (!['ᴏɴ', 'ᴏғғ'].includes(mode.toLowerCase())) {
+  if (!['ᴏɴ', 'ᴏғғ', 'on', 'off'].includes(mode.toLowerCase())) {
     return bot.sendMessage(chatId,
       `┌ ❏ ◆ *⌜𝗜𝗡𝗩𝗔𝗟𝗜𝗗⌟* ◆\n│\n├◆ ᴜsᴇ /maintenance ᴏɴ ᴏʀ /maintenance ᴏғғ\n│\n└ ❏`,
       { parse_mode: 'Markdown' }
     );
   }
 
-  database.maintenance = mode.toLowerCase() === 'ᴏɴ';
+  database.maintenance = ['ᴏɴ', 'on'].includes(mode.toLowerCase());
   await saveData();
 
   bot.sendMessage(chatId,
@@ -2538,12 +2540,13 @@ bot.onText(/\/announce(?:\s+(.+))?/, async (msg, match) => {
   }
 
   let delay = 0;
-  if (timeArg.endsWith('ᴍ')) {
+  const timeArgLower = timeArg.toLowerCase();
+  if (timeArgLower.endsWith('ᴍ') || timeArgLower.endsWith('m')) {
     delay = parseInt(timeArg) * 60 * 1000;
-  } else if (timeArg.endsWith('ʜ')) {
+  } else if (timeArgLower.endsWith('ʜ') || timeArgLower.endsWith('h')) {
     delay = parseInt(timeArg) * 60 * 60 * 1000;
   } else {
-    return bot.sendMessage(chatId, `┌ ❏ ◆ *⌜𝗜𝗡𝗩𝗔𝗟𝗜𝗗⌟* ◆\n│\n├◆ ᴜsᴇ 10ᴍ ᴏʀ 1ʜ\n│\n└ ❏`, { parse_mode: 'Markdown' });
+    return bot.sendMessage(chatId, `┌ ❏ ◆ *⌜𝗜𝗡𝗩𝗔𝗟𝗜𝗗⌟* ◆\n│\n├◆ ᴜsᴇ 10m ᴏʀ 1h ᴏʀ 10ᴍ ᴏʀ 1ʜ\n│\n└ ❏`, { parse_mode: 'Markdown' });
   }
 
   const scheduleTime = new Date(Date.now() + delay);
