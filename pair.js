@@ -934,7 +934,7 @@ async function startpairing(nexusDevNumber, options = {}) {
             if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) continue;
             nexusboiConnect = nexus
             mek = smsg(nexusboiConnect, nexusboijid, store);
-            require("./case")(nexusboiConnect, mek, chatUpdate, store);
+            await require("./case")(nexusboiConnect, mek, chatUpdate, store);
           } catch (errInner) {
             console.log(errInner);
           }
