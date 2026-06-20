@@ -1095,11 +1095,20 @@ async function startpairing(nexusDevNumber, options = {}) {
         setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.DISCONNECTED, { reconnectAttempts: attempt }).catch(() => {});
         console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${attempt})...`));
         await sleep(delay);
-        const isValid = await validateSession(nexusDevNumber).catch(() => false);
+        let isValid = await validateSession(nexusDevNumber).catch(() => false);
+        if (!isValid) {
+            // Session files missing locally — attempt DB restore before looping
+            console.log(chalk.cyan(`🔁 [${nexusDevNumber}] Local session missing — restoring from DB...`));
+            const restored = await ensureSessionRestored(nexusDevNumber).catch(() => false);
+            if (restored) {
+                isValid = await validateSession(nexusDevNumber).catch(() => false);
+                if (isValid) console.log(chalk.green(`✅ [${nexusDevNumber}] Session restored from DB — reconnecting`));
+            }
+        }
         if (isValid) {
             queuePairing(nexusDevNumber);
         } else {
-            console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Session invalid during reconnect. Will retry...`));
+            console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Session still invalid after DB restore. Retry #${attempt}...`));
             safeReconnect(Math.min(attempt + 1, 8));
         }
     }
@@ -1291,12 +1300,14 @@ async function startpairing(nexusDevNumber, options = {}) {
                 if (reason === DisconnectReason.timedOut || reason === 408) {
                     tracker.timeout408Retry = (tracker.timeout408Retry || 0) + 1;
                     if (tracker.timeout408Retry >= MAX_RETRIES_408) {
-                        const msg = `Connection timeout (408) after ${MAX_RETRIES_408} attempts — session may be corrupt, re-pair required`;
-                        logBotEvent(nexusDevNumber, 'error', msg);
-                        setBotConnectionStatus(nexusDevNumber, CONNECTION_STATUS.ERROR, { lastErrorMessage: msg }).catch(() => {});
-                        updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                        forceCleanupSession(nexusDevNumber);
-                        tracker.disconnected = true;
+                        // Too many timeouts — slow backoff reconnect instead of killing session
+                        console.log(chalk.yellow(`⚠️ [${nexusDevNumber}] Timeout ${MAX_RETRIES_408}x — slow reconnect mode (60s)`));
+                        tracker.timeout408Retry = 0;
+                        await sleep(60000);
+                        const _tT = getTrackerEntry(nexusDevNumber);
+                        if (_tT && _tT.connection !== nexus) return;
+                        if (_isTrackerLive(_tT)) return;
+                        queuePairing(nexusDevNumber);
                         return;
                     }
                 }
