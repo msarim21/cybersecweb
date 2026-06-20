@@ -4971,7 +4971,7 @@ case 'allmenu':
 case 'CYBERall':
 case 'commandlist': {
   setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -5776,8 +5776,8 @@ break;
 
 case 'aimenu':
 case 'CYBERai': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -5876,8 +5876,8 @@ break;
 
 case 'animemenu':
 case 'CYBERanime': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6095,8 +6095,8 @@ case 'CYBERbug': {
         if (!_bmUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _bmSenderNum))
             return reply(`🔒 *Bug Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
     }
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6239,8 +6239,8 @@ break;
 
 case 'downloadmenu':
 case 'CYBERdownload': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6346,8 +6346,8 @@ break;
 
 case 'funmenu':
 case 'CYBERfun': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6447,8 +6447,8 @@ break;
 
 case 'gamemenu':
 case 'CYBERgame': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6542,8 +6542,8 @@ break;
 
 case 'groupmenu':
 case 'CYBERgroup': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6684,8 +6684,8 @@ break;
 
 case 'logomenu':
 case 'CYBERlogo': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6807,8 +6807,8 @@ break;
 
 case 'ownermenu':
 case 'CYBERowner': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -6935,8 +6935,8 @@ break;
 
 case 'stickermenu':
 case 'CYBERsticker': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -7056,8 +7056,8 @@ break;
 case 'toolmenu':
 case 'toolsmenu':
 case 'CYBERtool': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -7171,8 +7171,8 @@ break;
 
 case 'voicemenu':
 case 'CYBERvoice': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
@@ -7267,8 +7267,8 @@ break;
 
 case 'othermenu':
 case 'CYBERother': {
-    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
-    await devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } });
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
     
     const menuImages = [
         'https://files.catbox.moe/smv12k.jpeg',
