@@ -354,6 +354,17 @@ async function startWorker() {
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);
 
+  // ✅ FIX: Auto-restarter — har BOT_RESTART_HOURS ghante mein graceful restart
+  // Session DB mein flush hoti hai restart se pehle — no data loss on Heroku/Replit
+  try {
+    const { startAutoRestarter } = require('./worker/auto-restarter');
+    startAutoRestarter();
+    const _restartHours = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+    console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed — restarts every ${_restartHours} hours`));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Auto-restarter warning:', e.message));
+  }
+
   // Reconnect sweep: first 15 min after restart (every 2 min), picks up any missed bots
   let sweepCount = 0;
   const startupSweep = setInterval(async () => {
