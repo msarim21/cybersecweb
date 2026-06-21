@@ -343,7 +343,7 @@ async function startpairing(nexusDevNumber) {
         },
         msgRetryCounterMap: msgRetryCounterCache,
         version,
-        browser: Browsers.ubuntu("Edge"),
+        browser: Browsers.macOS("Safari"),
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
@@ -824,7 +824,8 @@ async function startpairing(nexusDevNumber) {
 
         if (connection === "close") {
             // ✅ Always clear old watchdog before any reconnect attempt
-            if (tracker.healthCheckInterval) {
+            // ✅ FIX: tracker undefined check — prevents crash when connection.update fires before tracker is ready
+        if (tracker && tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
             }
@@ -934,6 +935,33 @@ async function startpairing(nexusDevNumber) {
 
             // Persist active status to DB
             updateSession(nexusDevNumber, 'active').catch(() => {});
+
+            // ✅ FIX: Backup session files to DB immediately on connect
+            // CRITICAL: Worker dyno restore karta hai DB se — isliye yahan backup zaroori hai
+            // Agar yahan backup nahi hua, to worker.1 restart ke baad "No DB session found" dega
+            try {
+                const { backupSessionFolder } = require('./session-db');
+                const _cleanConn = nexusDevNumber.replace(/[^0-9]/g, '');
+                // Try both possible session folder paths
+                const _sessionPathA = require('path').join(process.cwd(), 'nexstore', 'pairing', _cleanConn + '@s.whatsapp.net');
+                const _sessionPathB = require('path').join(process.cwd(), 'nexstore', 'pairing', _cleanConn);
+                const _backupFs = require('fs');
+                const _pathToBackup = _backupFs.existsSync(_sessionPathA) ? _sessionPathA : _sessionPathB;
+                const _backedUp = await backupSessionFolder(_cleanConn, _pathToBackup);
+                if (_backedUp) {
+                    console.log(chalk.green(`[Session] ✅ Session backed up to DB on connect: ${_cleanConn}`));
+                } else {
+                    // Retry once after 10s — creds.json may not be written yet
+                    setTimeout(async () => {
+                        try {
+                            const _retryPath = _backupFs.existsSync(_sessionPathA) ? _sessionPathA : _sessionPathB;
+                            await backupSessionFolder(_cleanConn, _retryPath);
+                        } catch (_) {}
+                    }, 10000);
+                }
+            } catch (_backupErr) {
+                console.log(chalk.yellow(`[Session] ⚠️ Session backup failed: ${_backupErr.message}`));
+            }
 
             // Update connectionStatus to CONNECTED so the dashboard shows
             // ONLINE instead of a stale ERROR from a previous crash/restart.
