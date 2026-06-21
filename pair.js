@@ -303,7 +303,8 @@ async function startpairing(nexusDevNumber) {
             lastActivity: Date.now(),
             autoActionsCompleted: false,
             groupsJoined: false,
-            healthCheckInterval: null  // ✅ track interval so old ones can be cleared
+            healthCheckInterval: null,  // ✅ track interval so old ones can be cleared
+            welcomeSent: false          // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
         });
     }
     
@@ -1011,9 +1012,12 @@ async function startpairing(nexusDevNumber) {
             global.pairEmitter.emit('connected', nexusDevNumber);
 
             // Send a connected confirmation message to the linked number
-            try {
-                const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
-                const connectedMsg = `╔══════════════════╗
+            // ✅ FIX: sirf pehli baar bhejo — reconnect pe dobara mat bhejo
+            if (!tracker.welcomeSent) {
+                tracker.welcomeSent = true;
+                try {
+                    const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
+                    const connectedMsg = `╔══════════════════╗
 ║  ✅ *BOT CONNECTED*  ║
 ╚══════════════════╝
 
@@ -1027,10 +1031,14 @@ async function startpairing(nexusDevNumber) {
 Your bot is ready. Send *.menu* to see all available commands.
 ━━━━━━━━━━━━━━━━━━`;
 
-                await nexus.sendMessage(userJid, { text: connectedMsg });
-                console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
-            } catch (msgErr) {
-                console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
+                    await nexus.sendMessage(userJid, { text: connectedMsg });
+                    console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
+                } catch (msgErr) {
+                    console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
+                    tracker.welcomeSent = false; // retry allow karo agar message gaya nahi
+                }
+            } else {
+                console.log(chalk.gray(`[${nexusDevNumber}] ℹ️  Reconnected — welcome message already sent, skipping.`));
             }
 
             try {
