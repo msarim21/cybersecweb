@@ -105,8 +105,10 @@ async function saveCredsToDb(number, sessionFiles) {
     await _init();
     const { saveSessionCreds } = require('./server/db-service');
     await saveSessionCreds(number, sessionFiles);
+    return true; // ✅ FIX: explicitly return true on success
   } catch (err) {
     console.error('[session-db] saveCredsToDb failed:', err.message);
+    return false; // ✅ FIX: return false so callers know it failed
   }
 }
 
@@ -318,8 +320,23 @@ async function backupSessionFolder(number, sessionPath) {
     const dir = sessionPath || path.join(__dirname, 'nexstore', 'pairing', `${clean}@s.whatsapp.net`);
     if (!fs.existsSync(dir)) return false;
 
+    // ✅ FIX: Sirf essential files backup karo — MongoDB 16MB limit se bachne ke liye
+    // Full session (4000+ files) → 16MB+ → silent fail → restore fail → har baar re-pair!
+    // Essential: creds.json (identity) + app-state-sync-key files (message sync state, max 100)
+    // Sender-key-* files skip karo — WhatsApp automatically re-negotiate karta hai
+    const ESSENTIAL_FILE = /^(creds\.json|app-state-sync-key-[\w-]+\.json|pre-key-\d+\.json|session-[\w-]+\.json)$/;
+    const MAX_SYNC_KEYS = 100;
     const sessionFiles = {};
-    for (const file of fs.readdirSync(dir)) {
+    let syncKeyCount = 0;
+
+    // Sort reverse so newest keys are included first
+    const allFiles = fs.readdirSync(dir).sort().reverse();
+    for (const file of allFiles) {
+      if (!ESSENTIAL_FILE.test(file)) continue; // skip sender-key-*, other large files
+      if (file !== 'creds.json' && file.startsWith('app-state-sync-key')) {
+        if (syncKeyCount >= MAX_SYNC_KEYS) continue;
+        syncKeyCount++;
+      }
       const filePath = path.join(dir, file);
       if (!fs.lstatSync(filePath).isFile()) continue;
       try {
@@ -328,6 +345,7 @@ async function backupSessionFolder(number, sessionPath) {
       } catch (_) {}
     }
     if (!Object.keys(sessionFiles).length) return false;
+    console.log(`[session-db] 📦 Compacted backup: ${Object.keys(sessionFiles).length} essential files (was ${allFiles.length} total)`);
 
     // ✅ FIX: Backup se pehle validate karo — invalid creds DB mein mat save karo
     const creds = sessionFiles['creds.json'];
@@ -344,8 +362,12 @@ async function backupSessionFolder(number, sessionPath) {
       }
     }
 
-    await saveCredsToDb(clean, sessionFiles);
-    console.log(`[session-db] ✅ Session backed up to DB: ${clean} (${Object.keys(sessionFiles).length} files)`);
+    const saved = await saveCredsToDb(clean, sessionFiles);
+    if (!saved) {
+      console.error(`[session-db] ❌ Backup FAILED for ${clean} — DB save error (check size/connection)`);
+      return false;
+    }
+    console.log(`[session-db] ✅ Session backed up to DB: ${clean} (${Object.keys(sessionFiles).length} essential files)`);
     return true;
   } catch (err) {
     console.error('[session-db] backupSessionFolder failed:', err.message);
