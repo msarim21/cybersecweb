@@ -86,6 +86,10 @@ const sharedBuffer = createSharedBuffer();
 /** @type {Map<string, { thread: Worker, slotIndex: number, pairing: boolean, spawnedAt: number, restartTimes: number[] }>} */
 const threads     = new Map();
 const lastActivity = new Map();
+// Persistent restart-time log — survives thread object replacement so the
+// MAX_RESTARTS_PER_HOUR circuit-breaker actually works (wasEntry.restartTimes
+// resets to [] on every new _spawnThread call, making the old check useless).
+const _restartHistory = new Map(); // clean → number[]
 
 let _slotCounter = 0;
 let _active      = false;
@@ -297,10 +301,17 @@ function _spawnThread(clean, opts = {}) {
         if (opts.noRestart || !_active) return;
         if (code === 0) return;
 
-        const hourAgo = Date.now() - 60 * 60 * 1000;
-        const recentRestarts = (wasEntry?.restartTimes || []).filter((t) => t > hourAgo);
+        // Track restart times in a persistent Map so the circuit-breaker works
+        // across successive _spawnThread calls (wasEntry.restartTimes always
+        // resets to [] on each new spawn, so the old check was always 0).
+        const now = Date.now();
+        const hourAgo = now - 60 * 60 * 1000;
+        const history = _restartHistory.get(clean) || [];
+        history.push(now);
+        const recentRestarts = history.filter((t) => t > hourAgo);
+        _restartHistory.set(clean, recentRestarts); // prune entries older than 1h
         if (recentRestarts.length >= MAX_RESTARTS_PER_HOUR) {
-            console.log(chalk.red(`[Supervisor] +${clean} thread restart limit — skip`));
+            console.log(chalk.red(`[Supervisor] +${clean} thread restart limit (${recentRestarts.length}/${MAX_RESTARTS_PER_HOUR}/hr) — pausing`));
             return;
         }
 
