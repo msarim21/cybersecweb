@@ -916,6 +916,17 @@ async function startpairing(nexusDevNumber) {
             // Persist active status to DB
             updateSession(nexusDevNumber, 'active').catch(() => {});
 
+            // Update connectionStatus to CONNECTED so the dashboard shows
+            // ONLINE instead of a stale ERROR from a previous crash/restart.
+            try {
+                const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                setBotConnectionStatus(cleanForDb, 'CONNECTED', {
+                    lastErrorMessage: null,
+                    reconnectAttempts: 0,
+                }).catch(() => {});
+            } catch (_) {}
+
             // Write connected flag so web panel can auto-save the number
             try {
                 const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
