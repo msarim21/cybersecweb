@@ -34,10 +34,8 @@ function setAuthenticated(value) {
 const autoLoadPairs = async () => {
     console.log(chalk.cyan('🔄 Auto-loading all paired users...'));
 
-    // ── Only reconnect numbers that are actively linked in the web panel ────────
-    // Retry up to 3 times — DB may still be connecting right after restart
     let allUsers = [];
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
         try {
             const webLinked = await getActiveLinkedNumbers();
             allUsers = (webLinked || []).map(n => {
@@ -46,29 +44,25 @@ const autoLoadPairs = async () => {
             }).filter(Boolean);
             if (allUsers.length > 0) {
                 console.log(chalk.green(`🌐 Found ${allUsers.length} web-linked number(s) to reconnect.`));
-                break; // success — stop retrying
+                break;
             }
         } catch (e) {
-            console.log(chalk.yellow(`⚠️  Could not read web-linked numbers (attempt ${attempt}/3): ${e.message}`));
+            console.log(chalk.yellow(`⚠️  Could not read web-linked numbers (attempt ${attempt}/5): ${e.message}`));
         }
-        if (allUsers.length === 0 && attempt < 3) {
-            console.log(chalk.yellow(`⏳ DB returned 0 numbers (attempt ${attempt}/3) — retrying in 8s...`));
+        if (allUsers.length === 0 && attempt < 5) {
+            console.log(chalk.yellow(`⏳ DB returned 0 numbers (attempt ${attempt}/5) — retrying in 8s...`));
             await delay(8000);
         }
     }
 
     if (allUsers.length === 0) {
-        console.log(chalk.yellow('ℹ️  No web-linked active numbers found after 3 attempts. Nothing to reconnect.'));
+        console.log(chalk.yellow('ℹ️  No web-linked active numbers found after 5 attempts. Nothing to reconnect.'));
         return;
     }
 
     console.log(chalk.green(`✅ Total ${allUsers.length} user(s) to reconnect.`));
-    // SPEED FIX: reduced from 4000ms to 500ms startup delay
     await delay(500);
 
-    // ⚡ SPEED FIX: Parallel batched connections (3 at a time, 2s between batches)
-    // Sequential was: 10 numbers × connect time = minutes before last number works
-    // Now: all numbers connect in parallel batches — everyone online in seconds
     const connectOne = async (userNumber, idx) => {
         const cleanNum   = userNumber.replace(/[^0-9]/g, '');
         const sessionPath = path.join(PAIRING_DIR, cleanNum);
@@ -82,6 +76,17 @@ const autoLoadPairs = async () => {
                     return;
                 }
             }
+            // ✅ FIX: Validate creds before connecting — skip if invalid/corrupt
+            try {
+                const creds = JSON.parse(fs.readFileSync(path.join(sessionPath, 'creds.json'), 'utf-8'));
+                if (!creds || (!creds.registered && !creds.me && !creds.noiseKey)) {
+                    console.log(chalk.yellow(`⚠️  Creds invalid for ${userNumber} — skipping (needs re-pair).`));
+                    return;
+                }
+            } catch (parseErr) {
+                console.log(chalk.yellow(`⚠️  Creds corrupt for ${userNumber} — skipping.`));
+                return;
+            }
             console.log(chalk.blue(`🔄 Connecting [${idx + 1}/${allUsers.length}]: ${userNumber}`));
             await startpairing(userNumber);
             console.log(chalk.green(`✅ Connected: ${userNumber}`));
@@ -90,18 +95,17 @@ const autoLoadPairs = async () => {
         }
     };
 
-    const BATCH_SIZE = 3; // 3 connections at a time — safe for WA servers
+    const BATCH_SIZE = 3;
     for (let b = 0; b < allUsers.length; b += BATCH_SIZE) {
         const batch = allUsers.slice(b, b + BATCH_SIZE);
         await Promise.allSettled(batch.map((num, j) => connectOne(num, b + j)));
         if (b + BATCH_SIZE < allUsers.length) {
             console.log(chalk.cyan(`⏳ Batch done — next batch in 2s...`));
-            await delay(2000); // 2s between batches — prevents WA rate limiting
+            await delay(2000);
         }
     }
 
     console.log(chalk.green('✅ All paired users processed.'));
-    // SPEED FIX: removed 4000ms wait after processing — not needed
 };
 
 const initializeBot = async () => {
@@ -122,19 +126,15 @@ const initializeBot = async () => {
         console.log(chalk.green('✅ Welcome back! Skipping password...'));
         launchBot();
     } else if (process.env.STARTUP_PASSWORD) {
-        // ── Auto-restart fix: Heroku/Replit Config Var se password uthao ──
-        // Heroku → Settings → Config Vars → STARTUP_PASSWORD = apna password
         if (process.env.STARTUP_PASSWORD === startupPassword) {
             console.log(chalk.green('✅ Heroku Config Var se auto-authenticate. Bot start ho raha hai...'));
             setAuthenticated(true);
             launchBot();
         } else {
             console.log(chalk.red('❌ STARTUP_PASSWORD galat hai!'));
-            console.log(chalk.yellow('   Heroku Settings → Config Vars → STARTUP_PASSWORD check karo'));
             process.exit(1);
         }
     } else {
-        // Manual password — local development ke liye
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
@@ -169,20 +169,11 @@ function launchBot() {
     console.clear();
     console.log(chalk.green('𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 sᴏʟᴏs ᴀʟʟ....\n'));
 
-    // 24/7 keep-alive — prevents hosting platform from sleeping the bot
     try { startKeepAlive(); } catch (e) {}
-
-    // ── NOTE: 25-min stale-termination health check REMOVED ──────────────────
-    // BUG it caused: after 20 min idle it terminated working connections AND
-    // cleared pair.js's healthCheckInterval watchdog — leaving the bot offline
-    // with no reconnect mechanism. pair.js already has its own 30-second
-    // watchdog (healthCheckInterval) that properly handles dead connections
-    // AND reconnects. No redundant terminator needed here.
 
     let telegramLoaded = false;
     let whatsappLoaded = false;
 
-    // Load Telegram bot (bot.js)
     const botPath = path.join(__dirname, 'bot.js');
     if (fs.existsSync(botPath)) {
         try {
@@ -193,18 +184,12 @@ function launchBot() {
         } catch (error) {
             console.log(chalk.red('❌ Failed to load Telegram bot (bot.js):'));
             console.log(chalk.red('   Error:', error.message));
-            
-            if (error.stack) {
-                console.log(chalk.gray('   Stack:', error.stack.split('\n')[1].trim()));
-            }
-            
             console.log(chalk.yellow('⚠️  Continuing without Telegram bot...\n'));
         }
     } else {
         console.log(chalk.yellow('⚠️  bot.js not found, skipping Telegram bot...\n'));
     }
 
-    // Load WhatsApp commands (case.js)
     const nexusPath = path.join(__dirname, 'case.js');
     if (fs.existsSync(nexusPath)) {
         try {
@@ -212,25 +197,15 @@ function launchBot() {
             const nexusModule = require('./case');
             whatsappLoaded = true;
             console.log(chalk.green('✅ WhatsApp commands loaded successfully!'));
-            
-            // Note: Event listeners will be set up when pair.js creates the connection
-            // We're just loading the command handler here
-            
         } catch (error) {
             console.log(chalk.red('❌ Failed to load WhatsApp commands (case.js):'));
             console.log(chalk.red('   Error:', error.message));
-            
-            if (error.stack) {
-                console.log(chalk.gray('   Stack:', error.stack.split('\n')[1].trim()));
-            }
-            
             console.log(chalk.yellow('⚠️  Continuing without WhatsApp commands...\n'));
         }
     } else {
         console.log(chalk.yellow('⚠️  case.js not found, skipping WhatsApp commands...\n'));
     }
 
-    // Summary
     console.log(chalk.cyan('\n⚄︎═══════════════════════════════⚄︎'));
     console.log(chalk.bold.white('  ʙᴏᴛ ɪɴɪᴛɪᴀʟɪᴢᴀᴛɪᴏɴ sᴜᴍᴍᴀʀʀʏ        '));
     console.log(chalk.cyan('⚄︎════════════════════════════════⚄︎'));
@@ -244,62 +219,38 @@ function launchBot() {
         console.log(chalk.green('✅ 𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 ᴀᴄᴛɪᴠᴇ!\n'));
     }
 
-    // Error handlers
     const ignoredErrors = [
-        'Socket connection timeout',
-        'EKEYTYPE',
-        'item-not-found',
-        'rate-overlimit',
-        'Connection Closed',
-        'Timed Out',
-        'Value not found',
-        'Connection Failure',
-        'ENOTFOUND',
-        'ECONNRESET',
-        'ETIMEDOUT',
-        'ECONNREFUSED',
-        'socket hang up',
-        'stream ended unexpectedly',
-        'Closing stale open session',
-        'Request timeout',
-        'Bad MAC',
-        'Lost connection',
-        'connect ETIMEDOUT',
-        'read ECONNRESET',
-        'write ECONNRESET',
-        'Connection reset',
-        'WebSocket closed',
-        'Tag not found',
-        'Connection lost'
+        'Socket connection timeout', 'EKEYTYPE', 'item-not-found',
+        'rate-overlimit', 'Connection Closed', 'Timed Out', 'Value not found',
+        'Connection Failure', 'ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT',
+        'ECONNREFUSED', 'socket hang up', 'stream ended unexpectedly',
+        'Closing stale open session', 'Request timeout', 'Bad MAC',
+        'Lost connection', 'connect ETIMEDOUT', 'read ECONNRESET',
+        'write ECONNRESET', 'Connection reset', 'WebSocket closed',
+        'Tag not found', 'Connection lost'
     ];
 
     process.on('unhandledRejection', (reason, promise) => {
         if (ignoredErrors.some(e => String(reason).includes(e))) return;
-        // Log only — do NOT call process.exit (keeps bot alive)
         console.log(chalk.red('\n⚠️  Unhandled Promise Rejection:'));
         console.log(chalk.yellow('Reason:'), String(reason).substring(0, 200));
     });
 
     process.on('uncaughtException', (error) => {
         if (ignoredErrors.some(e => String(error).includes(e))) return;
-        // Log only — do NOT call process.exit (keeps bot alive)
         console.log(chalk.red('\n❌ Uncaught Exception (bot staying alive):'));
         console.log(chalk.yellow('Error:'), error.message);
     });
 
     const originalConsoleError = console.error;
     console.error = function (message, ...optionalParams) {
-        if (typeof message === 'string' && ignoredErrors.some(e => message.includes(e))) {
-            return;
-        }
+        if (typeof message === 'string' && ignoredErrors.some(e => message.includes(e))) return;
         originalConsoleError.apply(console, [message, ...optionalParams]);
     };
 
     const originalStderrWrite = process.stderr.write;
     process.stderr.write = function (message, encoding, fd) {
-        if (typeof message === 'string' && ignoredErrors.some(e => message.includes(e))) {
-            return;
-        }
+        if (typeof message === 'string' && ignoredErrors.some(e => message.includes(e))) return;
         originalStderrWrite.apply(process.stderr, arguments);
     };
 
@@ -307,22 +258,55 @@ function launchBot() {
     console.log(chalk.gray('Press Ctrl+C to stop the bot\n'));
 }
 
-// AUTO-RESTART every 8 hours — memory cleanup without frequent bot downtime
-// Heroku will automatically restart the process after process.exit(0)
-const _RESTART_MS = 8 * 60 * 60 * 1000; // 8 hours
-setTimeout(() => {
-    console.log(chalk.cyan('\n🔄 Auto-restart: 8 hours elapsed — restarting for fresh state...'));
+// ✅ FIX: AUTO-RESTART har 4 ghante — 8 se 4 kar diya
+// Session DB mein flush hoti hai (supervisor graceful shutdown se)
+// Heroku/Replit automatically process restart karta hai process.exit(0) ke baad
+const _RESTART_HOURS = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+const _RESTART_MS = _RESTART_HOURS * 60 * 60 * 1000;
+
+setTimeout(async () => {
+    console.log(chalk.cyan(`\n🔄 Auto-restart: ${_RESTART_HOURS} hours elapsed — flushing sessions then restarting...`));
+    
+    // ✅ FIX: Session DB mein save karo restart se pehle
+    try {
+        const { backupSessionFolder } = require('./session-db');
+        const pairingDir = './nexstore/pairing';
+        if (fs.existsSync(pairingDir)) {
+            const dirs = fs.readdirSync(pairingDir, { withFileTypes: true })
+                .filter(d => d.isDirectory())
+                .map(d => d.name);
+            
+            for (const dir of dirs) {
+                const cleanNum = dir.replace(/[^0-9]/g, '');
+                if (!cleanNum) continue;
+                const sessionPath = `${pairingDir}/${dir}`;
+                try {
+                    await backupSessionFolder(cleanNum, sessionPath);
+                    console.log(chalk.green(`✅ Session backed up: ${cleanNum}`));
+                } catch (e) {
+                    console.log(chalk.yellow(`⚠️  Backup failed for ${cleanNum}: ${e.message}`));
+                }
+            }
+        }
+    } catch (flushErr) {
+        console.log(chalk.yellow(`⚠️  Pre-restart session flush error: ${flushErr.message}`));
+    }
+    
+    console.log(chalk.cyan('✅ Sessions flushed. Restarting now...'));
+    await new Promise(r => setTimeout(r, 1000)); // 1s wait for writes to complete
     process.exit(0);
 }, _RESTART_MS);
 
+console.log(chalk.gray(`⏰ Auto-restart scheduled in ${_RESTART_HOURS} hours (env: BOT_RESTART_HOURS)`));
+
 // Graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
     console.log(chalk.yellow('\n\n⚠️  Shutting down gracefully...'));
     console.log(chalk.green('👋 Goodbye!'));
     process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
     console.log(chalk.yellow('\n\n⚠️  Received termination signal...'));
     process.exit(0);
 });
@@ -330,8 +314,6 @@ process.on('SIGTERM', () => {
 initializeBot().catch((error) => {
     console.log(chalk.red('\n❌ Fatal error during initialization:'));
     console.log(chalk.yellow('Error:'), error.message);
-    if (error.stack) {
-        console.log(chalk.gray(error.stack));
-    }
+    if (error.stack) console.log(chalk.gray(error.stack));
     process.exit(1);
 });
