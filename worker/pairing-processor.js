@@ -45,7 +45,22 @@ async function processPairingQueue() {
         if (!global._pairingInFlight) global._pairingInFlight = new Set();
 
         for (const clean of pending) {
-            if (!clean || global._pairingInFlight.has(clean)) continue;
+            if (!clean) continue;
+
+            // Supersede stale pairing child when user requests a fresh code.
+            if (global._pairingInFlight.has(clean)) {
+                try {
+                    const { killBot, isSupervisorActive } = require('./supervisor');
+                    if (isSupervisorActive()) {
+                        killBot(clean, 'SIGKILL');
+                    } else if (global._pairingChildPids?.get(clean)) {
+                        try { global._pairingChildPids.get(clean).kill('SIGKILL'); } catch (_) {}
+                        global._pairingChildPids.delete(clean);
+                    }
+                } catch (_) {}
+                global._pairingInFlight.delete(clean);
+                await new Promise((r) => setTimeout(r, 500));
+            }
 
             // Skip if bot is already connected — no new pairing code needed
             try {
@@ -82,6 +97,31 @@ async function processPairingQueue() {
 
                     // Use clean digits only — no @s.whatsapp.net suffix
                     const sessionPath = path.join(__dirname, '..', 'nexstore', 'pairing', clean);
+
+                    // RECONNECT LOOP FIX: Before wiping creds, check if valid session
+                    // creds exist in DB. If they do, restart bot via autoload instead of
+                    // doing a destructive fresh pairing (which causes infinite reconnect loops).
+                    let hasValidDbCreds = false;
+                    try {
+                        const { restoreCredsFromDb } = require('../session-db');
+                        hasValidDbCreds = await restoreCredsFromDb(clean, sessionPath).catch(() => false);
+                    } catch (_) {}
+
+                    if (hasValidDbCreds) {
+                        console.log(`[PairingQueue] ${clean} has valid session creds in DB — restarting bot instead of fresh pairing`);
+                        try {
+                            const { clearPairingRequest } = require('../server/db-service');
+                            await clearPairingRequest(clean).catch(() => {});
+                        } catch (_) {}
+                        global._pairingInFlight.delete(clean);
+                        try {
+                            const { autoLoadPairs } = require('../autoload');
+                            await autoLoadPairs({ concurrent: true }).catch(() => {});
+                        } catch (_) {}
+                        return;
+                    }
+
+                    // No valid creds in DB — proceed with destructive fresh pairing
                     if (fs.existsSync(sessionPath)) {
                         deleteFolderRecursive(sessionPath);
                     }
@@ -96,7 +136,7 @@ async function processPairingQueue() {
                         if (fs.existsSync(pairingJson)) fs.unlinkSync(pairingJson);
                     } catch (_) {}
 
-                    fork(runner, [clean], {
+                    const child = fork(runner, [clean], {
                         env: {
                             ...process.env,
                             WHATSAPP_WORKER: '1',
@@ -107,12 +147,40 @@ async function processPairingQueue() {
                         stdio: 'inherit',
                         cwd: path.join(__dirname, '..'),
                     });
+                    if (!global._pairingChildPids) global._pairingChildPids = new Map();
+                    global._pairingChildPids.set(clean, child);
+                    child.on('exit', () => global._pairingChildPids?.delete(clean));
 
-                    const deadline = Date.now() + 90_000;
-                    while (Date.now() < deadline) {
+                    // Phase 1: Wait for pairing code (max 90s)
+                    const codeDeadline = Date.now() + 90_000;
+                    while (Date.now() < codeDeadline) {
                         const st = await getPairingState(clean).catch(() => null);
-                        if (st?.code) break;
+                        if (st?.code || st?.status === 'active') break;
                         await new Promise((r) => setTimeout(r, 400));
+                    }
+
+                    // Phase 2: Wait for user to enter code → bot becomes active (max 3 min)
+                    // Once active, kill the pairing child so the parent process manages the
+                    // bot via autoload. Running in the parent avoids Error 440 caused by
+                    // the parent keepalive triggering autoload on an already-connected child.
+                    const connectDeadline = Date.now() + 180_000;
+                    while (Date.now() < connectDeadline) {
+                        const st = await getPairingState(clean).catch(() => null);
+                        if (st?.status === 'active') {
+                            // Give child 8s to flush Signal keys to DB before SIGTERM
+                            await new Promise(r => setTimeout(r, 8000));
+                            try { child.kill('SIGTERM'); } catch (_) {}
+                            // Give parent autoload time to pick it up
+                            await new Promise(r => setTimeout(r, 5000));
+                            try {
+                                const { autoLoadPairs } = require('../autoload');
+                                autoLoadPairs({ concurrent: true }).catch(() => {});
+                            } catch (_) {}
+                            break;
+                        }
+                        // Bot session expired or failed — stop waiting
+                        if (st?.status === 'failed' || !st) break;
+                        await new Promise((r) => setTimeout(r, 1000));
                     }
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
