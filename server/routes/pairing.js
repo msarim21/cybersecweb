@@ -6,8 +6,6 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
-
-// Root pair.js — same module bot.js uses
 const PAIR_MODULE = path.join(__dirname, '../../pair');
 
 function ensureDir(p) {
@@ -26,12 +24,6 @@ function deleteFolderRecursive(p) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ── POST /api/pairing/request ─────────────────────────────────────────────────
-// Mirrors exactly what bot.js /pair command does:
-//  1. Call startpairing(jid) from pair.js  (keeps socket alive in background)
-//  2. Wait ~4 s for pair.js to write code to pairing.json
-//  3. Read the code and return it
-//  4. pair.js socket stays alive — when user enters the code WhatsApp
-//     confirms and the full bot boots automatically
 router.post('/request', protect, async (req, res) => {
   const { phoneNumber } = req.body;
   if (!phoneNumber) return res.status(400).json({ error: 'Phone number required.' });
@@ -42,22 +34,81 @@ router.post('/request', protect, async (req, res) => {
 
   const sessionPath = path.join(PAIRING_BASE, clean);
 
-  // ✅ FIX: If the bot is ALREADY linked/connected, don't wipe session and don't re-pair
-  // This stops the "link device" notification loop on WhatsApp after pairing is done
+  // ✅ FIX 1: Check local filesystem first (connected.flag + creds.json)
   const connectedFlagPath = path.join(sessionPath, 'connected.flag');
   const existingCredsPath = path.join(sessionPath, 'creds.json');
-  const isAlreadyPaired = fsSync.existsSync(connectedFlagPath) || (fsSync.existsSync(existingCredsPath) && (() => {
+  const isAlreadyPairedLocal = fsSync.existsSync(connectedFlagPath) || (fsSync.existsSync(existingCredsPath) && (() => {
     try {
       const c = JSON.parse(fsSync.readFileSync(existingCredsPath, 'utf-8'));
       return !!(c.noiseKey?.private || c.me);
     } catch(_) { return false; }
   })());
 
-  if (isAlreadyPaired) {
+  if (isAlreadyPairedLocal) {
+    console.log(`[Pairing] ${clean}: Already paired (local files found) — blocking new pairing code`);
     return res.status(409).json({ error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true });
   }
 
-  // Wipe stale session so pair.js always issues a fresh code
+  // ✅ FIX 2: Check DATABASE session — Heroku/Replit ephemeral disk wipes local
+  // files on every restart. If session creds exist in DB, the number IS paired.
+  // Without this check, restart → files gone → new pairing code → WhatsApp spam.
+  try {
+    const { hasSessionInDb, ensureSessionRestored } = require('../../session-db');
+    const inDb = await hasSessionInDb(clean);
+    if (inDb) {
+      console.log(`[Pairing] ${clean}: Session found in DB — restoring and blocking new pairing code`);
+      // Restore from DB so bot can auto-reconnect without re-pairing
+      await ensureSessionRestored(clean).catch(() => {});
+      return res.status(409).json({
+        error: 'This number is already linked (session restored from DB). Unlink it first before re-pairing.',
+        alreadyLinked: true
+      });
+    }
+  } catch (dbErr) {
+    // DB check failed — log and continue (do not block pairing if DB is down)
+    console.warn(`[Pairing] DB session check failed for ${clean}: ${dbErr.message}`);
+  }
+
+  // ✅ FIX 3: Check active bot session status in DB (BotSession model)
+  try {
+    const { upsertBotSession } = require('../db-service');
+    // Check if there's an active session in bot_sessions table
+    const { getPool, isMongoMode } = require('../db');
+    const pool = getPool();
+    if (pool && !isMongoMode?.()) {
+      const result = await pool.query(
+        `SELECT status FROM bot_sessions WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 AND status = 'active' LIMIT 1`,
+        [clean]
+      );
+      if (result.rows.length > 0) {
+        console.log(`[Pairing] ${clean}: Active bot_session in PostgreSQL — blocking new pairing code`);
+        return res.status(409).json({
+          error: 'This number is already active. Unlink it first before re-pairing.',
+          alreadyLinked: true
+        });
+      }
+    } else if (isMongoMode?.()) {
+      const BotSession = require('../models/BotSession');
+      const existing = await BotSession.findOne({
+        number: { $in: [clean, clean + '@s.whatsapp.net'] },
+        status: 'active'
+      });
+      if (existing) {
+        console.log(`[Pairing] ${clean}: Active BotSession in MongoDB — blocking new pairing code`);
+        return res.status(409).json({
+          error: 'This number is already active. Unlink it first before re-pairing.',
+          alreadyLinked: true
+        });
+      }
+    }
+  } catch (sessionCheckErr) {
+    console.warn(`[Pairing] Session status check failed for ${clean}: ${sessionCheckErr.message}`);
+  }
+
+  // ── Number is NOT paired — proceed with fresh pairing ─────────────────────
+  console.log(`[Pairing] ${clean}: No existing session found — generating fresh pairing code`);
+
+  // Wipe any stale/partial session so pair.js always issues a fresh code
   if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
   ensureDir(PAIRING_BASE);
   ensureDir(sessionPath);
@@ -66,8 +117,19 @@ router.post('/request', protect, async (req, res) => {
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
+  // ✅ FIX 4: Save pairing ownership BEFORE starting pair.js
+  // So that when WhatsApp confirms pairing, session-db.js auto-saves to linked_numbers
   try {
-    // Load startpairing from root pair.js — exactly what bot.js does
+    const { savePairingOwner } = require('../db-service');
+    if (req.user?.id) {
+      await savePairingOwner(clean, req.user.id, req.body.botName || 'CYBER PRO');
+      console.log(`[Pairing] ${clean}: Pairing owner saved (userId=${req.user.id})`);
+    }
+  } catch (ownerErr) {
+    console.warn(`[Pairing] savePairingOwner failed for ${clean}: ${ownerErr.message}`);
+  }
+
+  try {
     // Clear require cache so a fresh connection is created each time
     delete require.cache[require.resolve(PAIR_MODULE)];
     const startpairing = require(PAIR_MODULE);
@@ -79,8 +141,7 @@ router.post('/request', protect, async (req, res) => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
 
-    // Wait for pair.js to write pairing.json
-    // pair.js stores number as "263xxx@s.whatsapp.net" so we match digits only
+    // Wait for pair.js to write pairing.json (max 40 seconds)
     let code = null;
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
@@ -100,6 +161,7 @@ router.post('/request', protect, async (req, res) => {
       return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
     }
 
+    console.log(`[Pairing] ${clean}: Pairing code generated successfully`);
     return res.json({ code, number: clean });
 
   } catch (err) {
@@ -109,7 +171,6 @@ router.post('/request', protect, async (req, res) => {
 });
 
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
-// Returns {connected: true} if WhatsApp has confirmed pairing for this number
 router.get('/status/:number', protect, (req, res) => {
   const clean    = req.params.number.replace(/[^0-9]/g, '');
   const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
@@ -121,6 +182,22 @@ router.get('/status/:number', protect, (req, res) => {
     return res.json({ connected: true });
   }
   res.json({ connected: false });
+});
+
+// ── GET /api/pairing/code/:number ────────────────────────────────────────────
+// Returns the current pairing code for a number (for polling)
+router.get('/code/:number', protect, (req, res) => {
+  const clean = req.params.number.replace(/[^0-9]/g, '');
+  const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
+  if (!fsSync.existsSync(PAIRING_JSON)) {
+    return res.json({ code: null });
+  }
+  try {
+    const obj = JSON.parse(fsSync.readFileSync(PAIRING_JSON, 'utf-8'));
+    return res.json({ code: obj.code || null, number: clean });
+  } catch (_) {
+    return res.json({ code: null });
+  }
 });
 
 module.exports = router;
