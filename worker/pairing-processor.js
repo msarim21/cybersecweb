@@ -62,9 +62,25 @@ async function processPairingQueue() {
                 await new Promise((r) => setTimeout(r, 500));
             }
 
-            // Skip if bot is already connected — no new pairing code needed
+            // Skip if bot is already linked/active — no new pairing code needed.
+            // Check linked_numbers first (definitive source of truth): a number that is
+            // already active there should NEVER receive another pairing code regardless of
+            // what bot_sessions.connectionStatus says (it may be blank after a dyno restart).
             try {
-                const { getBotSessionsByNumbers, clearPairingRequest } = require('../server/db-service');
+                const {
+                    getBotSessionsByNumbers,
+                    clearPairingRequest,
+                    isNumberInLinkedNumbers,
+                } = require('../server/db-service');
+
+                const alreadyLinked = await isNumberInLinkedNumbers(clean).catch(() => false);
+                if (alreadyLinked) {
+                    console.log(`[PairingQueue] ${clean} is already in linked_numbers — clearing stale pairing request`);
+                    await clearPairingRequest(clean).catch(() => {});
+                    continue;
+                }
+
+                // Fallback: check live connection status in bot_sessions
                 const sessMap = await getBotSessionsByNumbers([clean]).catch(() => ({}));
                 const sess = sessMap[clean];
                 if (sess?.connectionStatus === 'CONNECTED' && sess?.status === 'active') {
