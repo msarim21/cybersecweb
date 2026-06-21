@@ -27,6 +27,17 @@ function startWhatsAppStack() {
     const { startOrphanDisconnectJob } = require('../server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
 
+    // ✅ FIX: Auto-restarter — har BOT_RESTART_HOURS ghante mein graceful restart
+    // Session DB mein flush hoti hai restart se pehle — no data loss
+    try {
+        const { startAutoRestarter } = require('./auto-restarter');
+        startAutoRestarter();
+        const hours = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+        console.log(chalk.gray(`[WhatsApp] ⏰ Auto-restarter armed — restarts every ${hours} hours`));
+    } catch (e) {
+        console.log(chalk.yellow('[WhatsApp] Auto-restarter warning:', e.message));
+    }
+
     return true;
 }
 
