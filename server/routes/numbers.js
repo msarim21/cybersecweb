@@ -117,6 +117,11 @@ router.get('/', protect, async (req, res) => {
         if ((hbFresh && hbReady) || (sess?.status === 'active' && dbReady && lastFresh)) {
           return 'online';
         }
+        // Trust DB connectionStatus === 'CONNECTED' as an authoritative online signal.
+        // Heartbeat files are written by the worker dyno and are NOT visible to the web
+        // dyno on Heroku (separate ephemeral filesystems), so hbFresh is always false on
+        // the web dyno. The DB connectionStatus field is the only cross-dyno signal.
+        if (sess?.connectionStatus === 'CONNECTED' && lastFresh) return 'online';
         if (sess?.status === 'active' && sess?.commandReady === false && lastFresh) return 'syncing';
         if (sess?.status === 'active') {
           const connectedAtFresh = sess?.connectedAt &&
