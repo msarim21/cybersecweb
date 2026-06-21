@@ -988,15 +988,43 @@ async function disconnectAllUserDevices(userId) {
 async function getPendingPairingRequests() {
   try {
     if (isMongoMode()) {
-      const { PairingRequest } = M();
+      const { PairingRequest, LinkedNumber } = M();
       const docs = await PairingRequest.find({ status: 'requested' })
-        .sort({ createdAt: 1 }).limit(5).lean();
-      return docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+        .sort({ createdAt: 1 }).limit(20).lean();
+      const candidates = docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+      if (!candidates.length) return [];
+
+      // Filter out numbers that are already active in linked_numbers (source of truth).
+      // This prevents sending a fresh pairing code to a number that is already paired.
+      const activeLinked = await LinkedNumber.find({
+        $or: candidates.map(n => ({ number: { $regex: `^${n}` } })),
+        status: 'active',
+      }).select('number').lean().catch(() => []);
+      const activeSet = new Set(
+        activeLinked.map(d => String(d.number).replace(/[^0-9]/g, ''))
+      );
+
+      // Clear stale pairing requests for already-active numbers (fire-and-forget)
+      for (const n of candidates) {
+        if (activeSet.has(n)) {
+          PairingRequest.deleteOne({ number: n }).catch(() => {});
+        }
+      }
+
+      return candidates.filter(n => !activeSet.has(n)).slice(0, 5);
     }
+
+    // PostgreSQL: exclude numbers already active in linked_numbers
     const { rows } = await pg().query(
-      `SELECT number FROM bot_sessions
-       WHERE pairing_status = 'requested'
-       ORDER BY last_active ASC NULLS LAST
+      `SELECT bs.number FROM bot_sessions bs
+       WHERE bs.pairing_status = 'requested'
+         AND NOT EXISTS (
+           SELECT 1 FROM linked_numbers ln
+           WHERE REGEXP_REPLACE(ln.number,'[^0-9]','','g')
+               = REGEXP_REPLACE(bs.number,'[^0-9]','','g')
+             AND ln.status = 'active'
+         )
+       ORDER BY bs.last_active ASC NULLS LAST
        LIMIT 5`
     );
     return rows.map(r => String(r.number).replace(/[^0-9]/g, '')).filter(Boolean);
