@@ -238,6 +238,12 @@ router.put('/:id/toggle', protect, async (req, res) => {
           const { upsertBotSession } = require('../db-service');
           await upsertBotSession(clean, 'inactive');
         } catch (_) {}
+        // Also update connectionStatus so the dashboard reflects the real state
+        // instead of leaving a stale CONNECTED badge on a manually stopped bot.
+        try {
+          const { setBotConnectionStatus } = require('../../allfunc/bot-lifecycle');
+          setBotConnectionStatus(clean, 'DISCONNECTED').catch(() => {});
+        } catch (_) {}
       }
     }
     res.json(updated);
