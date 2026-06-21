@@ -368,7 +368,17 @@ async function startpairing(nexusDevNumber) {
     
     if (store) store.bind(nexus.ev);
 
-    if (pairingCode && !state.creds.registered) {
+    // ✅ FIX: Never request a new pairing code if session creds already exist on disk
+    // This prevents the pairing code loop on reconnect when bot is already linked
+    const _existingCredsPath = path.join(sessionPath, 'creds.json');
+    const _sessionAlreadyPaired = fs.existsSync(_existingCredsPath) && (() => {
+        try {
+            const _c = JSON.parse(fs.readFileSync(_existingCredsPath, 'utf-8'));
+            return !!((_c.noiseKey && _c.noiseKey.private) || _c.me || _c.registered);
+        } catch(_) { return false; }
+    })();
+
+    if (pairingCode && !state.creds.registered && !_sessionAlreadyPaired) {
         if (useMobile) {
             throw new Error('Cannot use pairing code with mobile API');
         }
@@ -502,6 +512,13 @@ async function startpairing(nexusDevNumber) {
             try {
                 const botNumber = nexus.decodeJid(nexus.user.id);
 
+                // ✅ ANTIDELETE CACHE — store every message so delete handler can recover it
+                try {
+                    if (typeof global._cacheMessageForAntidelete === 'function') {
+                        global._cacheMessageForAntidelete(nexusboijid, nexus);
+                    }
+                } catch (_adCacheErr) {}
+
                 // Auto-view status (fast)
                 let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
                     || global.db?.data?.settings?.[botNumber]?.antiswview
@@ -592,6 +609,34 @@ async function startpairing(nexusDevNumber) {
     } catch (err) {
         console.log(err);
     }
+    });
+
+    // ✅ ANTIDELETE DELETE HANDLER — catches every WhatsApp message deletion
+    nexus.ev.on('messages.delete', async (item) => {
+        try {
+            if (!nexus.user) return;
+            if (typeof global._adHandleMessageDelete !== 'function') return;
+            const botNum = nexus.decodeJid(nexus.user.id);
+            const keys = item?.keys || (item?.key ? [item.key] : []);
+            for (const key of keys) {
+                if (!key?.id || !key?.remoteJid) continue;
+                const chatId = key.remoteJid;
+                const msgId = key.id;
+                const deletedBy = item?.participant || key.participant || '';
+                const fromMeDelete = Boolean(key.fromMe);
+                const altChatIds = (typeof global._adChatIdsFromKey === 'function')
+                    ? global._adChatIdsFromKey(key).filter(id => id !== chatId)
+                    : [];
+                global._adHandleMessageDelete(nexus, {
+                    botNum,
+                    chatId,
+                    msgId,
+                    deletedBy,
+                    fromMeDelete,
+                    altChatIds,
+                }).catch(() => {});
+            }
+        } catch (_adDelErr) {}
     });
 
     nexus.sendFromOwner = async (jid, text, quoted, options = {}) => {
