@@ -42,6 +42,21 @@ router.post('/request', protect, async (req, res) => {
 
   const sessionPath = path.join(PAIRING_BASE, clean);
 
+  // ✅ FIX: If the bot is ALREADY linked/connected, don't wipe session and don't re-pair
+  // This stops the "link device" notification loop on WhatsApp after pairing is done
+  const connectedFlagPath = path.join(sessionPath, 'connected.flag');
+  const existingCredsPath = path.join(sessionPath, 'creds.json');
+  const isAlreadyPaired = fsSync.existsSync(connectedFlagPath) || (fsSync.existsSync(existingCredsPath) && (() => {
+    try {
+      const c = JSON.parse(fsSync.readFileSync(existingCredsPath, 'utf-8'));
+      return !!(c.noiseKey?.private || c.me);
+    } catch(_) { return false; }
+  })());
+
+  if (isAlreadyPaired) {
+    return res.status(409).json({ error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true });
+  }
+
   // Wipe stale session so pair.js always issues a fresh code
   if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
   ensureDir(PAIRING_BASE);
