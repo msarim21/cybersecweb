@@ -868,6 +868,21 @@ async function startpairing(nexusDevNumber) {
                 console.log(chalk.red(`🚫 ${nexusDevNumber} will NOT reconnect. User must re-pair.`));
                 return;
             } else if (reason === 440) {
+                // ✅ FIX: Isolated mode mein pair.js reconnect NAHI karta
+                // Supervisor/BotRunner khud thread restart karta hai — dono reconnect = 440 loop
+                if (global.__ISOLATED_BOT) {
+                    console.warn(chalk.yellow(`⚠️ Error 440 (isolated) for ${nexusDevNumber} — letting Supervisor handle restart`));
+                    tracker.disconnected = true;
+                    tracker.connection = null;
+                    // BotRunner ko batao ke exit karo — wo proper delay ke saath restart karega
+                    if (typeof global._botRunnerExit === 'function') {
+                        global._botRunnerExit(440);
+                    } else {
+                        // Fallback: 8s baad process exit karo so Supervisor re-spawns
+                        setTimeout(() => process.exit(440), 8000);
+                    }
+                    return;
+                }
                 if (tracker.retryCount < MAX_RETRIES_440) {
                     console.warn(chalk.yellow(`⚠️ Error 440 for ${nexusDevNumber}. Retry ${tracker.retryCount}/${MAX_RETRIES_440}...`));
                     await sleep(5000);
@@ -909,10 +924,20 @@ async function startpairing(nexusDevNumber) {
                 // ✅ ALWAYS reconnect — no give-up for connection drops
                 tracker.dropRetry = (tracker.dropRetry || 0) + 1;
                 console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Connection drop #${tracker.dropRetry}. Reconnecting...`));
+                // ✅ FIX: Isolated mode mein Supervisor restart handle karta hai
+                if (global.__ISOLATED_BOT) {
+                    tracker.disconnected = true;
+                    setTimeout(() => process.exit(1), 5000);
+                    return;
+                }
                 await sleep(3000);
                 queuePairing(nexusDevNumber);
             } else if (reason === DisconnectReason.restartRequired) {
                 console.log(chalk.blue(`🔄 Restart required for ${nexusDevNumber}`));
+                if (global.__ISOLATED_BOT) {
+                    setTimeout(() => process.exit(1), 3000);
+                    return;
+                }
                 await sleep(2000);
                 queuePairing(nexusDevNumber);
             } else {
