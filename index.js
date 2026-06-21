@@ -32,6 +32,14 @@ function setAuthenticated(value) {
 }
 
 const autoLoadPairs = async () => {
+    // ✅ FIX: Supervisor chal raha hai to direct pair() band karo — 440 loop rokne ke liye
+    // start-whatsapp.js ne Supervisor start kar diya hai jo isolated threads mein bots chalata hai
+    // Index.js ka apna autoLoadPairs bhi chale to = 2 connections → Error 440 loop
+    const { shouldRunWhatsAppSupervisor } = require('./allfunc/whatsapp-host');
+    if (shouldRunWhatsAppSupervisor()) {
+        console.log(chalk.gray('[index.js] ℹ️  Supervisor chal raha hai — autoLoadPairs skip (Supervisor handles bots)'));
+        return;
+    }
     console.log(chalk.cyan('🔄 Auto-loading all paired users...'));
 
     let allUsers = [];
