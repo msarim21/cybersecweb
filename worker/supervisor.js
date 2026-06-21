@@ -561,14 +561,23 @@ async function handlePairingRequest(clean) {
     const num = cleanBotNum(clean);
     if (!num) return;
     if (!global._pairingInFlight) global._pairingInFlight = new Set();
-    if (global._pairingInFlight.has(num)) return;
+
+    // User requested a fresh code — supersede any in-flight pairing child.
+    if (global._pairingInFlight.has(num)) {
+        console.log(chalk.yellow(`[Supervisor] Superseding in-flight pairing for +${num}`));
+        killBot(num, 'SIGKILL');
+        global._pairingInFlight.delete(num);
+        await new Promise((r) => setTimeout(r, 800));
+    }
     global._pairingInFlight.add(num);
 
     console.log(chalk.cyan(`[Supervisor] 🔗 Pairing +${num} — spawning isolated thread`));
 
     try {
         const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
+        const { clearPairingRequest } = require('../server/db-service');
         removeFromStoppedBots(num);
+        await clearPairingRequest(num).catch(() => {});
         killBot(num, 'SIGKILL');
 
         // pair.js writes auth to nexstore/pairing/<digits>; some legacy paths
