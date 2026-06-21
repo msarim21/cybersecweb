@@ -856,7 +856,11 @@ async function startpairing(nexusDevNumber) {
                 console.log(chalk.yellow(`🗑️ Force cleaning session for ${nexusDevNumber}...`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 forceCleanupSession(nexusDevNumber);
-                
+                try {
+                    const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Error 405 — session invalid, re-pair required' }).catch(() => {});
+                } catch (_) {}
                 tracker.disconnected = true;
                 tracker.connection = null;
                 
@@ -871,17 +875,32 @@ async function startpairing(nexusDevNumber) {
                     console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} attempts for ${nexusDevNumber}`));
                     updateSession(nexusDevNumber, 'inactive').catch(() => {});
                     forceCleanupSession(nexusDevNumber);
+                    try {
+                        const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                        const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                        setBotConnectionStatus(cleanForDb, 'ERROR', { lastErrorMessage: `Error 440 — conflict after ${MAX_RETRIES_440} retries, re-pair required` }).catch(() => {});
+                    } catch (_) {}
                     tracker.disconnected = true;
                 }
             } else if (reason === DisconnectReason.badSession) {
                 console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber}`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 forceCleanupSession(nexusDevNumber);
+                try {
+                    const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Bad session — re-pair required' }).catch(() => {});
+                } catch (_) {}
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 forceCleanupSession(nexusDevNumber);
+                try {
+                    const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Logged out from WhatsApp' }).catch(() => {});
+                } catch (_) {}
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
