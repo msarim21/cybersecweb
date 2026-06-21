@@ -72,8 +72,8 @@ PORT=3001          # Backend port (default)
 
 ## Plan Limits
 - FREE: 5 linked numbers
-- PRO: 25 linked numbers (contact +923417022212)
-- ENTERPRISE: Unlimited (contact +923417022212)
+- PRO: 25 linked numbers (contact +923350340732)
+- ENTERPRISE: Unlimited (contact +923350340732)
 
 ## To Make Admin
 Run in server directory:
