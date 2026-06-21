@@ -284,6 +284,17 @@ async function startWorker() {
     startPairingProcessor(150);
     const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
+
+    // ✅ FIX: Auto-restarter — isolated mode mein bhi 4 ghante restart
+    try {
+      const { startAutoRestarter } = require('./worker/auto-restarter');
+      startAutoRestarter();
+      const _rh = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+      console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed (isolated) — every ${_rh}h`));
+    } catch (e) {
+      console.log(chalk.yellow('[Worker] Auto-restarter (isolated) warning:', e.message));
+    }
+
     let sweepCount = 0;
     const startupSweep = setInterval(async () => {
       sweepCount += 1;
