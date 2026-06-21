@@ -316,6 +316,14 @@ async function refreshBotSessions() {
                 ? trackerMap.get(jid) || trackerMap.get(clean)
                 : null;
             if (!tracker) {
+                // Skip intentionally-stopped bots — user disconnected them from the
+                // dashboard and they live in stopped_bots.json. Reconnecting them here
+                // contradicts the user's explicit action and causes a Error 440 loop.
+                try {
+                    const { isStopped } = require('./allfunc/stopped-bots');
+                    if (isStopped(clean)) continue;
+                } catch (_) {}
+
                 console.log(`[KeepAlive] 🔌 ${clean} not in tracker — reconnecting missed session...`);
                 try {
                     const { restoreCredsFromDb } = require('./session-db');
