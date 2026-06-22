@@ -1012,8 +1012,12 @@ async function startpairing(nexusDevNumber) {
             global.pairEmitter.emit('connected', nexusDevNumber);
 
             // Send a connected confirmation message to the linked number
-            // ✅ FIX: sirf pehli baar bhejo — reconnect pe dobara mat bhejo
-            if (!tracker.welcomeSent) {
+            // ✅ FIX (persistent): disk flag check — server restart ke baad bhi ek baar hi bhejo
+            const _cleanWelcome = nexusDevNumber.replace(/[^0-9]/g, '');
+            const _welcomeFlagPath = path.join(process.cwd(), 'nexstore', 'pairing', _cleanWelcome, 'welcomed.flag');
+            const _alreadyWelcomed = fs.existsSync(_welcomeFlagPath) || tracker.welcomeSent;
+
+            if (!_alreadyWelcomed) {
                 tracker.welcomeSent = true;
                 try {
                     const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
@@ -1032,13 +1036,15 @@ Your bot is ready. Send *.menu* to see all available commands.
 ━━━━━━━━━━━━━━━━━━`;
 
                     await nexus.sendMessage(userJid, { text: connectedMsg });
+                    // ✅ Disk pe flag likho — server restart ke baad bhi dobara nahi bhejega
+                    try { fs.writeFileSync(_welcomeFlagPath, JSON.stringify({ ts: Date.now(), number: _cleanWelcome })); } catch (_) {}
                     console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
                 } catch (msgErr) {
                     console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
-                    tracker.welcomeSent = false; // retry allow karo agar message gaya nahi
+                    tracker.welcomeSent = false; // retry next time agar message fail hua
                 }
             } else {
-                console.log(chalk.gray(`[${nexusDevNumber}] ℹ️  Reconnected — welcome message already sent, skipping.`));
+                console.log(chalk.gray(`[${nexusDevNumber}] ℹ️  Reconnected — welcome message already sent (flag exists), skipping.`));
             }
 
             try {
