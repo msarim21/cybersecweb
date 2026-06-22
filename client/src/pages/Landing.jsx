@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion';
 
 const HERO_IMG = '/cybersecpro_hero.jpeg';
-const CONTACT = '+923417022212';
+const CONTACT = '+923350340732';
 const INSTAGRAM = 'https://www.instagram.com/cyber_sec_pro';
 
 const MatrixRain = () => {
