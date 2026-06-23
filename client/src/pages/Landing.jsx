@@ -127,6 +127,22 @@ const HIGHLIGHT_FEATURES = [
   { icon: '📊', title: 'Real-time Stats', desc: 'Monitor active numbers and usage at a glance' },
 ];
 
+const HeroLogo3D = () => (
+  <motion.div
+    className="hero-logo-3d-wrap"
+    initial={{ opacity: 0, scale: 0.85, y: 30 }}
+    animate={{ opacity: 1, scale: 1, y: 0 }}
+    transition={{ duration: 0.7, ease: 'easeOut' }}>
+    <div className="hero-logo-3d-glow" />
+    <div className="hero-logo-3d-ring" />
+    <div className="hero-logo-3d">
+      <div className="hero-logo-3d-face">
+        <img src={HERO_IMG} alt="CYBERSECPRO" />
+      </div>
+    </div>
+  </motion.div>
+);
+
 const FEATURES = [
   { icon: '📱', title: 'Bot Management', desc: 'Link and control WhatsApp numbers from one dashboard with real-time status updates.', color: '#22d3ee' },
   { icon: '🔒', title: 'Secure Pairing', desc: 'Encrypted pairing codes with session protection and JWT authentication.', color: '#06b6d4' },
@@ -217,13 +233,13 @@ export default function Landing() {
 
       {/* Navbar — mobile-friendly like reference */}
       <motion.nav
-        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 bg-[#0f1629]/90 backdrop-blur-xl border-b border-white/8"
-        style={{ opacity: headerOpacity }}>
-        <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-3">
-          <div className="font-display font-bold text-base text-white tracking-tight">CYBERSECPRO</div>
+        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3.5 bg-[#0f1629]/92 backdrop-blur-xl border-b border-white/8"
+        style={{ opacity: headerOpacity, paddingTop: 'max(0.875rem, env(safe-area-inset-top))' }}>
+        <div className="flex flex-col gap-0.5">
+          <div className="font-display font-bold text-[15px] text-white tracking-tight leading-none">CYBERSECPRO</div>
           <div className="flex items-center gap-1.5 md:hidden">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            <span className="text-[10px] font-medium text-emerald-400 uppercase tracking-wide">System Online</span>
+            <span className="text-[9px] font-semibold text-emerald-400 uppercase tracking-wider">Online</span>
           </div>
           <div className="hidden md:flex items-center gap-3">
             <img src={HERO_IMG} alt="" className="w-8 h-8 object-cover rounded-lg ring-1 ring-white/10" />
@@ -273,81 +289,54 @@ export default function Landing() {
         )}
       </AnimatePresence>
 
-      {/* ── HERO — centered background image behind text ── */}
-      <section className="relative z-10 px-4 pt-24 pb-8 md:min-h-screen md:flex md:items-center md:justify-center md:text-center md:overflow-hidden md:pt-20">
+      {/* ── HERO — mobile-first 3D professional ── */}
+      <section className="relative z-10 mobile-hero-section px-4 overflow-hidden">
 
-        {/* Centered hero image — background layer, perfectly centered */}
-        <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
-            {/* HUD rings around image */}
-            <div className="absolute opacity-20 relative" style={{ width: 'clamp(280px, 52vw, 540px)', height: 'clamp(280px, 52vw, 540px)' }}>
-              <HUDRing size={540} color="#22d3ee" duration={25} dashed />
-              <HUDRing size={440} color="#8b5cf6" duration={18} reverse />
+        {/* Mobile ambient glow */}
+        <div className="md:hidden absolute top-16 left-1/2 -translate-x-1/2 w-[90vw] h-[45vw] rounded-full pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse, rgba(34,211,238,0.12) 0%, transparent 70%)', filter: 'blur(30px)' }} />
+
+        {/* Desktop-only background logo */}
+        <div className="hidden md:block absolute inset-0 pointer-events-none z-0">
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            <div className="absolute opacity-15 relative" style={{ width: 500, height: 500, marginLeft: -250, marginTop: -250 }}>
+              <HUDRing size={500} color="#22d3ee" duration={25} dashed />
             </div>
-
-            <motion.div
-              className="relative"
-              style={{ width: 'clamp(260px, 50vw, 500px)', height: 'clamp(260px, 50vw, 500px)' }}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 1.2, ease: 'easeOut' }}>
-              <div
-                className="w-full h-full rounded-full overflow-hidden"
-                style={{
-                  opacity: 0.62,
-                  border: '2px solid rgba(34,211,238,0.35)',
-                  boxShadow: '0 0 60px rgba(34,211,238,0.2), 0 0 120px rgba(34,211,238,0.08), inset 0 0 40px rgba(34,211,238,0.05)',
-                }}>
-                <img
-                  src={HERO_IMG}
-                  alt=""
-                  aria-hidden="true"
-                  className="w-full h-full object-cover object-center scale-105"
-                />
-              </div>
-              {/* Soft vignette — keeps edges blended, center visible */}
-              <div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  background: 'radial-gradient(circle, transparent 45%, rgba(15,22,41,0.65) 80%)',
-                }}
-              />
-            </motion.div>
+            <div className="w-[420px] h-[420px] rounded-full overflow-hidden opacity-50"
+              style={{ border: '2px solid rgba(34,211,238,0.3)', boxShadow: '0 0 80px rgba(34,211,238,0.15)' }}>
+              <img src={HERO_IMG} alt="" className="w-full h-full object-cover" aria-hidden="true" />
+            </div>
           </div>
+          <div className="absolute inset-0"
+            style={{ background: 'radial-gradient(ellipse 55% 50% at 50% 50%, rgba(15,22,41,0.3) 0%, rgba(15,22,41,0.85) 100%)' }} />
         </div>
 
-        {/* Readability overlays — lighter so logo shows through */}
-        <div
-          className="absolute inset-0 pointer-events-none z-[1]"
-          style={{
-            background: 'radial-gradient(ellipse 55% 50% at 50% 50%, rgba(15,22,41,0.25) 0%, rgba(15,22,41,0.6) 60%, rgba(15,22,41,0.88) 100%)',
-          }}
-        />
-
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: 'easeOut' }}
-          className="relative z-10 max-w-5xl mx-auto w-full">
+          transition={{ duration: 0.5 }}
+          className="relative z-10 max-w-lg md:max-w-5xl mx-auto w-full flex flex-col">
 
-          {/* Status badge */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-[#0f1629]/60 backdrop-blur-sm border border-cyan-500/25 text-left md:mx-auto md:flex">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            <span className="text-xs font-medium text-cyan-300">System online — Next-gen bot platform</span>
+          {/* Mobile: prominent 3D logo on top */}
+          <div className="md:hidden mb-7">
+            <HeroLogo3D />
+          </div>
+
+          {/* Status pill */}
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
+            className="mobile-status-pill mb-5 self-start md:mx-auto md:self-center">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse" />
+            <span className="text-[11px] font-semibold text-cyan-300 tracking-wide">System Online</span>
           </motion.div>
 
           <motion.h1
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15 }}
-            className="font-display font-extrabold mb-4 leading-tight tracking-tight text-left md:text-center drop-shadow-[0_2px_16px_rgba(15,22,41,1)]"
-            style={{ fontSize: 'clamp(1.75rem, 6vw, 4.5rem)' }}>
-            <span className="md:hidden text-white block">NEXT-GEN</span>
-            <span className="md:hidden text-white block">BOT PLATFORM</span>
+            transition={{ delay: 0.1 }}
+            className="font-display font-extrabold mb-3 leading-[1.1] tracking-tight text-white md:text-center"
+            style={{ fontSize: 'clamp(2rem, 8.5vw, 4rem)' }}>
+            <span className="block md:hidden">NEXT-GEN</span>
+            <span className="block md:hidden text-cyan-400">BOT PLATFORM</span>
             <span className="hidden md:inline">
               <GlitchText className="text-cyan-400">CYBER</GlitchText>
               <span className="text-white">SEC</span>
@@ -358,55 +347,59 @@ export default function Landing() {
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="text-sm sm:text-base text-slate-200 mb-8 max-w-2xl leading-relaxed text-left md:text-center md:mx-auto drop-shadow-[0_2px_12px_rgba(15,22,41,1)]">
+            transition={{ delay: 0.25 }}
+            className="text-[15px] text-slate-300 mb-7 leading-relaxed md:text-center md:max-w-2xl md:mx-auto">
             The ultimate control center for WhatsApp bot number management. Secure, scalable, and built for operators.
           </motion.p>
 
+          {/* 3D touch-friendly CTAs */}
           <motion.div
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="flex flex-col sm:flex-row gap-3 mb-10 md:justify-center md:mb-16">
-            <Link to="/signup" className="w-full sm:w-auto">
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-bold btn-neon-solid flex items-center justify-center gap-2 shadow-[0_4px_24px_rgba(15,22,41,0.5)]">
+            transition={{ delay: 0.35 }}
+            className="flex flex-col gap-3 mb-8 md:flex-row md:justify-center md:mb-14">
+            <Link to="/signup" className="w-full md:w-auto">
+              <button className="btn-3d-primary font-display text-sm flex items-center justify-center gap-2 md:px-10 md:w-auto">
                 <span>⚡</span> Initialize Free
-              </motion.button>
+              </button>
             </Link>
-            <a href="#features" className="w-full sm:w-auto">
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-semibold btn-outline-cyan bg-[#0f1629]/50 backdrop-blur-sm">
+            <a href="#features" className="w-full md:w-auto">
+              <button className="btn-3d-secondary font-display text-sm md:px-10 md:w-auto">
                 Explore System
-              </motion.button>
+              </button>
             </a>
           </motion.div>
 
-          {/* Mobile highlight features */}
-          <div className="md:hidden mb-6">
-            <p className="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-4">System Features</p>
+          {/* Mobile 3D feature cards */}
+          <div className="md:hidden">
+            <p className="text-[11px] font-bold text-cyan-400 uppercase tracking-[0.15em] mb-4">System Features</p>
             <div className="space-y-3">
               {HIGHLIGHT_FEATURES.map((f, i) => (
                 <motion.div
                   key={i}
-                  initial={{ opacity: 0, y: 12 }}
+                  initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5 + i * 0.1 }}
-                  className="lite-feature-card flex items-start gap-4 bg-[#0f1629]/70 backdrop-blur-sm">
-                  <div className="text-2xl flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-cyan-500/10">{f.icon}</div>
-                  <div>
-                    <div className="font-display font-semibold text-sm text-white mb-0.5">{f.title}</div>
-                    <div className="text-xs text-slate-400 leading-relaxed">{f.desc}</div>
+                  transition={{ delay: 0.45 + i * 0.08 }}
+                  className="card-3d-mobile flex items-center gap-4">
+                  <div className="flex-shrink-0 w-12 h-12 flex items-center justify-center rounded-2xl text-xl"
+                    style={{
+                      background: 'linear-gradient(145deg, rgba(34,211,238,0.15), rgba(34,211,238,0.05))',
+                      boxShadow: '0 4px 12px rgba(34,211,238,0.1), inset 0 1px 0 rgba(255,255,255,0.1)',
+                      border: '1px solid rgba(34,211,238,0.2)',
+                    }}>
+                    {f.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-display font-bold text-[15px] text-white mb-0.5">{f.title}</div>
+                    <div className="text-[13px] text-slate-400 leading-snug">{f.desc}</div>
                   </div>
                 </motion.div>
               ))}
             </div>
           </div>
 
-          {/* Stats — desktop only */}
-          <div className="hidden md:grid grid-cols-3 gap-4 max-w-lg mx-auto">
+          {/* Desktop stats */}
+          <div className="hidden md:grid grid-cols-3 gap-4 max-w-lg mx-auto mt-4">
             <CounterCard value="1000+" label="Active Users" suffix="+" color="#22d3ee" />
             <CounterCard value="50000+" label="Bot Sessions" suffix="+" color="#8b5cf6" />
             <CounterCard value="99%" label="Uptime" suffix="%" color="#34d399" />
@@ -415,7 +408,7 @@ export default function Landing() {
       </section>
 
       {/* Features */}
-      <section id="features" className="relative z-10 py-16 sm:py-24 px-4">
+      <section id="features" className="relative z-10 py-12 sm:py-24 px-4">
         <div className="max-w-6xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
             <p className="text-xs font-semibold text-cyan-400 mb-3 uppercase tracking-wider">Core modules</p>
@@ -424,25 +417,19 @@ export default function Landing() {
             </h2>
             <div className="mt-3 h-px max-w-xs mx-auto bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent" />
           </motion.div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-5">
             {FEATURES.map((f, i) => (
               <motion.div key={i}
                 initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}
-                whileHover={{ y: -8, scale: 1.02 }}
+                whileHover={{ y: -4 }}
                 onHoverStart={() => setActiveFeature(i)} onHoverEnd={() => setActiveFeature(null)}
-                className="rounded-2xl p-6 cursor-default relative overflow-hidden premium-card card-hover"
+                className="card-3d-mobile sm:premium-card sm:card-hover cursor-default relative overflow-hidden sm:rounded-2xl sm:p-6"
                 style={{
-                  background: `linear-gradient(145deg, ${f.color}08, rgba(9,9,11,0.95))`,
-                  border: `1px solid ${f.color}${activeFeature === i ? '40' : '18'}`,
-                  boxShadow: activeFeature === i ? `0 8px 32px ${f.color}15` : undefined,
+                  borderColor: activeFeature === i ? `${f.color}40` : undefined,
                 }}>
-                <div className="text-3xl mb-4">{f.icon}</div>
-                <div className="font-display text-sm font-bold tracking-wider mb-2" style={{ color: f.color }}>{f.title}</div>
-                <div className="font-mono text-xs text-gray-400 leading-relaxed">{f.desc}</div>
-                <motion.div className="mt-5 h-px" style={{ background: `linear-gradient(90deg, ${f.color}80, transparent)` }}
-                  initial={{ scaleX: 0, originX: 0 }}
-                  whileInView={{ scaleX: 1 }}
-                  transition={{ duration: 0.8, delay: i * 0.1 }} />
+                <div className="text-2xl sm:text-3xl mb-3 sm:mb-4">{f.icon}</div>
+                <div className="font-display text-[15px] sm:text-sm font-bold mb-1.5 sm:mb-2" style={{ color: f.color }}>{f.title}</div>
+                <div className="text-[13px] sm:text-xs text-slate-400 leading-relaxed">{f.desc}</div>
               </motion.div>
             ))}
           </div>
