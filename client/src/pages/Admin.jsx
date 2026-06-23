@@ -270,12 +270,13 @@ const LiveDataGraph = ({ tabId = 'overview' }) => {
 };
 
 const GCard = ({ children, className = '', style = {} }) => (
-  <div className={`rounded-2xl ${className}`}
+  <div className={`rounded-2xl premium-card ${className}`}
     style={{
-      background: 'rgba(15,5,30,0.65)',
-      backdropFilter: 'blur(24px)',
-      WebkitBackdropFilter: 'blur(24px)',
-      border: '1px solid rgba(255,0,255,0.18)',
+      background: 'rgba(255,255,255,0.03)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
       ...style
     }}>
     {children}
@@ -283,18 +284,16 @@ const GCard = ({ children, className = '', style = {} }) => (
 );
 
 const StatPanel = ({ label, value, color, icon, sub }) => (
-  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ y: -3 }}
-    className="rounded-2xl p-4 relative overflow-hidden"
+  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ y: -2 }}
+    className="rounded-2xl p-5 relative overflow-hidden premium-card"
     style={{
-      background: `linear-gradient(135deg,${color}18,rgba(15,5,30,0.75))`,
-      backdropFilter: 'blur(24px)',
-      border: `1px solid ${color}35`,
-      boxShadow: `0 0 24px ${color}12`
+      background: `linear-gradient(135deg, ${color}10, rgba(255,255,255,0.02))`,
+      border: `1px solid ${color}20`,
     }}>
-    <div className="absolute -top-2 -right-2 text-5xl opacity-10">{icon}</div>
-    <div className="font-mono text-[10px] tracking-widest mb-1" style={{ color: `${color}cc` }}>{label}</div>
-    <div className="font-display font-black text-2xl sm:text-3xl" style={{ color, textShadow: `0 0 12px ${color}60` }}>{value}</div>
-    {sub && <div className="font-mono text-[10px] text-gray-500 mt-1">{sub}</div>}
+    <div className="absolute -top-2 -right-2 text-5xl opacity-5">{icon}</div>
+    <div className="text-[11px] font-medium text-slate-500 mb-1 uppercase tracking-wide">{label}</div>
+    <div className="font-display font-bold text-2xl sm:text-3xl" style={{ color }}>{value}</div>
+    {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
   </motion.div>
 );
 
@@ -1065,14 +1064,13 @@ Ye action immediately apply hoga.`)) return;
     u.email?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const planColors = { free: '#00f5ff', pro: '#8b5cf6', enterprise: '#ff00ff' };
+  const planColors = { free: '#6366f1', pro: '#8b5cf6', enterprise: '#a855f7' };
   const pendingCount = upgradeRequests.length;
 
   return (
-    <div className="min-h-screen flex" style={{ background: 'linear-gradient(135deg,#06091a 0%,#120820 50%,#06091a 100%)' }}>
-      <div className="fixed top-0 left-0 right-0 h-0.5 z-50"
-        style={{ background: 'linear-gradient(90deg,#ff00ff,#8b5cf6,#00f5ff)', boxShadow: '0 0 20px rgba(255,0,255,0.6)' }} />
-      <div className="fixed inset-0 cyber-grid pointer-events-none z-0 opacity-30" />
+    <div className="min-h-screen flex app-shell-admin">
+      <div className="fixed top-0 left-0 right-0 h-0.5 z-50 bg-gradient-to-r from-violet-500 via-purple-500 to-brand-500" />
+      <div className="fixed inset-0 cyber-grid pointer-events-none z-0 opacity-20" />
 
       <AnimatePresence>
         {sidebarOpen && (
@@ -1158,24 +1156,22 @@ Ye action immediately apply hoga.`)) return;
         initial={false}
         animate={{ x: (sidebarOpen || isDesktop) ? 0 : -260 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-60 z-40 flex flex-col lg:translate-x-0"
-        style={{ background: 'rgba(8,3,18,0.96)', backdropFilter: 'blur(30px)', borderRight: '1px solid rgba(255,0,255,0.15)' }}>
+        className="fixed top-0 left-0 h-full w-60 z-40 flex flex-col lg:translate-x-0 bg-[#09090b]/95 backdrop-blur-xl border-r border-white/8">
 
-        <div className="p-5 pt-6 border-b border-[rgba(255,0,255,0.12)]">
+        <div className="p-5 pt-6 border-b border-white/8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src={LOGO} className="w-9 h-9 rounded-xl object-cover" style={{ filter: 'drop-shadow(0 0 8px #ff00ff)' }} alt="CSP" />
+              <img src={LOGO} className="w-9 h-9 rounded-xl object-cover ring-1 ring-white/10" alt="CSP" />
               <div>
-                <div className="font-display text-xs font-bold tracking-widest" style={{ color: '#ff00ff' }}>ADMIN</div>
-                <div className="font-display text-xs font-bold text-white tracking-widest">CONTROL</div>
+                <div className="font-display text-xs font-bold text-violet-400">Admin</div>
+                <div className="font-display text-xs font-semibold text-white">Control</div>
               </div>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-gray-500 hover:text-white">×</button>
+            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-500 hover:text-white">×</button>
           </div>
         </div>
 
-        <div className="mx-3 mt-3 mb-2 rounded-xl p-3"
-          style={{ background: 'rgba(255,0,255,0.08)', border: '1px solid rgba(255,0,255,0.2)' }}>
+        <div className="mx-3 mt-3 mb-2 rounded-xl p-3 bg-violet-500/8 border border-violet-500/15">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base"
               style={{ background: 'rgba(255,0,255,0.15)', border: '1px solid rgba(255,0,255,0.3)' }}>⚙️</div>
@@ -1189,11 +1185,10 @@ Ye action immediately apply hoga.`)) return;
         <nav className="flex-1 px-2 py-2 space-y-1 overflow-y-auto">
           {NAV.map(item => (
             <button key={item.id} onClick={() => { setTab(item.id); setSidebarOpen(false); }}
-              className="w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-all relative"
+              className="w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 transition-all text-sm font-medium relative"
               style={{
-                background: tab === item.id ? 'rgba(255,0,255,0.1)' : 'transparent',
-                borderLeft: tab === item.id ? '2px solid #ff00ff' : '2px solid transparent',
-                color: tab === item.id ? '#ff00ff' : '#9ca3af'
+                background: tab === item.id ? 'rgba(139,92,246,0.12)' : 'transparent',
+                color: tab === item.id ? '#c4b5fd' : '#94a3b8'
               }}>
               <span>{item.icon}</span>
               <span className="font-mono text-xs tracking-widest">{item.label}</span>
@@ -1228,29 +1223,25 @@ Ye action immediately apply hoga.`)) return;
 
       {/* ════ MAIN ════ */}
       <div className="flex-1 flex flex-col min-w-0 lg:ml-60 relative z-10">
-        <header className="sticky top-0.5 z-20 flex items-center justify-between px-4 py-3"
-          style={{ background: 'rgba(8,3,18,0.9)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,0,255,0.12)' }}>
+        <header className="sticky top-0.5 z-20 flex items-center justify-between px-4 py-3 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/8">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(p => !p)}
-              className="w-9 h-9 rounded-xl flex items-center justify-center lg:hidden"
-              style={{ background: 'rgba(255,0,255,0.08)', border: '1px solid rgba(255,0,255,0.2)', color: '#ff00ff' }}>☰</button>
+              className="w-9 h-9 rounded-xl flex items-center justify-center lg:hidden bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/15 transition-all">☰</button>
             <div>
-              <div className="font-display text-sm tracking-widest" style={{ color: '#ff00ff' }}>ADMIN CONTROL CENTER</div>
-              <div className="font-mono text-[10px] text-gray-600">CYBERSECPRO — CLASSIFIED ACCESS</div>
+              <div className="font-display text-sm font-semibold text-white">Admin Control Center</div>
+              <div className="text-[11px] text-slate-500">CYBERSECPRO — Classified Access</div>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {pendingCount > 0 && (
               <button onClick={() => setTab('upgrades')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono text-[10px] animate-pulse"
-                style={{ background: 'rgba(255,0,255,0.15)', border: '1px solid rgba(255,0,255,0.4)', color: '#ff00ff' }}>
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-medium bg-violet-500/15 border border-violet-500/30 text-violet-300">
                 🔔 {pendingCount} upgrade{pendingCount > 1 ? 's' : ''}
               </button>
             )}
             <button onClick={fetchData}
-              className="px-3 py-1.5 rounded-xl font-mono text-[10px] tracking-widest transition-all"
-              style={{ border: '1px solid rgba(255,0,255,0.25)', color: '#ff00ff', background: 'rgba(255,0,255,0.06)' }}>
-              ↻ REFRESH
+              className="px-3 py-1.5 rounded-xl text-[11px] font-medium border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 transition-all">
+              ↻ Refresh
             </button>
           </div>
         </header>
@@ -2870,27 +2861,24 @@ Ye action immediately apply hoga.`)) return;
       </div>
 
       {/* ════ MOBILE BOTTOM NAV ════ */}
-      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex"
-        style={{ background: 'rgba(8,3,18,0.97)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(255,0,255,0.15)' }}>
+      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#09090b]/95 backdrop-blur-xl border-t border-white/8">
         {NAV.map(item => (
           <button key={item.id} onClick={() => setTab(item.id)}
             className="flex-1 flex flex-col items-center justify-center py-3 gap-1 relative transition-all"
-            style={{ color: tab === item.id ? '#ff00ff' : '#6b7280' }}>
+            style={{ color: tab === item.id ? '#c4b5fd' : '#64748b' }}>
             <span className="text-xl leading-none">{item.icon}</span>
-            <span className="font-mono text-[9px] tracking-widest">{item.label}</span>
+            <span className="text-[10px] font-medium">{item.label}</span>
             {item.id === 'upgrades' && pendingCount > 0 && (
-              <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center"
-                style={{ background: '#ff00ff', color: '#fff' }}>{pendingCount}</span>
+              <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center bg-violet-500 text-white">{pendingCount}</span>
             )}
             {tab === item.id && (
-              <motion.div layoutId="admin-tab-ind" className="absolute top-0 h-0.5 w-10 rounded-full"
-                style={{ background: '#ff00ff', boxShadow: '0 0 8px #ff00ff' }} />
+              <motion.div layoutId="admin-tab-ind" className="absolute top-0 h-0.5 w-10 rounded-full bg-violet-500" />
             )}
           </button>
         ))}
-        <Link to="/dashboard" className="flex-1 flex flex-col items-center justify-center py-3 gap-1" style={{ color: '#00f5ff' }}>
+        <Link to="/dashboard" className="flex-1 flex flex-col items-center justify-center py-3 gap-1 text-brand-400">
           <span className="text-xl leading-none">←</span>
-          <span className="font-mono text-[9px] tracking-widest">USER</span>
+          <span className="text-[10px] font-medium">User</span>
         </Link>
       </nav>
     </div>

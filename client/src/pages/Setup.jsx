@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import axios from 'axios';
@@ -6,35 +6,12 @@ import toast from 'react-hot-toast';
 
 const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
 
-const MatrixRain = () => {
-  const canvasRef = useRef(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const chars = '01アイウエオCYBERSECPRO<>{}[]/\\';
-    const fontSize = 12;
-    const cols = Math.floor(canvas.width / fontSize);
-    const drops = Array(cols).fill(1);
-    const draw = () => {
-      ctx.fillStyle = 'rgba(2,4,8,0.06)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'rgba(0,245,255,0.12)';
-      ctx.font = `${fontSize}px Share Tech Mono`;
-      drops.forEach((y, i) => {
-        const char = chars[Math.floor(Math.random() * chars.length)];
-        ctx.fillText(char, i * fontSize, y * fontSize);
-        if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
-        drops[i]++;
-      });
-    };
-    const id = setInterval(draw, 50);
-    return () => clearInterval(id);
-  }, []);
-  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none opacity-30" style={{ zIndex: 0 }} />;
-};
+const AmbientBg = () => (
+  <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full opacity-30"
+      style={{ background: 'radial-gradient(ellipse, rgba(99,102,241,0.12) 0%, transparent 70%)', filter: 'blur(60px)' }} />
+  </div>
+);
 
 export default function Setup() {
   const navigate = useNavigate();
@@ -81,59 +58,56 @@ export default function Setup() {
 
   if (checking) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-[#020408]">
-        <div className="text-[#00f5ff] font-mono animate-pulse text-sm tracking-widest">CHECKING SYSTEM...</div>
+      <div className="fixed inset-0 flex items-center justify-center bg-[#09090b]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="cyber-spinner" />
+          <p className="text-sm text-slate-400 font-medium">Checking system...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#020408] flex items-center justify-center relative overflow-hidden px-4">
-      <MatrixRain />
-      <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 1 }}>
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-5" style={{ background: 'radial-gradient(circle, #00f5ff, transparent)' }} />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full opacity-5" style={{ background: 'radial-gradient(circle, #8b5cf6, transparent)' }} />
-      </div>
+    <div className="min-h-screen auth-bg flex items-center justify-center relative overflow-hidden px-4">
+      <AmbientBg />
 
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
+        transition={{ duration: 0.5 }}
         className="relative z-10 w-full max-w-md"
       >
         <div className="text-center mb-8">
-          <div className="relative inline-block mb-4">
-            <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: '#00f5ff' }} />
-            <img src={LOGO} alt="CYBERSECPRO" className="relative w-16 h-16 rounded-full object-cover border-2 border-[#00f5ff] shadow-lg" style={{ boxShadow: '0 0 20px rgba(0,245,255,0.4)' }} />
-          </div>
-          <h1 className="text-2xl font-bold tracking-widest mb-1" style={{ fontFamily: 'Share Tech Mono, monospace', color: '#00f5ff' }}>
-            FIRST-RUN SETUP
+          <img src={LOGO} alt="CYBERSECPRO"
+            className="w-14 h-14 rounded-xl object-cover mx-auto mb-5 ring-1 ring-white/10 shadow-premium" />
+          <h1 className="text-2xl font-display font-bold text-white tracking-tight mb-1">
+            First-run setup
           </h1>
-          <p className="text-xs tracking-widest" style={{ color: 'rgba(0,245,255,0.5)', fontFamily: 'Share Tech Mono, monospace' }}>
-            CREATE YOUR ADMIN ACCOUNT
+          <p className="text-sm text-slate-400">
+            Create your admin account
           </p>
-          <div className="mt-3 text-xs px-4 py-2 rounded border" style={{ color: '#fbbf24', borderColor: 'rgba(251,191,36,0.3)', background: 'rgba(251,191,36,0.05)', fontFamily: 'Share Tech Mono, monospace' }}>
-            ⚠ This page is only available once — no admin exists yet
+          <div className="mt-4 text-xs px-4 py-2.5 rounded-xl border border-amber-500/20 bg-amber-500/8 text-amber-300 font-medium">
+            This page is only available once — no admin exists yet
           </div>
         </div>
 
-        <div className="rounded-xl p-8 border" style={{ background: 'rgba(2,4,8,0.9)', borderColor: 'rgba(0,245,255,0.2)', boxShadow: '0 0 40px rgba(0,245,255,0.05)' }}>
+        <div className="glass rounded-2xl p-8">
           {done ? (
             <div className="text-center py-8">
               <div className="text-4xl mb-4">✅</div>
-              <p className="text-[#00ff88] font-mono text-sm tracking-widest">ADMIN CREATED SUCCESSFULLY</p>
-              <p className="text-[rgba(0,245,255,0.5)] text-xs mt-2 font-mono">Redirecting to login...</p>
+              <p className="text-emerald-400 font-display font-semibold text-sm">Admin created successfully</p>
+              <p className="text-slate-500 text-sm mt-2">Redirecting to login...</p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
               {[
-                { label: 'USERNAME', key: 'username', type: 'text', placeholder: 'admin_username' },
-                { label: 'EMAIL', key: 'email', type: 'email', placeholder: 'admin@yourdomain.com' },
-                { label: 'PASSWORD', key: 'password', type: 'password', placeholder: '••••••••' },
-                { label: 'CONFIRM PASSWORD', key: 'confirm', type: 'password', placeholder: '••••••••' },
+                { label: 'Username', key: 'username', type: 'text', placeholder: 'admin_username' },
+                { label: 'Email', key: 'email', type: 'email', placeholder: 'admin@yourdomain.com' },
+                { label: 'Password', key: 'password', type: 'password', placeholder: '••••••••' },
+                { label: 'Confirm password', key: 'confirm', type: 'password', placeholder: '••••••••' },
               ].map(({ label, key, type, placeholder }) => (
                 <div key={key}>
-                  <label className="block text-xs mb-2 tracking-widest" style={{ color: 'rgba(0,245,255,0.6)', fontFamily: 'Share Tech Mono, monospace' }}>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
                     {label}
                   </label>
                   <input
@@ -142,15 +116,7 @@ export default function Setup() {
                     onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
                     placeholder={placeholder}
                     required
-                    className="w-full px-4 py-3 rounded-lg text-sm outline-none transition-all"
-                    style={{
-                      background: 'rgba(0,245,255,0.03)',
-                      border: '1px solid rgba(0,245,255,0.15)',
-                      color: '#e0f7fa',
-                      fontFamily: 'Share Tech Mono, monospace',
-                    }}
-                    onFocus={e => { e.target.style.borderColor = 'rgba(0,245,255,0.5)'; e.target.style.boxShadow = '0 0 12px rgba(0,245,255,0.1)'; }}
-                    onBlur={e => { e.target.style.borderColor = 'rgba(0,245,255,0.15)'; e.target.style.boxShadow = 'none'; }}
+                    className="input-neon"
                   />
                 </div>
               ))}
@@ -158,16 +124,9 @@ export default function Setup() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-lg text-sm font-bold tracking-widest transition-all disabled:opacity-50"
-                style={{
-                  background: loading ? 'rgba(0,245,255,0.1)' : 'linear-gradient(135deg, rgba(0,245,255,0.15), rgba(139,92,246,0.15))',
-                  border: '1px solid rgba(0,245,255,0.4)',
-                  color: '#00f5ff',
-                  fontFamily: 'Share Tech Mono, monospace',
-                  boxShadow: loading ? 'none' : '0 0 20px rgba(0,245,255,0.1)',
-                }}
+                className="w-full btn-neon-solid py-3.5 font-display text-sm font-semibold disabled:opacity-50"
               >
-                {loading ? 'CREATING ADMIN...' : 'CREATE ADMIN ACCOUNT'}
+                {loading ? 'Creating admin...' : 'Create admin account'}
               </button>
             </form>
           )}
