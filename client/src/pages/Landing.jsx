@@ -273,49 +273,82 @@ export default function Landing() {
         )}
       </AnimatePresence>
 
-      {/* ── HERO — lite mobile-first layout ── */}
+      {/* ── HERO — centered background image behind text ── */}
       <section className="relative z-10 px-4 pt-24 pb-8 md:min-h-screen md:flex md:items-center md:justify-center md:text-center md:overflow-hidden md:pt-20">
 
-        {/* Desktop-only decorative elements */}
-        <div className="absolute opacity-15 hidden md:block" style={{ width: '100%', height: '100%', maxWidth: 700, maxHeight: 700, left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
-          <div style={{ width: 700, height: 700, left: '50%', top: '50%', marginLeft: -350, marginTop: -350, position: 'absolute' }}>
-            <HUDRing size={700} color="#22d3ee" duration={25} dashed />
-            <HUDRing size={560} color="#8b5cf6" duration={18} reverse />
+        {/* Centered hero image — background layer */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 overflow-hidden">
+          {/* Subtle HUD rings behind image */}
+          <div className="absolute hidden md:block opacity-10 relative" style={{ width: 'min(90vw, 520px)', height: 'min(90vw, 520px)' }}>
+            <HUDRing size={520} color="#22d3ee" duration={25} dashed />
+            <HUDRing size={420} color="#8b5cf6" duration={18} reverse />
           </div>
+
+          <motion.div
+            className="relative"
+            style={{ width: 'clamp(220px, 42vw, 420px)', height: 'clamp(220px, 42vw, 420px)' }}
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1.2, ease: 'easeOut' }}>
+            <div
+              className="w-full h-full rounded-full overflow-hidden"
+              style={{
+                opacity: 0.35,
+                filter: 'blur(0.5px)',
+                border: '1px solid rgba(34,211,238,0.15)',
+              }}>
+              <img
+                src={HERO_IMG}
+                alt=""
+                aria-hidden="true"
+                className="w-full h-full object-cover object-center"
+              />
+            </div>
+            {/* Vignette on image itself */}
+            <div
+              className="absolute inset-0 rounded-full"
+              style={{
+                background: 'radial-gradient(circle, transparent 30%, rgba(15,22,41,0.85) 75%)',
+              }}
+            />
+          </motion.div>
         </div>
 
-        <motion.div
-          className="absolute pointer-events-none hidden md:block"
+        {/* Readability overlays — keep text crisp */}
+        <div
+          className="absolute inset-0 pointer-events-none z-[1] hidden md:block"
           style={{
-            width: 'clamp(160px, 40vw, 340px)',
-            height: 'clamp(160px, 40vw, 340px)',
-            left: '50%', top: '50%',
-            transform: 'translate(-50%, -50%)'
+            background: 'radial-gradient(ellipse 70% 60% at 50% 45%, rgba(15,22,41,0.55) 0%, rgba(15,22,41,0.82) 55%, rgba(15,22,41,0.95) 100%)',
           }}
-          initial={{ opacity: 0, scale: 0.7 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.4, ease: 'easeOut' }}>
-          <div style={{
-            width: '100%', height: '100%', borderRadius: '50%', overflow: 'hidden',
-            border: '2px solid rgba(34,211,238,0.3)',
-            boxShadow: '0 8px 40px rgba(34,211,238,0.15)',
-          }}>
-            <img src={HERO_IMG} alt="CYBERSECPRO" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center' }} />
-          </div>
-        </motion.div>
+        />
+        <div
+          className="absolute inset-0 pointer-events-none z-[1] md:hidden"
+          style={{
+            background: 'linear-gradient(180deg, rgba(15,22,41,0.3) 0%, rgba(15,22,41,0.85) 60%)',
+          }}
+        />
 
-        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: 'easeOut' }}
-          className="relative z-10 max-w-5xl mx-auto w-full md:pt-[clamp(220px,55vw,380px)]">
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: 'easeOut' }}
+          className="relative z-10 max-w-5xl mx-auto w-full">
 
-          {/* Status badge — desktop only */}
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
-            className="hidden md:inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/20">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          {/* Status badge */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-[#0f1629]/60 backdrop-blur-sm border border-cyan-500/25 text-left md:mx-auto md:flex">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
             <span className="text-xs font-medium text-cyan-300">System online — Next-gen bot platform</span>
           </motion.div>
 
-          <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
-            className="font-display font-extrabold mb-4 leading-tight tracking-tight text-left md:text-center"
+          <motion.h1
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="font-display font-extrabold mb-4 leading-tight tracking-tight text-left md:text-center drop-shadow-[0_2px_12px_rgba(15,22,41,0.9)]"
             style={{ fontSize: 'clamp(1.75rem, 6vw, 4.5rem)' }}>
             <span className="md:hidden text-white block">NEXT-GEN</span>
             <span className="md:hidden text-white block">BOT PLATFORM</span>
@@ -326,34 +359,46 @@ export default function Landing() {
             </span>
           </motion.h1>
 
-          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
-            className="text-sm sm:text-base text-slate-400 mb-8 max-w-2xl leading-relaxed text-left md:text-center md:mx-auto">
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3 }}
+            className="text-sm sm:text-base text-slate-300 mb-8 max-w-2xl leading-relaxed text-left md:text-center md:mx-auto drop-shadow-[0_1px_8px_rgba(15,22,41,0.8)]">
             The ultimate control center for WhatsApp bot number management. Secure, scalable, and built for operators.
           </motion.p>
 
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
             className="flex flex-col sm:flex-row gap-3 mb-10 md:justify-center md:mb-16">
             <Link to="/signup" className="w-full sm:w-auto">
-              <motion.button whileTap={{ scale: 0.98 }}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-bold btn-neon-solid flex items-center justify-center gap-2">
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-bold btn-neon-solid flex items-center justify-center gap-2 shadow-[0_4px_24px_rgba(15,22,41,0.5)]">
                 <span>⚡</span> Initialize Free
               </motion.button>
             </Link>
             <a href="#features" className="w-full sm:w-auto">
-              <motion.button whileTap={{ scale: 0.98 }}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-semibold btn-outline-cyan">
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-semibold btn-outline-cyan bg-[#0f1629]/50 backdrop-blur-sm">
                 Explore System
               </motion.button>
             </a>
           </motion.div>
 
-          {/* Mobile highlight features — like reference */}
+          {/* Mobile highlight features */}
           <div className="md:hidden mb-6">
             <p className="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-4">System Features</p>
             <div className="space-y-3">
               {HIGHLIGHT_FEATURES.map((f, i) => (
-                <motion.div key={i} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 + i * 0.1 }}
-                  className="lite-feature-card flex items-start gap-4">
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5 + i * 0.1 }}
+                  className="lite-feature-card flex items-start gap-4 bg-[#0f1629]/70 backdrop-blur-sm">
                   <div className="text-2xl flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-cyan-500/10">{f.icon}</div>
                   <div>
                     <div className="font-display font-semibold text-sm text-white mb-0.5">{f.title}</div>
