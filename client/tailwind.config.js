@@ -5,27 +5,27 @@ export default {
     extend: {
       colors: {
         brand: {
-          50: '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
+          50: '#ecfeff',
+          100: '#cffafe',
+          200: '#a5f3fc',
+          300: '#67e8f9',
+          400: '#22d3ee',
+          500: '#06b6d4',
+          600: '#0891b2',
+          700: '#0e7490',
+          800: '#155e75',
+          900: '#164e63',
         },
         surface: {
           DEFAULT: 'rgba(255,255,255,0.03)',
           elevated: 'rgba(255,255,255,0.06)',
         },
         neon: {
-          cyan: '#6366f1',
-          blue: '#4f46e5',
+          cyan: '#22d3ee',
+          blue: '#06b6d4',
           purple: '#8b5cf6',
-          pink: '#a855f7',
-          green: '#10b981',
+          pink: '#a78bfa',
+          green: '#34d399',
         }
       },
       fontFamily: {
@@ -40,7 +40,7 @@ export default {
       boxShadow: {
         'premium': '0 4px 24px rgba(0, 0, 0, 0.35)',
         'premium-lg': '0 8px 40px rgba(0, 0, 0, 0.45)',
-        'glow': '0 4px 20px rgba(99, 102, 241, 0.25)',
+        'glow': '0 4px 20px rgba(34, 211, 238, 0.25)',
         'glow-purple': '0 4px 20px rgba(139, 92, 246, 0.25)',
       },
       animation: {
@@ -77,7 +77,7 @@ export default {
       backgroundImage: {
         'cyber-grid': 'linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)',
         'neon-gradient': 'linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7)',
-        'premium-gradient': 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+        'premium-gradient': 'linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%)',
       }
     }
   },

@@ -95,13 +95,13 @@ export default function Login() {
           <div className="mt-6 pt-5 border-t border-white/8 text-center">
             <p className="text-sm text-slate-500">
               Don't have an account?{' '}
-              <Link to="/signup" className="text-brand-400 hover:text-brand-300 font-medium transition-colors">Create account</Link>
+              <Link to="/signup" className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors">Create account</Link>
             </p>
           </div>
         </div>
 
         <div className="text-center mt-6">
-          <Link to="/" className="text-sm text-slate-500 hover:text-brand-400 transition-colors">← Back to home</Link>
+          <Link to="/" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">← Back to home</Link>
         </div>
       </motion.div>
     </div>
