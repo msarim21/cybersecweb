@@ -18,13 +18,13 @@ const MatrixRain = () => {
     const fontSize = 13;
     const cols = Math.floor(canvas.width / fontSize);
     const drops = Array(cols).fill(1);
-    const colors = ['rgba(0,245,255,0.2)', 'rgba(139,92,246,0.15)', 'rgba(0,255,136,0.18)'];
+    const colors = ['rgba(99,102,241,0.08)', 'rgba(139,92,246,0.06)', 'rgba(16,185,129,0.06)'];
     const draw = () => {
-      ctx.fillStyle = 'rgba(6,9,26,0.05)';
+      ctx.fillStyle = 'rgba(9,9,11,0.04)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drops.forEach((y, i) => {
         ctx.fillStyle = colors[i % colors.length];
-        ctx.font = `${fontSize}px Share Tech Mono`;
+        ctx.font = `${fontSize}px JetBrains Mono`;
         const char = chars[Math.floor(Math.random() * chars.length)];
         ctx.fillText(char, i * fontSize, y * fontSize);
         if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
@@ -36,7 +36,7 @@ const MatrixRain = () => {
     window.addEventListener('resize', onResize);
     return () => { clearInterval(interval); window.removeEventListener('resize', onResize); };
   }, []);
-  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-0 opacity-60" />;
+  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-0 opacity-25" />;
 };
 
 const GlitchText = ({ children, className, style }) => {
@@ -109,31 +109,30 @@ const CounterCard = ({ value, label, prefix = '', suffix = '', color = '#00f5ff'
   return (
     <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
       whileHover={{ scale: 1.05, y: -5 }}
-      className="rounded-xl text-center p-6"
+      className="rounded-2xl text-center p-6 premium-card card-hover"
       style={{
-        background: `linear-gradient(145deg, ${color}15, rgba(6,9,26,0.9))`,
-        border: `1px solid ${color}40`,
-        boxShadow: `0 0 30px ${color}20`
+        background: `linear-gradient(145deg, ${color}10, rgba(9,9,11,0.9))`,
+        border: `1px solid ${color}25`,
       }}>
       <div className="font-display text-2xl sm:text-3xl font-bold mb-1" style={{ color }}>{prefix}{count.toLocaleString()}{suffix}</div>
-      <div className="w-8 h-px mx-auto mb-2" style={{ background: color }} />
-      <div className="font-mono text-xs tracking-widest text-gray-400 uppercase">{label}</div>
+      <div className="w-8 h-px mx-auto mb-2 opacity-50" style={{ background: color }} />
+      <div className="text-xs text-slate-500 uppercase tracking-wide font-medium">{label}</div>
     </motion.div>
   );
 };
 
 const FEATURES = [
-  { icon: '⚡', title: 'Lightning Fast', desc: 'Instant number linking and management with real-time status updates across your entire network.', color: '#00f5ff' },
+  { icon: '⚡', title: 'Lightning Fast', desc: 'Instant number linking and management with real-time status updates across your entire network.', color: '#6366f1' },
   { icon: '🛡️', title: 'Military Grade Security', desc: 'End-to-end encryption, JWT authentication, and advanced threat detection protect your data.', color: '#8b5cf6' },
-  { icon: '🤖', title: 'AI-Powered Bots', desc: 'Intelligent bot management system with automated responses and smart routing algorithms.', color: '#ff00ff' },
-  { icon: '📊', title: 'Real-Time Analytics', desc: 'Holographic dashboards with live metrics, usage graphs, and performance insights.', color: '#00ff88' },
-  { icon: '🌐', title: 'Global Network', desc: 'Distributed infrastructure spanning multiple regions for ultra-low latency worldwide.', color: '#0080ff' },
-  { icon: '🔮', title: 'Quantum Encryption', desc: 'Next-generation cryptographic protocols that are resistant to future quantum attacks.', color: '#ff6600' },
+  { icon: '🤖', title: 'AI-Powered Bots', desc: 'Intelligent bot management system with automated responses and smart routing algorithms.', color: '#a855f7' },
+  { icon: '📊', title: 'Real-Time Analytics', desc: 'Holographic dashboards with live metrics, usage graphs, and performance insights.', color: '#10b981' },
+  { icon: '🌐', title: 'Global Network', desc: 'Distributed infrastructure spanning multiple regions for ultra-low latency worldwide.', color: '#4f46e5' },
+  { icon: '🔮', title: 'Quantum Encryption', desc: 'Next-generation cryptographic protocols that are resistant to future quantum attacks.', color: '#f59e0b' },
 ];
 
 const PRICING = [
   {
-    plan: 'FREE', color: '#00f5ff',
+    plan: 'FREE', color: '#6366f1',
     price: 'FREE',
     period: '24 hours',
     users: '1 User',
@@ -149,7 +148,7 @@ const PRICING = [
     cta: 'Contact for PRO', isFree: false
   },
   {
-    plan: 'ENTERPRISE', color: '#ff00ff',
+    plan: 'ENTERPRISE', color: '#a855f7',
     price: 'Contact',
     period: 'for pricing',
     users: 'Unlimited',
@@ -159,9 +158,9 @@ const PRICING = [
 ];
 
 const TESTIMONIALS = [
-  { name: 'Alex_X', role: 'Bot Developer', text: 'CYBERSECPRO transformed how I manage my bot infrastructure. The holographic UI is insane.', rating: 5, color: '#00f5ff' },
+  { name: 'Alex_X', role: 'Bot Developer', text: 'CYBERSECPRO transformed how I manage my bot infrastructure. The holographic UI is insane.', rating: 5, color: '#6366f1' },
   { name: 'CyberNinja', role: 'Tech Lead', text: 'Best SaaS platform I\'ve ever used. The security features are unmatched in every way.', rating: 5, color: '#8b5cf6' },
-  { name: 'NexusOp', role: 'System Admin', text: 'Migrated 50+ numbers seamlessly. The admin panel is a complete game changer for teams.', rating: 5, color: '#ff00ff' },
+  { name: 'NexusOp', role: 'System Admin', text: 'Migrated 50+ numbers seamlessly. The admin panel is a complete game changer for teams.', rating: 5, color: '#a855f7' },
 ];
 
 const ParticleField = () => {
@@ -170,7 +169,7 @@ const ParticleField = () => {
     x: Math.random() * 100,
     y: Math.random() * 100,
     size: Math.random() * 3 + 1,
-    color: ['#00f5ff', '#8b5cf6', '#ff00ff', '#00ff88'][Math.floor(Math.random() * 4)],
+    color: ['#6366f1', '#8b5cf6', '#a855f7', '#10b981'][Math.floor(Math.random() * 4)],
     duration: Math.random() * 8 + 4,
     delay: Math.random() * 4
   }));
@@ -195,69 +194,57 @@ export default function Landing() {
   const headerOpacity = useTransform(scrollYProgress, [0, 0.1], [1, 0.95]);
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden" style={{ background: 'linear-gradient(135deg, #04061a 0%, #0a0618 40%, #040c1e 100%)' }}>
+    <div className="relative min-h-screen overflow-x-hidden bg-[#09090b]">
       <MatrixRain />
       <ParticleField />
-      <ScanLine />
 
-      <FloatingOrb size={600} x="0%" y="-5%" color="#00f5ff" delay={0} />
+      <FloatingOrb size={600} x="0%" y="-5%" color="#6366f1" delay={0} />
       <FloatingOrb size={500} x="60%" y="0%" color="#8b5cf6" delay={2} />
-      <FloatingOrb size={400} x="75%" y="50%" color="#ff00ff" delay={4} />
-      <FloatingOrb size={500} x="-5%" y="60%" color="#0060ff" delay={1} />
-      <FloatingOrb size={350} x="35%" y="35%" color="#00ff88" delay={3} />
+      <FloatingOrb size={400} x="75%" y="50%" color="#a855f7" delay={4} />
+      <FloatingOrb size={500} x="-5%" y="60%" color="#4f46e5" delay={1} />
+      <FloatingOrb size={350} x="35%" y="35%" color="#10b981" delay={3} />
 
-      <div className="fixed inset-0 pointer-events-none z-0"
-        style={{ backgroundImage: 'linear-gradient(rgba(0,245,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0,245,255,0.04) 1px, transparent 1px)', backgroundSize: '50px 50px' }} />
+      <div className="fixed inset-0 pointer-events-none z-0 cyber-grid opacity-50" />
 
       {/* Progress Bar */}
-      <motion.div className="fixed top-0 left-0 h-0.5 z-50 origin-left"
-        style={{ scaleX: scrollYProgress, background: 'linear-gradient(90deg, #00f5ff, #8b5cf6, #ff00ff)' }} />
+      <motion.div className="fixed top-0 left-0 h-0.5 z-50 origin-left bg-gradient-to-r from-brand-500 via-violet-500 to-purple-500"
+        style={{ scaleX: scrollYProgress }} />
 
       {/* Navbar */}
       <motion.nav
-        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4"
-        style={{
-          opacity: headerOpacity,
-          background: 'rgba(4,6,26,0.85)',
-          backdropFilter: 'blur(20px)',
-          borderBottom: '1px solid rgba(0,245,255,0.15)',
-        }}>
+        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/8"
+        style={{ opacity: headerOpacity }}>
         <div className="flex items-center gap-3 absolute left-1/2 -translate-x-1/2 md:static md:translate-x-0">
           <div className="relative">
-            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 sm:w-10 sm:h-10 object-cover rounded-full" style={{ filter: 'drop-shadow(0 0 12px #00f5ff)' }} />
-            <div className="absolute inset-0 rounded-full animate-ping" style={{ border: '1px solid rgba(0,245,255,0.3)', animationDuration: '3s' }} />
+            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 sm:w-10 sm:h-10 object-cover rounded-xl ring-1 ring-white/10" />
           </div>
           <div>
-            <div className="font-display font-bold text-sm sm:text-base tracking-widest" style={{ color: '#00f5ff' }}>CYBERSECPRO</div>
-            <div className="font-mono text-xs text-gray-500 tracking-widest hidden sm:block">v4.0 ONLINE</div>
+            <div className="font-display font-bold text-sm sm:text-base text-white tracking-tight">CYBERSECPRO</div>
+            <div className="text-xs text-slate-500 hidden sm:block">v4.0 Online</div>
           </div>
         </div>
         <div className="hidden md:flex items-center gap-8">
           {['Features', 'Pricing', 'Testimonials'].map(item => (
             <a key={item} href={`#${item.toLowerCase()}`}
-              className="font-mono text-xs tracking-widest text-gray-400 hover:text-[#00f5ff] transition-all duration-300 uppercase relative group">
+              className="text-sm font-medium text-slate-400 hover:text-white transition-colors relative group">
               {item}
-              <span className="absolute -bottom-1 left-0 w-0 h-px bg-[#00f5ff] group-hover:w-full transition-all duration-300" />
+              <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-brand-500 group-hover:w-full transition-all duration-300 rounded-full" />
             </a>
           ))}
         </div>
         <div className="hidden md:flex gap-3">
           <Link to="/login">
-            <button className="font-display text-xs px-5 py-2 rounded tracking-widest transition-all duration-300"
-              style={{ border: '1px solid rgba(0,245,255,0.5)', color: '#00f5ff', background: 'transparent' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,245,255,0.1)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              LOGIN
+            <button className="text-sm font-medium px-5 py-2.5 rounded-xl border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 transition-all">
+              Login
             </button>
           </Link>
           <Link to="/signup">
-            <button className="font-display text-xs px-5 py-2 rounded tracking-widest transition-all duration-300"
-              style={{ background: 'linear-gradient(135deg, #00f5ff, #0080ff)', color: '#04061a', boxShadow: '0 0 20px rgba(0,245,255,0.4)' }}>
-              SIGNUP
+            <button className="text-sm font-semibold px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-400 text-white shadow-glow transition-all">
+              Sign up
             </button>
           </Link>
         </div>
-        <button onClick={() => setMenuOpen(p => !p)} className="md:hidden text-2xl" style={{ color: '#00f5ff' }}>
+        <button onClick={() => setMenuOpen(p => !p)} className="md:hidden text-xl text-slate-300 hover:text-white">
           {menuOpen ? '✕' : '☰'}
         </button>
       </motion.nav>
@@ -266,17 +253,16 @@ export default function Landing() {
       <AnimatePresence>
         {menuOpen && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            className="fixed top-[65px] left-0 right-0 z-40 md:hidden px-4 py-4 flex flex-col gap-4"
-            style={{ background: 'rgba(4,6,26,0.97)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,245,255,0.15)' }}>
+            className="fixed top-[65px] left-0 right-0 z-40 md:hidden px-4 py-4 flex flex-col gap-3 bg-[#09090b]/95 backdrop-blur-xl border-b border-white/8">
             {['Features', 'Pricing', 'Testimonials'].map(item => (
               <a key={item} href={`#${item.toLowerCase()}`} onClick={() => setMenuOpen(false)}
-                className="font-mono text-sm tracking-widest text-gray-300 hover:text-[#00f5ff] transition-colors uppercase py-2 border-b border-[rgba(0,245,255,0.1)]">{item}</a>
+                className="text-sm font-medium text-slate-300 hover:text-white transition-colors py-2 border-b border-white/5">{item}</a>
             ))}
             <Link to="/login" onClick={() => setMenuOpen(false)}>
-              <button className="w-full py-3 rounded font-display text-sm tracking-widest" style={{ border: '1px solid rgba(0,245,255,0.5)', color: '#00f5ff' }}>LOGIN</button>
+              <button className="w-full py-3 rounded-xl text-sm font-medium border border-white/10 text-slate-300">Login</button>
             </Link>
             <Link to="/signup" onClick={() => setMenuOpen(false)}>
-              <button className="w-full py-3 rounded font-display text-sm tracking-widest" style={{ background: 'linear-gradient(135deg, #00f5ff, #0080ff)', color: '#04061a' }}>SIGNUP</button>
+              <button className="w-full py-3 rounded-xl text-sm font-semibold bg-brand-500 text-white">Sign up</button>
             </Link>
           </motion.div>
         )}
@@ -285,21 +271,16 @@ export default function Landing() {
       {/* ── HERO ── */}
       <section className="relative z-10 min-h-screen flex items-center justify-center text-center px-4 overflow-hidden pt-20">
 
-        {/* HUD rings — visible on all screens, scaled for mobile */}
-        <div className="absolute" style={{ width: '100%', height: '100%', maxWidth: 700, maxHeight: 700, left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
+        {/* HUD rings — subtle decorative element */}
+        <div className="absolute opacity-20" style={{ width: '100%', height: '100%', maxWidth: 700, maxHeight: 700, left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
           <div className="hidden sm:block" style={{ width: 700, height: 700, left: '50%', top: '50%', marginLeft: -350, marginTop: -350, position: 'absolute' }}>
-            <HUDRing size={700} color="#00f5ff" duration={25} dashed />
+            <HUDRing size={700} color="#6366f1" duration={25} dashed />
             <HUDRing size={560} color="#8b5cf6" duration={18} reverse />
-            <HUDRing size={420} color="#ff00ff" duration={12} dashed />
-            <HUDRing size={280} color="#00f5ff" duration={8} reverse />
-            <HUDRing size={140} color="#8b5cf6" duration={5} />
+            <HUDRing size={420} color="#a855f7" duration={12} dashed />
           </div>
-          {/* Mobile HUD rings — smaller */}
           <div className="sm:hidden" style={{ width: 280, height: 280, left: '50%', top: '50%', marginLeft: -140, marginTop: -140, position: 'absolute' }}>
-            <HUDRing size={280} color="#00f5ff" duration={25} dashed />
+            <HUDRing size={280} color="#6366f1" duration={25} dashed />
             <HUDRing size={220} color="#8b5cf6" duration={18} reverse />
-            <HUDRing size={160} color="#ff00ff" duration={12} dashed />
-            <HUDRing size={100} color="#00f5ff" duration={8} reverse />
           </div>
         </div>
 
@@ -321,8 +302,8 @@ export default function Landing() {
             height: '100%',
             borderRadius: '50%',
             overflow: 'hidden',
-            border: '2px solid rgba(0,245,255,0.5)',
-            boxShadow: '0 0 60px rgba(0,245,255,0.4), 0 0 120px rgba(139,92,246,0.2), inset 0 0 40px rgba(0,245,255,0.1)',
+            border: '2px solid rgba(99,102,241,0.3)',
+            boxShadow: '0 8px 40px rgba(99,102,241,0.2), 0 0 0 1px rgba(255,255,255,0.05)',
           }}>
             <img
               src={HERO_IMG}
@@ -345,50 +326,47 @@ export default function Landing() {
         <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1.2, ease: 'easeOut' }}
           className="relative z-10 max-w-5xl mx-auto w-full" style={{ paddingTop: 'clamp(220px, 55vw, 380px)' }}>
 
-          <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
-            className="inline-flex items-center gap-2 mb-8 px-5 py-2.5 rounded-full"
-            style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.3)', boxShadow: '0 0 20px rgba(0,245,255,0.1)' }}>
-            <motion.div className="w-2 h-2 rounded-full bg-[#00f5ff]" animate={{ opacity: [1, 0, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} />
-            <span className="font-mono text-xs tracking-widest text-[#00f5ff]">SYSTEM ONLINE — NEXT-GEN BOT PLATFORM</span>
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
+            className="inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-brand-500/10 border border-brand-500/20">
+            <motion.div className="w-2 h-2 rounded-full bg-emerald-500" animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 2 }} />
+            <span className="text-xs font-medium text-brand-300">System online — Next-gen bot platform</span>
           </motion.div>
 
           <motion.h1 initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-            className="font-display font-black mb-6 leading-none"
-            style={{ fontSize: 'clamp(3rem, 9vw, 8rem)' }}>
-            <GlitchText className="text-[#00f5ff]" style={{ textShadow: '0 0 40px rgba(0,245,255,0.6), 0 0 80px rgba(0,245,255,0.3)' }}>CYBER</GlitchText>
-            <span className="text-white" style={{ textShadow: '0 0 20px rgba(255,255,255,0.2)' }}>SEC</span>
-            <GlitchText style={{ color: '#8b5cf6', textShadow: '0 0 40px rgba(139,92,246,0.6)' }}>PRO</GlitchText>
+            className="font-display font-extrabold mb-6 leading-tight tracking-tight"
+            style={{ fontSize: 'clamp(2.5rem, 8vw, 6rem)' }}>
+            <GlitchText className="text-brand-400">CYBER</GlitchText>
+            <span className="text-white">SEC</span>
+            <GlitchText className="text-violet-400">PRO</GlitchText>
           </motion.h1>
 
           <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
-            className="font-mono text-sm sm:text-base text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed tracking-wide">
+            className="text-base sm:text-lg text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
             Next-generation WhatsApp bot management platform. Link numbers, manage sessions,
-            and control your entire bot network from one cyberpunk command center.
+            and control your entire bot network from one professional command center.
           </motion.p>
 
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}
             className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
             <Link to="/signup">
-              <motion.button whileHover={{ scale: 1.06, boxShadow: '0 0 50px rgba(0,245,255,0.5)' }} whileTap={{ scale: 0.95 }}
-                className="px-10 py-4 rounded font-display text-sm tracking-widest"
-                style={{ background: 'linear-gradient(135deg, #00f5ff, #0060ff)', color: '#04061a' }}>
-                ⚡ INITIALIZE FREE
+              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                className="px-8 py-3.5 rounded-xl font-display text-sm font-semibold bg-brand-500 hover:bg-brand-400 text-white shadow-glow">
+                Get started free
               </motion.button>
             </Link>
             <a href="#features">
-              <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.95 }}
-                className="px-10 py-4 rounded font-display text-sm tracking-widest"
-                style={{ border: '1px solid rgba(139,92,246,0.6)', color: '#8b5cf6', background: 'rgba(139,92,246,0.08)' }}>
-                EXPLORE SYSTEM →
+              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                className="px-8 py-3.5 rounded-xl font-display text-sm font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 transition-all">
+                Explore features →
               </motion.button>
             </a>
           </motion.div>
 
           {/* Stats row */}
           <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
-            <CounterCard value="1000+" label="Active Users" suffix="+" color="#00f5ff" />
+            <CounterCard value="1000+" label="Active Users" suffix="+" color="#6366f1" />
             <CounterCard value="50000+" label="Bot Sessions" suffix="+" color="#8b5cf6" />
-            <CounterCard value="99%" label="Uptime" suffix="%" color="#00ff88" />
+            <CounterCard value="99%" label="Uptime" suffix="%" color="#10b981" />
           </div>
         </motion.div>
       </section>
@@ -397,12 +375,11 @@ export default function Landing() {
       <section id="features" className="relative z-10 py-16 sm:py-24 px-4">
         <div className="max-w-6xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
-            <p className="font-mono text-xs tracking-widest text-gray-500 mb-3 uppercase">// Core Modules</p>
-            <h2 className="font-display font-bold text-3xl sm:text-5xl mb-4"
-              style={{ background: 'linear-gradient(135deg, #00f5ff, #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              SYSTEM FEATURES
+            <p className="text-xs font-semibold text-brand-400 mb-3 uppercase tracking-wider">Core modules</p>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl mb-4 gradient-text">
+              System Features
             </h2>
-            <div className="mt-3 h-px max-w-xs mx-auto" style={{ background: 'linear-gradient(90deg, transparent, #00f5ff, transparent)' }} />
+            <div className="mt-3 h-px max-w-xs mx-auto bg-gradient-to-r from-transparent via-brand-500/50 to-transparent" />
           </motion.div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
@@ -410,12 +387,11 @@ export default function Landing() {
                 initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}
                 whileHover={{ y: -8, scale: 1.02 }}
                 onHoverStart={() => setActiveFeature(i)} onHoverEnd={() => setActiveFeature(null)}
-                className="rounded-xl p-6 cursor-default relative overflow-hidden"
+                className="rounded-2xl p-6 cursor-default relative overflow-hidden premium-card card-hover"
                 style={{
-                  background: `linear-gradient(145deg, ${f.color}12, rgba(4,6,26,0.95))`,
-                  border: `1px solid ${f.color}${activeFeature === i ? '60' : '25'}`,
-                  boxShadow: activeFeature === i ? `0 0 40px ${f.color}25` : 'none',
-                  transition: 'all 0.3s ease'
+                  background: `linear-gradient(145deg, ${f.color}08, rgba(9,9,11,0.95))`,
+                  border: `1px solid ${f.color}${activeFeature === i ? '40' : '18'}`,
+                  boxShadow: activeFeature === i ? `0 8px 32px ${f.color}15` : undefined,
                 }}>
                 <div className="text-3xl mb-4">{f.icon}</div>
                 <div className="font-display text-sm font-bold tracking-wider mb-2" style={{ color: f.color }}>{f.title}</div>
@@ -434,19 +410,19 @@ export default function Landing() {
       <section id="capabilities" className="relative z-10 py-16 sm:py-24 px-4">
         <div className="max-w-6xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
-            <p className="font-mono text-xs tracking-widest text-gray-500 mb-3 uppercase">// Bot Capabilities</p>
-            <h2 className="font-display font-bold text-3xl sm:text-5xl mb-4"
-              style={{ background: 'linear-gradient(135deg, #00ff88, #00f5ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              WHAT CYBERSECPRO CAN DO
+            <p className="text-xs font-semibold text-emerald-400 mb-3 uppercase tracking-wider">Bot capabilities</p>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl mb-4"
+              style={{ background: 'linear-gradient(135deg, #10b981, #6366f1)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              What CYBERSECPRO Can Do
             </h2>
-            <div className="mt-3 h-px max-w-xs mx-auto" style={{ background: 'linear-gradient(90deg, transparent, #00ff88, transparent)' }} />
+            <div className="mt-3 h-px max-w-xs mx-auto bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
           </motion.div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
               {
                 icon: '🤖',
-                color: '#00f5ff',
+                color: '#6366f1',
                 title: 'AI Chat',
                 desc: 'Talk directly to GPT & Gemini inside WhatsApp. Get answers, generate content, solve problems — all without leaving the app.',
                 tag: 'GPT · GEMINI · AI IMAGE',
@@ -460,28 +436,28 @@ export default function Landing() {
               },
               {
                 icon: '👁️',
-                color: '#00ff88',
+                color: '#10b981',
                 title: 'Deleted Message Viewer',
                 desc: 'Never miss a deleted message again. The bot automatically captures and shows you messages before they disappear.',
                 tag: 'AUTO CAPTURE · INSTANT NOTIFY',
               },
               {
                 icon: '📸',
-                color: '#ff00ff',
+                color: '#a855f7',
                 title: 'View Once Saver',
                 desc: "WhatsApp's one-time view photos and videos are automatically saved — so you never lose them after a single view.",
                 tag: 'PHOTOS · VIDEOS · AUTO SAVE',
               },
               {
                 icon: '📥',
-                color: '#ff6600',
+                color: '#f59e0b',
                 title: 'Status Downloader',
                 desc: "Reply to anyone's WhatsApp status and the bot instantly downloads the photo or video for you — no extra steps.",
                 tag: 'PHOTO · VIDEO · ONE TAP',
               },
               {
                 icon: '⚡',
-                color: '#ffd700',
+                color: '#eab308',
                 title: '700+ Features',
                 desc: 'Group management, sticker maker, bug tools, utility commands, auto-replies, anti-spam and hundreds more built-in tools.',
                 tag: 'GROUP · TOOLS · STICKERS · MORE',
@@ -536,11 +512,12 @@ export default function Landing() {
       <section id="pricing" className="relative z-10 py-16 sm:py-24 px-4">
         <div className="max-w-5xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
-            <p className="font-mono text-xs tracking-widest text-gray-500 mb-3 uppercase">// Access Tiers</p>
-            <h2 className="font-display font-bold text-3xl sm:text-5xl mb-4" style={{ background: 'linear-gradient(135deg, #8b5cf6, #ff00ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              PRICING MATRIX
+            <p className="text-xs font-semibold text-violet-400 mb-3 uppercase tracking-wider">Access tiers</p>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl mb-4"
+              style={{ background: 'linear-gradient(135deg, #8b5cf6, #a855f7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              Pricing
             </h2>
-            <div className="mt-3 h-px max-w-xs mx-auto" style={{ background: 'linear-gradient(90deg, transparent, #8b5cf6, transparent)' }} />
+            <div className="mt-3 h-px max-w-xs mx-auto bg-gradient-to-r from-transparent via-violet-500/50 to-transparent" />
           </motion.div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             {PRICING.map((tier, i) => (
@@ -619,9 +596,9 @@ export default function Landing() {
       <section id="testimonials" className="relative z-10 py-16 sm:py-24 px-4">
         <div className="max-w-5xl mx-auto">
           <motion.div initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} className="text-center mb-14">
-            <p className="font-mono text-xs tracking-widest text-gray-500 mb-3 uppercase">// User Logs</p>
-            <h2 className="font-display font-bold text-3xl sm:text-5xl" style={{ background: 'linear-gradient(135deg, #00f5ff, #ff00ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              TESTIMONIALS
+            <p className="text-xs font-semibold text-brand-400 mb-3 uppercase tracking-wider">User reviews</p>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl gradient-text">
+              Testimonials
             </h2>
           </motion.div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -646,62 +623,55 @@ export default function Landing() {
 
       {/* CTA */}
       <section className="relative z-10 py-16 sm:py-24 px-4">
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }}
-          className="max-w-4xl mx-auto text-center rounded-2xl p-10 sm:p-16 relative overflow-hidden"
-          style={{ background: 'linear-gradient(145deg, rgba(0,245,255,0.08), rgba(139,92,246,0.08))', border: '1px solid rgba(0,245,255,0.25)', boxShadow: '0 0 80px rgba(0,245,255,0.1)' }}>
-          <div className="absolute inset-0 opacity-20" style={{ background: 'radial-gradient(circle at 30% 50%, rgba(0,245,255,0.3) 0%, transparent 50%), radial-gradient(circle at 70% 50%, rgba(139,92,246,0.3) 0%, transparent 50%)' }} />
-          <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
-            className="absolute right-10 top-10 w-20 h-20 rounded-full hidden sm:block"
-            style={{ border: '1px solid rgba(0,245,255,0.2)' }} />
-          <h2 className="font-display font-black text-3xl sm:text-5xl mb-6 relative z-10"
-            style={{ background: 'linear-gradient(135deg, #00f5ff, #8b5cf6, #ff00ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            READY TO ENTER?
+        <motion.div initial={{ opacity: 0, scale: 0.98 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }}
+          className="max-w-4xl mx-auto text-center rounded-3xl p-10 sm:p-16 relative overflow-hidden premium-card"
+          style={{ background: 'linear-gradient(145deg, rgba(99,102,241,0.08), rgba(139,92,246,0.06))', border: '1px solid rgba(99,102,241,0.2)' }}>
+          <div className="absolute inset-0 opacity-30" style={{ background: 'radial-gradient(circle at 30% 50%, rgba(99,102,241,0.15) 0%, transparent 50%), radial-gradient(circle at 70% 50%, rgba(139,92,246,0.1) 0%, transparent 50%)' }} />
+          <h2 className="font-display font-bold text-3xl sm:text-4xl mb-6 relative z-10 gradient-text">
+            Ready to get started?
           </h2>
-          <p className="font-mono text-gray-400 text-sm mb-10 tracking-wider relative z-10">
+          <p className="text-slate-400 text-base mb-10 relative z-10 max-w-lg mx-auto">
             Join thousands of operators using CYBERSECPRO to manage their bot infrastructure
           </p>
           <Link to="/signup">
-            <motion.button whileHover={{ scale: 1.06, boxShadow: '0 0 50px rgba(0,245,255,0.5)' }} whileTap={{ scale: 0.95 }}
-              className="px-12 py-4 rounded font-display text-sm tracking-widest relative z-10"
-              style={{ background: 'linear-gradient(135deg, #00f5ff, #0060ff)', color: '#04061a' }}>
-              ⚡ GET STARTED FREE
+            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+              className="px-10 py-3.5 rounded-xl font-display text-sm font-semibold bg-brand-500 hover:bg-brand-400 text-white shadow-glow relative z-10">
+              Get started free
             </motion.button>
           </Link>
         </motion.div>
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 py-12 px-4 sm:px-8"
-        style={{ background: 'rgba(4,6,26,0.95)', borderTop: '1px solid rgba(0,245,255,0.15)' }}>
+      <footer className="relative z-10 py-12 px-4 sm:px-8 bg-[#09090b]/90 border-t border-white/8">
         <div className="max-w-6xl mx-auto flex flex-col items-center gap-6">
           <div className="flex items-center gap-3">
-            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 object-cover rounded-full" style={{ filter: 'drop-shadow(0 0 10px #00f5ff)' }} />
-            <span className="font-display text-base tracking-widest" style={{ color: '#00f5ff' }}>CYBERSECPRO</span>
+            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 object-cover rounded-xl ring-1 ring-white/10" />
+            <span className="font-display text-base font-semibold text-white">CYBERSECPRO</span>
           </div>
-          <div className="h-px w-40" style={{ background: 'linear-gradient(90deg, transparent, rgba(0,245,255,0.4), transparent)' }} />
+          <div className="h-px w-40 bg-gradient-to-r from-transparent via-white/10 to-transparent" />
           <div className="text-center">
-            <div className="font-mono text-sm text-gray-300 mb-1">
-              Created by <span className="font-bold" style={{ color: '#00f5ff' }}>CYBERSECPRO</span>
+            <div className="text-sm text-slate-400 mb-1">
+              Created by <span className="font-semibold text-white">CYBERSECPRO</span>
             </div>
-            <div className="font-mono text-xs text-gray-500">
+            <div className="text-xs text-slate-500">
               For Premium Plans:{' '}
               <a href={`https://wa.me/${CONTACT.replace(/\+/g, '')}`} target="_blank" rel="noreferrer"
-                className="transition-colors" style={{ color: '#8b5cf6' }}>{CONTACT}</a>
+                className="text-brand-400 hover:text-brand-300 transition-colors">{CONTACT}</a>
             </div>
           </div>
           <div className="flex gap-6">
-            <Link to="/login" className="font-mono text-xs text-gray-400 hover:text-[#00f5ff] transition-colors">LOGIN</Link>
-            <span className="text-gray-700">|</span>
-            <Link to="/signup" className="font-mono text-xs text-gray-400 hover:text-[#00f5ff] transition-colors">SIGNUP</Link>
+            <Link to="/login" className="text-sm text-slate-500 hover:text-white transition-colors">Login</Link>
+            <span className="text-slate-700">|</span>
+            <Link to="/signup" className="text-sm text-slate-500 hover:text-white transition-colors">Sign up</Link>
           </div>
-          <div className="font-mono text-xs text-gray-600 text-center">
-            © 2026 CYBERSECPRO — FUTURISTIC BOT MANAGEMENT SYSTEM
+          <div className="text-xs text-slate-600 text-center">
+            © 2026 CYBERSECPRO — Professional Bot Management Platform
           </div>
-          <div className="font-mono text-xs text-center" style={{ color: 'rgba(0,245,255,0.35)' }}>
+          <div className="text-xs text-center text-slate-500">
             Web by{' '}
             <a href={INSTAGRAM} target="_blank" rel="noreferrer"
-              className="transition-colors duration-200 hover:text-[#00f5ff]"
-              style={{ color: 'rgba(0,245,255,0.6)' }}>
+              className="text-brand-400 hover:text-brand-300 transition-colors">
               cyber_sec_pro
             </a>
           </div>

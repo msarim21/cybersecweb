@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import axios from 'axios';
@@ -7,35 +7,14 @@ import { useAuth } from '../contexts/AuthContext';
 
 const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
 
-const MatrixRain = () => {
-  const canvasRef = useRef(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const chars = '01アCSP<>{}CYBERSECPRO[]=/\\';
-    const fontSize = 12;
-    const cols = Math.floor(canvas.width / fontSize);
-    const drops = Array(cols).fill(1);
-    const draw = () => {
-      ctx.fillStyle = 'rgba(2,4,8,0.06)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'rgba(139,92,246,0.12)';
-      ctx.font = `${fontSize}px Share Tech Mono`;
-      drops.forEach((y, i) => {
-        const char = chars[Math.floor(Math.random() * chars.length)];
-        ctx.fillText(char, i * fontSize, y * fontSize);
-        if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
-        drops[i]++;
-      });
-    };
-    const interval = setInterval(draw, 60);
-    return () => clearInterval(interval);
-  }, []);
-  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-0" />;
-};
+const AmbientBg = () => (
+  <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full opacity-30"
+      style={{ background: 'radial-gradient(ellipse, rgba(139,92,246,0.12) 0%, transparent 70%)', filter: 'blur(60px)' }} />
+    <div className="absolute bottom-0 left-0 w-[400px] h-[400px] rounded-full opacity-20"
+      style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.1) 0%, transparent 70%)', filter: 'blur(50px)' }} />
+  </div>
+);
 
 const PasswordStrength = ({ password }) => {
   const getStrength = () => {
@@ -47,17 +26,17 @@ const PasswordStrength = ({ password }) => {
     return score;
   };
   const strength = getStrength();
-  const labels = ['', 'WEAK', 'FAIR', 'GOOD', 'STRONG'];
-  const colors = ['', '#ff4444', '#ffaa00', '#00f5ff', '#00ff88'];
+  const labels = ['', 'Weak', 'Fair', 'Good', 'Strong'];
+  const colors = ['', '#ef4444', '#f59e0b', '#6366f1', '#10b981'];
   if (!password) return null;
   return (
     <div className="mt-2">
       <div className="flex gap-1">
         {[1,2,3,4].map(i => (
-          <div key={i} className="h-1 flex-1 rounded" style={{ background: i <= strength ? colors[strength] : 'rgba(255,255,255,0.1)', transition: 'all 0.3s' }} />
+          <div key={i} className="h-1 flex-1 rounded-full" style={{ background: i <= strength ? colors[strength] : 'rgba(255,255,255,0.08)', transition: 'all 0.3s' }} />
         ))}
       </div>
-      <span className="font-mono text-xs mt-1 block" style={{ color: colors[strength] }}>{labels[strength]}</span>
+      <span className="text-xs mt-1.5 block font-medium" style={{ color: colors[strength] }}>{labels[strength]}</span>
     </div>
   );
 };
@@ -100,147 +79,134 @@ export default function Signup() {
   };
 
   return (
-    <div className="min-h-screen bg-[#020408] flex items-center justify-center relative overflow-hidden scan-lines py-8">
-      <MatrixRain />
-      <div className="fixed inset-0 cyber-grid opacity-30 pointer-events-none z-0" />
+    <div className="min-h-screen auth-bg flex items-center justify-center relative overflow-hidden py-8">
+      <AmbientBg />
+      <div className="fixed inset-0 cyber-grid opacity-40 pointer-events-none z-0" />
 
-      <div className="fixed top-1/3 right-1/4 w-72 h-72 rounded-full pointer-events-none z-0" style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-      <div className="fixed bottom-1/3 left-1/4 w-72 h-72 rounded-full pointer-events-none z-0" style={{ background: 'radial-gradient(circle, rgba(255,0,255,0.04) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-
-      <motion.div initial={{ opacity: 0, y: 30, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.6 }}
+      <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: 'easeOut' }}
         className="relative z-10 w-full max-w-md mx-4">
 
         <div className="text-center mb-8">
-          <motion.img src={LOGO} alt="CYBERSECPRO" animate={{ filter: ['drop-shadow(0 0 8px #8b5cf6)', 'drop-shadow(0 0 20px #8b5cf6)', 'drop-shadow(0 0 8px #8b5cf6)'] }} transition={{ duration: 3, repeat: Infinity }}
-            className="w-16 h-16 object-contain rounded mx-auto mb-4" />
-          <h1 className="font-display font-bold text-2xl tracking-widest gradient-text">CYBERSECPRO</h1>
-          <p className="font-mono text-xs text-gray-600 tracking-widest mt-1">SIGNUP</p>
+          <img src={LOGO} alt="CYBERSECPRO"
+            className="w-14 h-14 object-contain rounded-xl mx-auto mb-5 ring-1 ring-white/10 shadow-premium" />
+          <h1 className="font-display font-bold text-2xl text-white tracking-tight">Create your account</h1>
+          <p className="text-sm text-slate-400 mt-2">Get started with CYBERSECPRO for free</p>
         </div>
 
-        <div className="glass neon-border-purple rounded-xl p-8 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-[#8b5cf6]" />
-          <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-[#8b5cf6]" />
-          <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-[#8b5cf6]" />
-          <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-[#8b5cf6]" />
-
+        <div className="glass-purple rounded-2xl p-8">
           <div className="mb-6 flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-[#8b5cf6] animate-pulse" style={{ boxShadow: '0 0 6px #8b5cf6' }} />
-            <span className="font-mono text-xs text-gray-500 tracking-widest">CREATE NEW OPERATOR</span>
+            <div className="w-2 h-2 rounded-full bg-violet-500" />
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">New operator registration</span>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="font-mono text-xs text-[#8b5cf6] tracking-widest block mb-2">USERNAME</label>
+              <label className="text-sm font-medium text-slate-300 block mb-2">Username</label>
               <input name="username" type="text" value={formData.username} onChange={handleChange}
-                className="input-neon rounded w-full" placeholder="operator_name" style={{ borderColor: 'rgba(139,92,246,0.3)' }} />
+                className="input-neon" placeholder="operator_name" />
             </div>
             <div>
-              <label className="font-mono text-xs text-[#8b5cf6] tracking-widest block mb-2">EMAIL ADDRESS</label>
+              <label className="text-sm font-medium text-slate-300 block mb-2">Email address</label>
               <input name="email" type="email" value={formData.email} onChange={handleChange}
-                className="input-neon rounded w-full" placeholder="operator@cybersec.pro" style={{ borderColor: 'rgba(139,92,246,0.3)' }} />
+                className="input-neon" placeholder="operator@cybersec.pro" />
             </div>
             <div>
-              <label className="font-mono text-xs text-[#8b5cf6] tracking-widest block mb-2">PASSWORD</label>
+              <label className="text-sm font-medium text-slate-300 block mb-2">Password</label>
               <div className="relative">
                 <input name="password" type={showPass ? 'text' : 'password'} value={formData.password} onChange={handleChange}
-                  className="input-neon rounded w-full pr-12" placeholder="••••••••" style={{ borderColor: 'rgba(139,92,246,0.3)' }} />
+                  className="input-neon pr-16" placeholder="••••••••" />
                 <button type="button" onClick={() => setShowPass(p => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-[#8b5cf6] transition-colors font-mono text-xs">
-                  {showPass ? 'HIDE' : 'SHOW'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-violet-400 transition-colors text-xs font-medium">
+                  {showPass ? 'Hide' : 'Show'}
                 </button>
               </div>
               <PasswordStrength password={formData.password} />
             </div>
             <div>
-              <label className="font-mono text-xs text-[#8b5cf6] tracking-widest block mb-2">CONFIRM PASSWORD</label>
+              <label className="text-sm font-medium text-slate-300 block mb-2">Confirm password</label>
               <input name="confirmPassword" type="password" value={formData.confirmPassword} onChange={handleChange}
-                className="input-neon rounded w-full" placeholder="••••••••"
-                style={{ borderColor: formData.confirmPassword && formData.password !== formData.confirmPassword ? 'rgba(255,68,68,0.5)' : 'rgba(139,92,246,0.3)' }} />
+                className="input-neon" placeholder="••••••••"
+                style={{ borderColor: formData.confirmPassword && formData.password !== formData.confirmPassword ? 'rgba(239,68,68,0.5)' : undefined }} />
               {formData.confirmPassword && formData.password !== formData.confirmPassword && (
-                <span className="font-mono text-xs text-red-400 mt-1 block">PASSWORDS DO NOT MATCH</span>
+                <span className="text-xs text-red-400 mt-1.5 block font-medium">Passwords do not match</span>
               )}
             </div>
 
-            <motion.button type="submit" disabled={loading} whileHover={{ scale: loading ? 1 : 1.02 }} whileTap={{ scale: loading ? 1 : 0.98 }}
-              className="w-full py-3 rounded font-display text-sm tracking-widest relative overflow-hidden mt-2"
-              style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(255,0,255,0.2))', border: '1px solid rgba(139,92,246,0.5)', color: '#e0f7fa', boxShadow: '0 0 20px rgba(139,92,246,0.2)' }}>
+            <motion.button type="submit" disabled={loading} whileHover={{ scale: loading ? 1 : 1.01 }} whileTap={{ scale: loading ? 1 : 0.99 }}
+              className="w-full py-3.5 rounded-xl font-display text-sm font-semibold text-white mt-2 transition-all"
+              style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', boxShadow: '0 4px 16px rgba(139,92,246,0.35)' }}>
               {loading ? (
                 <span className="flex items-center justify-center gap-3">
-                  <div className="cyber-spinner w-5 h-5" style={{ borderTopColor: '#8b5cf6' }} />
-                  INITIALIZING...
+                  <div className="cyber-spinner w-5 h-5" style={{ borderTopColor: '#fff' }} />
+                  Creating account...
                 </span>
-              ) : '🔮 CREATE ACCOUNT'}
+              ) : 'Create account'}
             </motion.button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-[rgba(139,92,246,0.1)] text-center">
-            <p className="font-mono text-xs text-gray-600">
-              ALREADY REGISTERED?{' '}
-              <Link to="/login" className="text-[#8b5cf6] hover:text-white transition-colors tracking-widest">ACCESS TERMINAL</Link>
+          <div className="mt-6 pt-5 border-t border-white/8 text-center">
+            <p className="text-sm text-slate-500">
+              Already registered?{' '}
+              <Link to="/login" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">Sign in</Link>
             </p>
           </div>
         </div>
 
-        {/* ── Upgrade to Pro / Enterprise ── */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
-          className="mt-5 rounded-2xl overflow-hidden"
-          style={{ background: 'rgba(10,20,60,0.55)', backdropFilter: 'blur(24px)', border: '1px solid rgba(139,92,246,0.35)' }}>
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+          className="mt-5 glass-purple rounded-2xl overflow-hidden">
 
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'rgba(139,92,246,0.15)' }}>
-            <div className="font-mono text-[10px] tracking-widest text-gray-500 mb-1">WANT MORE POWER?</div>
-            <h2 className="font-display font-bold text-sm tracking-widest" style={{ color: '#8b5cf6' }}>⚡ UPGRADE TO PRO OR ENTERPRISE</h2>
+          <div className="px-6 py-4 border-b border-white/8">
+            <div className="text-xs font-medium text-slate-500 mb-1 uppercase tracking-wide">Want more power?</div>
+            <h2 className="font-display font-semibold text-sm text-violet-300">Upgrade to Pro or Enterprise</h2>
           </div>
 
           <div className="grid grid-cols-2 gap-0">
-            {/* Pro */}
-            <div className="p-4 border-r" style={{ borderColor: 'rgba(139,92,246,0.15)' }}>
+            <div className="p-4 border-r border-white/8">
               <div className="text-2xl mb-2">⚡</div>
-              <div className="font-display text-xs font-bold tracking-widest mb-2" style={{ color: '#8b5cf6' }}>PRO</div>
-              <ul className="space-y-1 mb-3">
+              <div className="font-display text-xs font-bold text-violet-400 mb-2">PRO</div>
+              <ul className="space-y-1.5 mb-3">
                 {['5 WhatsApp Numbers', 'All bot features', 'Priority support', 'No trial limit'].map(f => (
-                  <li key={f} className="font-mono text-[9px] text-gray-400 flex items-center gap-1">
-                    <span style={{ color: '#8b5cf6' }}>›</span> {f}
+                  <li key={f} className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <span className="text-violet-400">›</span> {f}
                   </li>
                 ))}
               </ul>
             </div>
-            {/* Enterprise */}
             <div className="p-4">
               <div className="text-2xl mb-2">🚀</div>
-              <div className="font-display text-xs font-bold tracking-widest mb-2" style={{ color: '#ff00ff' }}>ENTERPRISE</div>
-              <ul className="space-y-1 mb-3">
+              <div className="font-display text-xs font-bold text-purple-400 mb-2">ENTERPRISE</div>
+              <ul className="space-y-1.5 mb-3">
                 {['Unlimited Numbers', 'All Pro features', 'Custom config', 'VIP support'].map(f => (
-                  <li key={f} className="font-mono text-[9px] text-gray-400 flex items-center gap-1">
-                    <span style={{ color: '#ff00ff' }}>›</span> {f}
+                  <li key={f} className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <span className="text-purple-400">›</span> {f}
                   </li>
                 ))}
               </ul>
             </div>
           </div>
 
-          {/* WhatsApp CTA */}
           <div className="px-4 pb-4">
             <a
               href="https://wa.me/923350340732?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-3 w-full py-3.5 rounded-xl font-display text-sm tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98]"
+              className="flex items-center justify-center gap-3 w-full py-3.5 rounded-xl font-display text-sm font-semibold text-white transition-all hover:scale-[1.01] active:scale-[0.99]"
               style={{
                 background: 'linear-gradient(135deg, #25D366, #128C7E)',
-                boxShadow: '0 0 20px rgba(37,211,102,0.35)'
+                boxShadow: '0 4px 16px rgba(37,211,102,0.25)'
               }}>
               <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white flex-shrink-0">
                 <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
                 <path d="M12 0C5.373 0 0 5.373 0 12c0 2.124.554 4.122 1.524 5.857L.057 23.882a.5.5 0 0 0 .611.611l6.025-1.467A11.945 11.945 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.812 9.812 0 0 1-5.003-1.372l-.359-.214-3.717.904.921-3.625-.235-.373A9.818 9.818 0 0 1 2.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/>
               </svg>
-              CONTACT ADMIN ON WHATSAPP
+              Contact admin on WhatsApp
             </a>
-            <p className="font-mono text-[9px] text-gray-600 text-center mt-2">Message automatically ready: "I want to buy access of website plz share details"</p>
+            <p className="text-[10px] text-slate-600 text-center mt-2">Message automatically ready: "I want to buy access of website plz share details"</p>
           </div>
         </motion.div>
 
         <div className="text-center mt-5">
-          <Link to="/" className="font-mono text-xs text-gray-600 hover:text-[#8b5cf6] transition-colors tracking-widest">← RETURN TO BASE</Link>
+          <Link to="/" className="text-sm text-slate-500 hover:text-violet-400 transition-colors">← Back to home</Link>
         </div>
       </motion.div>
     </div>

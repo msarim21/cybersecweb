@@ -8,12 +8,13 @@ import { useAuth } from '../contexts/AuthContext';
 const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
 
 const GCard = ({ children, className = '', style = {} }) => (
-  <div className={`rounded-2xl ${className}`}
+  <div className={`rounded-2xl premium-card ${className}`}
     style={{
-      background: 'rgba(10,20,60,0.55)',
-      backdropFilter: 'blur(24px)',
-      WebkitBackdropFilter: 'blur(24px)',
-      border: '1px solid rgba(0,245,255,0.18)',
+      background: 'rgba(255,255,255,0.03)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
       ...style
     }}>
     {children}
@@ -21,18 +22,16 @@ const GCard = ({ children, className = '', style = {} }) => (
 );
 
 const StatCard = ({ label, value, icon, color, sub }) => (
-  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ y: -3 }}
-    className="rounded-2xl p-4 relative overflow-hidden"
+  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ y: -2 }}
+    className="rounded-2xl p-5 relative overflow-hidden premium-card"
     style={{
-      background: `linear-gradient(135deg, ${color}18, rgba(10,20,60,0.7))`,
-      backdropFilter: 'blur(24px)',
-      border: `1px solid ${color}35`,
-      boxShadow: `0 0 24px ${color}15`
+      background: `linear-gradient(135deg, ${color}10, rgba(255,255,255,0.02))`,
+      border: `1px solid ${color}20`,
     }}>
-    <div className="absolute -top-2 -right-2 text-5xl opacity-10">{icon}</div>
-    <div className="font-mono text-[10px] tracking-widest mb-1" style={{ color: `${color}cc` }}>{label}</div>
-    <div className="font-display font-bold text-2xl sm:text-3xl" style={{ color, textShadow: `0 0 12px ${color}60` }}>{value}</div>
-    {sub && <div className="font-mono text-[10px] text-gray-500 mt-1">{sub}</div>}
+    <div className="absolute -top-2 -right-2 text-5xl opacity-5">{icon}</div>
+    <div className="text-[11px] font-medium text-slate-500 mb-1 uppercase tracking-wide">{label}</div>
+    <div className="font-display font-bold text-2xl sm:text-3xl text-white" style={{ color }}>{value}</div>
+    {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
   </motion.div>
 );
 
@@ -245,7 +244,7 @@ const SiteAudioPlayer = ({ audioUrl }) => {
   };
 
   if (!audioUrl) return null;
-  const btnColor = !playing ? '#8b5cf6' : muted ? '#ff4444' : '#00f5ff';
+  const btnColor = !playing ? '#8b5cf6' : muted ? '#ef4444' : '#6366f1';
   const btnLabel = !playing ? 'PLAY' : muted ? 'UNMUTE' : 'MUTE';
   const btnIcon  = !playing ? '▶' : muted ? '🔇' : '🔊';
   return (
@@ -889,7 +888,7 @@ export default function Dashboard() {
     n.botName?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const planColor = user?.subscriptionPlan === 'enterprise' ? '#ff00ff' : user?.subscriptionPlan === 'pro' ? '#8b5cf6' : '#00f5ff';
+  const planColor = user?.subscriptionPlan === 'enterprise' ? '#a855f7' : user?.subscriptionPlan === 'pro' ? '#8b5cf6' : '#6366f1';
 
   const trialExpired = stats?.trialExpired;
   const trialExpiresAt = stats?.trialExpiresAt;
@@ -899,8 +898,8 @@ export default function Dashboard() {
   const canAddNumber = !trialExpired && (stats?.total ?? 0) < (stats?.limit ?? 1);
 
   return (
-    <div className="min-h-screen flex" style={{ background: 'linear-gradient(135deg,#06091a 0%,#0d0820 50%,#060d1e 100%)' }}>
-      <div className="fixed inset-0 cyber-grid pointer-events-none z-0 opacity-40" />
+    <div className="min-h-screen flex app-shell">
+      <div className="fixed inset-0 cyber-grid pointer-events-none z-0 opacity-30" />
 
       {audioUrl && <SiteAudioPlayer audioUrl={audioUrl} audioName={siteAudio.original} />}
 
@@ -922,22 +921,20 @@ export default function Dashboard() {
         initial={false}
         animate={{ x: isDesktop || sidebarOpen ? 0 : -280 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col"
-        style={{ background: 'rgba(6,9,26,0.92)', backdropFilter: 'blur(30px)', borderRight: '1px solid rgba(0,245,255,0.15)' }}>
-        <div className="p-5 border-b border-[rgba(0,245,255,0.12)]">
+        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col bg-[#09090b]/95 backdrop-blur-xl border-r border-white/8">
+        <div className="p-5 border-b border-white/8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src={LOGO} className="w-9 h-9 rounded-lg object-cover" style={{ filter: 'drop-shadow(0 0 8px #00f5ff)' }} alt="CSP" />
+              <img src={LOGO} className="w-9 h-9 rounded-xl object-cover ring-1 ring-white/10" alt="CSP" />
               <div>
-                <div className="font-display text-xs font-bold tracking-widest" style={{ color: '#00f5ff' }}>CYBERSEC</div>
-                <div className="font-display text-xs font-bold text-white tracking-widest">PRO</div>
+                <div className="font-display text-xs font-bold text-white">CYBERSEC</div>
+                <div className="font-display text-xs font-semibold text-slate-400">PRO</div>
               </div>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-gray-500 hover:text-white text-lg">×</button>
+            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-500 hover:text-white text-lg">×</button>
           </div>
         </div>
-        <div className="mx-3 mt-3 mb-2 rounded-xl p-3"
-          style={{ background: `linear-gradient(135deg,${planColor}12,rgba(10,20,60,0.6))`, border: `1px solid ${planColor}25` }}>
+        <div className="mx-3 mt-3 mb-2 rounded-xl p-3 bg-white/3 border border-white/8">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
               style={{ background: `${planColor}20`, border: `1.5px solid ${planColor}40` }}>👤</div>
@@ -952,50 +949,46 @@ export default function Dashboard() {
         <nav className="flex-1 px-2 py-2 space-y-1 overflow-y-auto">
           {NAV.map(item => (
             <button key={item.id} onClick={() => { setTab(item.id); setSidebarOpen(false); }}
-              className="w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-all"
+              className="w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 transition-all text-sm font-medium"
               style={{
-                background: tab === item.id ? 'rgba(0,245,255,0.1)' : 'transparent',
-                borderLeft: tab === item.id ? '2px solid #00f5ff' : '2px solid transparent',
-                color: tab === item.id ? '#00f5ff' : '#9ca3af'
+                background: tab === item.id ? 'rgba(99,102,241,0.12)' : 'transparent',
+                color: tab === item.id ? '#a5b4fc' : '#94a3b8'
               }}>
               <span className="text-base">{item.icon}</span>
-              <span className="font-mono text-xs tracking-widest">{item.label}</span>
+              <span>{item.label}</span>
             </button>
           ))}
           {user?.role === 'admin' && (
             <Link to="/admin" onClick={() => setSidebarOpen(false)}>
-              <div className="w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 text-[#ff00ff] hover:bg-[rgba(255,0,255,0.07)] transition-all">
-                <span>⚙️</span><span className="font-mono text-xs tracking-widest">ADMIN PANEL</span>
+              <div className="w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 text-violet-400 hover:bg-violet-500/10 transition-all text-sm font-medium">
+                <span>⚙️</span><span>Admin Panel</span>
               </div>
             </Link>
           )}
         </nav>
-        <div className="p-2 border-t border-[rgba(0,245,255,0.08)]">
+        <div className="p-2 border-t border-white/8">
           <button onClick={handleLogout}
-            className="w-full px-4 py-3 rounded-xl font-mono text-xs tracking-widest text-red-400 flex items-center gap-3 hover:bg-red-500/10 transition-all">
-            <span>⏻</span> LOGOUT
+            className="w-full px-4 py-2.5 rounded-xl text-sm font-medium text-red-400 flex items-center gap-3 hover:bg-red-500/10 transition-all">
+            <span>⏻</span> Logout
           </button>
         </div>
       </motion.aside>
 
       {/* ════ MAIN AREA ════ */}
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64 relative z-10">
-        <header className="sticky top-0 z-20 flex items-center justify-between px-4 py-3"
-          style={{ background: 'rgba(6,9,26,0.88)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,245,255,0.1)' }}>
+        <header className="sticky top-0 z-20 flex items-center justify-between px-4 py-3 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/8">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(p => !p)}
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-[#00f5ff] lg:hidden"
-              style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.2)' }}>☰</button>
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 lg:hidden bg-white/5 border border-white/8 hover:bg-white/10 transition-all">☰</button>
             <div>
-              <div className="font-display text-sm tracking-widest text-[#00f5ff]">{NAV.find(n => n.id === tab)?.label || 'DASHBOARD'}</div>
-              <div className="font-mono text-[10px] text-gray-600">CYBERSECPRO CONTROL CENTER</div>
+              <div className="font-display text-sm font-semibold text-white">{NAV.find(n => n.id === tab)?.label || 'Dashboard'}</div>
+              <div className="text-[11px] text-slate-500">CYBERSECPRO Control Center</div>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" style={{ boxShadow: '0 0 6px #00ff88' }} />
-            <div className="flex items-center gap-2 rounded-xl px-3 py-1.5"
-              style={{ background: `${planColor}12`, border: `1px solid ${planColor}25` }}>
-              <span className="font-mono text-[10px] truncate max-w-[80px]" style={{ color: planColor }}>{user?.username}</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <div className="flex items-center gap-2 rounded-xl px-3 py-1.5 bg-white/5 border border-white/8">
+              <span className="text-[11px] font-medium truncate max-w-[80px]" style={{ color: planColor }}>{user?.username}</span>
             </div>
           </div>
         </header>
@@ -1456,28 +1449,25 @@ export default function Dashboard() {
       </div>
 
       {/* ════ MOBILE BOTTOM NAV ════ */}
-      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex"
-        style={{ background: 'rgba(6,9,26,0.95)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,245,255,0.15)' }}>
+      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#09090b]/95 backdrop-blur-xl border-t border-white/8">
         {NAV.map(item => (
           <button key={item.id} onClick={() => setTab(item.id)}
             className="flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-all relative"
-            style={{ color: tab === item.id ? '#00f5ff' : '#6b7280' }}>
+            style={{ color: tab === item.id ? '#a5b4fc' : '#64748b' }}>
             <span className="text-xl leading-none">{item.icon}</span>
-            <span className="font-mono text-[9px] tracking-widest">{item.label}</span>
+            <span className="text-[10px] font-medium">{item.label}</span>
             {item.id === 'support' && chatUnread > 0 && (
-              <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center"
-                style={{ background: '#ff4444', color: '#fff' }}>{chatUnread}</span>
+              <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center bg-red-500 text-white">{chatUnread}</span>
             )}
             {tab === item.id && (
-              <motion.div layoutId="tab-indicator" className="absolute top-0 h-0.5 w-10 rounded-full"
-                style={{ background: '#00f5ff', boxShadow: '0 0 8px #00f5ff' }} />
+              <motion.div layoutId="tab-indicator" className="absolute top-0 h-0.5 w-10 rounded-full bg-brand-500" />
             )}
           </button>
         ))}
         {user?.role === 'admin' && (
-          <Link to="/admin" className="flex-1 flex flex-col items-center justify-center py-3 gap-1" style={{ color: '#ff00ff' }}>
+          <Link to="/admin" className="flex-1 flex flex-col items-center justify-center py-3 gap-1 text-violet-400">
             <span className="text-xl leading-none">⚙️</span>
-            <span className="font-mono text-[9px] tracking-widest">ADMIN</span>
+            <span className="text-[10px] font-medium">Admin</span>
           </Link>
         )}
       </nav>
