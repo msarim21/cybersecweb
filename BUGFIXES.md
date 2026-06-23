@@ -75,3 +75,27 @@ Pushed to: https://github.com/msarim21/cybersecweb
 **Result:** When any WhatsApp number successfully pairs (connection opens), its number is immediately and permanently saved to `linked_numbers` in the database. The dashboard shows it on the next refresh and it never disappears.
 
 **Files:** `server/db-service.js`, `session-db.js`
+
+## Bug 8 - BOT OFFLINE on Dashboard (Critical Fix)
+**Problem:** Bot is running and connected to WhatsApp but dashboard shows "BOT OFFLINE".
+
+**Root Cause:**
+On Heroku, the **web dyno** and **worker dyno** have separate ephemeral filesystems. Heartbeat files written by the worker dyno (`database/bots/<num>/heartbeat.json`) are completely invisible to the web dyno — so `isBotHeartbeatFresh()` always returns `false` on the web dyno. The only cross-dyno liveness signal is the database `lastActive` timestamp.
+
+In `server/routes/numbers.js`, the bot is shown as `online` only when:
+```js
+if (sess?.connectionStatus === 'CONNECTED' && lastFresh) return 'online';
+```
+Where `lastFresh = Date.now() - sess.lastActive <= 15 minutes`.
+
+The bug was in `allfunc/bot-heartbeat.js` — inside `touchBotHeartbeat()`, there was an early `return` when `extra.ready === false`:
+```js
+if (extra.ready === false) return;   // ← BUG: skips upsertBotSession
+await upsertBotSession(clean, 'active', meta);
+```
+This meant `upsertBotSession()` (which updates `lastActive` in the DB) was NEVER called when the bot was in a non-ready state (e.g. still syncing, wsState not yet 1). After 15 minutes, `lastActive` became stale → `lastFresh = false` → dashboard showed "BOT OFFLINE" forever.
+
+**Fix:**
+- `allfunc/bot-heartbeat.js`: Removed the `if (extra.ready === false) return;` guard. `upsertBotSession` is now always called when the DB throttle window passes, keeping `lastActive` fresh every ~60 seconds regardless of ready state. The `commandReady` field is still only set when `ready === true`, preserving existing behavior.
+
+**Files:** `allfunc/bot-heartbeat.js`
