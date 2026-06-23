@@ -497,6 +497,16 @@ async function startpairing(nexusDevNumber) {
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
         nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
 
+        // ✅ ANTIDELETE CACHE — must run BEFORE the private-mode guard below.
+        // Bug: when bot is in private/self mode the guard did an early `return`
+        // which skipped caching entirely — messages from others were never stored,
+        // so delete events always showed "[Original message not in cache]".
+        try {
+            if (typeof global._cacheMessageForAntidelete === 'function') {
+                global._cacheMessageForAntidelete(nexusboijid, nexus);
+            }
+        } catch (_adCacheErr) {}
+
         // ✅ FAST GUARD: Check mode FIRST — skip message entirely if self-mode + not fromMe
         if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
         if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
@@ -513,12 +523,7 @@ async function startpairing(nexusDevNumber) {
             try {
                 const botNumber = nexus.decodeJid(nexus.user.id);
 
-                // ✅ ANTIDELETE CACHE — store every message so delete handler can recover it
-                try {
-                    if (typeof global._cacheMessageForAntidelete === 'function') {
-                        global._cacheMessageForAntidelete(nexusboijid, nexus);
-                    }
-                } catch (_adCacheErr) {}
+                // (antidelete cache moved above the private-mode guard — see fix above)
 
                 // Auto-view status (fast)
                 let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
