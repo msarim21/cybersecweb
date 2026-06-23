@@ -1064,7 +1064,7 @@ Ye action immediately apply hoga.`)) return;
     u.email?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const planColors = { free: '#6366f1', pro: '#8b5cf6', enterprise: '#a855f7' };
+  const planColors = { free: '#22d3ee', pro: '#8b5cf6', enterprise: '#a78bfa' };
   const pendingCount = upgradeRequests.length;
 
   return (
@@ -1156,7 +1156,7 @@ Ye action immediately apply hoga.`)) return;
         initial={false}
         animate={{ x: (sidebarOpen || isDesktop) ? 0 : -260 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-60 z-40 flex flex-col lg:translate-x-0 bg-[#09090b]/95 backdrop-blur-xl border-r border-white/8">
+        className="fixed top-0 left-0 h-full w-60 z-40 flex flex-col lg:translate-x-0 bg-[#0f1629]/95 backdrop-blur-xl border-r border-white/8">
 
         <div className="p-5 pt-6 border-b border-white/8">
           <div className="flex items-center justify-between">
@@ -1223,7 +1223,7 @@ Ye action immediately apply hoga.`)) return;
 
       {/* ════ MAIN ════ */}
       <div className="flex-1 flex flex-col min-w-0 lg:ml-60 relative z-10">
-        <header className="sticky top-0.5 z-20 flex items-center justify-between px-4 py-3 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/8">
+        <header className="sticky top-0.5 z-20 flex items-center justify-between px-4 py-3 bg-[#0f1629]/80 backdrop-blur-xl border-b border-white/8">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(p => !p)}
               className="w-9 h-9 rounded-xl flex items-center justify-center lg:hidden bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/15 transition-all">☰</button>
@@ -2861,7 +2861,7 @@ Ye action immediately apply hoga.`)) return;
       </div>
 
       {/* ════ MOBILE BOTTOM NAV ════ */}
-      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#09090b]/95 backdrop-blur-xl border-t border-white/8">
+      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#0f1629]/95 backdrop-blur-xl border-t border-white/8">
         {NAV.map(item => (
           <button key={item.id} onClick={() => setTab(item.id)}
             className="flex-1 flex flex-col items-center justify-center py-3 gap-1 relative transition-all"
@@ -2876,7 +2876,7 @@ Ye action immediately apply hoga.`)) return;
             )}
           </button>
         ))}
-        <Link to="/dashboard" className="flex-1 flex flex-col items-center justify-center py-3 gap-1 text-brand-400">
+        <Link to="/dashboard" className="flex-1 flex flex-col items-center justify-center py-3 gap-1 text-cyan-400">
           <span className="text-xl leading-none">←</span>
           <span className="text-[10px] font-medium">User</span>
         </Link>

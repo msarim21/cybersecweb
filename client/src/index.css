@@ -4,21 +4,21 @@
 @tailwind utilities;
 
 :root {
-  /* Premium SaaS palette — legacy var names kept for compatibility */
-  --neon-cyan: #6366f1;
-  --neon-blue: #4f46e5;
+  /* Lite user-friendly palette */
+  --neon-cyan: #22d3ee;
+  --neon-blue: #06b6d4;
   --neon-purple: #8b5cf6;
-  --neon-pink: #a855f7;
-  --neon-green: #10b981;
-  --bg-dark: #09090b;
-  --bg-card: rgba(255, 255, 255, 0.04);
-  --surface-1: rgba(255, 255, 255, 0.03);
-  --surface-2: rgba(255, 255, 255, 0.06);
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-accent: rgba(99, 102, 241, 0.35);
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --neon-pink: #a78bfa;
+  --neon-green: #34d399;
+  --bg-dark: #0f1629;
+  --bg-card: rgba(255, 255, 255, 0.05);
+  --surface-1: rgba(255, 255, 255, 0.05);
+  --surface-2: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-accent: rgba(34, 211, 238, 0.35);
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.45);
@@ -43,9 +43,8 @@ html {
 body {
   background: var(--bg-dark);
   background-image:
-    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(99, 102, 241, 0.12), transparent),
-    radial-gradient(ellipse 60% 50% at 100% 50%, rgba(139, 92, 246, 0.06), transparent),
-    radial-gradient(ellipse 50% 40% at 0% 80%, rgba(79, 70, 229, 0.05), transparent);
+    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(34, 211, 238, 0.08), transparent),
+    radial-gradient(ellipse 60% 50% at 100% 50%, rgba(139, 92, 246, 0.05), transparent);
   background-attachment: fixed;
   color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -61,11 +60,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.35);
+  background: rgba(34, 211, 238, 0.3);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.55);
+  background: rgba(34, 211, 238, 0.5);
 }
 
 /* Accent text — refined, no harsh glow */
@@ -135,9 +134,9 @@ body {
 
 /* Buttons */
 .btn-neon {
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  color: #a5b4fc;
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  color: #22d3ee;
   padding: 12px 28px;
   font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 0.875rem;
@@ -167,17 +166,17 @@ body {
   left: 100%;
 }
 .btn-neon:hover {
-  background: rgba(99, 102, 241, 0.18);
-  border-color: rgba(99, 102, 241, 0.6);
+  background: rgba(34, 211, 238, 0.15);
+  border-color: rgba(34, 211, 238, 0.6);
   color: #fff;
-  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 4px 20px rgba(34, 211, 238, 0.2);
   transform: translateY(-1px);
 }
 
 .btn-neon-solid {
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-  border: 1px solid rgba(99, 102, 241, 0.5);
-  color: #fff;
+  background: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  color: #0f1629;
   padding: 12px 28px;
   font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 0.875rem;
@@ -186,15 +185,16 @@ body {
   text-transform: none;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 4px 16px rgba(34, 211, 238, 0.3);
   display: inline-block;
   text-align: center;
   border-radius: var(--radius-md);
 }
 .btn-neon-solid:hover {
-  box-shadow: 0 6px 28px rgba(99, 102, 241, 0.45);
+  box-shadow: 0 6px 28px rgba(34, 211, 238, 0.4);
   transform: translateY(-1px);
-  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+  background: linear-gradient(135deg, #67e8f9 0%, #22d3ee 100%);
+  color: #0f1629;
 }
 .btn-neon-solid:disabled {
   opacity: 0.6;
@@ -244,8 +244,8 @@ body {
   border-radius: var(--radius-md);
 }
 .input-neon:focus {
-  border-color: rgba(99, 102, 241, 0.5);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-color: rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
   background: rgba(255, 255, 255, 0.06);
 }
 .input-neon::placeholder {
@@ -340,7 +340,7 @@ body {
 
 /* Gradient text */
 .gradient-text {
-  background: linear-gradient(135deg, #818cf8, #a78bfa, #c4b5fd);
+  background: linear-gradient(135deg, #22d3ee, #67e8f9, #a78bfa);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -357,13 +357,13 @@ body {
 .app-shell {
   background: var(--bg-dark);
   background-image:
-    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(99, 102, 241, 0.08), transparent);
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(34, 211, 238, 0.06), transparent);
 }
 
 .app-shell-admin {
   background: var(--bg-dark);
   background-image:
-    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(139, 92, 246, 0.08), transparent);
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(139, 92, 246, 0.06), transparent);
 }
 
 /* Premium card utility */
@@ -379,8 +379,41 @@ body {
 .auth-bg {
   background: var(--bg-dark);
   background-image:
-    radial-gradient(ellipse 60% 50% at 50% 0%, rgba(99, 102, 241, 0.1), transparent),
-    radial-gradient(ellipse 40% 40% at 100% 100%, rgba(139, 92, 246, 0.06), transparent);
+    radial-gradient(ellipse 60% 50% at 50% 0%, rgba(34, 211, 238, 0.08), transparent),
+    radial-gradient(ellipse 40% 40% at 100% 100%, rgba(139, 92, 246, 0.04), transparent);
+}
+
+/* Lite feature card */
+.lite-feature-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 1.25rem;
+  transition: all 0.2s ease;
+}
+.lite-feature-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(34, 211, 238, 0.25);
+}
+
+.btn-outline-cyan {
+  background: transparent;
+  border: 1.5px solid rgba(34, 211, 238, 0.5);
+  color: #22d3ee;
+  padding: 12px 28px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-block;
+  text-align: center;
+}
+.btn-outline-cyan:hover {
+  background: rgba(34, 211, 238, 0.08);
+  border-color: #22d3ee;
+  color: #67e8f9;
 }
 
 @media (max-width: 640px) {

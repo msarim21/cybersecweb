@@ -121,18 +121,24 @@ const CounterCard = ({ value, label, prefix = '', suffix = '', color = '#00f5ff'
   );
 };
 
+const HIGHLIGHT_FEATURES = [
+  { icon: '📱', title: 'Bot Management', desc: 'Link and control WhatsApp numbers from one dashboard' },
+  { icon: '🔒', title: 'Secure Pairing', desc: 'Encrypted pairing codes with session protection' },
+  { icon: '📊', title: 'Real-time Stats', desc: 'Monitor active numbers and usage at a glance' },
+];
+
 const FEATURES = [
-  { icon: '⚡', title: 'Lightning Fast', desc: 'Instant number linking and management with real-time status updates across your entire network.', color: '#6366f1' },
-  { icon: '🛡️', title: 'Military Grade Security', desc: 'End-to-end encryption, JWT authentication, and advanced threat detection protect your data.', color: '#8b5cf6' },
-  { icon: '🤖', title: 'AI-Powered Bots', desc: 'Intelligent bot management system with automated responses and smart routing algorithms.', color: '#a855f7' },
-  { icon: '📊', title: 'Real-Time Analytics', desc: 'Holographic dashboards with live metrics, usage graphs, and performance insights.', color: '#10b981' },
-  { icon: '🌐', title: 'Global Network', desc: 'Distributed infrastructure spanning multiple regions for ultra-low latency worldwide.', color: '#4f46e5' },
-  { icon: '🔮', title: 'Quantum Encryption', desc: 'Next-generation cryptographic protocols that are resistant to future quantum attacks.', color: '#f59e0b' },
+  { icon: '📱', title: 'Bot Management', desc: 'Link and control WhatsApp numbers from one dashboard with real-time status updates.', color: '#22d3ee' },
+  { icon: '🔒', title: 'Secure Pairing', desc: 'Encrypted pairing codes with session protection and JWT authentication.', color: '#06b6d4' },
+  { icon: '📊', title: 'Real-time Stats', desc: 'Monitor active numbers, usage graphs, and performance insights live.', color: '#34d399' },
+  { icon: '🤖', title: 'AI-Powered Bots', desc: 'Intelligent bot management with automated responses and smart routing.', color: '#8b5cf6' },
+  { icon: '🌐', title: 'Global Network', desc: 'Distributed infrastructure for ultra-low latency worldwide.', color: '#a78bfa' },
+  { icon: '⚡', title: 'Lightning Fast', desc: 'Instant number linking and management across your entire network.', color: '#f59e0b' },
 ];
 
 const PRICING = [
   {
-    plan: 'FREE', color: '#6366f1',
+    plan: 'FREE', color: '#22d3ee',
     price: 'FREE',
     period: '24 hours',
     users: '1 User',
@@ -148,7 +154,7 @@ const PRICING = [
     cta: 'Contact for PRO', isFree: false
   },
   {
-    plan: 'ENTERPRISE', color: '#a855f7',
+    plan: 'ENTERPRISE', color: '#a78bfa',
     price: 'Contact',
     period: 'for pricing',
     users: 'Unlimited',
@@ -158,9 +164,9 @@ const PRICING = [
 ];
 
 const TESTIMONIALS = [
-  { name: 'Alex_X', role: 'Bot Developer', text: 'CYBERSECPRO transformed how I manage my bot infrastructure. The holographic UI is insane.', rating: 5, color: '#6366f1' },
+  { name: 'Alex_X', role: 'Bot Developer', text: 'CYBERSECPRO transformed how I manage my bot infrastructure. Clean and easy to use.', rating: 5, color: '#22d3ee' },
   { name: 'CyberNinja', role: 'Tech Lead', text: 'Best SaaS platform I\'ve ever used. The security features are unmatched in every way.', rating: 5, color: '#8b5cf6' },
-  { name: 'NexusOp', role: 'System Admin', text: 'Migrated 50+ numbers seamlessly. The admin panel is a complete game changer for teams.', rating: 5, color: '#a855f7' },
+  { name: 'NexusOp', role: 'System Admin', text: 'Migrated 50+ numbers seamlessly. The admin panel is a complete game changer for teams.', rating: 5, color: '#a78bfa' },
 ];
 
 const ParticleField = () => {
@@ -194,66 +200,65 @@ export default function Landing() {
   const headerOpacity = useTransform(scrollYProgress, [0, 0.1], [1, 0.95]);
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#09090b]">
-      <MatrixRain />
-      <ParticleField />
+    <div className="relative min-h-screen overflow-x-hidden bg-[#0f1629]">
+      <div className="hidden md:block"><MatrixRain /></div>
+      <div className="hidden md:block"><ParticleField /></div>
 
-      <FloatingOrb size={600} x="0%" y="-5%" color="#6366f1" delay={0} />
-      <FloatingOrb size={500} x="60%" y="0%" color="#8b5cf6" delay={2} />
-      <FloatingOrb size={400} x="75%" y="50%" color="#a855f7" delay={4} />
-      <FloatingOrb size={500} x="-5%" y="60%" color="#4f46e5" delay={1} />
-      <FloatingOrb size={350} x="35%" y="35%" color="#10b981" delay={3} />
+      <div className="hidden md:block">
+        <FloatingOrb size={600} x="0%" y="-5%" color="#22d3ee" delay={0} />
+        <FloatingOrb size={500} x="60%" y="0%" color="#8b5cf6" delay={2} />
+        <FloatingOrb size={400} x="75%" y="50%" color="#a78bfa" delay={4} />
+      </div>
 
-      <div className="fixed inset-0 pointer-events-none z-0 cyber-grid opacity-50" />
+      <div className="fixed inset-0 pointer-events-none z-0 cyber-grid opacity-30" />
 
-      {/* Progress Bar */}
-      <motion.div className="fixed top-0 left-0 h-0.5 z-50 origin-left bg-gradient-to-r from-brand-500 via-violet-500 to-purple-500"
+      <motion.div className="fixed top-0 left-0 h-0.5 z-50 origin-left bg-gradient-to-r from-cyan-400 to-violet-400"
         style={{ scaleX: scrollYProgress }} />
 
-      {/* Navbar */}
+      {/* Navbar — mobile-friendly like reference */}
       <motion.nav
-        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/8"
+        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-8 py-4 bg-[#0f1629]/90 backdrop-blur-xl border-b border-white/8"
         style={{ opacity: headerOpacity }}>
-        <div className="flex items-center gap-3 absolute left-1/2 -translate-x-1/2 md:static md:translate-x-0">
-          <div className="relative">
-            <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 sm:w-10 sm:h-10 object-cover rounded-xl ring-1 ring-white/10" />
+        <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-3">
+          <div className="font-display font-bold text-base text-white tracking-tight">CYBERSECPRO</div>
+          <div className="flex items-center gap-1.5 md:hidden">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
+            <span className="text-[10px] font-medium text-emerald-400 uppercase tracking-wide">System Online</span>
           </div>
-          <div>
-            <div className="font-display font-bold text-sm sm:text-base text-white tracking-tight">CYBERSECPRO</div>
-            <div className="text-xs text-slate-500 hidden sm:block">v4.0 Online</div>
+          <div className="hidden md:flex items-center gap-3">
+            <img src={HERO_IMG} alt="" className="w-8 h-8 object-cover rounded-lg ring-1 ring-white/10" />
+            <span className="text-xs text-slate-500">v4.0 Online</span>
           </div>
         </div>
         <div className="hidden md:flex items-center gap-8">
           {['Features', 'Pricing', 'Testimonials'].map(item => (
             <a key={item} href={`#${item.toLowerCase()}`}
-              className="text-sm font-medium text-slate-400 hover:text-white transition-colors relative group">
+              className="text-sm font-medium text-slate-400 hover:text-white transition-colors">
               {item}
-              <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-brand-500 group-hover:w-full transition-all duration-300 rounded-full" />
             </a>
           ))}
         </div>
-        <div className="hidden md:flex gap-3">
-          <Link to="/login">
-            <button className="text-sm font-medium px-5 py-2.5 rounded-xl border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 transition-all">
-              Login
-            </button>
+        <div className="flex items-center gap-3">
+          <Link to="/login" className="md:hidden">
+            <span className="text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors">Login</span>
           </Link>
-          <Link to="/signup">
-            <button className="text-sm font-semibold px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-400 text-white shadow-glow transition-all">
-              Sign up
-            </button>
+          <Link to="/login" className="hidden md:block">
+            <button className="btn-outline-cyan text-sm py-2 px-4">Login</button>
           </Link>
+          <Link to="/signup" className="hidden md:block">
+            <button className="btn-neon-solid text-sm py-2 px-4">Sign up</button>
+          </Link>
+          <button onClick={() => setMenuOpen(p => !p)} className="md:hidden text-xl text-slate-400 hover:text-white ml-1">
+            {menuOpen ? '✕' : '☰'}
+          </button>
         </div>
-        <button onClick={() => setMenuOpen(p => !p)} className="md:hidden text-xl text-slate-300 hover:text-white">
-          {menuOpen ? '✕' : '☰'}
-        </button>
       </motion.nav>
 
       {/* Mobile Menu */}
       <AnimatePresence>
         {menuOpen && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            className="fixed top-[65px] left-0 right-0 z-40 md:hidden px-4 py-4 flex flex-col gap-3 bg-[#09090b]/95 backdrop-blur-xl border-b border-white/8">
+            className="fixed top-[65px] left-0 right-0 z-40 md:hidden px-4 py-4 flex flex-col gap-3 bg-[#0f1629]/95 backdrop-blur-xl border-b border-white/8">
             {['Features', 'Pricing', 'Testimonials'].map(item => (
               <a key={item} href={`#${item.toLowerCase()}`} onClick={() => setMenuOpen(false)}
                 className="text-sm font-medium text-slate-300 hover:text-white transition-colors py-2 border-b border-white/5">{item}</a>
@@ -262,111 +267,108 @@ export default function Landing() {
               <button className="w-full py-3 rounded-xl text-sm font-medium border border-white/10 text-slate-300">Login</button>
             </Link>
             <Link to="/signup" onClick={() => setMenuOpen(false)}>
-              <button className="w-full py-3 rounded-xl text-sm font-semibold bg-brand-500 text-white">Sign up</button>
+              <button className="w-full py-3 rounded-xl text-sm font-semibold btn-neon-solid">Sign up</button>
             </Link>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── HERO ── */}
-      <section className="relative z-10 min-h-screen flex items-center justify-center text-center px-4 overflow-hidden pt-20">
+      {/* ── HERO — lite mobile-first layout ── */}
+      <section className="relative z-10 px-4 pt-24 pb-8 md:min-h-screen md:flex md:items-center md:justify-center md:text-center md:overflow-hidden md:pt-20">
 
-        {/* HUD rings — subtle decorative element */}
-        <div className="absolute opacity-20" style={{ width: '100%', height: '100%', maxWidth: 700, maxHeight: 700, left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
-          <div className="hidden sm:block" style={{ width: 700, height: 700, left: '50%', top: '50%', marginLeft: -350, marginTop: -350, position: 'absolute' }}>
-            <HUDRing size={700} color="#6366f1" duration={25} dashed />
+        {/* Desktop-only decorative elements */}
+        <div className="absolute opacity-15 hidden md:block" style={{ width: '100%', height: '100%', maxWidth: 700, maxHeight: 700, left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
+          <div style={{ width: 700, height: 700, left: '50%', top: '50%', marginLeft: -350, marginTop: -350, position: 'absolute' }}>
+            <HUDRing size={700} color="#22d3ee" duration={25} dashed />
             <HUDRing size={560} color="#8b5cf6" duration={18} reverse />
-            <HUDRing size={420} color="#a855f7" duration={12} dashed />
-          </div>
-          <div className="sm:hidden" style={{ width: 280, height: 280, left: '50%', top: '50%', marginLeft: -140, marginTop: -140, position: 'absolute' }}>
-            <HUDRing size={280} color="#6366f1" duration={25} dashed />
-            <HUDRing size={220} color="#8b5cf6" duration={18} reverse />
           </div>
         </div>
 
-        {/* Hero image — center of rings, mobile + desktop */}
         <motion.div
-          className="absolute pointer-events-none"
+          className="absolute pointer-events-none hidden md:block"
           style={{
             width: 'clamp(160px, 40vw, 340px)',
             height: 'clamp(160px, 40vw, 340px)',
-            left: '50%',
-            top: '50%',
+            left: '50%', top: '50%',
             transform: 'translate(-50%, -50%)'
           }}
           initial={{ opacity: 0, scale: 0.7 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.4, ease: 'easeOut' }}>
           <div style={{
-            width: '100%',
-            height: '100%',
-            borderRadius: '50%',
-            overflow: 'hidden',
-            border: '2px solid rgba(99,102,241,0.3)',
-            boxShadow: '0 8px 40px rgba(99,102,241,0.2), 0 0 0 1px rgba(255,255,255,0.05)',
+            width: '100%', height: '100%', borderRadius: '50%', overflow: 'hidden',
+            border: '2px solid rgba(34,211,238,0.3)',
+            boxShadow: '0 8px 40px rgba(34,211,238,0.15)',
           }}>
-            <img
-              src={HERO_IMG}
-              alt="CYBERSECPRO"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center' }}
-            />
+            <img src={HERO_IMG} alt="CYBERSECPRO" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center' }} />
           </div>
-          {/* Glow ring around image */}
-          <motion.div
-            className="absolute inset-0 rounded-full"
-            style={{
-              border: '1px solid rgba(0,245,255,0.6)',
-              boxShadow: '0 0 40px rgba(0,245,255,0.3)'
-            }}
-            animate={{ opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-          />
         </motion.div>
 
-        <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1.2, ease: 'easeOut' }}
-          className="relative z-10 max-w-5xl mx-auto w-full" style={{ paddingTop: 'clamp(220px, 55vw, 380px)' }}>
+        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: 'easeOut' }}
+          className="relative z-10 max-w-5xl mx-auto w-full md:pt-[clamp(220px,55vw,380px)]">
 
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
-            className="inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-brand-500/10 border border-brand-500/20">
-            <motion.div className="w-2 h-2 rounded-full bg-emerald-500" animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 2 }} />
-            <span className="text-xs font-medium text-brand-300">System online — Next-gen bot platform</span>
+          {/* Status badge — desktop only */}
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
+            className="hidden md:inline-flex items-center gap-2 mb-8 px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span className="text-xs font-medium text-cyan-300">System online — Next-gen bot platform</span>
           </motion.div>
 
-          <motion.h1 initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-            className="font-display font-extrabold mb-6 leading-tight tracking-tight"
-            style={{ fontSize: 'clamp(2.5rem, 8vw, 6rem)' }}>
-            <GlitchText className="text-brand-400">CYBER</GlitchText>
-            <span className="text-white">SEC</span>
-            <GlitchText className="text-violet-400">PRO</GlitchText>
+          <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+            className="font-display font-extrabold mb-4 leading-tight tracking-tight text-left md:text-center"
+            style={{ fontSize: 'clamp(1.75rem, 6vw, 4.5rem)' }}>
+            <span className="md:hidden text-white block">NEXT-GEN</span>
+            <span className="md:hidden text-white block">BOT PLATFORM</span>
+            <span className="hidden md:inline">
+              <GlitchText className="text-cyan-400">CYBER</GlitchText>
+              <span className="text-white">SEC</span>
+              <GlitchText className="text-violet-400">PRO</GlitchText>
+            </span>
           </motion.h1>
 
-          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
-            className="text-base sm:text-lg text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Next-generation WhatsApp bot management platform. Link numbers, manage sessions,
-            and control your entire bot network from one professional command center.
+          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
+            className="text-sm sm:text-base text-slate-400 mb-8 max-w-2xl leading-relaxed text-left md:text-center md:mx-auto">
+            The ultimate control center for WhatsApp bot number management. Secure, scalable, and built for operators.
           </motion.p>
 
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}
-            className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-            <Link to="/signup">
-              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                className="px-8 py-3.5 rounded-xl font-display text-sm font-semibold bg-brand-500 hover:bg-brand-400 text-white shadow-glow">
-                Get started free
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
+            className="flex flex-col sm:flex-row gap-3 mb-10 md:justify-center md:mb-16">
+            <Link to="/signup" className="w-full sm:w-auto">
+              <motion.button whileTap={{ scale: 0.98 }}
+                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-bold btn-neon-solid flex items-center justify-center gap-2">
+                <span>⚡</span> Initialize Free
               </motion.button>
             </Link>
-            <a href="#features">
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                className="px-8 py-3.5 rounded-xl font-display text-sm font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 transition-all">
-                Explore features →
+            <a href="#features" className="w-full sm:w-auto">
+              <motion.button whileTap={{ scale: 0.98 }}
+                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-display text-sm font-semibold btn-outline-cyan">
+                Explore System
               </motion.button>
             </a>
           </motion.div>
 
-          {/* Stats row */}
-          <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
-            <CounterCard value="1000+" label="Active Users" suffix="+" color="#6366f1" />
+          {/* Mobile highlight features — like reference */}
+          <div className="md:hidden mb-6">
+            <p className="text-xs font-semibold text-cyan-400 uppercase tracking-wider mb-4">System Features</p>
+            <div className="space-y-3">
+              {HIGHLIGHT_FEATURES.map((f, i) => (
+                <motion.div key={i} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 + i * 0.1 }}
+                  className="lite-feature-card flex items-start gap-4">
+                  <div className="text-2xl flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-cyan-500/10">{f.icon}</div>
+                  <div>
+                    <div className="font-display font-semibold text-sm text-white mb-0.5">{f.title}</div>
+                    <div className="text-xs text-slate-400 leading-relaxed">{f.desc}</div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+
+          {/* Stats — desktop only */}
+          <div className="hidden md:grid grid-cols-3 gap-4 max-w-lg mx-auto">
+            <CounterCard value="1000+" label="Active Users" suffix="+" color="#22d3ee" />
             <CounterCard value="50000+" label="Bot Sessions" suffix="+" color="#8b5cf6" />
-            <CounterCard value="99%" label="Uptime" suffix="%" color="#10b981" />
+            <CounterCard value="99%" label="Uptime" suffix="%" color="#34d399" />
           </div>
         </motion.div>
       </section>
@@ -375,11 +377,11 @@ export default function Landing() {
       <section id="features" className="relative z-10 py-16 sm:py-24 px-4">
         <div className="max-w-6xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
-            <p className="text-xs font-semibold text-brand-400 mb-3 uppercase tracking-wider">Core modules</p>
-            <h2 className="font-display font-bold text-3xl sm:text-4xl mb-4 gradient-text">
+            <p className="text-xs font-semibold text-cyan-400 mb-3 uppercase tracking-wider">Core modules</p>
+            <h2 className="font-display font-bold text-2xl sm:text-4xl mb-4 gradient-text">
               System Features
             </h2>
-            <div className="mt-3 h-px max-w-xs mx-auto bg-gradient-to-r from-transparent via-brand-500/50 to-transparent" />
+            <div className="mt-3 h-px max-w-xs mx-auto bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent" />
           </motion.div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
@@ -625,7 +627,7 @@ export default function Landing() {
       <section className="relative z-10 py-16 sm:py-24 px-4">
         <motion.div initial={{ opacity: 0, scale: 0.98 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }}
           className="max-w-4xl mx-auto text-center rounded-3xl p-10 sm:p-16 relative overflow-hidden premium-card"
-          style={{ background: 'linear-gradient(145deg, rgba(99,102,241,0.08), rgba(139,92,246,0.06))', border: '1px solid rgba(99,102,241,0.2)' }}>
+          style={{ background: 'linear-gradient(145deg, rgba(34,211,238,0.08), rgba(139,92,246,0.06))', border: '1px solid rgba(34,211,238,0.2)' }}>
           <div className="absolute inset-0 opacity-30" style={{ background: 'radial-gradient(circle at 30% 50%, rgba(99,102,241,0.15) 0%, transparent 50%), radial-gradient(circle at 70% 50%, rgba(139,92,246,0.1) 0%, transparent 50%)' }} />
           <h2 className="font-display font-bold text-3xl sm:text-4xl mb-6 relative z-10 gradient-text">
             Ready to get started?
@@ -635,7 +637,7 @@ export default function Landing() {
           </p>
           <Link to="/signup">
             <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-              className="px-10 py-3.5 rounded-xl font-display text-sm font-semibold bg-brand-500 hover:bg-brand-400 text-white shadow-glow relative z-10">
+              className="px-10 py-3.5 rounded-xl font-display text-sm font-bold btn-neon-solid relative z-10">
               Get started free
             </motion.button>
           </Link>
@@ -643,7 +645,7 @@ export default function Landing() {
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 py-12 px-4 sm:px-8 bg-[#09090b]/90 border-t border-white/8">
+      <footer className="relative z-10 py-12 px-4 sm:px-8 bg-[#0f1629]/90 border-t border-white/8">
         <div className="max-w-6xl mx-auto flex flex-col items-center gap-6">
           <div className="flex items-center gap-3">
             <img src={HERO_IMG} alt="CYBERSECPRO" className="w-9 h-9 object-cover rounded-xl ring-1 ring-white/10" />
@@ -657,7 +659,7 @@ export default function Landing() {
             <div className="text-xs text-slate-500">
               For Premium Plans:{' '}
               <a href={`https://wa.me/${CONTACT.replace(/\+/g, '')}`} target="_blank" rel="noreferrer"
-                className="text-brand-400 hover:text-brand-300 transition-colors">{CONTACT}</a>
+                className="text-cyan-400 hover:text-cyan-300 transition-colors">{CONTACT}</a>
             </div>
           </div>
           <div className="flex gap-6">

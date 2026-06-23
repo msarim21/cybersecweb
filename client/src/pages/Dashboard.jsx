@@ -244,7 +244,7 @@ const SiteAudioPlayer = ({ audioUrl }) => {
   };
 
   if (!audioUrl) return null;
-  const btnColor = !playing ? '#8b5cf6' : muted ? '#ef4444' : '#6366f1';
+  const btnColor = !playing ? '#8b5cf6' : muted ? '#ef4444' : '#22d3ee';
   const btnLabel = !playing ? 'PLAY' : muted ? 'UNMUTE' : 'MUTE';
   const btnIcon  = !playing ? '▶' : muted ? '🔇' : '🔊';
   return (
@@ -888,7 +888,7 @@ export default function Dashboard() {
     n.botName?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const planColor = user?.subscriptionPlan === 'enterprise' ? '#a855f7' : user?.subscriptionPlan === 'pro' ? '#8b5cf6' : '#6366f1';
+  const planColor = user?.subscriptionPlan === 'enterprise' ? '#a78bfa' : user?.subscriptionPlan === 'pro' ? '#8b5cf6' : '#22d3ee';
 
   const trialExpired = stats?.trialExpired;
   const trialExpiresAt = stats?.trialExpiresAt;
@@ -921,7 +921,7 @@ export default function Dashboard() {
         initial={false}
         animate={{ x: isDesktop || sidebarOpen ? 0 : -280 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col bg-[#09090b]/95 backdrop-blur-xl border-r border-white/8">
+        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col bg-[#0f1629]/95 backdrop-blur-xl border-r border-white/8">
         <div className="p-5 border-b border-white/8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -951,8 +951,8 @@ export default function Dashboard() {
             <button key={item.id} onClick={() => { setTab(item.id); setSidebarOpen(false); }}
               className="w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 transition-all text-sm font-medium"
               style={{
-                background: tab === item.id ? 'rgba(99,102,241,0.12)' : 'transparent',
-                color: tab === item.id ? '#a5b4fc' : '#94a3b8'
+                background: tab === item.id ? 'rgba(34,211,238,0.1)' : 'transparent',
+                color: tab === item.id ? '#22d3ee' : '#94a3b8'
               }}>
               <span className="text-base">{item.icon}</span>
               <span>{item.label}</span>
@@ -976,7 +976,7 @@ export default function Dashboard() {
 
       {/* ════ MAIN AREA ════ */}
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64 relative z-10">
-        <header className="sticky top-0 z-20 flex items-center justify-between px-4 py-3 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/8">
+        <header className="sticky top-0 z-20 flex items-center justify-between px-4 py-3 bg-[#0f1629]/80 backdrop-blur-xl border-b border-white/8">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(p => !p)}
               className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 lg:hidden bg-white/5 border border-white/8 hover:bg-white/10 transition-all">☰</button>
@@ -1449,18 +1449,18 @@ export default function Dashboard() {
       </div>
 
       {/* ════ MOBILE BOTTOM NAV ════ */}
-      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#09090b]/95 backdrop-blur-xl border-t border-white/8">
+      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#0f1629]/95 backdrop-blur-xl border-t border-white/8">
         {NAV.map(item => (
           <button key={item.id} onClick={() => setTab(item.id)}
             className="flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-all relative"
-            style={{ color: tab === item.id ? '#a5b4fc' : '#64748b' }}>
+            style={{ color: tab === item.id ? '#22d3ee' : '#64748b' }}>
             <span className="text-xl leading-none">{item.icon}</span>
             <span className="text-[10px] font-medium">{item.label}</span>
             {item.id === 'support' && chatUnread > 0 && (
               <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center bg-red-500 text-white">{chatUnread}</span>
             )}
             {tab === item.id && (
-              <motion.div layoutId="tab-indicator" className="absolute top-0 h-0.5 w-10 rounded-full bg-brand-500" />
+              <motion.div layoutId="tab-indicator" className="absolute top-0 h-0.5 w-10 rounded-full bg-cyan-400" />
             )}
           </button>
         ))}
