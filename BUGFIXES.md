@@ -99,3 +99,32 @@ This meant `upsertBotSession()` (which updates `lastActive` in the DB) was NEVER
 - `allfunc/bot-heartbeat.js`: Removed the `if (extra.ready === false) return;` guard. `upsertBotSession` is now always called when the DB throttle window passes, keeping `lastActive` fresh every ~60 seconds regardless of ready state. The `commandReady` field is still only set when `ready === true`, preserving existing behavior.
 
 **Files:** `allfunc/bot-heartbeat.js`
+
+## Bug 9 - Antidelete "Original Message Not in Cache" (Critical Fix)
+**Problem:** Antidelete frequently shows `[Original message not in cache]` when someone deletes a message, even though the bot was running and online.
+
+**Root Cause:**
+In `pair.js`, the `messages.upsert` event handler had this order:
+
+```js
+// 1. Ephemeral unwrap
+nexusboijid.message = ...ephemeralMessage...
+
+// 2. ❌ PRIVATE MODE GUARD — early return here
+if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
+
+// 3. case.js fires...
+
+// 4. setImmediate() {
+//      cacheMessageForAntidelete(nexusboijid, nexus);  ← NEVER REACHED in private mode
+// }
+```
+
+When the bot is in **private/self mode** (`.self` command), any message received from another person hits the guard at step 2 and returns immediately — the `cacheMessageForAntidelete` call inside `setImmediate` at step 4 is **never executed**. The message is never stored in the antidelete cache. When the sender deletes it, the bot has no record of it and reports `[Original message not in cache]`.
+
+**Fix:**
+- `pair.js`: Moved `cacheMessageForAntidelete` call to BEFORE the private-mode guard (but after the ephemeral unwrap). The cache now runs for every valid incoming message regardless of bot mode. Removed the duplicate call from inside `setImmediate`.
+
+**Result:** Antidelete now correctly caches messages from all senders in all bot modes (public, private, group-only, etc.), so delete events reliably recover the original message content.
+
+**Files:** `pair.js`
