@@ -276,55 +276,51 @@ export default function Landing() {
       {/* ── HERO — centered background image behind text ── */}
       <section className="relative z-10 px-4 pt-24 pb-8 md:min-h-screen md:flex md:items-center md:justify-center md:text-center md:overflow-hidden md:pt-20">
 
-        {/* Centered hero image — background layer */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 overflow-hidden">
-          {/* Subtle HUD rings behind image */}
-          <div className="absolute hidden md:block opacity-10 relative" style={{ width: 'min(90vw, 520px)', height: 'min(90vw, 520px)' }}>
-            <HUDRing size={520} color="#22d3ee" duration={25} dashed />
-            <HUDRing size={420} color="#8b5cf6" duration={18} reverse />
-          </div>
-
-          <motion.div
-            className="relative"
-            style={{ width: 'clamp(220px, 42vw, 420px)', height: 'clamp(220px, 42vw, 420px)' }}
-            initial={{ opacity: 0, scale: 0.85 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 1.2, ease: 'easeOut' }}>
-            <div
-              className="w-full h-full rounded-full overflow-hidden"
-              style={{
-                opacity: 0.35,
-                filter: 'blur(0.5px)',
-                border: '1px solid rgba(34,211,238,0.15)',
-              }}>
-              <img
-                src={HERO_IMG}
-                alt=""
-                aria-hidden="true"
-                className="w-full h-full object-cover object-center"
-              />
+        {/* Centered hero image — background layer, perfectly centered */}
+        <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
+            {/* HUD rings around image */}
+            <div className="absolute opacity-20 relative" style={{ width: 'clamp(280px, 52vw, 540px)', height: 'clamp(280px, 52vw, 540px)' }}>
+              <HUDRing size={540} color="#22d3ee" duration={25} dashed />
+              <HUDRing size={440} color="#8b5cf6" duration={18} reverse />
             </div>
-            {/* Vignette on image itself */}
-            <div
-              className="absolute inset-0 rounded-full"
-              style={{
-                background: 'radial-gradient(circle, transparent 30%, rgba(15,22,41,0.85) 75%)',
-              }}
-            />
-          </motion.div>
+
+            <motion.div
+              className="relative"
+              style={{ width: 'clamp(260px, 50vw, 500px)', height: 'clamp(260px, 50vw, 500px)' }}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 1.2, ease: 'easeOut' }}>
+              <div
+                className="w-full h-full rounded-full overflow-hidden"
+                style={{
+                  opacity: 0.62,
+                  border: '2px solid rgba(34,211,238,0.35)',
+                  boxShadow: '0 0 60px rgba(34,211,238,0.2), 0 0 120px rgba(34,211,238,0.08), inset 0 0 40px rgba(34,211,238,0.05)',
+                }}>
+                <img
+                  src={HERO_IMG}
+                  alt=""
+                  aria-hidden="true"
+                  className="w-full h-full object-cover object-center scale-105"
+                />
+              </div>
+              {/* Soft vignette — keeps edges blended, center visible */}
+              <div
+                className="absolute inset-0 rounded-full"
+                style={{
+                  background: 'radial-gradient(circle, transparent 45%, rgba(15,22,41,0.65) 80%)',
+                }}
+              />
+            </motion.div>
+          </div>
         </div>
 
-        {/* Readability overlays — keep text crisp */}
+        {/* Readability overlays — lighter so logo shows through */}
         <div
-          className="absolute inset-0 pointer-events-none z-[1] hidden md:block"
+          className="absolute inset-0 pointer-events-none z-[1]"
           style={{
-            background: 'radial-gradient(ellipse 70% 60% at 50% 45%, rgba(15,22,41,0.55) 0%, rgba(15,22,41,0.82) 55%, rgba(15,22,41,0.95) 100%)',
-          }}
-        />
-        <div
-          className="absolute inset-0 pointer-events-none z-[1] md:hidden"
-          style={{
-            background: 'linear-gradient(180deg, rgba(15,22,41,0.3) 0%, rgba(15,22,41,0.85) 60%)',
+            background: 'radial-gradient(ellipse 55% 50% at 50% 50%, rgba(15,22,41,0.25) 0%, rgba(15,22,41,0.6) 60%, rgba(15,22,41,0.88) 100%)',
           }}
         />
 
@@ -348,7 +344,7 @@ export default function Landing() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
-            className="font-display font-extrabold mb-4 leading-tight tracking-tight text-left md:text-center drop-shadow-[0_2px_12px_rgba(15,22,41,0.9)]"
+            className="font-display font-extrabold mb-4 leading-tight tracking-tight text-left md:text-center drop-shadow-[0_2px_16px_rgba(15,22,41,1)]"
             style={{ fontSize: 'clamp(1.75rem, 6vw, 4.5rem)' }}>
             <span className="md:hidden text-white block">NEXT-GEN</span>
             <span className="md:hidden text-white block">BOT PLATFORM</span>
@@ -363,7 +359,7 @@ export default function Landing() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3 }}
-            className="text-sm sm:text-base text-slate-300 mb-8 max-w-2xl leading-relaxed text-left md:text-center md:mx-auto drop-shadow-[0_1px_8px_rgba(15,22,41,0.8)]">
+            className="text-sm sm:text-base text-slate-200 mb-8 max-w-2xl leading-relaxed text-left md:text-center md:mx-auto drop-shadow-[0_2px_12px_rgba(15,22,41,1)]">
             The ultimate control center for WhatsApp bot number management. Secure, scalable, and built for operators.
           </motion.p>
 
