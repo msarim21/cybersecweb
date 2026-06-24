@@ -868,6 +868,16 @@ async function startpairing(nexusDevNumber) {
                     const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                     setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Error 405 — session invalid, re-pair required' }).catch(() => {});
                 } catch (_) {}
+                // ✅ BUG FIX (Bug 10): DB se session creds delete karo — warna LOGGED_OUT ke baad bhi
+                // "already linked (session restored from DB)" error aata hai kyunki hasSessionInDb()
+                // DB mein purana stale data paata hai aur fresh pairing block ho jati hai.
+                try {
+                    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    deleteSessionCreds(cleanForDb).catch(() => {});
+                    removeLinkedNumber(cleanForDb).catch(() => {});
+                    console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (405 logout)`));
+                } catch (_) {}
                 tracker.disconnected = true;
                 tracker.connection = null;
                 
@@ -902,6 +912,13 @@ async function startpairing(nexusDevNumber) {
                         const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                         setBotConnectionStatus(cleanForDb, 'ERROR', { lastErrorMessage: `Error 440 — conflict after ${MAX_RETRIES_440} retries, re-pair required` }).catch(() => {});
                     } catch (_) {}
+                    try {
+                        const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                        const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                        deleteSessionCreds(cleanForDb).catch(() => {});
+                        removeLinkedNumber(cleanForDb).catch(() => {});
+                        console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (440 max retries)`));
+                    } catch (_) {}
                     tracker.disconnected = true;
                 }
             } else if (reason === DisconnectReason.badSession) {
@@ -913,6 +930,13 @@ async function startpairing(nexusDevNumber) {
                     const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                     setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Bad session — re-pair required' }).catch(() => {});
                 } catch (_) {}
+                try {
+                    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    deleteSessionCreds(cleanForDb).catch(() => {});
+                    removeLinkedNumber(cleanForDb).catch(() => {});
+                    console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (badSession)`));
+                } catch (_) {}
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
@@ -922,6 +946,13 @@ async function startpairing(nexusDevNumber) {
                     const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
                     const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                     setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Logged out from WhatsApp' }).catch(() => {});
+                } catch (_) {}
+                try {
+                    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    deleteSessionCreds(cleanForDb).catch(() => {});
+                    removeLinkedNumber(cleanForDb).catch(() => {});
+                    console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (loggedOut)`));
                 } catch (_) {}
                 tracker.disconnected = true;
             } else if (reason === DisconnectReason.connectionClosed || 
@@ -1120,6 +1151,15 @@ Your bot is ready. Send *.menu* to see all available commands.
         if (wsState === 1) {
             // WebSocket open — keep alive
             nexus.sendPresenceUpdate('available').catch(() => {});
+            // ✅ BUG FIX (Bug 11): Watchdog mein touchBotHeartbeat call karo
+            // Warna agar chat quiet hai (koi message nahi) to lastActive update nahi hota
+            // aur website per "BOT OFFLINE" dikhta rehta hai. Watchdog har 30s pe chalta hai;
+            // touchBotHeartbeat ka DB throttle 60s hai to effective DB update = har 60s.
+            try {
+                const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
+            } catch (_) {}
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
