@@ -81,19 +81,24 @@ router.post('/request', protect, async (req, res) => {
         }
       } catch (_) {}
 
-      const staleStatuses = ['LOGGED_OUT', 'ERROR', 'DISCONNECTED', 'inactive'];
-      if (connStatus && staleStatuses.includes(connStatus)) {
-        // Stale session — auto-clear DB so fresh pairing can proceed
-        console.log(`[Pairing] ${clean}: Stale session detected (connection_status=${connStatus}) — auto-clearing DB creds for fresh pairing`);
+      // ✅ WHITELIST approach — sirf clearly CONNECTED status mein block karo.
+      // Blacklist approach (stale check) ka bug: connStatus === null hone par bhi block hota tha.
+      // e.g. bot_sessions row nahi hai, ya connection_status null/empty → old code blocked pairing!
+      // Fix: ONLY block when bot is confirmed ACTIVELY CONNECTED. Everything else → allow re-pair.
+      const activeStatuses = ['CONNECTED', 'OPEN'];
+      const isReallyActive = connStatus && activeStatuses.includes(connStatus.toUpperCase());
+      if (!isReallyActive) {
+        // null / LOGGED_OUT / ERROR / DISCONNECTED / inactive / unknown → stale, allow fresh pairing
+        console.log(`[Pairing] ${clean}: Session not active (connection_status=${connStatus ?? 'null'}) — auto-clearing DB creds for fresh pairing`);
         await deleteSessionCreds(clean).catch(() => {});
         await removeLinkedNumber(clean).catch(() => {});
         // Fall through to generate fresh pairing code below
       } else {
-        console.log(`[Pairing] ${clean}: Active session found in DB (connection_status=${connStatus || 'unknown'}) — restoring and blocking new pairing code`);
+        console.log(`[Pairing] ${clean}: Bot is CONNECTED (connection_status=${connStatus}) — blocking re-pairing`);
         // Restore from DB so bot can auto-reconnect without re-pairing
         await ensureSessionRestored(clean).catch(() => {});
         return res.status(409).json({
-          error: 'This number is already linked (session restored from DB). Unlink it first before re-pairing.',
+          error: 'This number is already linked and connected. Unlink it first before re-pairing.',
           alreadyLinked: true
         });
       }
