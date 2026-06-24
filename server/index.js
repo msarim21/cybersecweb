@@ -143,6 +143,7 @@ const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
+const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { protect: protectAuth, adminOnly } = require('./middleware/auth');
 
 const app  = express();
@@ -588,6 +589,8 @@ initDb()
 
     // Start plan expiry auto-disconnect cron (every 60 seconds)
     startPlanExpiryJob(60_000);
+    // Auto-cleanup: purge stale antideletecaches & cap collection size daily
+    startDbCleanupJob();
     // Orphan disconnect runs on worker dyno only (worker.js)
   })
   .catch(err => {
