@@ -128,3 +128,79 @@ When the bot is in **private/self mode** (`.self` command), any message received
 **Result:** Antidelete now correctly caches messages from all senders in all bot modes (public, private, group-only, etc.), so delete events reliably recover the original message content.
 
 **Files:** `pair.js`
+
+## Bug 10 - "Already Linked" Error After WhatsApp Logout (Critical Fix)
+**Problem:** Jab WhatsApp se number logout ho jata hai (Error 405, bad session, ya explicit logout), to dashboard mein "NO NUMBERS LINKED YET" dikhta hai lekin re-pair karne par yeh error aata hai:
+```
+This number is already linked (session restored from DB). Unlink it first before re-pairing.
+```
+
+**Root Cause:**
+Jab WhatsApp disconnect ya logout event fire hota tha (`pair.js` mein), ye cheezein hoti thi:
+1. `forceCleanupSession()` → local filesystem session delete hota (nexstore/pairing/)
+2. `setBotConnectionStatus('LOGGED_OUT')` → bot_sessions.connection_status update hota
+3. `linked_numbers.status` → 'inactive' set hota (dashboard se number gayab)
+
+**Lekin yeh nahi hota:**
+- `deleteSessionCreds()` — **kabhi nahi call hota** → `session_creds` table mein purana stale data rehta tha!
+
+Jab user dobara pair karne ki koshish karta:
+1. `pairing.js` → `hasSessionInDb(clean)` → `session_creds` mein purana data milta → `true` return
+2. Bina `connection_status` check kiye BLOCK kar deta → "already linked" error
+3. Dashboard mein number nahi dikhta (linked_numbers inactive) lekin pairing bhi nahi ho sakti
+
+**Fix:**
+**Part A — `pair.js` (4 handlers fixed):** Har LOGGED_OUT event (405, 440 max retries, badSession, loggedOut) pe `deleteSessionCreds()` + `removeLinkedNumber()` call added:
+```js
+try {
+    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+    deleteSessionCreds(cleanForDb).catch(() => {});   // DB session creds delete
+    removeLinkedNumber(cleanForDb).catch(() => {});   // linked_numbers cleanup
+} catch (_) {}
+```
+
+**Part B — `server/routes/pairing.js` (smart status check):** `hasSessionInDb()` true return karne par seedha block karne ki jagah pehle `connection_status` check karo. Agar LOGGED_OUT/ERROR/DISCONNECTED/inactive ho to auto-clear karo aur fresh pairing allow karo:
+```js
+const staleStatuses = ['LOGGED_OUT', 'ERROR', 'DISCONNECTED', 'inactive'];
+if (connStatus && staleStatuses.includes(connStatus)) {
+    await deleteSessionCreds(clean).catch(() => {});
+    await removeLinkedNumber(clean).catch(() => {});
+    // Fall through — fresh pairing allowed
+} else {
+    return res.status(409).json({ error: 'This number is already linked...' });
+}
+```
+
+**Files:** `pair.js`, `server/routes/pairing.js`
+
+---
+
+## Bug 11 - Bot Shows Offline When No Messages Coming (Watchdog Gap)
+**Problem:** Bot WhatsApp se connected hota hai (wsState=1) lekin agar chat quiet ho (koi incoming message nahi) to website per "BOT OFFLINE" dikhna shuru ho jata hai kuch time baad.
+
+**Root Cause:**
+`allfunc/bot-heartbeat.js` ka `touchBotHeartbeat()` sirf tab call hota tha jab koi event fire ho:
+- Message receive ho
+- Connection open/ready event ho
+
+Lekin agar bot connected hai aur koi message nahi aa raha to `touchBotHeartbeat` call nahi hota. `lastActive` DB mein update nahi hota. 15 minute ke baad `lastFresh = false` → dashboard "BOT OFFLINE" dikhaane lagta.
+
+`pair.js` ka 30-second watchdog sirf `sendPresenceUpdate()` call karta tha — `touchBotHeartbeat()` nahi.
+
+**Fix:**
+`pair.js` watchdog (`setInterval` jo har 30s pe chalta hai) mein `touchBotHeartbeat` call added kiya jab `wsState === 1` (WebSocket open):
+```js
+if (wsState === 1) {
+    nexus.sendPresenceUpdate('available').catch(() => {});
+    // NEW: DB mein lastActive update karo (DB throttle = 60s, watchdog = 30s → har 60s DB update)
+    try {
+        const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+        touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
+    } catch (_) {}
+}
+```
+
+**Result:** Jab tak bot ka WebSocket open hai, har 60 seconds mein DB `lastActive` update hota hai. 15-minute online window ke andar bot always "ONLINE" dikhega, chahe koi message na aaye.
+
+**Files:** `pair.js`
