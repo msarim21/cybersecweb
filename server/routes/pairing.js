@@ -52,17 +52,51 @@ router.post('/request', protect, async (req, res) => {
   // ✅ FIX 2: Check DATABASE session — Heroku/Replit ephemeral disk wipes local
   // files on every restart. If session creds exist in DB, the number IS paired.
   // Without this check, restart → files gone → new pairing code → WhatsApp spam.
+  //
+  // ✅ BUG FIX (Bug 10): LOGGED_OUT/ERROR status check added.
+  // Problem: Number WhatsApp se logout hone ke baad bhi DB mein session creds rahte hain.
+  // hasSessionInDb() true return karta hai → "already linked" error aata hai.
+  // Dashboard mein number nahi dikhta (linked_numbers inactive hai) lekin pairing block hoti hai.
+  // Fix: connection_status LOGGED_OUT/ERROR ho to session auto-clear karo aur fresh pairing allow karo.
   try {
-    const { hasSessionInDb, ensureSessionRestored } = require('../../session-db');
+    const { hasSessionInDb, ensureSessionRestored, deleteSessionCreds, removeLinkedNumber } = require('../../session-db');
     const inDb = await hasSessionInDb(clean);
     if (inDb) {
-      console.log(`[Pairing] ${clean}: Session found in DB — restoring and blocking new pairing code`);
-      // Restore from DB so bot can auto-reconnect without re-pairing
-      await ensureSessionRestored(clean).catch(() => {});
-      return res.status(409).json({
-        error: 'This number is already linked (session restored from DB). Unlink it first before re-pairing.',
-        alreadyLinked: true
-      });
+      // Check connection_status — LOGGED_OUT/ERROR means stale session, allow re-pairing
+      let connStatus = null;
+      try {
+        const { getPool, isMongoMode } = require('../db');
+        const pool = getPool();
+        if (pool && !isMongoMode?.()) {
+          const r = await pool.query(
+            `SELECT connection_status FROM bot_sessions WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 ORDER BY last_active DESC NULLS LAST LIMIT 1`,
+            [clean]
+          );
+          connStatus = r.rows[0]?.connection_status || null;
+        } else if (isMongoMode?.()) {
+          const BotSession = require('../models/BotSession');
+          const bs = await BotSession.findOne({ number: { $in: [clean, clean + '@s.whatsapp.net'] } })
+            .sort({ lastActive: -1 }).select('connectionStatus').lean();
+          connStatus = bs?.connectionStatus || null;
+        }
+      } catch (_) {}
+
+      const staleStatuses = ['LOGGED_OUT', 'ERROR', 'DISCONNECTED', 'inactive'];
+      if (connStatus && staleStatuses.includes(connStatus)) {
+        // Stale session — auto-clear DB so fresh pairing can proceed
+        console.log(`[Pairing] ${clean}: Stale session detected (connection_status=${connStatus}) — auto-clearing DB creds for fresh pairing`);
+        await deleteSessionCreds(clean).catch(() => {});
+        await removeLinkedNumber(clean).catch(() => {});
+        // Fall through to generate fresh pairing code below
+      } else {
+        console.log(`[Pairing] ${clean}: Active session found in DB (connection_status=${connStatus || 'unknown'}) — restoring and blocking new pairing code`);
+        // Restore from DB so bot can auto-reconnect without re-pairing
+        await ensureSessionRestored(clean).catch(() => {});
+        return res.status(409).json({
+          error: 'This number is already linked (session restored from DB). Unlink it first before re-pairing.',
+          alreadyLinked: true
+        });
+      }
     }
   } catch (dbErr) {
     // DB check failed — log and continue (do not block pairing if DB is down)
