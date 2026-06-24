@@ -34,7 +34,8 @@ router.post('/request', protect, async (req, res) => {
 
   const sessionPath = path.join(PAIRING_BASE, clean);
 
-  // ✅ FIX 1: Check local filesystem first (connected.flag + creds.json)
+  // ✅ CHECK 1: Local filesystem (connected.flag + valid creds.json)
+  // On Heroku the disk is ephemeral — this check only catches bots running on the SAME dyno restart cycle.
   const connectedFlagPath = path.join(sessionPath, 'connected.flag');
   const existingCredsPath = path.join(sessionPath, 'creds.json');
   const isAlreadyPairedLocal = fsSync.existsSync(connectedFlagPath) || (fsSync.existsSync(existingCredsPath) && (() => {
@@ -49,103 +50,89 @@ router.post('/request', protect, async (req, res) => {
     return res.status(409).json({ error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true });
   }
 
-  // ✅ FIX 2: Check DATABASE session — Heroku/Replit ephemeral disk wipes local
-  // files on every restart. If session creds exist in DB, the number IS paired.
-  // Without this check, restart → files gone → new pairing code → WhatsApp spam.
+  // ── ACTIVE CONNECTION CHECK ───────────────────────────────────────────────
+  // ✅ KEY FIX: Block re-pairing ONLY when the bot is BOTH shown as active in
+  // the dashboard (linked_numbers.status = 'active') AND connection_status = 'CONNECTED'.
   //
-  // ✅ BUG FIX (Bug 10): LOGGED_OUT/ERROR status check added.
-  // Problem: Number WhatsApp se logout hone ke baad bhi DB mein session creds rahte hain.
-  // hasSessionInDb() true return karta hai → "already linked" error aata hai.
-  // Dashboard mein number nahi dikhta (linked_numbers inactive hai) lekin pairing block hoti hai.
-  // Fix: connection_status LOGGED_OUT/ERROR ho to session auto-clear karo aur fresh pairing allow karo.
+  // Why: Previous code checked session_creds in DB regardless of actual connection state.
+  // If bot was LOGGED_OUT but session_creds still in DB, and connection_status was null
+  // or not checked, it blocked pairing even though dashboard showed "NO NUMBERS LINKED".
+  //
+  // New logic: If dashboard shows "NO NUMBERS LINKED" (linked_numbers not active) → ALWAYS
+  // allow re-pairing and auto-clear any stale DB data. Only block when bot is provably live.
   try {
-    const { hasSessionInDb, ensureSessionRestored, deleteSessionCreds, removeLinkedNumber } = require('../../session-db');
-    const inDb = await hasSessionInDb(clean);
-    if (inDb) {
-      // Check connection_status — LOGGED_OUT/ERROR means stale session, allow re-pairing
-      let connStatus = null;
-      try {
-        const { getPool, isMongoMode } = require('../db');
-        const pool = getPool();
-        if (pool && !isMongoMode?.()) {
-          const r = await pool.query(
-            `SELECT connection_status FROM bot_sessions WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 ORDER BY last_active DESC NULLS LAST LIMIT 1`,
-            [clean]
-          );
-          connStatus = r.rows[0]?.connection_status || null;
-        } else if (isMongoMode?.()) {
-          const BotSession = require('../models/BotSession');
-          const bs = await BotSession.findOne({ number: { $in: [clean, clean + '@s.whatsapp.net'] } })
-            .sort({ lastActive: -1 }).select('connectionStatus').lean();
-          connStatus = bs?.connectionStatus || null;
-        }
-      } catch (_) {}
-
-      // ✅ WHITELIST approach — sirf clearly CONNECTED status mein block karo.
-      // Blacklist approach (stale check) ka bug: connStatus === null hone par bhi block hota tha.
-      // e.g. bot_sessions row nahi hai, ya connection_status null/empty → old code blocked pairing!
-      // Fix: ONLY block when bot is confirmed ACTIVELY CONNECTED. Everything else → allow re-pair.
-      const activeStatuses = ['CONNECTED', 'OPEN'];
-      const isReallyActive = connStatus && activeStatuses.includes(connStatus.toUpperCase());
-      if (!isReallyActive) {
-        // null / LOGGED_OUT / ERROR / DISCONNECTED / inactive / unknown → stale, allow fresh pairing
-        console.log(`[Pairing] ${clean}: Session not active (connection_status=${connStatus ?? 'null'}) — auto-clearing DB creds for fresh pairing`);
-        await deleteSessionCreds(clean).catch(() => {});
-        await removeLinkedNumber(clean).catch(() => {});
-        // Fall through to generate fresh pairing code below
-      } else {
-        console.log(`[Pairing] ${clean}: Bot is CONNECTED (connection_status=${connStatus}) — blocking re-pairing`);
-        // Restore from DB so bot can auto-reconnect without re-pairing
-        await ensureSessionRestored(clean).catch(() => {});
-        return res.status(409).json({
-          error: 'This number is already linked and connected. Unlink it first before re-pairing.',
-          alreadyLinked: true
-        });
-      }
-    }
-  } catch (dbErr) {
-    // DB check failed — log and continue (do not block pairing if DB is down)
-    console.warn(`[Pairing] DB session check failed for ${clean}: ${dbErr.message}`);
-  }
-
-  // ✅ FIX 3: Check active bot session status in DB (BotSession model)
-  try {
-    const { upsertBotSession } = require('../db-service');
-    // Check if there's an active session in bot_sessions table
+    const { deleteSessionCreds, removeLinkedNumber } = require('../../session-db');
     const { getPool, isMongoMode } = require('../db');
     const pool = getPool();
+    let isActivelyConnected = false;
+
     if (pool && !isMongoMode?.()) {
-      const result = await pool.query(
-        `SELECT status FROM bot_sessions WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1 AND status = 'active' LIMIT 1`,
+      // PostgreSQL: two-step check
+      // Step 1: Is this number shown as ACTIVE in the dashboard (linked_numbers)?
+      const lnResult = await pool.query(
+        `SELECT status FROM linked_numbers
+         WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1
+           AND status = 'active'
+         LIMIT 1`,
         [clean]
       );
-      if (result.rows.length > 0) {
-        console.log(`[Pairing] ${clean}: Active bot_session in PostgreSQL — blocking new pairing code`);
-        return res.status(409).json({
-          error: 'This number is already active. Unlink it first before re-pairing.',
-          alreadyLinked: true
-        });
+      if (lnResult.rows.length > 0) {
+        // Step 2: Is the bot actually CONNECTED right now (bot_sessions)?
+        const bsResult = await pool.query(
+          `SELECT connection_status, last_active FROM bot_sessions
+           WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1
+           ORDER BY last_active DESC NULLS LAST
+           LIMIT 1`,
+          [clean]
+        );
+        const connStatus = bsResult.rows[0]?.connection_status;
+        const lastActive = bsResult.rows[0]?.last_active;
+        // Only block if: CONNECTED status + lastActive within 20 minutes (stale detection)
+        const isRecent = lastActive && (Date.now() - new Date(lastActive).getTime() < 20 * 60 * 1000);
+        if (connStatus === 'CONNECTED' && isRecent) {
+          isActivelyConnected = true;
+        }
       }
     } else if (isMongoMode?.()) {
-      const BotSession = require('../models/BotSession');
-      const existing = await BotSession.findOne({
-        number: { $in: [clean, clean + '@s.whatsapp.net'] },
-        status: 'active'
-      });
-      if (existing) {
-        console.log(`[Pairing] ${clean}: Active BotSession in MongoDB — blocking new pairing code`);
-        return res.status(409).json({
-          error: 'This number is already active. Unlink it first before re-pairing.',
-          alreadyLinked: true
-        });
-      }
+      try {
+        const BotSession = require('../models/BotSession');
+        const LinkedNumberModel = require('../models/LinkedNumber');
+        const ln = await LinkedNumberModel.findOne({
+          number: { $in: [clean, clean + '@s.whatsapp.net'] },
+          status: 'active'
+        }).lean();
+        if (ln) {
+          const bs = await BotSession.findOne({
+            number: { $in: [clean, clean + '@s.whatsapp.net'] }
+          }).sort({ lastActive: -1 }).select('connectionStatus lastActive').lean();
+          const isRecent = bs?.lastActive && (Date.now() - new Date(bs.lastActive).getTime() < 20 * 60 * 1000);
+          if (bs?.connectionStatus === 'CONNECTED' && isRecent) {
+            isActivelyConnected = true;
+          }
+        }
+      } catch (_) {}
     }
-  } catch (sessionCheckErr) {
-    console.warn(`[Pairing] Session status check failed for ${clean}: ${sessionCheckErr.message}`);
+
+    if (isActivelyConnected) {
+      console.log(`[Pairing] ${clean}: Bot is actively CONNECTED (in dashboard + recent heartbeat) — blocking re-pairing`);
+      return res.status(409).json({
+        error: 'This number is already linked and connected. Unlink it first before re-pairing.',
+        alreadyLinked: true
+      });
+    }
+
+    // Not actively connected — clear any stale DB data so fresh pairing works cleanly
+    console.log(`[Pairing] ${clean}: No active connection found — clearing stale DB session for fresh pairing`);
+    await deleteSessionCreds(clean).catch(() => {});
+    await removeLinkedNumber(clean).catch(() => {});
+
+  } catch (dbCheckErr) {
+    // DB check failed — log and continue (never block pairing due to DB failure)
+    console.warn(`[Pairing] Active connection check failed for ${clean}: ${dbCheckErr.message}`);
   }
 
-  // ── Number is NOT paired — proceed with fresh pairing ─────────────────────
-  console.log(`[Pairing] ${clean}: No existing session found — generating fresh pairing code`);
+  // ── Number is NOT actively connected — proceed with fresh pairing ──────────
+  console.log(`[Pairing] ${clean}: Generating fresh pairing code`);
 
   // Wipe any stale/partial session so pair.js always issues a fresh code
   if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
@@ -156,7 +143,7 @@ router.post('/request', protect, async (req, res) => {
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
-  // ✅ FIX 4: Save pairing ownership BEFORE starting pair.js
+  // ✅ Save pairing ownership BEFORE starting pair.js
   // So that when WhatsApp confirms pairing, session-db.js auto-saves to linked_numbers
   try {
     const { savePairingOwner } = require('../db-service');
