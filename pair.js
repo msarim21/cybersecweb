@@ -35,6 +35,11 @@ let themeemoji = "😇";
 const chalk = require('chalk')
 const { writeExif, imageToWebp, videoToWebp, writeExifImg, writeExifVid } = require('./allfunc/exif')
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetch } = require('./allfunc/myfunc')
+// ✅ FIX: Load antidelete-helpers at startup so global._cacheMessageForAntidelete is set
+// BEFORE any messages arrive — in self mode case.js is never called for others' messages
+// so relying on case.js to load this module causes cache misses and antidelete to fail.
+require('./allfunc/antidelete-session');
+require('./allfunc/antidelete-helpers');
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 // Define sleep function directly here to avoid import issues
