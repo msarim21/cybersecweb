@@ -273,6 +273,57 @@ router.post('/:id/disconnect', protect, async (req, res) => {
   }
 });
 
+// POST /api/numbers/:id/reconnect
+// Restores session from DB and reconnects the bot — no re-pairing needed.
+router.post('/:id/reconnect', protect, async (req, res) => {
+  try {
+    const numbers = await getNumbersByOwner(req.user.id);
+    const target  = numbers.find(n => String(n._id) === req.params.id);
+    if (!target) return res.status(404).json({ error: 'Number not found.' });
+
+    const clean = String(target.number).replace(/[^0-9]/g, '');
+    const jid   = `${clean}@s.whatsapp.net`;
+
+    // Step 1: Restore session from DB (writes to BOTH cleanNum and cleanNum@s.whatsapp.net dirs)
+    const { ensureSessionRestored } = require('../../session-db');
+    const restored = await ensureSessionRestored(clean);
+    if (!restored) {
+      return res.status(400).json({
+        error: 'No valid session found in database. Please re-pair this number.',
+        needsRepair: true,
+      });
+    }
+
+    // Step 2: Remove from stopped_bots so autoLoadPairs / supervisor won't skip it
+    try {
+      const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
+      if (typeof removeFromStoppedBots === 'function') removeFromStoppedBots(clean);
+      if (global.stoppedBots) global.stoppedBots.delete(clean);
+    } catch (_) {}
+
+    // Step 3: Mark bot_session active so dashboard reflects reconnecting state
+    try {
+      const { upsertBotSession, setBotConnectionStatus: dbSetStatus } = require('../db-service');
+      await upsertBotSession(clean, 'active');
+    } catch (_) {}
+
+    // Step 4: Fire startpairing (non-blocking — bot reconnects in background)
+    try {
+      const startpairing = require('../../pair');
+      startpairing(jid).catch(err => {
+        console.error(`[reconnect] startpairing error for ${clean}:`, err.message);
+      });
+    } catch (pairErr) {
+      console.error(`[reconnect] could not load pair.js:`, pairErr.message);
+      return res.status(500).json({ error: 'Failed to start bot reconnect. Try again.' });
+    }
+
+    res.json({ message: `Reconnect initiated for ${clean}. Bot will be online in a few seconds.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/numbers/:id/force-disconnect
 // More aggressive: kills bot, wipes filesystem AND DB creds — use when number is stuck.
 router.post('/:id/force-disconnect', protect, async (req, res) => {
