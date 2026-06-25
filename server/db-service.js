@@ -551,6 +551,13 @@ async function isNumberInLinkedNumbers(number) {
 async function getBotMode(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return 'public';
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      const doc = await BotSession.findOne({ number: clean }).select('botMode').lean();
+      return doc?.botMode || 'public';
+    } catch (_) { return 'public'; }
+  }
   try {
     const { rows } = await pg().query(
       'SELECT bot_mode FROM bot_sessions WHERE number=$1 LIMIT 1',
@@ -564,6 +571,17 @@ async function setBotMode(number, mode) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return;
   const safeMode = mode === 'self' ? 'self' : 'public';
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { botMode: safeMode, lastActive: new Date() } },
+        { upsert: true }
+      );
+    } catch (_) {}
+    return;
+  }
   try {
     await pg().query(
       `INSERT INTO bot_sessions (number, status, bot_mode, last_active)
