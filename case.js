@@ -4345,12 +4345,15 @@ if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
 })();
 
 if (!devtrust.public) {
-    // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
-    const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
-    // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
-    const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
-    const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
+    // Allow .self / .public / .private to pass even in self mode — so ANY user can toggle mode
+    const _isModeToggleCmd = isCmd && ['self', 'public', 'private'].includes(command);
+    if (!_isModeToggleCmd) {
+        // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
+        const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
+        const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+        const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
+        if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
+    }
 }
 
 // Linked-user / owner commands — skip auto-react, status hooks, group moderation
