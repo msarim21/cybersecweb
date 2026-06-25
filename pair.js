@@ -668,7 +668,6 @@ async function startpairing(nexusDevNumber) {
 
     // Restore public/private mode from saved settings
     try {
-        // Per-bot mode file — each user's bot has its own public/self setting
         const _cleanBotNum = nexusDevNumber.replace(/[^0-9]/g, '');
         const _modeFile = `./database/bot_mode_${_cleanBotNum}.json`;
         const _modeFileLegacy = './database/bot_mode.json';
@@ -677,11 +676,19 @@ async function startpairing(nexusDevNumber) {
             const _savedMode = JSON.parse(_fs.readFileSync(_modeFile, 'utf-8'));
             nexus.public = _savedMode.mode !== 'self';
         } else if (_fs.existsSync(_modeFileLegacy)) {
-            // Migrate legacy shared file to per-bot file
             const _savedMode = JSON.parse(_fs.readFileSync(_modeFileLegacy, 'utf-8'));
             nexus.public = _savedMode.mode !== 'self';
+            // Migrate to per-bot file
+            try { _fs.writeFileSync(_modeFile, JSON.stringify({ mode: _savedMode.mode })); } catch (_) {}
         } else {
-            nexus.public = true;
+            // File not found — read from DB (survives Heroku ephemeral filesystem restarts)
+            try {
+                const { getBotMode } = require('./server/db-service');
+                const _dbMode = await getBotMode(_cleanBotNum);
+                nexus.public = _dbMode !== 'self';
+            } catch (_) {
+                nexus.public = true;
+            }
         }
     } catch (e) {
         nexus.public = true;
