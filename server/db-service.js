@@ -844,16 +844,34 @@ async function countAdmins() {
 
 async function deleteNumberByPhone(phone) {
   const clean = phone.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+  if (!clean) return;
   if (isMongoMode()) {
-    const { LinkedNumber } = M();
+    const { LinkedNumber, BotSession } = M();
     try {
-      await LinkedNumber.findOneAndDelete({ number: { $regex: clean } });
-    } catch (e) { console.error('[db] deleteNumberByPhone mongo error:', e.message); }
+      // deleteMany handles duplicates; matches both "923..." and "923...@s.whatsapp.net"
+      await LinkedNumber.deleteMany({
+        number: { $regex: clean, $options: 'i' }
+      });
+    } catch (e) { console.error('[db] deleteNumberByPhone mongo LinkedNumber error:', e.message); }
+    // Also mark bot_session as logged_out and clear session_data so restart won't auto-reconnect
+    try {
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { status: 'inactive', connectionStatus: 'LOGGED_OUT', sessionData: null } }
+      );
+    } catch (e) { console.error('[db] deleteNumberByPhone mongo BotSession error:', e.message); }
     return;
   }
   try {
-    await pg().query('DELETE FROM linked_numbers WHERE number LIKE $1', [`%${clean}%`]);
+    await pg().query('DELETE FROM linked_numbers WHERE REGEXP_REPLACE(number,\'[^0-9]\',\'\',\'g\') = $1', [clean]);
   } catch (e) { console.error('[db] deleteNumberByPhone pg error:', e.message); }
+  try {
+    await pg().query(
+      `UPDATE bot_sessions SET status='inactive', connection_status='LOGGED_OUT', session_data=NULL
+       WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
+      [clean]
+    );
+  } catch (e) { console.error('[db] deleteNumberByPhone pg BotSession clear error:', e.message); }
 }
 
 async function getAllActiveLinkedNumbers() {
