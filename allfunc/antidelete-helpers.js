@@ -480,7 +480,7 @@ function _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state) {
  */
 function cacheMessageForAntidelete(rawMsg, sock) {
     try {
-        console.log("[AD-DEBUG] cacheMsg called: id="+(rawMsg?.key?.id||"?").slice(0,10)+" fromMe="+rawMsg?.key?.fromMe+" jid="+(rawMsg?.key?.remoteJid||"?").slice(0,25));
+.slice(0,10)+" fromMe="+rawMsg?.key?.fromMe+" jid="+(rawMsg?.key?.remoteJid||"?").slice(0,25));
         if (!rawMsg?.key?.id || !rawMsg?.key?.remoteJid) return;
         if (rawMsg.message?.protocolMessage) return;
 
@@ -491,7 +491,7 @@ function cacheMessageForAntidelete(rawMsg, sock) {
         if (!botNum) return;
 
         const session = getAntideleteSession(botNum);
-        if (!session) { console.log("[AD-DEBUG] cacheMsg: NO SESSION for botNum="+botNum); return; }
+        if (!session) return;
 
         const rawMessage = rawMsg.message || {};
         const unwrapped = unwrapWaMessage(rawMessage);
@@ -531,7 +531,6 @@ function cacheMessageForAntidelete(rawMsg, sock) {
 
         session.set(chatId, msgId, entry, aliasChatIds);
         _adMongoSave(botNum, chatId, msgId, entry);
-        console.log("[AD-DEBUG] CACHED msgId="+msgId.slice(0,10)+" chatId="+chatId.slice(0,25)+" botNum="+botNum);
         session.scheduleDiskSave();
     } catch (e) {
         console.error('[ANTIDELETE] cache error:', e.message);
@@ -976,9 +975,11 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         tracker = null,
     } = opts;
     const clean = _adResolveBotNum(sock, botNum);
-    console.log("[AD-DEBUG] handleDelete: clean="+clean+" chatId="+(chatId||"?").slice(0,25)+" msgId="+(msgId||"?").slice(0,10));
-    if (!sock || !clean || !chatId || !msgId) { console.log("[AD-DEBUG] handleDelete: EARLY EXIT missing field"); return false; }
-    if (_adCheckDeleteProcessed(clean, chatId, msgId)) { console.log("[AD-DEBUG] handleDelete: already processed"); return false; }
+.slice(0,25)+" msgId="+(msgId||"?").slice(0,10));
+    if (!sock || !clean || !chatId || !msgId) {
+ return false; }
+    if (_adCheckDeleteProcessed(clean, chatId, msgId)) {
+ return false; }
 
     let _tracker = tracker;
     if (!_tracker) {
@@ -995,8 +996,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
 
     const cfg = loadAntideleteCfg(clean);
     const mode = cfg.mode || 'off';
-    console.log("[AD-DEBUG] handleDelete: mode="+mode);
-    if (mode === 'off') { console.log("[AD-DEBUG] handleDelete: mode is off, returning"); return false; }
+    if (mode === 'off') return false;
 
     const isGroup = String(chatId).endsWith('@g.us');
     if (mode === 'private_pm' && isGroup) return false;
@@ -1026,8 +1026,7 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
 
     const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
-
-    console.log("[AD-DEBUG] handleDelete: orig found="+Boolean(orig)+" target="+(target||"?").slice(0,25));
+.slice(0,25));
     if (!orig) {
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
