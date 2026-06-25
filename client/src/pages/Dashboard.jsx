@@ -1256,93 +1256,102 @@ export default function Dashboard() {
                   </GCard>
                 ) : (
                   <div className="space-y-3">
-                    {filtered.map((n, i) => (
-                      <motion.div key={n._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
-                        className="rounded-2xl p-4"
-                        style={{ background: 'rgba(10,20,60,0.55)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,245,255,0.14)' }}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-mono text-sm text-white truncate">{n.number}</div>
-                            <div className="font-mono text-[10px] text-[#00f5ff] mt-0.5">{n.botName}</div>
-                            <div className="font-mono text-[10px] text-gray-600 mt-0.5">Added {new Date(n.createdAt).toLocaleDateString()}</div>
-                            {n.status === 'active' && (
-                              <div className="mt-2 space-y-0.5">
-                                {n.connectionStatus && (
-                                  <div className="font-mono text-[9px] text-gray-500">
-                                    WA: <span className="text-[#00f5ff]">{n.connectionStatus}</span>
-                                    {n.sessionHealth && n.sessionHealth !== 'unknown' && (
-                                      <span className="ml-2 text-gray-600">· {n.sessionHealth}</span>
-                                    )}
-                                  </div>
-                                )}
-                                {n.lastConnectedAt && (
-                                  <div className="font-mono text-[9px] text-gray-600">
-                                    Last connected: {new Date(n.lastConnectedAt).toLocaleString()}
-                                  </div>
-                                )}
-                                {n.hostDyno && (
-                                  <div className="font-mono text-[9px] text-gray-600">Worker: {n.hostDyno}</div>
-                                )}
-                                {n.lastError && (
-                                  <div className="font-mono text-[9px] text-red-400 truncate" title={n.lastError}>
-                                    Error: {n.lastError}
-                                  </div>
-                                )}
+                    {filtered.map((n, i) => {
+                      const presence = getBotPresence(n);
+                      return (
+                        <motion.div key={n._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                          className="rounded-2xl p-4"
+                          style={{ background: 'rgba(10,20,60,0.55)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,245,255,0.14)' }}>
+
+                          {/* ── Top row: info + status badge ── */}
+                          <div className="flex items-start justify-between gap-2 mb-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-mono text-sm text-white truncate">{n.number}</div>
+                              <div className="font-mono text-[10px] text-[#00f5ff] mt-0.5 truncate">{n.botName}</div>
+                              <div className="font-mono text-[10px] text-gray-600 mt-0.5">
+                                Added {new Date(n.createdAt).toLocaleDateString()}
                               </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 ml-3 flex-shrink-0">
-                            {n.status === 'active' && (() => {
-                              const presence = getBotPresence(n);
-                              return (
-                                <span
-                                  className={`font-mono text-[9px] px-2 py-1 rounded-lg ${presence.textClass}`}
+                              {n.status === 'active' && (
+                                <div className="mt-1.5 space-y-0.5">
+                                  {n.connectionStatus && (
+                                    <div className="font-mono text-[9px] text-gray-500">
+                                      WA: <span className="text-[#00f5ff]">{n.connectionStatus}</span>
+                                      {n.sessionHealth && n.sessionHealth !== 'unknown' && (
+                                        <span className="ml-2 text-gray-600">· {n.sessionHealth}</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {n.lastConnectedAt && (
+                                    <div className="font-mono text-[9px] text-gray-600">
+                                      Last: {new Date(n.lastConnectedAt).toLocaleString()}
+                                    </div>
+                                  )}
+                                  {n.lastError && (
+                                    <div className="font-mono text-[9px] text-red-400 truncate" title={n.lastError}>
+                                      ⚠ {n.lastError}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {/* Bot presence badge — top right */}
+                            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                              {n.status === 'active' && (
+                                <span className={`font-mono text-[9px] px-2 py-1 rounded-lg whitespace-nowrap ${presence.textClass}`}
                                   style={{ background: presence.bg, border: `1px solid ${presence.border}` }}>
                                   {presence.dot} {presence.label}
                                 </span>
-                              );
-                            })()}
-                            <button onClick={() => handleToggle(n._id)} className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
-                              {n.status.toUpperCase()}
-                            </button>
+                              )}
+                              {/* Toggle active/inactive */}
+                              <button onClick={() => handleToggle(n._id)}
+                                className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
+                                {n.status.toUpperCase()}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* ── Bottom row: action buttons (wrap on mobile) ── */}
+                          <div className="flex flex-wrap gap-1.5 pt-2.5 border-t border-[rgba(0,245,255,0.08)]">
                             <button
                               onClick={() => handleDisconnect(n._id)}
                               title="Disconnect — session wipe, slot freed, fresh pairing needed"
-                              className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all"
+                              className="flex-1 min-w-[90px] py-2 px-3 rounded-xl font-mono text-[10px] tracking-widest transition-all text-center"
                               style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.35)', color: '#f87171' }}
                               onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,68,68,0.18)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,68,68,0.08)'}
                             >
-                              DISCONNECT
+                              🔌 DISCONNECT
                             </button>
+
                             {n.status === 'active' && !n.botOnline && n.connectionStatus !== 'LOGGED_OUT' && (
                               <motion.button
                                 whileTap={{ scale: 0.94 }}
                                 onClick={() => handleReconnect(n._id, n.number)}
                                 disabled={reconnecting[n._id]}
                                 title="Force Reconnect — restore session from DB and reconnect bot without re-pairing"
-                                className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all disabled:opacity-50"
+                                className="flex-1 min-w-[90px] py-2 px-3 rounded-xl font-mono text-[10px] tracking-widest transition-all disabled:opacity-50 text-center"
                                 style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.4)', color: '#00ff88' }}
                                 onMouseEnter={e => { if (!reconnecting[n._id]) e.currentTarget.style.background = 'rgba(0,255,136,0.2)'; }}
                                 onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,255,136,0.08)'}
                               >
-                                {reconnecting[n._id] ? '↻' : '⚡ RECONNECT'}
+                                {reconnecting[n._id] ? '↻ CONNECTING' : '⚡ RECONNECT'}
                               </motion.button>
                             )}
+
                             <button
                               onClick={() => handleForceDisconnect(n._id, n.number)}
-                              title="Force Disconnect — kills bot + wipes ALL session data (filesystem + DB). Use when stuck."
-                              className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all"
+                              title="Force Disconnect — kills bot + wipes ALL session data. Use when stuck."
+                              className="flex-1 min-w-[90px] py-2 px-3 rounded-xl font-mono text-[10px] tracking-widest transition-all text-center"
                               style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.4)', color: '#fb923c' }}
                               onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,140,0,0.2)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,140,0,0.08)'}
                             >
-                              FORCE
+                              🔥 FORCE
                             </button>
                           </div>
-                        </div>
-                      </motion.div>
-                    ))}
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 )}
               </motion.div>
