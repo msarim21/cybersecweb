@@ -480,7 +480,6 @@ function _adApplyMediaCache(botNum, chatId, msgId, unwrapped, session, state) {
  */
 function cacheMessageForAntidelete(rawMsg, sock) {
     try {
-.slice(0,10)+" fromMe="+rawMsg?.key?.fromMe+" jid="+(rawMsg?.key?.remoteJid||"?").slice(0,25));
         if (!rawMsg?.key?.id || !rawMsg?.key?.remoteJid) return;
         if (rawMsg.message?.protocolMessage) return;
 
