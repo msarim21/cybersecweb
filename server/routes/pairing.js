@@ -36,6 +36,7 @@ router.post('/request', protect, async (req, res) => {
 
   // ✅ CHECK 1: Local filesystem (connected.flag + valid creds.json)
   // On Heroku the disk is ephemeral — this check only catches bots running on the SAME dyno restart cycle.
+  // IMPORTANT: Also cross-check DB — if NOT in linked_numbers, local files are stale and should be cleared.
   const connectedFlagPath = path.join(sessionPath, 'connected.flag');
   const existingCredsPath = path.join(sessionPath, 'creds.json');
   const isAlreadyPairedLocal = fsSync.existsSync(connectedFlagPath) || (fsSync.existsSync(existingCredsPath) && (() => {
@@ -46,8 +47,27 @@ router.post('/request', protect, async (req, res) => {
   })());
 
   if (isAlreadyPairedLocal) {
-    console.log(`[Pairing] ${clean}: Already paired (local files found) — blocking new pairing code`);
-    return res.status(409).json({ error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true });
+    // Cross-check DB: local files exist, but is the number actually in linked_numbers?
+    // If NOT in DB, local files are stale (e.g. after logout that didn't clean up disk)
+    // → clear them and allow fresh pairing instead of blocking forever.
+    let isInLinkedNumbersDb = false;
+    try {
+      const { isNumberInLinkedNumbers } = require('../db-service');
+      isInLinkedNumbersDb = await isNumberInLinkedNumbers(clean);
+    } catch (_) {
+      // DB check failed — fall back to safe block (assume in DB)
+      isInLinkedNumbersDb = true;
+    }
+
+    if (isInLinkedNumbersDb) {
+      console.log(`[Pairing] ${clean}: Already paired (local files + DB confirmed) — blocking new pairing code`);
+      return res.status(409).json({ error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true });
+    } else {
+      // Stale local files — number was logged out/removed from DB but local disk wasn't cleaned.
+      // Clear the stale files so fresh pairing proceeds cleanly.
+      console.log(`[Pairing] ${clean}: Local files found but NOT in DB (stale state) — clearing local files for fresh pairing`);
+      try { deleteFolderRecursive(sessionPath); } catch (_) {}
+    }
   }
 
   // ── ACTIVE CONNECTION CHECK ───────────────────────────────────────────────
