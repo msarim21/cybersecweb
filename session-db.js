@@ -144,16 +144,33 @@ async function restoreCredsFromDb(number, sessionPath) {
 
 /**
  * Remove a linked number from the database when WhatsApp logout is detected.
+ * Also clears local filesystem session files so re-pairing works cleanly.
  */
 async function removeLinkedNumber(number) {
+  const clean = number.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+  if (!clean) return;
   try {
     await _init();
     const { deleteNumberByPhone } = require('./server/db-service');
-    const clean = number.replace(/@.*$/, '').replace(/[^0-9]/g, '');
     await deleteNumberByPhone(clean);
     console.log(`[session-db] ✅ Auto-removed linked number on logout: ${clean}`);
   } catch (err) {
-    console.error('[session-db] removeLinkedNumber failed:', err.message);
+    console.error('[session-db] removeLinkedNumber DB failed:', err.message);
+  }
+  // Always clear local filesystem session files — even if DB call failed.
+  // This prevents "already linked" error on re-pair after logout.
+  for (const dir of _sessionDirs(clean)) {
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          try { fs.unlinkSync(require('path').join(dir, file)); } catch (_) {}
+        }
+        try { fs.rmdirSync(dir); } catch (_) {}
+        console.log(`[session-db] 🗑️  Cleared local session files for ${clean}: ${dir}`);
+      }
+    } catch (_) {}
   }
 }
 
