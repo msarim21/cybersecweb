@@ -850,6 +850,29 @@ export default function Dashboard() {
     } catch (err) { toast.error(err.response?.data?.error || 'Force disconnect failed'); }
   };
 
+  const [reconnecting, setReconnecting] = useState({});
+  const handleReconnect = async (id, number) => {
+    setReconnecting(p => ({ ...p, [id]: true }));
+    try {
+      const res = await axios.post(`/api/numbers/${id}/reconnect`);
+      toast.success(res.data?.message || `Reconnecting ${number}...`);
+      // Optimistically show CONNECTING state then refresh after 4s
+      setNumbers(p => p.map(n => n._id === id
+        ? { ...n, connectionStatus: 'CONNECTING', botOnline: false, botPhase: 'starting' }
+        : n));
+      setTimeout(() => fetchData(true), 4000);
+    } catch (err) {
+      const d = err.response?.data;
+      if (d?.needsRepair) {
+        toast.error('No session in DB — please use DISCONNECT then re-pair this number.');
+      } else {
+        toast.error(d?.error || 'Reconnect failed. Try again.');
+      }
+    } finally {
+      setReconnecting(p => ({ ...p, [id]: false }));
+    }
+  };
+
   const handleToggle = async id => {
     try {
       const res = await axios.put(`/api/numbers/${id}/toggle`);
@@ -1292,6 +1315,20 @@ export default function Dashboard() {
                             >
                               DISCONNECT
                             </button>
+                            {n.status === 'active' && !n.botOnline && n.connectionStatus !== 'LOGGED_OUT' && (
+                              <motion.button
+                                whileTap={{ scale: 0.94 }}
+                                onClick={() => handleReconnect(n._id, n.number)}
+                                disabled={reconnecting[n._id]}
+                                title="Force Reconnect — restore session from DB and reconnect bot without re-pairing"
+                                className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all disabled:opacity-50"
+                                style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.4)', color: '#00ff88' }}
+                                onMouseEnter={e => { if (!reconnecting[n._id]) e.currentTarget.style.background = 'rgba(0,255,136,0.2)'; }}
+                                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,255,136,0.08)'}
+                              >
+                                {reconnecting[n._id] ? '↻' : '⚡ RECONNECT'}
+                              </motion.button>
+                            )}
                             <button
                               onClick={() => handleForceDisconnect(n._id, n.number)}
                               title="Force Disconnect — kills bot + wipes ALL session data (filesystem + DB). Use when stuck."
