@@ -13441,30 +13441,40 @@ case 'checkapis': {
 break;
 
 case 'public': {
-    // Per-session only — only this connected number switches to public
     devtrust.public = true;
-    // Save to DB so mode survives restarts (per-number, not shared)
+    const _modeNumPub = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
+    // Save to DB (MongoDB + PostgreSQL both supported now)
     try {
         const { setBotMode } = require('./server/db-service');
-        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
-        if (_modeNum) setBotMode(_modeNum, 'public').catch(() => {});
+        if (_modeNumPub) setBotMode(_modeNumPub, 'public').catch(() => {});
     } catch (_) {}
-    reply("🌍 *Public mode activated*\nEveryone can use the bot");
+    // Also save to local file (for local dev / fallback)
+    try {
+        const _fsMode = require('fs');
+        if (_modeNumPub) _fsMode.writeFileSync('./database/bot_mode_' + _modeNumPub + '.json', JSON.stringify({ mode: 'public' }));
+    } catch (_) {}
+    reply("🌍 *Public mode activated*
+Everyone can use the bot");
 }
 break;
 
 case 'private':
 case 'self': {
-    // Per-session only — only this connected number switches to private/self
     devtrust.public = false;
-    // Save to DB so mode survives restarts (per-number, not shared)
+    const _modeNumSelf = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
+    // Save to DB (MongoDB + PostgreSQL both supported now)
     try {
         const { setBotMode } = require('./server/db-service');
-        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
-        if (_modeNum) setBotMode(_modeNum, 'self').catch(() => {});
+        if (_modeNumSelf) setBotMode(_modeNumSelf, 'self').catch(() => {});
     } catch (_) {}
-    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
-}
+    // Also save to local file (for local dev / fallback)
+    try {
+        const _fsMode = require('fs');
+        if (_modeNumSelf) _fsMode.writeFileSync('./database/bot_mode_' + _modeNumSelf + '.json', JSON.stringify({ mode: 'self' }));
+    } catch (_) {}
+    reply("🔐 *Private mode activated*
+Only bot owner & bot number can use the bot");
+}}
 break;
 
 case 'readmore': {
