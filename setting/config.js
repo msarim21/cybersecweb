@@ -1,37 +1,37 @@
 const fs = require('fs')
 
 global.owner = "923350340732" //owner number
-global.footer = "𝐃𝐈𝐆𝐈𝐓𝐀𝐋 𝐃𝐎𝐍" //footer section
+global.footer = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢" //footer section
 global.status = false //"self/public" section of the bot
 global.prefa = ['','!','.',',','🐤','🗿']
 global.owner = ['923350340732']
 global.xprefix = '.'
 global.gambar = "https://files.catbox.moe/smv12k.jpeg"
-global.OWNER_NAME = "@DIGITALCYBER24" //
+global.OWNER_NAME = "@CYBERSECPRO" //
 global.DEVELOPER = ["923350340732"] //
-global.BOT_NAME = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
-global.bankowner = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
-global.creatorName = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡™"
+global.BOT_NAME = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
+global.bankowner = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
+global.creatorName = "𝗚𝗔𝗠𝗘𝗖𝗛𝗔𝗡𝗚𝗘𝗥™"
 global.ownernumber = '923350340732'  //creator number
-global.location = "Nigeria,lagos island"
+global.location = "Pakistan"
 global.prefa = ['','!','.','#','&']
 //================DO NOT CHANGE OR YOU'LL GET AN ERROR=============\
-global.footer = "𝐃𝐈𝐆𝐈𝐓𝐀𝐋 𝐃𝐎𝐍" //footer section
+global.footer = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢" //footer section
 global.link = "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc"
 global.autobio = false//auto update bio
-global.botName = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
+global.botName = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
 global.version = "1.0.1"
-global.botname = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
-global.author = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡™"
+global.botname = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
+global.author = "𝗚𝗔𝗠𝗘𝗖𝗛𝗔𝗡𝗚𝗘𝗥™"
 global.themeemoji = "🥷"
 global.wagc = 'https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc'
 global.thumbnail = 'https://files.catbox.moe/smv12k.jpeg'
 global.richpp = ' '
-global.packname = "Sticker By 𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
-global.author = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"
+global.packname = "Sticker By 𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
+global.author = "𝗚𝗔𝗠𝗘𝗖𝗛𝗔𝗡𝗚𝗘𝗥"
 global.creator = "923350340732@s.whatsapp.net"
-global.ownername = 'Great ' 
-global.onlyowner = `Only Violet dev can use this Command 🥶🥷`
+global.ownername = 'GAMECHANGER'
+global.onlyowner = `Only CYBERSECPRO dev can use this Command 🥶🥷`
   // reply 
 global.database = `*To Exist In The Database Contact The Owner of this bot*`
   global.mess = {
@@ -73,7 +73,6 @@ require('fs').watchFile(file, () => {
   require(file)
 })
 
-//Property of  𝝙𝗜𝗚𝗜𝗧𝝠𝗟 𝝙𝗢𝗡
+//Property of CYBERSECPRO
 //owner number:+923350340732
-//telegram :@DIGITALCYBER24
-
+//telegram :@cybersecpro7
