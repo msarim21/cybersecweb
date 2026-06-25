@@ -560,9 +560,25 @@ if (!devtrust || !devtrust.user) return;
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
 // ✅ GUARD: Bot ke automatic reply messages block karo (infinite loop fix)
-// 'append' = bot ne khud bheja hua message wapis aaya → skip
-// 'notify' = user/owner ka actual message → process karo
-if (chatUpdate && chatUpdate.type === 'append') return;
+// 'append' = device ka outgoing message (user ka command YA bot ka reply dono)
+// 'notify' = kisi aur ka incoming message
+// FIX: 'append' block karne se .menu/.ping jaise khud ke commands bhi block ho rahe the.
+// pair.js already BAE5 IDs filter karta hai (Baileys-generated bot replies).
+// Yahan sirf woh 'append' block karo jo command prefix se shuru nahi hote.
+if (chatUpdate && chatUpdate.type === 'append') {
+    const _appendBody = m.message?.conversation
+        || m.message?.extendedTextMessage?.text
+        || m.body
+        || m.text
+        || '';
+    const _appendBodyStr = String(_appendBody || '').trim();
+    // Allow through if it starts with any known command prefix
+    const _knownPrefixes = (Array.isArray(global.prefa) && global.prefa.length)
+        ? global.prefa.filter(p => p)
+        : ['.', '!', '#', '&'];
+    const _appendIsCmd = _knownPrefixes.some(p => _appendBodyStr.startsWith(p));
+    if (!_appendIsCmd) return;
+}
 
 // ═════════════════════════════════════════════════════════════════════
 // 📢 BROADCAST — Global initializers (MUST run once, before switch)
