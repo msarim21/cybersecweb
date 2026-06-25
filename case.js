@@ -9119,11 +9119,7 @@ case "autorecordtype": {
 break;
 
 case "autoreact": {
-    if (!isAdmins && !isCreator) 
-        return reply('🔒 *Admins/Owner only*');
-    
     if (!args[0]) return reply("⚙️ *Usage:* autoreact on/off");
-    if (!m.isGroup) return reply("👥 *Groups only*");
 
     if (args[0].toLowerCase() === "on") {
         setSetting(m.chat, "autoReact", true);
