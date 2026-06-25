@@ -199,6 +199,15 @@ async function setTrialExpiry(id, expiresAt) {
   await pg().query('UPDATE users SET trial_expires_at = $1 WHERE id = $2', [expiresAt, id]);
 }
 
+async function setLicenseKey(id, key) {
+  if (isMongoMode()) {
+    const { User } = M();
+    await User.findByIdAndUpdate(id, { licenseKey: key || null });
+    return;
+  }
+  await pg().query('UPDATE users SET license_key = $1 WHERE id = $2', [key || null, id]);
+}
+
 async function requestUpgrade(id, plan) {
   if (isMongoMode()) {
     const { User } = M();
@@ -1591,6 +1600,7 @@ module.exports = {
   deleteSessionCreds,
   hasFirstConnected, markFirstConnected,
   isPlanExpired,
+  setLicenseKey,
   sendChatMessage, getChatMessages, markChatMessagesRead,
   getActiveChatUsers, getChatUnreadCounts,
   getBotPairingStatus,
