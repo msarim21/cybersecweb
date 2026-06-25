@@ -73,10 +73,13 @@ async function tryTurboCommand(devtrust, m, ctx) {
     const send = (payload) => devtrust.sendMessage(chat, payload, { priority: true, quoted: m });
 
     if (cmd === 'ping' || cmd === 'speed') {
-        const t1 = process.hrtime.bigint();
-        const t2 = process.hrtime.bigint();
-        const ms = Number(t2 - t1) / 1e6;
-        await send({ text: `⚡ *CYBER Ping*\n\n📡 ${ms.toFixed(2)} ms` });
+        const _t1 = Date.now();
+        await send({ text: `⚡ *CYBER Ping*\n\n📡 Calculating...` });
+        const _ms = Date.now() - _t1;
+        const up = process.uptime();
+        const h = Math.floor(up / 3600);
+        const min = Math.floor((up % 3600) / 60);
+        await send({ text: `⚡ *CYBER BOT - PING*\n\n📡 Response: *${_ms}ms*\n⏱ Uptime: ${h}h ${min}m\n✅ Bot is Online!` });
         return true;
     }
 
