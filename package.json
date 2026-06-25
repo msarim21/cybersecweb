@@ -1,7 +1,7 @@
 {
-  "name": "axis-xmd",
-  "version": "1.0.0",
-  "description": "Nexus Cleaned whatsapp bot",
+  "name": "cybersecpro-bot",
+  "version": "1.0.1",
+  "description": "CYBERSECPRO — WhatsApp Multi-Session Enterprise Bot with Web Dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -19,7 +19,7 @@
     "multi-session",
     "pairing-bot"
   ],
-  "author": "Nexus",
+  "author": "GAMECHANGER",
   "license": "MIT",
   "engines": {
     "node": "22.x",
