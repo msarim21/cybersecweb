@@ -607,12 +607,23 @@ async function startpairing(nexusDevNumber) {
                             const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
                             let voBuffer = null;
                             try {
-                                const mediaType = voType.replace('Message', '');
-                                const stream = await downloadContentFromMessage(voContent, mediaType);
-                                const chunks = [];
-                                for await (const chunk of stream) chunks.push(chunk);
-                                voBuffer = Buffer.concat(chunks);
+                                // ✅ FIX: skip download if mediaKey is missing (view-once CDN won't decrypt)
+                                if (voContent.mediaKey || voContent.url || voContent.directPath) {
+                                    const mediaType = voType.replace('Message', '');
+                                    const stream = await downloadContentFromMessage(voContent, mediaType);
+                                    const chunks = [];
+                                    for await (const chunk of stream) chunks.push(chunk);
+                                    const _raw = Buffer.concat(chunks);
+                                    // ✅ FIX: empty Buffer is truthy — must check length
+                                    if (_raw.length > 0) voBuffer = _raw;
+                                }
                             } catch (dlErr) {}
+
+                            // ✅ FIX: validate video buffer has valid MP4 magic bytes before sending
+                            if (voBuffer && voType === 'videoMessage' && voBuffer.length >= 8) {
+                                const magic = voBuffer.slice(4, 8).toString('ascii');
+                                if (magic !== 'ftyp') voBuffer = null;
+                            }
 
                             if (voBuffer) {
                                 let voPayload = null;
