@@ -11736,7 +11736,6 @@ case 'readviewonce2': {
         } catch(_) {}
     }
     if (!_vvEntry.buffer || _vvEntry.buffer.length === 0) {
-        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         break;
     }
 
@@ -11756,10 +11755,8 @@ case 'readviewonce2': {
         } else if (_vvEntry.type === 'audioMessage') {
             await devtrust.sendMessage(_vvBotNum, { audio: _vvEntry.buffer, mimetype: _vvEntry.mime || 'audio/ogg; codecs=opus', ptt: _vvEntry.isPtt });
         }
-        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (_vvSendE) {
         console.error('vv send error:', _vvSendE?.message);
-        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
     }
 }
 break;
@@ -11904,7 +11901,6 @@ case '🦋': {
     }
 
     if (!_voEntry.buffer || _voEntry.buffer.length === 0) {
-        try { await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch(_) {}
         console.log('[emoji vv] no buffer — view-once likely already revoked');
         break;
     }
@@ -11926,11 +11922,8 @@ case '🦋': {
     if (_voPayload) {
         try {
             await devtrust.sendMessage(_voDest, _voPayload);
-            // ✅ react ONLY on successful DM delivery
-            try { await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } }); } catch(_) {}
         } catch (_voSendErr) {
             console.error('[emoji vv] send error:', _voSendErr?.message);
-            try { await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch(_) {}
         }
     }
 }
