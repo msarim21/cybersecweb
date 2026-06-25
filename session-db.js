@@ -311,14 +311,24 @@ async function ensureSessionRestored(number) {
     return false;
   }
 
-  // 3. DB se restore karo
-  console.log(`[session-db] 📥 Restoring session from DB for ${clean}...`);
+  // 3. DB se restore karo — DONO directories mein restore karo
+  // Bug fix: index.js autoLoadPairs `cleanNum` dir dhundta hai, lekin ensureSessionRestored
+  // pehle `cleanNum@s.whatsapp.net` mein restore karta tha aur wapas return ho jaata tha.
+  // Ab DONO dirs mein restore hoga taake chahe koi bhi path check kare — creds milenge.
+  console.log(`[session-db] 📥 Restoring session from DB for ${clean} (all dirs)...`);
+  let anySuccess = false;
   for (const dir of _sessionDirs(clean)) {
     const ok = await restoreCredsFromDb(clean, dir);
     if (ok && _hasValidLocalCreds(dir)) {
-      console.log(`[session-db] ✅ Session restored successfully for ${clean}`);
-      return true;
+      console.log(`[session-db] ✅ Session restored to ${dir}`);
+      anySuccess = true;
+      // Do NOT return here — continue to restore to remaining dirs too
     }
+  }
+
+  if (anySuccess) {
+    console.log(`[session-db] ✅ Session restore complete for ${clean}`);
+    return true;
   }
 
   console.log(`[session-db] ❌ Restore failed — creds invalid after DB restore for ${clean}`);
