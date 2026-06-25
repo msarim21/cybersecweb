@@ -1,18 +1,19 @@
 <div align="center">
 
 ```
- ██████╗██╗   ██╗██████╗ ███████╗██████╗     ██████╗ ██████╗  ██████╗ 
-██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔══██╗██╔══██╗██╔═══██╗
-██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██████╔╝██████╔╝██║   ██║
-██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██╔═══╝ ██╔══██╗██║   ██║
-╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ██║     ██║  ██║╚██████╔╝
- ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝   ╚═╝     ╚═╝  ╚═╝ ╚═════╝ 
+ ██████╗██╗   ██╗██████╗ ███████╗██████╗ ███████╗███████╗ ██████╗██████╗ ██████╗  ██████╗ 
+██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗██╔════╝██╔════╝██╔════╝██╔══██╗██╔══██╗██╔═══██╗
+██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝███████╗█████╗  ██║     ██████╔╝██████╔╝██║   ██║
+██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗╚════██║██╔══╝  ██║     ██╔═══╝ ██╔══██╗██║   ██║
+╚██████╗   ██║   ██████╔╝███████╗██║  ██║███████║███████╗╚██████╗██║     ██║  ██║╚██████╔╝
+ ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ 
 ```
 
 ```
-╔══════════════════════════════════════════════════════════════════════╗
-║   ⚡  𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 ™  —  WhatsApp Multi-Session Enterprise Bot  ⚡  ║
-╚══════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════╗
+║   ⚡  𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢  —  WhatsApp Multi-Session Enterprise Bot  ⚡     ║
+║              Crafted with precision by  𝗚𝗔𝗠𝗘𝗖𝗛𝗔𝗡𝗚𝗘𝗥™                  ║
+╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
 [![Version](https://img.shields.io/badge/VERSION-1.0.1-00ff41?style=for-the-badge&logo=github&logoColor=black)](https://github.com/msarim21/cybersecweb)
@@ -20,11 +21,13 @@
 [![License](https://img.shields.io/badge/LICENSE-MIT-ff003c?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/PLATFORM-WhatsApp%20MD-25D366?style=for-the-badge&logo=whatsapp&logoColor=black)](https://whatsapp.com)
 [![Telegram](https://img.shields.io/badge/SUPPORT-Telegram-0088cc?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cybersecpro7)
+[![Stars](https://img.shields.io/github/stars/msarim21/cybersecweb?style=for-the-badge&color=00ff41&labelColor=000000)](https://github.com/msarim21/cybersecweb/stargazers)
+[![Forks](https://img.shields.io/github/forks/msarim21/cybersecweb?style=for-the-badge&color=ff003c&labelColor=000000)](https://github.com/msarim21/cybersecweb/network)
 
 <img src="https://files.catbox.moe/smv12k.jpeg" width="420" />
 
-> **🥷 Built for the shadows. Engineered for dominance.**
-> *A full-stack WhatsApp bot with 500+ commands, web dashboard, multi-session support, and enterprise-grade security.*
+> **🛡️ Built for security. Engineered for performance. Designed for dominance.**
+> *A full-stack WhatsApp bot management system with 500+ commands, real-time web dashboard, multi-session support, and enterprise-grade security — all in one.*
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/msarim21/cybersecweb)
 
@@ -35,289 +38,134 @@
 ## ◈ TABLE OF CONTENTS
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  01  ►  SYSTEM OVERVIEW          06  ►  WEB PANEL        │
-│  02  ►  FEATURES ARSENAL         07  ►  DEPLOYMENT       │
-│  03  ►  COMMAND CATEGORIES       08  ►  CONFIGURATION    │
-│  04  ►  TECH STACK               09  ►  SECURITY         │
-│  05  ►  INSTALLATION             10  ►  CREDITS          │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  01  ►  SYSTEM OVERVIEW           07  ►  WEB PANEL           │
+│  02  ►  KEY FEATURES              08  ►  DEPLOYMENT          │
+│  03  ►  COMMAND CATEGORIES        09  ►  CONFIGURATION       │
+│  04  ►  TECH STACK                10  ►  ENVIRONMENT VARS    │
+│  05  ►  REQUIREMENTS              11  ►  SECURITY            │
+│  06  ►  INSTALLATION              12  ►  CREDITS             │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## ◈ 01 — SYSTEM OVERVIEW
 
-<div align="center">
+**CYBERSECPRO** is a production-ready, multi-session WhatsApp bot platform built on the Baileys MD protocol. It ships with a complete web management panel — including user accounts, license management, bot controls, admin dashboard, and real-time session monitoring — all secured and containerized.
 
 ```
-  ╭─────────────────────────────────────────────────────╮
-  │                                                     │
-  │   ⚡ BOT NAME   :  𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 ™                   │
-  │   🥷 AUTHOR     :  @DIGITALCYBER24                  │
-  │   📡 VERSION    :  1.0.1  [ENTERPRISE]              │
-  │   🌐 PLATFORM   :  WhatsApp Multi-Device            │
-  │   🤖 COMMANDS   :  500+ across 15 categories        │
-  │   🔒 SESSIONS   :  Multi-session (up to 100)        │
-  │   📊 DASHBOARD  :  React + Vite Web Panel           │
-  │   🛢️  DATABASE  :  MongoDB + PostgreSQL             │
-  │   🚀 DEPLOY     :  Heroku / Railway / Render        │
-  │                                                     │
-  ╰─────────────────────────────────────────────────────╯
+┌─────────────────────────────────────────────────────────────────┐
+│                    CYBERSECPRO ARCHITECTURE                      │
+│                                                                  │
+│  ┌─────────────┐    ┌──────────────┐    ┌────────────────────┐  │
+│  │  React Web  │◄──►│ Express API  │◄──►│  Baileys WA Core   │  │
+│  │  Dashboard  │    │   Server     │    │  (Multi-Session)    │  │
+│  └─────────────┘    └──────┬───────┘    └────────────────────┘  │
+│                            │                                      │
+│                    ┌───────┴───────┐                             │
+│              ┌─────┴─────┐  ┌─────┴────┐                        │
+│              │  MongoDB  │  │ PostgreSQL│                        │
+│              │ (Sessions)│  │  (Users) │                        │
+│              └───────────┘  └──────────┘                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
-
-</div>
-
-**CYBER PRO** is an enterprise-grade **multi-session WhatsApp bot** built on the Baileys library. It ships with a full **React web dashboard** for managing sessions, a **Telegram admin bot**, and a powerful command engine covering AI, downloads, group management, games, stickers, and much more — all backed by persistent **MongoDB + PostgreSQL** storage.
 
 ---
 
-## ◈ 02 — FEATURES ARSENAL
+## ◈ 02 — KEY FEATURES
 
-<div align="center">
+### 🤖 Bot Engine
+- ✅ **Multi-Session Management** — run unlimited WhatsApp bots simultaneously
+- ✅ **Pairing Code & QR Support** — connect via pairing code or QR scan
+- ✅ **500+ Commands** — media, AI, utility, group management, and more
+- ✅ **Auto-Reconnect** — sessions automatically recover from disconnection
+- ✅ **Anti-Ban Protection** — rate limiting and safe messaging practices built-in
+- ✅ **Custom Prefix** — configurable command prefixes per bot
 
-```
-╔════════════════════════════════════════════════════════════════╗
-║                     ⚡  CORE FEATURES  ⚡                     ║
-╠════════════════════════════════════════════════════════════════╣
-║                                                                ║
-║   🤖  MULTI-SESSION    —  Connect 100+ numbers simultaneously  ║
-║   🧠  AI INTEGRATION   —  OpenAI GPT-powered commands          ║
-║   📥  DOWNLOADER       —  TikTok · YouTube · Instagram · More  ║
-║   🛡️  GROUP SHIELD     —  Anti-link · Anti-spam · Anti-bot     ║
-║   🎮  GAME ENGINE      —  TicTacToe, Trivia & more             ║
-║   🖼️  STICKER MAKER    —  Image / Video → WhatsApp stickers     ║
-║   📡  BROADCAST        —  Mass message all chats / groups      ║
-║   👁️  ANTI-DELETE      —  Recover deleted & edited messages     ║
-║   🎵  MUSIC PLAYER     —  Search & stream from YouTube         ║
-║   🌐  WEB DASHBOARD    —  Full React admin panel               ║
-║   💎  PREMIUM SYSTEM   —  Tiered access control                ║
-║   📊  LIVE STATS       —  Real-time connection analytics       ║
-║   🔐  SESSION BACKUP   —  Auto-backup sessions to DB           ║
-║   📺  LIVE TV          —  Pakistan TV channels streaming       ║
-║   🌍  TRANSLATOR       —  Google Translate (100+ languages)    ║
-║   ⚡  AUTO-STATUS      —  Auto view & reply to stories         ║
-║                                                                ║
-╚════════════════════════════════════════════════════════════════╝
-```
+### 🖥️ Web Dashboard
+- ✅ **Real-Time Bot Control** — connect, disconnect, and reconnect bots from browser
+- ✅ **License Key System** — time-based license management with admin control
+- ✅ **User Management** — full admin panel with role-based access
+- ✅ **Plan Management** — Free, Basic, Premium, and Enterprise tiers
+- ✅ **Session Monitoring** — live status, uptime, message stats
+- ✅ **Mobile Responsive** — full PWA-ready UI works on all devices
 
-</div>
+### 🔒 Security
+- ✅ **JWT Authentication** — secure token-based session management
+- ✅ **Admin & User Roles** — separate permission levels
+- ✅ **Rate Limiting** — API abuse prevention built-in
+- ✅ **Environment-Based Config** — no credentials hardcoded
+- ✅ **CORS & Helmet** — HTTP security headers enforced
 
-### 🛡️ Anti-Spam & Security Shield
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| **Anti-Link** | Block unauthorized group links | ✅ Active |
-| **Anti-Spam** | Rate-limit spamming users | ✅ Active |
-| **Anti-Bot** | Detect & remove bot accounts | ✅ Active |
-| **Anti-Tag** | Prevent mass @tagging | ✅ Active |
-| **Anti-Beg** | Block begging messages | ✅ Active |
-| **Anti-Edit** | Log & notify on edited messages | ✅ Active |
-| **Anti-Delete** | Recover deleted messages | ✅ Active |
-| **Anti-Call** | Block / manage incoming calls | ✅ Active |
-| **Anti-92** | Block +92 numbers (optional) | ⚙️ Config |
-
-### 🤖 AI & Smart Features
-
-| Feature | Engine | Description |
-|---------|--------|-------------|
-| **AI Chat** | OpenAI GPT | Conversational AI in chats |
-| **Image AI** | DALL-E | AI image generation |
-| **Anime Search** | MAL Scraper | MyAnimeList integration |
-| **Urban Dict** | Urban API | Slang definitions |
-| **Math Solver** | MathJS | Complex math calculations |
-| **Translator** | Google API | 100+ language support |
-| **TTS Voice** | Google TTS | Text-to-speech audio |
+### 📦 Infrastructure
+- ✅ **One-Click Deploy** — Heroku, Railway, Render support
+- ✅ **PM2 Process Manager** — auto-restart and crash recovery
+- ✅ **MongoDB + PostgreSQL** — dual-database architecture
+- ✅ **RESTful API** — clean documented API for all operations
 
 ---
 
 ## ◈ 03 — COMMAND CATEGORIES
 
-<div align="center">
-
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│               🗂️  15 COMMAND CATEGORIES  ·  500+ COMMANDS        │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-> **Prefix:** `.` `!` `#` `&` *(configurable per user)*
-> Send `.menu` to see all available commands.
-
-</div>
-
-### ⚡ Category Map
-
-```
-.menu          →  🏠 MAIN MENU          — Bot status & overview
-.aimenu        →  🧠 AI MENU            — GPT, image gen, smart tools
-.downloadmenu  →  📥 DOWNLOAD MENU      — TikTok, YT, IG, FB, Twitter
-.groupmenu     →  👥 GROUP MENU         — Admin tools & protections
-.stickermenu   →  🖼️  STICKER MENU      — Create & manage stickers
-.gamemenu      →  🎮 GAME MENU          — TicTacToe & mini-games
-.funmenu       →  😂 FUN MENU           — Memes, roasts, fun commands
-.animemenu     →  🎌 ANIME MENU         — Anime info & media
-.logomenu      →  🎨 LOGO MENU          — Logo & image generators
-.voicemenu     →  🎵 VOICE MENU         — Audio tools & TTS
-.toolmenu      →  🔧 TOOL MENU          — Utility & info tools
-.bugmenu       →  🐛 BUG MENU           — Hacking & security tools
-.tvmenu        →  📺 TV MENU            — Live Pakistan TV channels
-.ownermenu     →  👑 OWNER MENU         — Owner-only commands
-.othermenu     →  📦 OTHER MENU         — Miscellaneous commands
-```
-
-### 📥 Download Supported Platforms
-
-<div align="center">
-
-| Platform | Video | Audio | Thumbnail |
-|----------|:-----:|:-----:|:---------:|
-| **YouTube** | ✅ HD | ✅ MP3 | ✅ |
-| **TikTok** | ✅ No Watermark | ✅ | ✅ |
-| **Instagram** | ✅ Reels/Stories | ✅ | ✅ |
-| **Facebook** | ✅ | ❌ | ✅ |
-| **Twitter / X** | ✅ | ❌ | ✅ |
-| **Spotify** | ❌ | ✅ | ✅ |
-
-</div>
-
-### 👥 Group Management Commands
-
-```
-.antilink on/off     —  Block group invite links
-.antispam on/off     —  Enable spam detection
-.antibot on/off      —  Remove bot accounts from group
-.antitag on/off      —  Prevent mass @mentions
-.antibeg on/off      —  Block begging messages
-.warn @user          —  Issue a warning to a member
-.kick @user          —  Remove member from group
-.promote @user       —  Promote to group admin
-.demote @user        —  Remove admin privileges
-.muteuser @user      —  Silence a specific member
-.announce on/off     —  Lock / unlock group chat
-.setname [name]      —  Change group name
-.setdesc [text]      —  Update group description
-.poll [question]     —  Create a vote poll
-.invite              —  Generate group invite link
-.revoke              —  Reset group invite link
-.acceptall           —  Accept all pending join requests
-.members             —  Show total member count
+┌────────────────┬───────────────────────────────────────────────┐
+│  CATEGORY      │  DESCRIPTION                                  │
+├────────────────┼───────────────────────────────────────────────┤
+│  🤖 AI         │  ChatGPT, image generation, voice AI          │
+│  🎵 Media      │  YouTube, TikTok, Instagram downloader         │
+│  🎨 Sticker    │  Create, convert, and edit stickers           │
+│  👥 Group      │  Admin tools, welcome, antilink, antispam      │
+│  🛡️ Security   │  Antibot, antibadword, antivirus              │
+│  🌐 Info       │  Google search, weather, wiki, translator      │
+│  🎮 Fun        │  Games, memes, reactions, jokes               │
+│  📊 Stats      │  Usage reports, leaderboards, analytics        │
+│  ⚙️ Settings   │  Bot configuration, prefix, auto-features     │
+│  👑 Owner      │  Broadcast, ban, premium management           │
+└────────────────┴───────────────────────────────────────────────┘
 ```
 
 ---
 
 ## ◈ 04 — TECH STACK
 
-<div align="center">
-
 ```
-╔══════════════════════════════════════════════════════════════╗
-║                    🔧  TECHNOLOGY STACK                      ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║   RUNTIME      ►  Node.js 22.x                              ║
-║   WA ENGINE    ►  @whiskeysockets/baileys  (Multi-Device)    ║
-║   TELEGRAM     ►  node-telegram-bot-api  +  telegraf         ║
-║   FRONTEND     ►  React 18  +  Vite  +  TailwindCSS         ║
-║   BACKEND      ►  Express.js  REST API                       ║
-║   DATABASE     ►  MongoDB  (Mongoose)  +  PostgreSQL         ║
-║   PROCESS MGR  ►  PM2  Ecosystem                             ║
-║   MEDIA        ►  FFmpeg  +  Sharp  +  jimp                  ║
-║   AI           ►  OpenAI SDK  v4                             ║
-║   STICKERS     ►  wa-sticker-formatter  +  webpmux           ║
-║   TRANSLATION  ►  @vitalets/google-translate-api             ║
-║   SCHEDULER    ►  node-cron                                  ║
-║   LOGGING      ►  pino  +  pino-pretty  +  chalk             ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-```
-
-</div>
-
-### 🏗️ Project Structure
-
-```
-cybersecweb/
-│
-├── 📄 index.js              ← Bot entry point & session manager
-├── 📄 pair.js               ← WhatsApp connection engine (Baileys)
-├── 📄 case.js               ← 500+ command handler
-├── 📄 bot.js                ← Telegram admin bot
-├── 📄 autoload.js           ← Auto-reconnect all saved sessions
-├── 📄 worker.js             ← Background worker process
-├── 📄 session-db.js         ← Session backup / restore logic
-│
-├── 📁 server/               ← Express REST API backend
-│   ├── index.js             ← Server entry + job scheduler
-│   ├── routes/
-│   │   ├── auth.js          ← Login / register
-│   │   ├── pairing.js       ← WhatsApp pairing API
-│   │   ├── numbers.js       ← Linked numbers CRUD
-│   │   ├── user.js          ← User profile routes
-│   │   └── admin.js         ← Admin panel API
-│   ├── middleware/          ← Auth guards & validators
-│   ├── models/              ← MongoDB / PostgreSQL schemas
-│   └── jobs/               ← Cron jobs (expiry, orphan cleanup)
-│
-├── 📁 client/               ← React + Vite web dashboard
-│   └── src/pages/
-│       ├── Landing.jsx      ← Public landing page
-│       ├── Login.jsx        ← Authentication page
-│       ├── Signup.jsx       ← Registration page
-│       ├── Dashboard.jsx    ← Paired numbers manager
-│       ├── Setup.jsx        ← Bot pairing wizard
-│       └── Admin.jsx        ← Admin control panel
-│
-├── 📁 allfunc/              ← Feature modules
-│   ├── viewonce-saver.js    ← View-once message bypass
-│   ├── antidelete-*.js      ← Anti-delete system
-│   ├── bot-lifecycle.js     ← Connection state management
-│   ├── whatsapp-host.js     ← Supervisor process
-│   ├── tiktok.js            ← TikTok downloader
-│   ├── ytdownload.js        ← YouTube downloader
-│   ├── igdownload.js        ← Instagram downloader
-│   ├── exif.js              ← Sticker metadata writer
-│   └── turbo-cmd.js         ← Command optimizer
-│
-├── 📁 nexstore/             ← Storage layer
-│   ├── token.js             ← Bot tokens & secrets
-│   ├── utils.js             ← Shared utilities
-│   └── pairing/             ← Per-number session folders
-│
-├── 📁 setting/
-│   └── config.js            ← Global bot configuration
-│
-└── 📁 database/             ← JSON data stores
-    ├── groups.json          ← Group settings
-    ├── private_chats.json   ← Private chat history
-    └── stickercmds.json     ← Custom sticker commands
+┌─────────────────┬──────────────────────────────────────────────┐
+│  LAYER          │  TECHNOLOGY                                   │
+├─────────────────┼──────────────────────────────────────────────┤
+│  WhatsApp       │  @whiskeysockets/baileys (MD Protocol)        │
+│  Backend API    │  Node.js 22 + Express.js                      │
+│  Frontend       │  React + Vite + Tailwind CSS                  │
+│  Primary DB     │  MongoDB + Mongoose                           │
+│  Secondary DB   │  PostgreSQL + Drizzle ORM                     │
+│  Auth           │  JWT + bcrypt                                 │
+│  Process Mgr    │  PM2                                          │
+│  Media Tools    │  FFmpeg, Sharp, WebPMux                       │
+│  AI             │  OpenAI GPT-4 API                             │
+│  Deployment     │  Heroku / Railway / Render / VPS              │
+└─────────────────┴──────────────────────────────────────────────┘
 ```
 
 ---
 
-## ◈ 05 — INSTALLATION
+## ◈ 05 — REQUIREMENTS
 
-<div align="center">
+Before you begin, make sure you have the following installed:
 
-```
-╔══════════════════════════════════╗
-║   🚀  QUICK START GUIDE  🚀     ║
-╚══════════════════════════════════╝
-```
+| Requirement | Version |
+|---|---|
+| Node.js | `22.x` or higher |
+| npm | `10.x` or higher |
+| MongoDB | `6.x` or Atlas cluster |
+| PostgreSQL | `14.x` or higher |
+| FFmpeg | Latest stable |
+| Git | Latest |
 
-</div>
+---
 
-### Prerequisites
+## ◈ 06 — INSTALLATION
 
-```
-✔  Node.js >= 22.x
-✔  npm >= 10.x
-✔  MongoDB URI  OR  PostgreSQL URL
-✔  FFmpeg  (for media processing)
-✔  Telegram Bot Token  (optional, for admin bot)
-```
-
-### Step 1 — Clone Repository
+### Step 1 — Clone the Repository
 
 ```bash
 git clone https://github.com/msarim21/cybersecweb.git
@@ -327,147 +175,101 @@ cd cybersecweb
 ### Step 2 — Install Dependencies
 
 ```bash
-# Root bot dependencies
 npm install --legacy-peer-deps
-
-# Web dashboard client
 npm install --legacy-peer-deps --prefix client
-
-# API server
-npm install --legacy-peer-deps --prefix server
 ```
 
-### Step 3 — Environment Setup
+### Step 3 — Configure Environment
 
-Create a `.env` file in the root:
-
-```env
-# ══════════════════════════════════════
-#   CYBER PRO  —  Environment Variables
-# ══════════════════════════════════════
-
-# Database (MongoDB recommended)
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/cyberpro
-DATABASE_URL=postgresql://user:pass@host:5432/cyberpro
-
-# Telegram Admin Bot
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-
-# Security
-SESSION_SECRET=your_super_long_random_secret_key
-STARTUP_PASSWORD=your_startup_password
-
-# AI Features
-OPENAI_API_KEY=sk-your-openai-key-here
-
-# Server
-PORT=5000
-NODE_ENV=production
+```bash
+cp .env.example .env
+cp server/.env.example server/.env
 ```
 
-### Step 4 — Configure Owner Number
+Edit both `.env` files with your credentials (see [Section 10](#-10--environment-variables)).
 
-Edit `setting/config.js`:
+### Step 4 — Configure the Bot
+
+Edit `setting/config.js` to set your owner number, bot name, and preferences:
 
 ```js
-global.owner       = "923350340732"         // Your WhatsApp (no +)
-global.BOT_NAME    = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"        // Bot display name
-global.OWNER_NAME  = "@DIGITALCYBER24"      // Your Telegram handle
+global.owner = "923XXXXXXXXX"   // Your WhatsApp number (no +)
+global.BOT_NAME = "CYBERSECPRO"  // Bot display name
+global.botName  = "CYBERSECPRO"
+global.author   = "GAMECHANGER"
 ```
 
-### Step 5 — Launch
+### Step 5 — Build the Frontend
 
 ```bash
-# Development (auto-restart on changes)
+npm run build --prefix client
+```
+
+### Step 6 — Start the Server
+
+```bash
+# Development
 npm run dev
 
-# Production
-npm start
-
-# Bot only (no web panel)
-npm run bot
-
-# PM2 — recommended for VPS
+# Production (with PM2)
 pm2 start ecosystem.config.js
-pm2 save && pm2 startup
+pm2 save
+pm2 startup
 ```
+
+### Step 7 — Connect Your WhatsApp
+
+1. Open the web dashboard at `http://localhost:5000`
+2. Register an account and log in
+3. Go to **My Numbers → Add Number**
+4. Enter your WhatsApp number and click **Generate Pairing Code**
+5. Open WhatsApp → Linked Devices → Link a Device → Enter Code
 
 ---
 
-## ◈ 06 — WEB PANEL
+## ◈ 07 — WEB PANEL
 
-<div align="center">
+The CYBERSECPRO web panel gives you full control over all your bots from a single browser interface.
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║               🌐  WEB DASHBOARD FEATURES                     ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║   📊  Dashboard     —  View all linked numbers live          ║
-║   🔗  Pair Number   —  Connect via QR code / Pairing code    ║
-║   👤  User Panel    —  Manage session & profile              ║
-║   🛠️  Admin Panel   —  Full control: users, bans, broadcast  ║
-║   📈  Analytics     —  Connection stats & uptime             ║
-║   🔔  Alerts        —  Real-time bot connection notifications ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-```
+### User Dashboard
+- Add and manage multiple WhatsApp numbers
+- View real-time connection status (Online / Offline / Connecting)
+- Connect, disconnect, and **reconnect** bots with one click
+- View your current plan and license expiry
+- See message statistics per session
 
-</div>
+### Admin Panel
+- Full user management (view, promote, ban users)
+- License key generation and assignment
+- Plan management (Free / Basic / Premium / Enterprise)
+- System-wide bot monitoring
+- Revenue and usage analytics
 
-### 🗺️ Web Routes
+### Accessing the Panel
 
-| Route | Page | Access |
-|-------|------|--------|
-| `/` | Landing Page | Public |
-| `/login` | Sign In | Public |
-| `/signup` | Register | Public |
-| `/dashboard` | Your Numbers | Authenticated |
-| `/setup` | Pair New Number | Authenticated |
-| `/admin` | Admin Controls | Owner Only |
-
-### ⚡ API Endpoints
-
-```
-POST   /api/auth/login           — User login
-POST   /api/auth/signup          — User registration
-GET    /api/numbers              — List all linked numbers
-POST   /api/pairing/start        — Initiate pairing session
-GET    /api/pairing/status/:id   — Check pairing status
-DELETE /api/numbers/:id          — Unlink a number
-GET    /api/user/profile         — Get user profile
-POST   /api/admin/broadcast      — Admin broadcast message
-GET    /api/admin/users          — List all users (admin only)
-```
+| Environment | URL |
+|---|---|
+| Local Dev | `http://localhost:5000` |
+| Heroku | `https://your-app.herokuapp.com` |
+| Custom Domain | `https://cybersecpro.site` |
 
 ---
 
-## ◈ 07 — DEPLOYMENT
+## ◈ 08 — DEPLOYMENT
 
-<div align="center">
+### Heroku (One-Click)
 
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/msarim21/cybersecweb)
+
+Set these Config Vars in your Heroku dashboard:
 ```
-╔══════════════════════════════════════════════════════════════╗
-║                 🚀  DEPLOYMENT OPTIONS                       ║
-╚══════════════════════════════════════════════════════════════╝
-```
-
-</div>
-
-### ☁️ Heroku
-
-```bash
-heroku login
-heroku create your-app-name
-heroku config:set MONGODB_URI=your_mongo_uri
-heroku config:set TELEGRAM_BOT_TOKEN=your_token
-heroku config:set SESSION_SECRET=your_secret
-git push heroku main
+MONGODB_URI=your_mongodb_atlas_uri
+JWT_SECRET=your_jwt_secret
+DATABASE_URL=your_postgresql_url
+SESSION_SECRET=your_session_secret
 ```
 
-> `Procfile` pre-configured: `web: node server/index.js`
-
-### 🚂 Railway
+### Railway
 
 ```bash
 railway login
@@ -475,154 +277,120 @@ railway init
 railway up
 ```
 
-`railway.toml` is pre-configured. Set env vars in Railway dashboard.
+Set environment variables in the Railway dashboard.
 
-### 🎨 Render
+### Render
 
-`render.yaml` is included. Connect GitHub repo → one-click deploy.
+1. Connect your GitHub repo to Render
+2. Set **Build Command**: `npm run build`
+3. Set **Start Command**: `npm start`
+4. Add environment variables
 
-### 🖥️ VPS with PM2
+### VPS / Self-Hosted
 
 ```bash
+# Install PM2 globally
 npm install -g pm2
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+
+# Start with PM2
+pm2 start ecosystem.config.js --env production
+pm2 save && pm2 startup
 ```
 
 ---
 
-## ◈ 08 — CONFIGURATION
+## ◈ 09 — CONFIGURATION
 
-### 🔧 Global Settings (`setting/config.js`)
+### Bot Settings (`setting/config.js`)
 
-```js
-global.owner          = "923350340732"        // Owner WhatsApp number
-global.BOT_NAME       = "𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡"       // Bot display name
-global.themeemoji     = "🥷"                  // Theme emoji in menus
-global.xprefix        = '.'                   // Default command prefix
-global.prefa          = ['','!','.','#','&']  // All accepted prefixes
+| Variable | Default | Description |
+|---|---|---|
+| `global.owner` | `923350340732` | Owner WhatsApp number |
+| `global.BOT_NAME` | `CYBERSECPRO` | Bot display name |
+| `global.author` | `GAMECHANGER` | Bot author name |
+| `global.xprefix` | `.` | Command prefix |
+| `global.autoread` | `true` | Auto-read messages |
+| `global.autoviewstatus` | `true` | Auto-view WhatsApp status |
+| `global.autobio` | `true` | Auto-update bio |
+| `global.anti92` | `false` | Block +92 numbers |
 
-// ── Auto Features ────────────────────
-global.autoviewstatus = true    // Auto view WhatsApp stories
-global.autoread       = true    // Auto read incoming messages
-global.autobio        = true    // Auto update profile bio
-global.autoswview     = true    // Auto view status updates
-global.anti92         = false   // Block +92 numbers (toggle)
-global.status         = false   // false=self only · "public"=everyone
-```
+### Server Settings (`server/.env`)
 
-### 💎 Premium Tiers
-
-```
-┌─────────────────────────────────────────────────────┐
-│  FREE        →  Basic commands, 1 session            │
-│  PRO         →  25 linked numbers, all commands      │
-│  PREMIUM     →  50 linked numbers, priority support  │
-│  ENTERPRISE  →  Unlimited  (contact owner)           │
-└─────────────────────────────────────────────────────┘
-```
-
-> **Contact:** `+923350340732` · **Telegram:** [@DIGITALCYBER24](https://t.me/gamechanger2007)
-
-### 🔑 Per-User Prefix
-
-```
-.setprefix !    →  Set your prefix to !
-.setprefix .    →  Reset to default
-```
+| Variable | Description |
+|---|---|
+| `MONGODB_URI` | MongoDB connection string |
+| `JWT_SECRET` | Secret for JWT signing |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `PORT` | Server port (default: 5000) |
 
 ---
 
-## ◈ 09 — SECURITY
+## ◈ 10 — ENVIRONMENT VARIABLES
+
+Create `.env` in the root and `server/.env` with the following:
+
+**Root `.env`**
+```env
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/cybersecpro
+SESSION_SECRET=your_super_secret_here
+```
+
+**`server/.env`**
+```env
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/cybersecpro
+JWT_SECRET=your_jwt_secret_key
+DATABASE_URL=postgresql://user:password@host:5432/cybersecpro
+PORT=5000
+NODE_ENV=production
+```
+
+> ⚠️ **Never commit your `.env` files to Git.** They are already in `.gitignore`.
+
+---
+
+## ◈ 11 — SECURITY
+
+CYBERSECPRO is built with security as a first-class concern:
+
+- **JWT Tokens** — all API endpoints are protected with signed JWT authentication
+- **bcrypt Hashing** — passwords are hashed with bcrypt (salt rounds: 12)
+- **Helmet.js** — sets secure HTTP headers on all responses
+- **CORS Policy** — only whitelisted origins can access the API
+- **Rate Limiting** — prevents brute-force and API abuse
+- **Input Validation** — all user inputs are sanitized server-side
+- **No Hardcoded Secrets** — all credentials loaded from environment variables
+- **Session Isolation** — each WhatsApp session runs in its own isolated directory
+
+### Reporting Vulnerabilities
+
+Found a security issue? Contact us privately:
+- Telegram: [@cybersecpro7](https://t.me/cybersecpro7)
+
+---
+
+## ◈ 12 — CREDITS
 
 <div align="center">
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║                  🔒  SECURITY ARCHITECTURE                   ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║   🛡️  Session isolation  — each number has its own folder    ║
-║   🔐  DB backup          — sessions auto-encrypted to DB     ║
-║   🚫  Global ban list    — with full audit trail             ║
-║   ⚡  Rate limiting      — 15 req/min per user               ║
-║   👁️  Audit logs         — all admin actions logged          ║
-║   🔑  Startup password   — prevents unauthorized start       ║
-║   🌐  JWT auth           — token-based web panel auth        ║
-║   🤖  Bot detection      — auto-remove bots from groups      ║
-║   📛  Warn system        — configurable kick threshold       ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-```
-
-</div>
-
-### 🏆 Access Levels
-
-```
-╭────────────────────────────────────────╮
-│  👑  OWNER      —  Full system access   │
-│  🛡️  SUDO       —  Extended commands    │
-│  💎  PREMIUM    —  Premium features     │
-│  👤  USER       —  Standard access      │
-│  🚫  BANNED     —  Blocked globally     │
-╰────────────────────────────────────────╯
-```
+| Role | Handle |
+|---|---|
+| 🛠️ Developer & Architect | **GAMECHANGER** |
+| 🌐 Platform | **CYBERSECPRO** |
+| 📡 WhatsApp Engine | [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys) |
+| 💬 Support | [Telegram @cybersecpro7](https://t.me/cybersecpro7) |
+| 🌍 Website | [cybersecpro.site](https://cybersecpro.site) |
 
 ---
 
-## ◈ 10 — CREDITS
-
-<div align="center">
-
 ```
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║      𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 ™  — Crafted with 🔥 by the shadows      ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════╗
+║     CYBERSECPRO  —  Secure. Powerful. Reliable.   ║
+║          Built by GAMECHANGER™  •  2024–2026       ║
+╚═══════════════════════════════════════════════════╝
 ```
 
-[![Telegram Channel](https://img.shields.io/badge/📡_CHANNEL-cybersecpro7-0088cc?style=for-the-badge&logo=telegram)](https://t.me/cybersecpro7)
-[![Telegram Group](https://img.shields.io/badge/💬_GROUP-cybersecpro4-0088cc?style=for-the-badge&logo=telegram)](https://t.me/cybersecpro4)
-[![Developer](https://img.shields.io/badge/👨‍💻_DEV-gamechanger2007-9b59b6?style=for-the-badge&logo=telegram)](https://t.me/gamechanger2007)
-[![WhatsApp](https://img.shields.io/badge/📱_WHATSAPP-Channel-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://whatsapp.com/channel/0029Vb73zJg29757363CTA0a)
-
-</div>
-
-### 🙏 Powered By
-
-| Library | Purpose |
-|---------|---------|
-| [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys) | WhatsApp Multi-Device Engine |
-| [node-telegram-bot-api](https://github.com/yagop/node-telegram-bot-api) | Telegram Integration |
-| [OpenAI SDK](https://github.com/openai/openai-node) | AI Features |
-| [FFmpeg](https://ffmpeg.org) | Media Processing |
-| [PM2](https://pm2.keymetrics.io) | Process Management |
-| [React + Vite](https://vitejs.dev) | Web Dashboard |
-| [Mongoose](https://mongoosejs.com) | MongoDB ODM |
-| [wa-sticker-formatter](https://github.com/AlenSaito1/wa-sticker-formatter) | WhatsApp Stickers |
-
----
-
-<div align="center">
-
-```
-╔══════════════════════════════════════════════════════════════════════╗
-║                                                                      ║
-║   ⚡ "In the neon-lit corridors of the digital world,               ║
-║      only the most powerful bots survive." ⚡                        ║
-║                                                                      ║
-║                   —  𝗗𝗜𝗚𝗜𝗧Λ𝗟 𝗗𝗢𝗡 ™  —                             ║
-║                                                                      ║
-╚══════════════════════════════════════════════════════════════════════╝
-```
-
-**Owner:** `+923350340732` &nbsp;·&nbsp; **Telegram:** [@DIGITALCYBER24](https://t.me/gamechanger2007) &nbsp;·&nbsp; **Support:** [t.me/cybersecpro7](https://t.me/cybersecpro7)
-
-[![Stars](https://img.shields.io/github/stars/msarim21/cybersecweb?style=for-the-badge&color=00ff41&labelColor=000000)](https://github.com/msarim21/cybersecweb/stargazers)
-[![Forks](https://img.shields.io/github/forks/msarim21/cybersecweb?style=for-the-badge&color=ff003c&labelColor=000000)](https://github.com/msarim21/cybersecweb/network)
+[![Telegram](https://img.shields.io/badge/JOIN-Telegram%20Channel-0088cc?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/cybersecpro7)
+[![GitHub](https://img.shields.io/badge/STAR-GitHub%20Repo-00ff41?style=for-the-badge&logo=github&logoColor=black)](https://github.com/msarim21/cybersecweb)
 
 *© 2024–2026 CYBERSECPRO. All rights reserved.*
 
