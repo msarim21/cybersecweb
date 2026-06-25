@@ -556,6 +556,10 @@ try {
 // ✅ GUARD: If socket not fully authenticated yet, skip silently
 if (!devtrust || !devtrust.user) return;
 
+// 🔍 DEBUG: Log entry into case.js
+const _dbgCaseBody = m?.message?.conversation || m?.message?.extendedTextMessage?.text || m?.body || m?.text || '(no body)';
+console.log(`[CASE] entered: type=${chatUpdate?.type} fromMe=${m?.key?.fromMe} body="${String(_dbgCaseBody).slice(0,40)}"`);
+
 // Keep latest socket reference for background scanners
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
@@ -925,6 +929,9 @@ let prefix = getUserPrefix(m.sender);
 // STRICT command detection - ONLY detect if message STARTS WITH user's prefix
 const isCmd = body && typeof body === 'string' && body.startsWith(prefix);
 
+// 🔍 DEBUG: Log command detection result
+console.log(`[CASE] body="${String(body).slice(0,40)}" prefix="${prefix}" isCmd=${isCmd} sender=${m.sender}`);
+
 let command = '';
 let args = [];
 let text = '';
@@ -936,6 +943,7 @@ if (isCmd) {
     command = parts[0].toLowerCase();
     args = parts.slice(1);
     text = args.join(' ');
+    console.log(`[CASE] command="${command}"`);
 }
 
 // ⚡ Sub-1s turbo path — skip ~4000 lines of per-message setup for hot commands
