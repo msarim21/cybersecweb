@@ -624,6 +624,6 @@ global.status         = false   // false=self only · "public"=everyone
 [![Stars](https://img.shields.io/github/stars/msarim21/cybersecweb?style=for-the-badge&color=00ff41&labelColor=000000)](https://github.com/msarim21/cybersecweb/stargazers)
 [![Forks](https://img.shields.io/github/forks/msarim21/cybersecweb?style=for-the-badge&color=ff003c&labelColor=000000)](https://github.com/msarim21/cybersecweb/network)
 
-*© 2024–2026 DIGITAL DON. All rights reserved.*
+*© 2024–2026 CYBERSECPRO. All rights reserved.*
 
 </div>
