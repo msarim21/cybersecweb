@@ -1475,68 +1475,106 @@ Ye action immediately apply hoga.`)) return;
                   </GCard>
                 ) : (
                   <>
-                    <div className="hidden space-y-3">
+                    {/* ── MOBILE CARDS (< lg) ── */}
+                    <div className="block lg:hidden space-y-3">
                       {filtered.map((u, i) => {
                         const uid = u.id || u._id;
+                        const numCount = numbers.filter(n => n.ownerId?.username === u.username).length;
                         return (
                           <motion.div key={uid} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
                             className="rounded-2xl p-4"
-                            style={{ background: 'rgba(15,5,30,0.65)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,0,255,0.14)' }}>
-                            <div className="flex items-start justify-between gap-3 mb-3">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <div className="font-mono text-sm text-[#00f5ff] font-bold truncate">{u.username}</div>
-                                  {(() => { const cnt = numbers.filter(n => n.ownerId?.username === u.username).length; return cnt > 0 ? (
+                            style={{ background: 'rgba(15,5,30,0.7)', backdropFilter: 'blur(20px)', border: `1px solid ${u.banned ? 'rgba(255,68,68,0.3)' : 'rgba(255,0,255,0.18)'}` }}>
+
+                            {/* ── top: user info + plan select ── */}
+                            <div className="flex items-start justify-between gap-2 mb-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                                  <span className="font-mono text-sm text-[#00f5ff] font-bold truncate">{u.username}</span>
+                                  {numCount > 0 && (
                                     <span className="font-mono text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
                                       style={{ background: 'rgba(0,245,255,0.15)', border: '1px solid rgba(0,245,255,0.35)', color: '#00f5ff' }}>
-                                      📱 {cnt}
+                                      📱 {numCount}
                                     </span>
-                                  ) : null; })()}
+                                  )}
+                                  {u.upgradeRequest && u.upgradeRequest !== 'none' && (
+                                    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded flex-shrink-0"
+                                      style={{ background: 'rgba(255,0,255,0.2)', color: '#ff00ff', border: '1px solid rgba(255,0,255,0.35)' }}>
+                                      ⚡ UPGRADE
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="font-mono text-[10px] text-gray-500 truncate">{u.email}</div>
-                                {u.upgradeRequest && u.upgradeRequest !== 'none' && (
-                                  <div className="font-mono text-[10px] mt-1" style={{ color: '#ff00ff' }}>
-                                    ⚡ UPGRADE REQUEST
-                                  </div>
-                                )}
-                                {u.trialExpiresAt && (
-                                  <div className="font-mono text-[9px] text-gray-600 mt-0.5">
-                                    Trial: {new Date(u.trialExpiresAt) > new Date() ? '🟢 Active' : '🔴 Expired'}
-                                  </div>
-                                )}
-                                {u.licenseKey && (
-                                  <div className="font-mono text-[9px] mt-0.5" style={{ color: '#00ff88' }}>
-                                    🔐 KEY: {u.licenseKey.substring(0, 10)}...
-                                  </div>
-                                )}
-                              </div>
-                              <select value={u.subscriptionPlan} onChange={e => handlePlanChange(uid, e.target.value)}
-                                className="text-xs font-mono px-2 py-1.5 rounded-lg outline-none"
-                                style={{ background: 'rgba(255,0,255,0.08)', border: '1px solid rgba(255,0,255,0.25)', color: planColors[u.subscriptionPlan] || '#fff' }}>
-                                <option value="free" style={{ background: '#0a0a1a' }}>FREE</option>
-                                <option value="pro" style={{ background: '#0a0a1a' }}>PRO</option>
-                                <option value="enterprise" style={{ background: '#0a0a1a' }}>ENTERPRISE</option>
-                              </select>
-                            </div>
-                            {u.role !== 'admin' && (
-                              <div className="flex flex-col gap-2 pt-2 border-t border-[rgba(255,0,255,0.07)]">
-                                <button onClick={() => handleForceDisconnectAll(uid, u.username)}
-                                  className="w-full py-2 rounded-xl font-mono text-xs transition-all"
-                                  style={{ background: 'rgba(255,170,0,0.08)', border: '1px solid rgba(255,170,0,0.3)', color: '#ffaa00' }}>
-                                  ⚡ FORCE DISCONNECT ALL
-                                </button>
-                                <div className="flex gap-2">
-                                  <button onClick={() => handleBan(uid)}
-                                    className="flex-1 py-2 rounded-xl font-mono text-xs transition-all"
-                                    style={{ background: u.banned ? 'rgba(0,255,136,0.08)' : 'rgba(255,170,0,0.08)', border: `1px solid ${u.banned ? 'rgba(0,255,136,0.25)' : 'rgba(255,170,0,0.25)'}`, color: u.banned ? '#00ff88' : '#ffaa00' }}>
-                                    {u.banned ? 'UNBAN' : 'BAN'}
-                                  </button>
-                                  <button onClick={() => handleDelete(uid)}
-                                    className="flex-1 py-2 rounded-xl font-mono text-xs transition-all"
-                                    style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)', color: '#ff4444' }}>
-                                    DELETE
-                                  </button>
+                                <div className="flex flex-wrap gap-2 mt-1.5">
+                                  {u.trialExpiresAt && (
+                                    <span className="font-mono text-[9px]"
+                                      style={{ color: new Date(u.trialExpiresAt) > new Date() ? '#00ff88' : '#ff4444' }}>
+                                      {new Date(u.trialExpiresAt) > new Date() ? '🟢 Trial' : '🔴 Trial exp.'}
+                                    </span>
+                                  )}
+                                  {u.licenseKey && (
+                                    <span className="font-mono text-[9px]" style={{ color: '#00ff88' }}>
+                                      🔐 {u.licenseKey.substring(0, 8)}...
+                                    </span>
+                                  )}
+                                  <span className="font-mono text-[9px] text-gray-600">
+                                    {new Date(u.created_at || u.createdAt).toLocaleDateString()}
+                                  </span>
                                 </div>
+                              </div>
+
+                              {/* right: plan + status */}
+                              <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                                <select value={u.subscriptionPlan} onChange={e => handlePlanChange(uid, e.target.value)}
+                                  className="text-xs font-mono px-2 py-1.5 rounded-lg outline-none"
+                                  style={{ background: 'rgba(255,0,255,0.08)', border: '1px solid rgba(255,0,255,0.25)', color: planColors[u.subscriptionPlan] || '#fff' }}>
+                                  <option value="free" style={{ background: '#0a0a1a' }}>FREE</option>
+                                  <option value="pro" style={{ background: '#0a0a1a' }}>PRO</option>
+                                  <option value="enterprise" style={{ background: '#0a0a1a' }}>ENTERPRISE</option>
+                                </select>
+                                <span className={u.banned ? 'status-inactive' : 'status-active'}>
+                                  {u.banned ? 'BANNED' : 'ACTIVE'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* ── bottom: action buttons ── */}
+                            {u.role !== 'admin' && (
+                              <div className="flex flex-wrap gap-1.5 pt-2.5 border-t border-[rgba(255,0,255,0.1)]">
+                                {(u.subscriptionPlan || 'free') === 'free' && (
+                                  <button onClick={() => { setTrialModalUser(u); setTrialHours(''); }}
+                                    className="flex-1 min-w-[70px] py-2 px-2 rounded-xl font-mono text-[10px] tracking-widest text-center transition-all"
+                                    style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.3)', color: '#00ff88' }}>
+                                    ⏱️ TRIAL
+                                  </button>
+                                )}
+                                <button onClick={() => handleForceDisconnectAll(uid, u.username)}
+                                  className="flex-1 min-w-[70px] py-2 px-2 rounded-xl font-mono text-[10px] tracking-widest text-center transition-all"
+                                  style={{ background: 'rgba(255,170,0,0.08)', border: '1px solid rgba(255,170,0,0.3)', color: '#ffaa00' }}>
+                                  ⚡ DC ALL
+                                </button>
+                                <button onClick={() => handleBan(uid)}
+                                  className="flex-1 min-w-[70px] py-2 px-2 rounded-xl font-mono text-[10px] tracking-widest text-center transition-all"
+                                  style={{ background: u.banned ? 'rgba(0,255,136,0.08)' : 'rgba(255,170,0,0.08)', border: `1px solid ${u.banned ? 'rgba(0,255,136,0.3)' : 'rgba(255,170,0,0.3)'}`, color: u.banned ? '#00ff88' : '#ffaa00' }}>
+                                  {u.banned ? '✅ UNBAN' : '🚫 BAN'}
+                                </button>
+                                <button onClick={() => handleDelete(uid)}
+                                  className="flex-1 min-w-[70px] py-2 px-2 rounded-xl font-mono text-[10px] tracking-widest text-center transition-all"
+                                  style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.3)', color: '#ff4444' }}>
+                                  🗑️ DELETE
+                                </button>
+                                <button onClick={async () => {
+                                  const key = prompt(`License key for ${u.username} (blank to clear):`, u.licenseKey || '');
+                                  if (key === null) return;
+                                  try {
+                                    await axios.put(`/api/admin/users/${uid}/license-key`, { key: key.trim() });
+                                    setUsers(p => p.map(x => (x.id === uid || x._id === uid) ? { ...x, licenseKey: key.trim() || null } : x));
+                                    toast.success(key.trim() ? 'License key set!' : 'License key cleared');
+                                  } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
+                                }}
+                                  className="flex-1 min-w-[70px] py-2 px-2 rounded-xl font-mono text-[10px] tracking-widest text-center transition-all"
+                                  style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.3)', color: '#00ff88' }}>
+                                  🔑 KEY
+                                </button>
                               </div>
                             )}
                           </motion.div>
@@ -1544,7 +1582,8 @@ Ye action immediately apply hoga.`)) return;
                       })}
                     </div>
 
-                    <GCard className="block overflow-x-auto">
+                    {/* ── DESKTOP TABLE (≥ lg) ── */}
+                    <GCard className="hidden lg:block overflow-x-auto">
                       <table className="w-full cyber-table min-w-[800px]">
                         <thead><tr><th>USERNAME</th><th>EMAIL</th><th>PLAN</th><th>TRIAL</th><th>LICENSE</th><th>STATUS</th><th>JOINED</th><th className="text-right">ACTIONS</th></tr></thead>
                         <tbody>
