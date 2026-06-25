@@ -979,11 +979,6 @@ if (!command && body && m.quoted) {
     }
 }
 
-// SPECIAL CHECK: If user types ONLY the default "." - show THEIR current prefix
-if (body && body.trim() === '.') {
-    reply(`🔧 *Your current prefix:* \`${prefix}\`\n_You can change it using_ \`${prefix}setprefix [new]\``);
-    return;
-}
 
 const qtext = args.join(" ");
 const q = args.join(" ");
