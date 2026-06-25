@@ -974,7 +974,6 @@ async function _adHandleMessageDelete(sock, opts = {}) {
         tracker = null,
     } = opts;
     const clean = _adResolveBotNum(sock, botNum);
-.slice(0,25)+" msgId="+(msgId||"?").slice(0,10));
     if (!sock || !clean || !chatId || !msgId) {
  return false; }
     if (_adCheckDeleteProcessed(clean, chatId, msgId)) {
@@ -1025,7 +1024,6 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
 
     const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
-.slice(0,25));
     if (!orig) {
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +
