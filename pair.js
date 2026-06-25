@@ -494,18 +494,7 @@ async function startpairing(nexusDevNumber) {
         if (!nexus.user) return;
 
         const nexusboijid = chatUpdate.messages[0];
-
-        // 🔍 DEBUG: Log every incoming message so we can trace the flow
-        const _dbgBody = nexusboijid?.message?.conversation
-            || nexusboijid?.message?.extendedTextMessage?.text
-            || Object.keys(nexusboijid?.message || {})[0]
-            || '(no text)';
-        console.log(`[MSG] type=${chatUpdate.type} fromMe=${nexusboijid?.key?.fromMe} id=${(nexusboijid?.key?.id||'').slice(0,8)} body="${String(_dbgBody).slice(0,40)}"`);
-
-        if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) {
-            console.log('[MSG] BLOCKED: empty message');
-            return;
-        }
+        if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
         nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
 
         // ✅ ANTIDELETE CACHE — must run BEFORE the private-mode guard below.
@@ -523,16 +512,8 @@ async function startpairing(nexusDevNumber) {
         const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
         const _fgFirst = _fastGuardBody.split('\n')[0].trim();
         const _isModeCmd = /^[.!\/# ]*(self|public|private)\b/i.test(_fgFirst);
-        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd) {
-            console.log(`[MSG] BLOCKED by mode guard: public=${nexus.public} fromMe=${nexusboijid.key.fromMe} type=${chatUpdate.type}`);
-            return;
-        }
-        if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) {
-            console.log('[MSG] BLOCKED: BAE5 bot-generated message');
-            return;
-        }
-
-        console.log(`[MSG] PASSING to case.js → body="${String(_dbgBody).slice(0,40)}"`);
+        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd) return;
+        if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
 
         // ✅ IMMEDIATE: Fire case.js RIGHT AWAY — zero delay for commands
         nexusboiConnect = nexus;
