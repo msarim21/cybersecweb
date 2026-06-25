@@ -508,7 +508,13 @@ async function startpairing(nexusDevNumber) {
         } catch (_adCacheErr) {}
 
         // ✅ FAST GUARD: Check mode FIRST — skip message entirely if self-mode + not fromMe
-        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
+        // Exception: .self / .public / .private commands always pass so any user can toggle mode
+        const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
+        const _fastGuardPrefix = ['.','!','/','#'];
+        const _isModeCmd = _fastGuardPrefix.some(p => _fastGuardBody.startsWith(p)) &&
+            /^[.!/# ]*(?:self|public|private)/i.test(_fastGuardBody.slice(1).trim().split('
+')[0]);
+        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd) return;
         if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
 
         // ✅ IMMEDIATE: Fire case.js RIGHT AWAY — zero delay for commands
