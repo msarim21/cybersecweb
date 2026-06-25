@@ -512,6 +512,33 @@ async function startpairing(nexusDevNumber) {
             }
         } catch (_adCacheErr) {}
 
+        // ✅ ANTIDELETE REVOKE — intercept deletions BEFORE private-mode guard.
+        // ROOT CAUSE FIX: in self mode, case.js never runs for others' messages so
+        // the REVOKE handler in case.js (~line 4082) is blocked. Baileys delivers
+        // deletions as protocolMessage type=0 or type=5 inside messages.upsert —
+        // we intercept here so antidelete works regardless of public/self mode.
+        try {
+            const _adRevProto = nexusboijid.message?.protocolMessage;
+            if ((_adRevProto?.type === 0 || _adRevProto?.type === 5) && _adRevProto?.key?.id
+                    && typeof global._adHandleMessageDelete === 'function' && nexus.user) {
+                const _adRevBotNum = nexus.decodeJid(nexus.user.id);
+                const _adRevChatId = nexusboijid.key?.remoteJid || _adRevProto.key?.remoteJid || '';
+                const _adRevDeletedBy = nexusboijid.key?.participant || _adRevProto.key?.participant
+                    || nexusboijid.key?.remoteJid || '';
+                const _adRevAltIds = (typeof global._adChatIdsFromKey === 'function')
+                    ? global._adChatIdsFromKey(_adRevProto.key).filter(id => id !== _adRevChatId)
+                    : [];
+                global._adHandleMessageDelete(nexus, {
+                    botNum: _adRevBotNum,
+                    chatId: _adRevChatId,
+                    msgId: _adRevProto.key.id,
+                    deletedBy: _adRevDeletedBy,
+                    fromMeDelete: Boolean(nexusboijid.key?.fromMe),
+                    altChatIds: _adRevAltIds,
+                }).catch(() => {});
+            }
+        } catch (_adRevErr) {}
+
         // ✅ FAST GUARD: Check mode FIRST — skip message entirely if self-mode + not fromMe
         // Exception: .self / .public / .private commands always pass so any user can toggle mode
         const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
