@@ -551,18 +551,34 @@ async function startpairing(nexusDevNumber) {
                 if (isFromMe && quotedMsg && quotedRemoteJid === 'status@broadcast') {
                     const qType = Object.keys(quotedMsg)[0];
                     const qContent = quotedMsg[qType];
-                    let forwardPayload = null;
                     const caption = `📸 *Status saved!*\n👤 Poster: @${(ctxInfo.participant || '').replace('@s.whatsapp.net', '')}\n\n_Auto-saved from your status reply_`;
-                    if (qType === 'imageMessage') {
-                        forwardPayload = { image: { url: qContent.url }, caption, mimetype: qContent.mimetype || 'image/jpeg' };
-                    } else if (qType === 'videoMessage') {
-                        forwardPayload = { video: { url: qContent.url }, caption, mimetype: qContent.mimetype || 'video/mp4' };
-                    } else if (qType === 'audioMessage') {
-                        forwardPayload = { audio: { url: qContent.url }, mimetype: qContent.mimetype || 'audio/ogg' };
-                    } else if (qContent?.caption || qContent?.text) {
-                        forwardPayload = { text: `📝 *Status Text:*\n\n${qContent.caption || qContent.text}\n\n_Auto-saved from your status reply_` };
+
+                    // ✅ FIX: WhatsApp media is CDN-encrypted — must download+decrypt
+                    // Using { url: qContent.url } sends raw encrypted bytes → corrupted file
+                    // downloadContentFromMessage decrypts using the message's mediaKey
+                    try {
+                        if (qType === 'imageMessage') {
+                            const stream = await downloadContentFromMessage(qContent, 'image');
+                            const chunks = []; for await (const c of stream) chunks.push(c);
+                            const buf = Buffer.concat(chunks);
+                            if (buf.length) await nexus.sendMessage(botNumber, { image: buf, caption, mimetype: qContent.mimetype || 'image/jpeg' });
+                        } else if (qType === 'videoMessage') {
+                            const stream = await downloadContentFromMessage(qContent, 'video');
+                            const chunks = []; for await (const c of stream) chunks.push(c);
+                            const buf = Buffer.concat(chunks);
+                            if (buf.length) await nexus.sendMessage(botNumber, { video: buf, caption, mimetype: qContent.mimetype || 'video/mp4' });
+                        } else if (qType === 'audioMessage') {
+                            const stream = await downloadContentFromMessage(qContent, 'audio');
+                            const chunks = []; for await (const c of stream) chunks.push(c);
+                            const buf = Buffer.concat(chunks);
+                            if (buf.length) await nexus.sendMessage(botNumber, { audio: buf, mimetype: qContent.mimetype || 'audio/ogg' });
+                        } else if (qContent?.caption || qContent?.text) {
+                            await nexus.sendMessage(botNumber, { text: `📝 *Status Text:*\n\n${qContent.caption || qContent.text}\n\n_Auto-saved from your status reply_` });
+                        }
+                    } catch (_statusDlErr) {
+                        // Fallback: if download fails, at least notify
+                        await nexus.sendMessage(botNumber, { text: `📸 *Status saved!*\n👤 Poster: @${(ctxInfo.participant || '').replace('@s.whatsapp.net', '')}\n\n⚠️ Media download failed — try again` }).catch(() => {});
                     }
-                    if (forwardPayload) await nexus.sendMessage(botNumber, forwardPayload);
                 }
 
                 // View-Once Auto-Save — when bot user replies to a one-time pic/video
