@@ -35,7 +35,7 @@ async function runCleanup() {
     console.log('[db-cleanup] ▶ Starting scheduled DB cleanup...');
 
     try {
-        const { isMongoMode, getPool } = require('./db');
+        const { isMongoMode, getPool } = require('../server/db');
 
         if (isMongoMode()) {
             await _cleanMongo();
