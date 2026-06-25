@@ -410,6 +410,8 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
 
     const job = (async () => {
         try {
+            // ✅ FIX: skip download when mediaKey is empty — prevents 'Cannot derive from empty media key' log spam
+            if (!mediaContent.mediaKey && !mediaContent.url && !mediaContent.directPath) return;
             const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
             const stream = await downloadContentFromMessage(mediaContent, mtype);
             const chunks = [];
