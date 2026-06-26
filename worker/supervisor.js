@@ -90,6 +90,7 @@ const lastActivity = new Map();
 // MAX_RESTARTS_PER_HOUR circuit-breaker actually works (wasEntry.restartTimes
 // resets to [] on every new _spawnThread call, making the old check useless).
 const _restartHistory = new Map(); // clean → number[]
+const _disconnectedSince = new Map(); // clean → first-seen-disconnected ms
 
 let _slotCounter = 0;
 let _active      = false;
@@ -154,14 +155,31 @@ function _isThreadAlive(entry) {
 
 function _isThreadHealthy(clean, entry) {
     if (!entry?.thread) return false;
-    const gracePeriod = 10 * 60 * 1000;
+    // Grace period after spawn — give bot time to establish WS connection
+    const gracePeriod = 3 * 60 * 1000;
     if (Date.now() - (entry.spawnedAt || 0) < gracePeriod) return true;
 
     try {
-        const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
+        const { readBotHeartbeat, getBotHeartbeatAgeMs } = require('../allfunc/bot-heartbeat');
         const hb = readBotHeartbeat(clean);
-        if (hb?.wsState === 1) return true;
-        if (isBotHeartbeatFresh(clean, 20 * 60 * 1000)) return true;
+
+        // No heartbeat file yet — still within grace, healthy
+        if (!hb) return getBotHeartbeatAgeMs(clean) <= 4 * 60 * 1000;
+
+        if (hb.wsState === 1) {
+            // Connected → clear any disconnect tracker
+            _disconnectedSince.delete(clean);
+            return true;
+        }
+
+        // wsState != OPEN → track how long we've been disconnected
+        // pair.js reconnects internally; give it 3 min before supervisor steps in
+        if (!_disconnectedSince.has(clean)) _disconnectedSince.set(clean, Date.now());
+        const offlineMs = Date.now() - _disconnectedSince.get(clean);
+        if (offlineMs < 3 * 60 * 1000) return true; // still within self-heal window
+        console.log(chalk.red(`[Supervisor] 🔌 +${clean} offline ${Math.round(offlineMs/1000)}s — marking unhealthy`));
+        _disconnectedSince.delete(clean);
+        return false;
     } catch (_) {}
 
     return false;
@@ -281,7 +299,7 @@ function _spawnThread(clean, opts = {}) {
             botRunnerScript : BOT_RUNNER_SCRIPT,
             env             : _buildThreadEnv({ BOT_PAIRING: opts.pairing ? '1' : '0' }),
             maxRestartsPerHour: MAX_RESTARTS_PER_HOUR,
-            restartDelayMs  : 10_000,
+            restartDelayMs  : 3_000,  // ✅ FIX: faster crash recovery (was 10s)
         },
     });
 
