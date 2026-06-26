@@ -309,7 +309,9 @@ async function startpairing(nexusDevNumber) {
             autoActionsCompleted: false,
             groupsJoined: false,
             healthCheckInterval: null,  // ✅ track interval so old ones can be cleared
-            welcomeSent: false          // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
+            welcomeSent: false,         // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
+            connectedAt: null,          // ✅ ZOMBIE FIX: set when connection opens
+            lastMsgAt: null,            // ✅ ZOMBIE FIX: set when any message.upsert fires
         });
     }
     
@@ -497,6 +499,13 @@ async function startpairing(nexusDevNumber) {
     try {
         // ✅ GUARD: Skip if socket not authenticated yet
         if (!nexus.user) return;
+
+        // ✅ ZOMBIE FIX: Track last message received time so watchdog can detect
+        // "WS open but no messages" zombie state and force reconnect
+        try {
+            const _zmTracker = rentbotTracker.get(nexusDevNumber);
+            if (_zmTracker) _zmTracker.lastMsgAt = Date.now();
+        } catch (_) {}
 
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
@@ -1061,6 +1070,9 @@ async function startpairing(nexusDevNumber) {
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
+            // ✅ ZOMBIE FIX: Record when we connected and reset message clock
+            tracker.connectedAt = Date.now();
+            tracker.lastMsgAt   = Date.now(); // Grace period — don't trigger zombie check immediately
             
             // Add small delay to ensure everything is initialized
             await sleep(5000);
@@ -1230,6 +1242,34 @@ Your bot is ready. Send *.menu* to see all available commands.
                 const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                 touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
             } catch (_) {}
+
+            // ✅ ZOMBIE BOT FIX: WS open dikhta hai but messages.upsert nahi fire ho raha
+            // Restart ke baad yeh common hai — socket technically open hai but WA server
+            // messages deliver nahi kar raha. 45 min silence = force socket restart.
+            try {
+                const _cleanForZombie = nexusDevNumber.replace(/[^0-9]/g, '');
+                const _zombieTracker  = rentbotTracker.get(nexusDevNumber);
+                const _now            = Date.now();
+                const _connectedAt    = _zombieTracker?.connectedAt || _now;
+                const _lastMsg        = _zombieTracker?.lastMsgAt   || _connectedAt;
+                const _connectedForMs = _now - _connectedAt;
+                const _silenceMs      = _now - _lastMsg;
+                const ZOMBIE_SILENCE_MS  = 45 * 60 * 1000;  // 45 minutes no message
+                const MIN_CONNECTED_MS   = 15 * 60 * 1000;  // bot must be connected 15 min first
+
+                if (_connectedForMs > MIN_CONNECTED_MS && _silenceMs > ZOMBIE_SILENCE_MS) {
+                    console.log(chalk.red(`🧟 [${nexusDevNumber}] ZOMBIE DETECTED — WS open but no messages in ${Math.floor(_silenceMs / 60000)} min. Force reconnecting...`));
+                    if (_zombieTracker) {
+                        _zombieTracker.lastMsgAt   = _now; // reset to prevent loop
+                        _zombieTracker.connectedAt = _now;
+                    }
+                    clearInterval(tracker.healthCheckInterval);
+                    tracker.healthCheckInterval = null;
+                    try { nexus.ws?.close(); } catch (_) {}
+                    await sleep(5000);
+                    queuePairing(nexusDevNumber);
+                }
+            } catch (_zombieErr) {}
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
