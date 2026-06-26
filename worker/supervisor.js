@@ -90,12 +90,20 @@ const lastActivity = new Map();
 // MAX_RESTARTS_PER_HOUR circuit-breaker actually works (wasEntry.restartTimes
 // resets to [] on every new _spawnThread call, making the old check useless).
 const _restartHistory = new Map(); // clean → number[]
-const _disconnectedSince = new Map(); // clean → first-seen-disconnected ms
 
 let _slotCounter = 0;
 let _active      = false;
 let _syncTimer   = null;
 let _lastRotationAt = Date.now();
+
+// ── Crash-loop protection ─────────────────────────────────────────────────────
+// Tracks bots that should NOT be spawned right now:
+//   _noSessionBots  — exited code=0 (no session / stopped). Pause 30 min.
+//   _restartLimitBots — hit MAX_RESTARTS_PER_HOUR. Pause 30 min then retry.
+const _noSessionBots    = new Map(); // clean → timestamp of last clean exit
+const _restartLimitBots = new Map(); // clean → timestamp when limit was hit
+const NO_SESSION_PAUSE_MS    = 30 * 60 * 1000; // 30 minutes
+const RESTART_LIMIT_PAUSE_MS = 30 * 60 * 1000; // 30 minutes
 
 // ── Global error handlers (Master process) ───────────────────────────────────
 const IGNORED_ERRORS = [
@@ -155,31 +163,14 @@ function _isThreadAlive(entry) {
 
 function _isThreadHealthy(clean, entry) {
     if (!entry?.thread) return false;
-    // Grace period after spawn — give bot time to establish WS connection
-    const gracePeriod = 3 * 60 * 1000;
+    const gracePeriod = 10 * 60 * 1000;
     if (Date.now() - (entry.spawnedAt || 0) < gracePeriod) return true;
 
     try {
-        const { readBotHeartbeat, getBotHeartbeatAgeMs } = require('../allfunc/bot-heartbeat');
+        const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
         const hb = readBotHeartbeat(clean);
-
-        // No heartbeat file yet — still within grace, healthy
-        if (!hb) return getBotHeartbeatAgeMs(clean) <= 4 * 60 * 1000;
-
-        if (hb.wsState === 1) {
-            // Connected → clear any disconnect tracker
-            _disconnectedSince.delete(clean);
-            return true;
-        }
-
-        // wsState != OPEN → track how long we've been disconnected
-        // pair.js reconnects internally; give it 3 min before supervisor steps in
-        if (!_disconnectedSince.has(clean)) _disconnectedSince.set(clean, Date.now());
-        const offlineMs = Date.now() - _disconnectedSince.get(clean);
-        if (offlineMs < 3 * 60 * 1000) return true; // still within self-heal window
-        console.log(chalk.red(`[Supervisor] 🔌 +${clean} offline ${Math.round(offlineMs/1000)}s — marking unhealthy`));
-        _disconnectedSince.delete(clean);
-        return false;
+        if (hb?.wsState === 1) return true;
+        if (isBotHeartbeatFresh(clean, 20 * 60 * 1000)) return true;
     } catch (_) {}
 
     return false;
@@ -233,20 +224,11 @@ async function _ensureBotSessionReady(clean) {
     try {
         const { ensureSessionRestored } = require('../session-db');
         const ok = await ensureSessionRestored(clean);
-        if (ok) {
-            console.log(chalk.cyan(`[Supervisor] 📥 Session restored from DB: +${clean}`));
-            return true;
-        }
-        // ✅ SESSION RESTORE FIX: Even if DB restore fails, still try to spawn.
-        // On first-ever run after pairing, local creds exist but DB backup may have
-        // failed. pair.js will read local creds directly via useMultiFileAuthState
-        // and connect fine. On a true cold-start with NO creds anywhere, Baileys
-        // returns DisconnectReason.loggedOut and the bot stops gracefully — no harm.
-        console.log(chalk.yellow(`[Supervisor] ⚠️  No DB session for +${clean} — attempting spawn anyway (local creds may exist)`));
-        return true; // spawn optimistically — pair.js handles graceful fail
+        if (ok) console.log(chalk.cyan(`[Supervisor] 📥 Session restored from DB: +${clean}`));
+        return ok;
     } catch (e) {
-        console.log(chalk.yellow(`[Supervisor] Session restore failed for +${clean}: ${e.message} — spawning anyway`));
-        return true; // spawn optimistically
+        console.log(chalk.yellow(`[Supervisor] Session restore failed for +${clean}: ${e.message}`));
+        return false;
     }
 }
 
@@ -262,6 +244,8 @@ function _onThreadMessage(clean, msg) {
         case 'heartbeat':
         case 'spawned':
             lastActivity.set(clean, Date.now());
+            // If bot is back up after being paused, clear pause flags
+            _noSessionBots.delete(clean);
             _updateActiveBotCount();
             break;
         case 'exit':
@@ -270,8 +254,18 @@ function _onThreadMessage(clean, msg) {
             ));
             _updateActiveBotCount();
             break;
+        case 'cleanExit':
+            // ✅ FIX: code=0 exit = no session or manually stopped
+            // Mark as "no session" so syncBots step 5 skips respawning for 30 min
+            console.log(chalk.yellow(`[Supervisor] +${clean} clean exit (no session/stopped) — pausing spawn for 30min`));
+            _noSessionBots.set(clean, Date.now());
+            _updateActiveBotCount();
+            break;
         case 'restartLimitReached':
-            console.log(chalk.red(`[Supervisor] +${clean} hit restart limit (${msg.recent}/hr) — pausing`));
+            // ✅ FIX: Bot hit crash-restart limit. Pause spawning to prevent OOM loops.
+            console.log(chalk.red(`[Supervisor] +${clean} hit restart limit (${msg.recent}/hr) — pausing 30min`));
+            _restartLimitBots.set(clean, Date.now());
+            _updateActiveBotCount();
             break;
         case 'threadError':
             console.log(chalk.red(`[Supervisor] Thread error for +${clean}: ${msg.message}`));
@@ -281,6 +275,29 @@ function _onThreadMessage(clean, msg) {
             _updateActiveBotCount();
             break;
     }
+}
+
+/** Check if a bot is currently in a crash-loop pause. Returns reason string or null. */
+function _isBotPaused(clean) {
+    const now = Date.now();
+    // Check no-session pause — BUT clear if session now exists (user re-paired)
+    if (_noSessionBots.has(clean)) {
+        if (now - _noSessionBots.get(clean) < NO_SESSION_PAUSE_MS) {
+            if (!_hasRegisteredCreds(clean)) return 'no-session';
+            // Session appeared (re-paired) — clear pause
+            _noSessionBots.delete(clean);
+        } else {
+            _noSessionBots.delete(clean); // Pause expired, try again
+        }
+    }
+    // Check restart-limit pause
+    if (_restartLimitBots.has(clean)) {
+        if (now - _restartLimitBots.get(clean) < RESTART_LIMIT_PAUSE_MS) {
+            return 'restart-limit';
+        }
+        _restartLimitBots.delete(clean); // Pause expired, try again
+    }
+    return null;
 }
 
 function _spawnThread(clean, opts = {}) {
@@ -299,7 +316,7 @@ function _spawnThread(clean, opts = {}) {
             botRunnerScript : BOT_RUNNER_SCRIPT,
             env             : _buildThreadEnv({ BOT_PAIRING: opts.pairing ? '1' : '0' }),
             maxRestartsPerHour: MAX_RESTARTS_PER_HOUR,
-            restartDelayMs  : 3_000,  // ✅ FIX: faster crash recovery (was 10s)
+            restartDelayMs  : 10_000,
         },
     });
 
@@ -450,6 +467,14 @@ async function syncBots() {
         if (!myBots.has(clean)) continue;
         if (_isThreadHealthy(clean, entry)) continue;
 
+        // ✅ FIX: Don't restart a paused bot — it would just re-enter the crash loop
+        const pauseReason = _isBotPaused(clean);
+        if (pauseReason) {
+            console.log(chalk.gray(`[Supervisor] ⏸ +${clean} unhealthy but paused (${pauseReason}) — skipping restart`));
+            killBot(clean, 'SIGTERM'); // Clean up dead thread, but don't respawn
+            continue;
+        }
+
         console.log(chalk.red(`[Supervisor] 💀 +${clean} unhealthy — restarting thread`));
         killBot(clean, 'SIGTERM');
         const ready = await _ensureBotSessionReady(clean);
@@ -486,7 +511,24 @@ async function syncBots() {
 
     // 5. Start sleeping bots (memory-aware + LRU eviction)
     const sleepingBots = [...myBots]
-        .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
+        .filter((c) => {
+            if (threads.has(c)) return false;
+            if (global._pairingInFlight?.has(c)) return false;
+            // ✅ FIX: Skip paused bots (no-session loop or restart-limit loop)
+            // This prevents the infinite spawn→exit(0)→spawn cycle that caused R14 OOM
+            const pauseReason = _isBotPaused(c);
+            if (pauseReason) {
+                // Only log occasionally (not every 8s sync) to avoid log spam
+                if (!_isBotPaused._loggedAt) _isBotPaused._loggedAt = {};
+                const lastLog = _isBotPaused._loggedAt[c] || 0;
+                if (Date.now() - lastLog > 5 * 60 * 1000) {
+                    console.log(chalk.gray(`[Supervisor] ⏸ +${c} sleeping but paused (${pauseReason}) — skipping spawn`));
+                    _isBotPaused._loggedAt[c] = Date.now();
+                }
+                return false;
+            }
+            return true;
+        })
         .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
 
     let runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
