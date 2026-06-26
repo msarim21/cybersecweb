@@ -100,6 +100,15 @@ function spawnChild(opts = {}) {
 
         if (_shuttingDown || opts.noRestart) return;
 
+        // ✅ FIX: code=0 = intentional clean exit (no session, bot stopped, or manual disconnect)
+        // Do NOT restart — Supervisor syncBots() will re-evaluate. Restarting here causes
+        // an infinite tight loop: no-session → exit(0) → restart → no-session → exit(0) → ...
+        // This was the primary cause of R14 memory errors on Heroku.
+        if (code === 0) {
+            send('cleanExit', { reason: 'intentional exit (no-session or stopped)' });
+            return;
+        }
+
         const recent = _recentRestarts();
         if (recent >= MAX_RESTARTS_PER_HOUR) {
             send('restartLimitReached', { recent });
@@ -110,8 +119,11 @@ function spawnChild(opts = {}) {
         _restartTimes.push(Date.now());
         slot.setRestarts(_totalRestarts);
 
-        const delay = _restartDelay();
-        send('scheduledRestart', { delayMs: delay, attempt: _totalRestarts });
+        // ✅ FIX: Error 440 (session conflict) needs longer wait so WhatsApp server-side
+        // session settles before we reconnect. Minimum 60s regardless of backoff formula.
+        const baseDelay = _restartDelay();
+        const delay = code === 440 ? Math.max(60_000, baseDelay) : baseDelay;
+        send('scheduledRestart', { delayMs: delay, attempt: _totalRestarts, exitCode: code });
 
         setTimeout(() => {
             if (!_shuttingDown) spawnChild();
