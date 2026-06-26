@@ -371,7 +371,7 @@ async function startpairing(nexusDevNumber) {
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
         syncFullHistory: true,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: false, // RATE-LIMIT FIX: presence burst on every reconnect → rate-overlimit
     })
     
     tracker.connection = nexus;
@@ -1259,8 +1259,10 @@ Your bot is ready. Send *.menu* to see all available commands.
         
         const wsState = nexus.ws?.readyState;
         if (wsState === 1) {
-            // WebSocket open — keep alive
-            nexus.sendPresenceUpdate('available').catch(() => {});
+            // WebSocket open — Baileys keepAlive pings (keepAliveIntervalMs:30s) handle the socket.
+            // sendPresenceUpdate REMOVED: every-30s presence + markOnlineOnConnect + WS pings
+            // = WhatsApp rate-overlimit → messages stop delivering ~1min after connect (commands die).
+            // Presence is only sent by socket-wake.js when bot has been idle 60s+ (IDLE_WARM_MS).
             // ✅ BUG FIX (Bug 11): Watchdog mein touchBotHeartbeat call karo
             // Warna agar chat quiet hai (koi message nahi) to lastActive update nahi hota
             // aur website per "BOT OFFLINE" dikhta rehta hai. Watchdog har 30s pe chalta hai;
