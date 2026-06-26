@@ -215,11 +215,20 @@ async function _ensureBotSessionReady(clean) {
     try {
         const { ensureSessionRestored } = require('../session-db');
         const ok = await ensureSessionRestored(clean);
-        if (ok) console.log(chalk.cyan(`[Supervisor] 📥 Session restored from DB: +${clean}`));
-        return ok;
+        if (ok) {
+            console.log(chalk.cyan(`[Supervisor] 📥 Session restored from DB: +${clean}`));
+            return true;
+        }
+        // ✅ SESSION RESTORE FIX: Even if DB restore fails, still try to spawn.
+        // On first-ever run after pairing, local creds exist but DB backup may have
+        // failed. pair.js will read local creds directly via useMultiFileAuthState
+        // and connect fine. On a true cold-start with NO creds anywhere, Baileys
+        // returns DisconnectReason.loggedOut and the bot stops gracefully — no harm.
+        console.log(chalk.yellow(`[Supervisor] ⚠️  No DB session for +${clean} — attempting spawn anyway (local creds may exist)`));
+        return true; // spawn optimistically — pair.js handles graceful fail
     } catch (e) {
-        console.log(chalk.yellow(`[Supervisor] Session restore failed for +${clean}: ${e.message}`));
-        return false;
+        console.log(chalk.yellow(`[Supervisor] Session restore failed for +${clean}: ${e.message} — spawning anyway`));
+        return true; // spawn optimistically
     }
 }
 
