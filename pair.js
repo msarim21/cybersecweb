@@ -312,6 +312,8 @@ async function startpairing(nexusDevNumber) {
             welcomeSent: false,         // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
             connectedAt: null,          // ✅ ZOMBIE FIX: set when connection opens
             lastMsgAt: null,            // ✅ ZOMBIE FIX: set when any message.upsert fires
+            lastDbBackupAt: 0,          // ✅ SESSION FIX: throttle creds.update DB backup
+            lastWatchdogBackupAt: 0,    // ✅ SESSION FIX: throttle watchdog periodic backup
         });
     }
     
@@ -1217,7 +1219,33 @@ Your bot is ready. Send *.menu* to see all available commands.
         }
     });
 
-    nexus.ev.on('creds.update', saveCreds);
+    // ✅ SESSION BACKUP FIX: creds.update pe DB bhi backup karo (throttled — max 1 per 5 min)
+    // Root cause: saveCreds sirf local disk pe save karta tha. Agar Heroku restart pe disk
+    // wipe ho, aur connect-pe-backup fail ho jaye, to session DB mein kabhi nahi aata.
+    // Ab creds change hone pe bhi DB backup hoga — reliable cross-restart session.
+    const _DB_BACKUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes throttle
+    nexus.ev.on('creds.update', async () => {
+        // Always save to local disk first (fast, sync)
+        try { await saveCreds(); } catch (_) {}
+
+        // DB backup — throttled to avoid hammering DB on every creds flush
+        try {
+            const _credsTracker = rentbotTracker.get(nexusDevNumber);
+            const _now = Date.now();
+            const _lastBk = _credsTracker?.lastDbBackupAt || 0;
+            if (_now - _lastBk >= _DB_BACKUP_INTERVAL_MS) {
+                if (_credsTracker) _credsTracker.lastDbBackupAt = _now;
+                const { backupSessionFolder } = require('./session-db');
+                const _cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const _path = require('path');
+                const _fs   = require('fs');
+                const _dirA = _path.join(process.cwd(), 'nexstore', 'pairing', `${_cleanNum}@s.whatsapp.net`);
+                const _dirB = _path.join(process.cwd(), 'nexstore', 'pairing', _cleanNum);
+                const _sessionDir = _fs.existsSync(_dirA) ? _dirA : _dirB;
+                backupSessionFolder(_cleanNum, _sessionDir).catch(() => {});
+            }
+        } catch (_) {}
+    });
     
     // ✅ IMPROVED 24/7 WATCHDOG — stored in tracker so it can be cleared on reconnect
     tracker.healthCheckInterval = setInterval(async () => {
@@ -1242,6 +1270,28 @@ Your bot is ready. Send *.menu* to see all available commands.
                 const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                 touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
             } catch (_) {}
+
+            // ✅ PERIODIC DB BACKUP: Har 2 ghante mein session DB mein backup karo
+            // Ensures latest creds always in DB even if connect-pe-backup failed
+            try {
+                const _wdTracker  = rentbotTracker.get(nexusDevNumber);
+                const _wdNow      = Date.now();
+                const _wdLastBk   = _wdTracker?.lastWatchdogBackupAt || 0;
+                const BACKUP_EVERY_MS = 2 * 60 * 60 * 1000; // 2 hours
+                if (_wdNow - _wdLastBk >= BACKUP_EVERY_MS) {
+                    if (_wdTracker) _wdTracker.lastWatchdogBackupAt = _wdNow;
+                    const { backupSessionFolder } = require('./session-db');
+                    const _wdClean = nexusDevNumber.replace(/[^0-9]/g, '');
+                    const _wdPath  = require('path');
+                    const _wdFs   = require('fs');
+                    const _wdDirA = _wdPath.join(process.cwd(), 'nexstore', 'pairing', `${_wdClean}@s.whatsapp.net`);
+                    const _wdDirB = _wdPath.join(process.cwd(), 'nexstore', 'pairing', _wdClean);
+                    const _wdDir  = _wdFs.existsSync(_wdDirA) ? _wdDirA : _wdDirB;
+                    backupSessionFolder(_wdClean, _wdDir)
+                        .then(ok => { if (ok) console.log(chalk.cyan(`[Watchdog] ✅ Periodic session backup OK: ${_wdClean}`)); })
+                        .catch(() => {});
+                }
+            } catch (_wdBkErr) {}
 
             // ✅ ZOMBIE BOT FIX: WS open dikhta hai but messages.upsert nahi fire ho raha
             // Restart ke baad yeh common hai — socket technically open hai but WA server
