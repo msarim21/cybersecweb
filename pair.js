@@ -509,10 +509,15 @@ async function startpairing(nexusDevNumber) {
 
         // ✅ FAST GUARD: Check mode FIRST — skip message entirely if self-mode + not fromMe
         // Exception: .self / .public / .private commands always pass so any user can toggle mode
+        // Exception: protocolMessage (type=0 REVOKE / type=14 EDIT) must ALWAYS pass through
+        //   regardless of mode — antidelete & antiedit need these events even in private/self mode.
+        //   Without this, when someone deletes "for everyone" the revoke arrives with fromMe=false
+        //   and gets blocked here, so antidelete never fires for other people's deletions.
         const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
         const _fgFirst = _fastGuardBody.split('\n')[0].trim();
         const _isModeCmd = /^[.!\/# ]*(self|public|private)\b/i.test(_fgFirst);
-        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd) return;
+        const _isSystemProto = Boolean(nexusboijid.message?.protocolMessage); // delete / edit events
+        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) return;
         if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
 
         // ✅ IMMEDIATE: Fire case.js RIGHT AWAY — zero delay for commands
