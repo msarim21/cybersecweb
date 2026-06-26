@@ -35,11 +35,6 @@ let themeemoji = "😇";
 const chalk = require('chalk')
 const { writeExif, imageToWebp, videoToWebp, writeExifImg, writeExifVid } = require('./allfunc/exif')
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetch } = require('./allfunc/myfunc')
-// ✅ FIX: Load antidelete-helpers at startup so global._cacheMessageForAntidelete is set
-// BEFORE any messages arrive — in self mode case.js is never called for others' messages
-// so relying on case.js to load this module causes cache misses and antidelete to fail.
-require('./allfunc/antidelete-session');
-require('./allfunc/antidelete-helpers');
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 // Define sleep function directly here to avoid import issues
@@ -309,11 +304,7 @@ async function startpairing(nexusDevNumber) {
             autoActionsCompleted: false,
             groupsJoined: false,
             healthCheckInterval: null,  // ✅ track interval so old ones can be cleared
-            welcomeSent: false,         // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
-            connectedAt: null,          // ✅ ZOMBIE FIX: set when connection opens
-            lastMsgAt: null,            // ✅ ZOMBIE FIX: set when any message.upsert fires
-            lastDbBackupAt: 0,          // ✅ SESSION FIX: throttle creds.update DB backup
-            lastWatchdogBackupAt: 0,    // ✅ SESSION FIX: throttle watchdog periodic backup
+            welcomeSent: false          // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
         });
     }
     
@@ -371,7 +362,7 @@ async function startpairing(nexusDevNumber) {
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
         syncFullHistory: true,
-        markOnlineOnConnect: false, // RATE-LIMIT FIX: presence burst on every reconnect → rate-overlimit
+        markOnlineOnConnect: true,
     })
     
     tracker.connection = nexus;
@@ -502,13 +493,6 @@ async function startpairing(nexusDevNumber) {
         // ✅ GUARD: Skip if socket not authenticated yet
         if (!nexus.user) return;
 
-        // ✅ ZOMBIE FIX: Track last message received time so watchdog can detect
-        // "WS open but no messages" zombie state and force reconnect
-        try {
-            const _zmTracker = rentbotTracker.get(nexusDevNumber);
-            if (_zmTracker) _zmTracker.lastMsgAt = Date.now();
-        } catch (_) {}
-
         const nexusboijid = chatUpdate.messages[0];
         if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
         nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
@@ -522,33 +506,6 @@ async function startpairing(nexusDevNumber) {
                 global._cacheMessageForAntidelete(nexusboijid, nexus);
             }
         } catch (_adCacheErr) {}
-
-        // ✅ ANTIDELETE REVOKE — intercept deletions BEFORE private-mode guard.
-        // ROOT CAUSE FIX: in self mode, case.js never runs for others' messages so
-        // the REVOKE handler in case.js (~line 4082) is blocked. Baileys delivers
-        // deletions as protocolMessage type=0 or type=5 inside messages.upsert —
-        // we intercept here so antidelete works regardless of public/self mode.
-        try {
-            const _adRevProto = nexusboijid.message?.protocolMessage;
-            if ((_adRevProto?.type === 0 || _adRevProto?.type === 5) && _adRevProto?.key?.id
-                    && typeof global._adHandleMessageDelete === 'function' && nexus.user) {
-                const _adRevBotNum = nexus.decodeJid(nexus.user.id);
-                const _adRevChatId = nexusboijid.key?.remoteJid || _adRevProto.key?.remoteJid || '';
-                const _adRevDeletedBy = nexusboijid.key?.participant || _adRevProto.key?.participant
-                    || nexusboijid.key?.remoteJid || '';
-                const _adRevAltIds = (typeof global._adChatIdsFromKey === 'function')
-                    ? global._adChatIdsFromKey(_adRevProto.key).filter(id => id !== _adRevChatId)
-                    : [];
-                global._adHandleMessageDelete(nexus, {
-                    botNum: _adRevBotNum,
-                    chatId: _adRevChatId,
-                    msgId: _adRevProto.key.id,
-                    deletedBy: _adRevDeletedBy,
-                    fromMeDelete: Boolean(nexusboijid.key?.fromMe),
-                    altChatIds: _adRevAltIds,
-                }).catch(() => {});
-            }
-        } catch (_adRevErr) {}
 
         // ✅ FAST GUARD: Check mode FIRST — skip message entirely if self-mode + not fromMe
         // Exception: .self / .public / .private commands always pass so any user can toggle mode
@@ -650,23 +607,12 @@ async function startpairing(nexusDevNumber) {
                             const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
                             let voBuffer = null;
                             try {
-                                // ✅ FIX: skip download if mediaKey is missing (view-once CDN won't decrypt)
-                                if (voContent.mediaKey || voContent.url || voContent.directPath) {
-                                    const mediaType = voType.replace('Message', '');
-                                    const stream = await downloadContentFromMessage(voContent, mediaType);
-                                    const chunks = [];
-                                    for await (const chunk of stream) chunks.push(chunk);
-                                    const _raw = Buffer.concat(chunks);
-                                    // ✅ FIX: empty Buffer is truthy — must check length
-                                    if (_raw.length > 0) voBuffer = _raw;
-                                }
+                                const mediaType = voType.replace('Message', '');
+                                const stream = await downloadContentFromMessage(voContent, mediaType);
+                                const chunks = [];
+                                for await (const chunk of stream) chunks.push(chunk);
+                                voBuffer = Buffer.concat(chunks);
                             } catch (dlErr) {}
-
-                            // ✅ FIX: validate video buffer has valid MP4 magic bytes before sending
-                            if (voBuffer && voType === 'videoMessage' && voBuffer.length >= 8) {
-                                const magic = voBuffer.slice(4, 8).toString('ascii');
-                                if (magic !== 'ftyp') voBuffer = null;
-                            }
 
                             if (voBuffer) {
                                 let voPayload = null;
@@ -968,15 +914,17 @@ async function startpairing(nexusDevNumber) {
                 // ✅ FIX: Isolated mode mein pair.js reconnect NAHI karta
                 // Supervisor/BotRunner khud thread restart karta hai — dono reconnect = 440 loop
                 if (global.__ISOLATED_BOT) {
-                    console.warn(chalk.yellow(`⚠️ Error 440 (isolated) for ${nexusDevNumber} — letting Supervisor handle restart`));
+                    console.warn(chalk.yellow(`⚠️ Error 440 (isolated) for ${nexusDevNumber} — waiting 30s then exiting (Supervisor will restart with 60s delay)`));
                     tracker.disconnected = true;
                     tracker.connection = null;
-                    // BotRunner ko batao ke exit karo — wo proper delay ke saath restart karega
+                    // ✅ FIX: Wait 30s before exit (not 8s) so WhatsApp server-side session
+                    // fully expires before Supervisor's 60s restart delay kicks in.
+                    // Total gap = 30s (here) + 60s (bot-thread) = 90s before reconnect.
+                    // This breaks the rapid 440→restart→440 cascade loop.
                     if (typeof global._botRunnerExit === 'function') {
-                        global._botRunnerExit(440);
+                        setTimeout(() => global._botRunnerExit(440), 30_000);
                     } else {
-                        // Fallback: 8s baad process exit karo so Supervisor re-spawns
-                        setTimeout(() => process.exit(440), 8000);
+                        setTimeout(() => process.exit(440), 30_000);
                     }
                     return;
                 }
@@ -1072,9 +1020,6 @@ async function startpairing(nexusDevNumber) {
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
-            // ✅ ZOMBIE FIX: Record when we connected and reset message clock
-            tracker.connectedAt = Date.now();
-            tracker.lastMsgAt   = Date.now(); // Grace period — don't trigger zombie check immediately
             
             // Add small delay to ensure everything is initialized
             await sleep(5000);
@@ -1219,33 +1164,7 @@ Your bot is ready. Send *.menu* to see all available commands.
         }
     });
 
-    // ✅ SESSION BACKUP FIX: creds.update pe DB bhi backup karo (throttled — max 1 per 5 min)
-    // Root cause: saveCreds sirf local disk pe save karta tha. Agar Heroku restart pe disk
-    // wipe ho, aur connect-pe-backup fail ho jaye, to session DB mein kabhi nahi aata.
-    // Ab creds change hone pe bhi DB backup hoga — reliable cross-restart session.
-    const _DB_BACKUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes throttle
-    nexus.ev.on('creds.update', async () => {
-        // Always save to local disk first (fast, sync)
-        try { await saveCreds(); } catch (_) {}
-
-        // DB backup — throttled to avoid hammering DB on every creds flush
-        try {
-            const _credsTracker = rentbotTracker.get(nexusDevNumber);
-            const _now = Date.now();
-            const _lastBk = _credsTracker?.lastDbBackupAt || 0;
-            if (_now - _lastBk >= _DB_BACKUP_INTERVAL_MS) {
-                if (_credsTracker) _credsTracker.lastDbBackupAt = _now;
-                const { backupSessionFolder } = require('./session-db');
-                const _cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                const _path = require('path');
-                const _fs   = require('fs');
-                const _dirA = _path.join(process.cwd(), 'nexstore', 'pairing', `${_cleanNum}@s.whatsapp.net`);
-                const _dirB = _path.join(process.cwd(), 'nexstore', 'pairing', _cleanNum);
-                const _sessionDir = _fs.existsSync(_dirA) ? _dirA : _dirB;
-                backupSessionFolder(_cleanNum, _sessionDir).catch(() => {});
-            }
-        } catch (_) {}
-    });
+    nexus.ev.on('creds.update', saveCreds);
     
     // ✅ IMPROVED 24/7 WATCHDOG — stored in tracker so it can be cleared on reconnect
     tracker.healthCheckInterval = setInterval(async () => {
@@ -1259,10 +1178,8 @@ Your bot is ready. Send *.menu* to see all available commands.
         
         const wsState = nexus.ws?.readyState;
         if (wsState === 1) {
-            // WebSocket open — Baileys keepAlive pings (keepAliveIntervalMs:30s) handle the socket.
-            // sendPresenceUpdate REMOVED: every-30s presence + markOnlineOnConnect + WS pings
-            // = WhatsApp rate-overlimit → messages stop delivering ~1min after connect (commands die).
-            // Presence is only sent by socket-wake.js when bot has been idle 60s+ (IDLE_WARM_MS).
+            // WebSocket open — keep alive
+            nexus.sendPresenceUpdate('available').catch(() => {});
             // ✅ BUG FIX (Bug 11): Watchdog mein touchBotHeartbeat call karo
             // Warna agar chat quiet hai (koi message nahi) to lastActive update nahi hota
             // aur website per "BOT OFFLINE" dikhta rehta hai. Watchdog har 30s pe chalta hai;
@@ -1272,56 +1189,6 @@ Your bot is ready. Send *.menu* to see all available commands.
                 const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                 touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
             } catch (_) {}
-
-            // ✅ PERIODIC DB BACKUP: Har 2 ghante mein session DB mein backup karo
-            // Ensures latest creds always in DB even if connect-pe-backup failed
-            try {
-                const _wdTracker  = rentbotTracker.get(nexusDevNumber);
-                const _wdNow      = Date.now();
-                const _wdLastBk   = _wdTracker?.lastWatchdogBackupAt || 0;
-                const BACKUP_EVERY_MS = 2 * 60 * 60 * 1000; // 2 hours
-                if (_wdNow - _wdLastBk >= BACKUP_EVERY_MS) {
-                    if (_wdTracker) _wdTracker.lastWatchdogBackupAt = _wdNow;
-                    const { backupSessionFolder } = require('./session-db');
-                    const _wdClean = nexusDevNumber.replace(/[^0-9]/g, '');
-                    const _wdPath  = require('path');
-                    const _wdFs   = require('fs');
-                    const _wdDirA = _wdPath.join(process.cwd(), 'nexstore', 'pairing', `${_wdClean}@s.whatsapp.net`);
-                    const _wdDirB = _wdPath.join(process.cwd(), 'nexstore', 'pairing', _wdClean);
-                    const _wdDir  = _wdFs.existsSync(_wdDirA) ? _wdDirA : _wdDirB;
-                    backupSessionFolder(_wdClean, _wdDir)
-                        .then(ok => { if (ok) console.log(chalk.cyan(`[Watchdog] ✅ Periodic session backup OK: ${_wdClean}`)); })
-                        .catch(() => {});
-                }
-            } catch (_wdBkErr) {}
-
-            // ✅ ZOMBIE BOT FIX: WS open dikhta hai but messages.upsert nahi fire ho raha
-            // Restart ke baad yeh common hai — socket technically open hai but WA server
-            // messages deliver nahi kar raha. 45 min silence = force socket restart.
-            try {
-                const _cleanForZombie = nexusDevNumber.replace(/[^0-9]/g, '');
-                const _zombieTracker  = rentbotTracker.get(nexusDevNumber);
-                const _now            = Date.now();
-                const _connectedAt    = _zombieTracker?.connectedAt || _now;
-                const _lastMsg        = _zombieTracker?.lastMsgAt   || _connectedAt;
-                const _connectedForMs = _now - _connectedAt;
-                const _silenceMs      = _now - _lastMsg;
-                const ZOMBIE_SILENCE_MS  = 45 * 60 * 1000;  // 45 minutes no message
-                const MIN_CONNECTED_MS   = 15 * 60 * 1000;  // bot must be connected 15 min first
-
-                if (_connectedForMs > MIN_CONNECTED_MS && _silenceMs > ZOMBIE_SILENCE_MS) {
-                    console.log(chalk.red(`🧟 [${nexusDevNumber}] ZOMBIE DETECTED — WS open but no messages in ${Math.floor(_silenceMs / 60000)} min. Force reconnecting...`));
-                    if (_zombieTracker) {
-                        _zombieTracker.lastMsgAt   = _now; // reset to prevent loop
-                        _zombieTracker.connectedAt = _now;
-                    }
-                    clearInterval(tracker.healthCheckInterval);
-                    tracker.healthCheckInterval = null;
-                    try { nexus.ws?.close(); } catch (_) {}
-                    await sleep(5000);
-                    queuePairing(nexusDevNumber);
-                }
-            } catch (_zombieErr) {}
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
