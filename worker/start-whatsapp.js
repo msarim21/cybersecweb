@@ -38,6 +38,19 @@ function startWhatsAppStack() {
         console.log(chalk.yellow('[WhatsApp] Auto-restarter warning:', e.message));
     }
 
+    // ── Auto-reconnect sweep ──────────────────────────────────────────────
+    // Har 5 minute mein check karta hai koi bot offline to nahi gaya.
+    // Agar offline hai, DB mein session hai, aur user ne manually disconnect
+    // nahi kiya — to automatically reconnect karta hai.
+    // User ko website pe ja ke RECONNECT button nahi dabaana parta.
+    try {
+        const { startAutoReconnectSweep } = require('../allfunc/auto-reconnect-sweep');
+        startAutoReconnectSweep();
+        console.log(chalk.green('[WhatsApp] ✅ Auto-reconnect sweep armed — offline bots will reconnect automatically'));
+    } catch (e) {
+        console.log(chalk.yellow('[WhatsApp] Auto-reconnect sweep warning:', e.message));
+    }
+
     return true;
 }
 
