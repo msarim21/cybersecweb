@@ -897,6 +897,19 @@ async function stopSupervisorGraceful(timeoutMs = 9000) {
     console.log(chalk.green('[Supervisor] ✅ All threads exited.'));
 }
 
+/**
+ * Clear a bot from the _noSessionBots / _restartLimitBots pause maps
+ * so the next syncBots() cycle will attempt to spawn it again.
+ * Used by the auto-reconnect sweep to override the 30-min hold.
+ */
+function _clearNoSessionBot(clean) {
+    const c = cleanBotNum(clean);
+    if (c) {
+        _noSessionBots.delete(c);
+        _restartLimitBots.delete(c);
+    }
+}
+
 module.exports = {
     startSupervisor,
     stopSupervisor,
@@ -910,6 +923,7 @@ module.exports = {
     markBotPromoted,
     promotePairingToNormal,
     bootReconnectReport,
+    _clearNoSessionBot,
     getSharedBuffer  : () => sharedBuffer,
     getActiveBotCount: () => getActiveBotCount(sharedBuffer),
 };
