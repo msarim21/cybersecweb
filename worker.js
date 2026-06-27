@@ -301,6 +301,18 @@ async function startWorker() {
       if (sweepCount > 8) { clearInterval(startupSweep); return; }
       try { const { syncBots } = require('./worker/supervisor'); await syncBots(); } catch (_) {}
     }, 2 * 60 * 1000);
+
+    // ── Auto-reconnect sweep (isolated mode) ──────────────────────────────
+    // Supervisor handles restarts but can pause bots for 30 min (_noSessionBots).
+    // This sweep overrides that and forces reconnect for offline bots that have
+    // a valid session in DB and were not manually stopped by the user.
+    try {
+      const { startAutoReconnectSweep } = require('./allfunc/auto-reconnect-sweep');
+      startAutoReconnectSweep();
+    } catch (e) {
+      console.log(chalk.yellow('[Worker] Auto-reconnect sweep (isolated) warning:', e.message));
+    }
+
     return;
   }
 
@@ -374,6 +386,18 @@ async function startWorker() {
     console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed — restarts every ${_restartHours} hours`));
   } catch (e) {
     console.log(chalk.yellow('[Worker] Auto-restarter warning:', e.message));
+  }
+
+  // ── Auto-reconnect sweep (flat mode) ────────────────────────────────────
+  // Detects offline bots that have a valid session in DB but are not running.
+  // Automatically calls startpairing() for them — no manual RECONNECT click needed.
+  // Skips bots that the user manually disconnected (stopped_bots list).
+  try {
+    const { startAutoReconnectSweep } = require('./allfunc/auto-reconnect-sweep');
+    startAutoReconnectSweep();
+    console.log(chalk.green('[Worker] ✅ Auto-reconnect sweep armed (flat mode)'));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Auto-reconnect sweep warning:', e.message));
   }
 
   // Reconnect sweep: first 15 min after restart (every 2 min), picks up any missed bots
