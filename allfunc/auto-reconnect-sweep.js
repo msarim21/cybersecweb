@@ -60,9 +60,31 @@ function _isSessionFresh(sess, maxAgeMs) {
     return (Date.now() - new Date(sess.lastActive).getTime()) <= maxAgeMs;
 }
 
-/** Returns true if the bot currently looks online according to DB session data. */
-function _isBotOnline(sess) {
-    const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000; // must match numbers.js
+/**
+ * Returns true if the bot is currently live.
+ * ✅ PRIMARY: checks connected.flag on filesystem — ground truth for live sockets.
+ * Fallback: DB session fields (stale by up to 15 min, so flag always wins).
+ */
+function _isBotOnline(clean, sess) {
+    // ── 1. Filesystem flag — most reliable (written by pair.js on connect) ──
+    try {
+        const { isConnected } = require('../allfunc/connected-flag');
+        if (isConnected(clean)) return true;
+    } catch (_) {}
+
+    // ── 2. Supervisor thread map — bot thread is alive ────────────────────
+    try {
+        const sup = require('../worker/supervisor');
+        if (sup.isSupervisorActive && sup.isSupervisorActive()) {
+            // spawnBot guard: threads.has(clean) already prevents duplicates,
+            // but we also surface it here so we skip the candidate entirely.
+            const { _getBotThread } = sup;
+            if (typeof _getBotThread === 'function' && _getBotThread(clean)) return true;
+        }
+    } catch (_) {}
+
+    // ── 3. DB session fallback ────────────────────────────────────────────
+    const BOT_ONLINE_MAX_AGE_MS = 15 * 60 * 1000;
     if (!sess) return false;
     const fresh = _isSessionFresh(sess, BOT_ONLINE_MAX_AGE_MS);
     if (sess.connectionStatus === 'CONNECTED' && fresh) return true;
@@ -116,17 +138,23 @@ async function _reconnectOne(clean) {
         await upsertBotSession(clean, 'active');
     } catch (_) {}
 
+    // ── FINAL live-check before touching anything ─────────────────────────
+    // The flag may have been written AFTER the sweep candidate list was built.
+    // Double-check here so we never kill a bot that just came online.
+    try {
+        const { isConnected } = require('../allfunc/connected-flag');
+        if (isConnected(clean)) {
+            console.log(chalk.gray(`[AutoReconnect] ℹ️  +${clean} connected.flag exists — already online, skipping`));
+            return 'skipped';
+        }
+    } catch (_) {}
+
     // ── Supervisor (isolated) mode — use spawnBot ─────────────────────────
     try {
-        const { isSupervisorActive, spawnBot, killBot } = require('../worker/supervisor');
+        const { isSupervisorActive, spawnBot, killBot, _clearNoSessionBot } = require('../worker/supervisor');
         if (isSupervisorActive()) {
             // Clear _noSessionBots so supervisor doesn't skip this bot
-            try {
-                const sup = require('../worker/supervisor');
-                if (typeof sup._clearNoSessionBot === 'function') {
-                    sup._clearNoSessionBot(clean);
-                }
-            } catch (_) {}
+            if (typeof _clearNoSessionBot === 'function') _clearNoSessionBot(clean);
 
             // Kill any stale thread first, then spawn fresh
             killBot(clean, 'SIGTERM');
@@ -136,23 +164,23 @@ async function _reconnectOne(clean) {
         }
     } catch (_) {}
 
-    // ── Flat mode — use queuePairing from pair.js ─────────────────────────
+    // ── Flat mode — connected.flag is ground truth; if present, skip ──────
+    try {
+        const { isConnected } = require('../allfunc/connected-flag');
+        if (isConnected(clean)) {
+            console.log(chalk.gray(`[AutoReconnect] ℹ️  +${clean} flag appeared mid-reconnect — already online, skipping`));
+            return 'skipped';
+        }
+    } catch (_) {}
+
+    // ── Flat mode — use pair.js to reconnect ──────────────────────────────
     try {
         const pairMod = require('../pair');
 
-        // If the bot is already tracked and not disconnected, skip
-        const tracker = pairMod._getTracker?.()?.get(jid)
-            || pairMod._getTracker?.()?.get(clean);
-        if (tracker && !tracker.disconnected) {
-            const wsState = tracker.connection?.ws?.readyState;
-            if (wsState === 1) {
-                console.log(chalk.gray(`[AutoReconnect] ℹ️  +${clean} WS already open, skipping`));
-                return 'skipped';
-            }
-        }
-
+        // Stop any zombie session first
         if (typeof pairMod.stopBot === 'function') pairMod.stopBot(clean);
         await new Promise(r => setTimeout(r, 500));
+
         await pairMod(jid);
         return 'queued';
     } catch (e) {
@@ -193,7 +221,7 @@ async function runSweep() {
             if (stoppedSet.has(clean)) return false;         // manually stopped
             if (_isCoolingDown(clean)) return false;         // recently attempted
             const sess = dbSessionMap[clean];
-            if (_isBotOnline(sess)) return false;            // already online
+            if (_isBotOnline(clean, sess)) return false;     // already online (flag or DB)
             if (!_isOfflineLongEnough(sess)) return false;   // too early to retry
             return true;
         });
