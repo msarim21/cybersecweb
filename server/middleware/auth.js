@@ -21,9 +21,18 @@ const protect = async (req, res, next) => {
     if (!user)       return res.status(401).json({ error: 'User not found.' });
     if (user.banned) return res.status(403).json({ error: 'Account banned.' });
 
-    // Check plan expiry (skip for admin)
+    // Check plan expiry (skip for admin).
+    // Whitelist account-management routes so expired users can still:
+    //   • view their profile/status  • request an upgrade  • chat with admin
     if (user.role !== 'admin' && isPlanExpired(user)) {
-      return res.status(403).json({ error: 'Plan expired. Contact admin to renew.' });
+      const ALLOWED_EXPIRED = [
+        '/upgrade-request', '/profile', '/stats', '/chat', '/license-key',
+      ];
+      const url = req.path || req.url || '';
+      const isAllowed = ALLOWED_EXPIRED.some(p => url.includes(p));
+      if (!isAllowed) {
+        return res.status(403).json({ error: 'Plan expired. Contact admin to renew.', planExpired: true });
+      }
     }
 
     try { await updateUserLastActive(decoded.id); } catch (_) { /* non-fatal */ }
