@@ -11,6 +11,47 @@ const CONNECTION_STATUS = Object.freeze({
 
 const MAX_RECONNECT_ATTEMPTS = 25;
 
+// ── 4-hour bot restart guard ──────────────────────────────────────────────────
+// Tracks when each bot was last FULLY restarted (not just reconnected).
+// Auto-reconnect for dropped connections is separate and not affected by this.
+const BOT_RESTART_INTERVAL_MS = Number(process.env.BOT_RESTART_INTERVAL_MS) || 4 * 60 * 60 * 1000; // 4 hours
+const _lastFullRestart = new Map(); // cleanNum -> timestamp
+
+/**
+ * Returns true if enough time has passed since the last full restart.
+ * Use this before triggering a complete bot restart (not auto-reconnect).
+ * @param {string} number - the bot phone number
+ */
+function canFullyRestartBot(number) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return true;
+  const last = _lastFullRestart.get(clean) || 0;
+  return (Date.now() - last) >= BOT_RESTART_INTERVAL_MS;
+}
+
+/**
+ * Call this whenever a full bot restart happens (not auto-reconnect).
+ * Records the restart timestamp so canFullyRestartBot() works correctly.
+ * @param {string} number - the bot phone number
+ */
+function recordBotRestart(number) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return;
+  _lastFullRestart.set(clean, Date.now());
+}
+
+/**
+ * Get the time in ms until the next restart is allowed for this bot.
+ * Returns 0 if restart is allowed now.
+ */
+function msUntilNextRestart(number) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return 0;
+  const last = _lastFullRestart.get(clean) || 0;
+  const elapsed = Date.now() - last;
+  return Math.max(0, BOT_RESTART_INTERVAL_MS - elapsed);
+}
+
 function getHostDyno() {
   return process.env.DYNO || 'local';
 }
@@ -37,6 +78,10 @@ async function setBotConnectionStatus(number, connectionStatus, meta = {}) {
 module.exports = {
   CONNECTION_STATUS,
   MAX_RECONNECT_ATTEMPTS,
+  BOT_RESTART_INTERVAL_MS,
+  canFullyRestartBot,
+  recordBotRestart,
+  msUntilNextRestart,
   getHostDyno,
   logBotEvent,
   setBotConnectionStatus,
