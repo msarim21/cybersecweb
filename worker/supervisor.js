@@ -350,8 +350,9 @@ function _spawnThread(clean, opts = {}) {
         // resets to [] on each new spawn, so the old check was always 0).
         const now = Date.now();
         const hourAgo = now - 60 * 60 * 1000;
-        const history = _restartHistory.get(clean) || [];
-        history.push(now);
+        const history = (_restartHistory.get(clean) || [])
+        .filter(t => t > Date.now() - 3600_000); // prune entries older than 1h (memory leak fix)
+    history.push(now);
         const recentRestarts = history.filter((t) => t > hourAgo);
         _restartHistory.set(clean, recentRestarts); // prune entries older than 1h
         if (recentRestarts.length >= MAX_RESTARTS_PER_HOUR) {
