@@ -76,8 +76,17 @@ function getPlanLimit(plan) {
 }
 
 function isTrialExpired(user) {
-  if (!user.trial_expires_at) return false;
+  if (!user) return false;
+  // Check subscriptionStatus field first (new system — highest priority)
+  const subStatus = user.subscription_status || user.subscriptionStatus || null;
+  if (subStatus === 'expired') return true;
+  if (subStatus === 'active_pro' || subStatus === 'active_enterprise') return false;
+  // Admin-activated paid users are never expired
+  if (user.activated_by_admin || user.activatedByAdmin) return false;
+  // Paid plan with no status set — not expired
   if (user.subscription_plan === 'pro' || user.subscription_plan === 'enterprise') return false;
+  // Free trial fallback
+  if (!user.trial_expires_at) return false;
   return new Date(user.trial_expires_at) < new Date();
 }
 
