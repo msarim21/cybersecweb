@@ -132,6 +132,10 @@ const initDb = async () => {
         license_key       VARCHAR(100)   DEFAULT NULL,
         upgrade_request   VARCHAR(20)  DEFAULT 'none'  CHECK (upgrade_request IN ('none','pro','enterprise')),
         upgrade_request_at TIMESTAMPTZ DEFAULT NULL,
+        subscription_status VARCHAR(30)  DEFAULT 'trial',
+        trial_start         TIMESTAMPTZ  DEFAULT NULL,
+        activated_by_admin  BOOLEAN      DEFAULT false,
+        subscription_expiry TIMESTAMPTZ  DEFAULT NULL,
         banned            BOOLEAN      DEFAULT false,
         last_active       TIMESTAMPTZ  DEFAULT NOW(),
         created_at        TIMESTAMPTZ  DEFAULT NOW()
@@ -144,6 +148,21 @@ const initDb = async () => {
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS license_key VARCHAR(100) DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upgrade_request VARCHAR(20) DEFAULT 'none'`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upgrade_request_at TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) DEFAULT 'trial'`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_start TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS activated_by_admin BOOLEAN DEFAULT false`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expiry TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
+    // Backfill subscription_status for existing users based on current plan
+    await client.query(`
+      UPDATE users SET subscription_status = CASE
+        WHEN subscription_plan = 'pro' THEN 'active_pro'
+        WHEN subscription_plan = 'enterprise' THEN 'active_enterprise'
+        WHEN trial_expires_at IS NOT NULL AND trial_expires_at < NOW() THEN 'expired'
+        ELSE 'trial'
+      END
+      WHERE subscription_status IS NULL OR subscription_status = 'trial'
+        AND subscription_plan IN ('pro','enterprise')
+    `).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS linked_numbers (
