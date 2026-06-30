@@ -89,11 +89,15 @@ router.get('/stats', protect, async (req, res) => {
 
     res.json({
       total, active, inactive: total - active, plan, limit,
-      planExpiresAt: user.plan_expires_at || null,
-      planExpired:   isPlanExpired(user),
+      planExpiresAt:      user.plan_expires_at || null,
+      planExpired:        isPlanExpired(user),
       trialExpiresAt,
-      trialExpired: !!trialExpired,
-      upgradeRequest: user.upgrade_request || 'none',
+      trialExpired:       !!trialExpired,
+      subscriptionStatus,
+      activatedByAdmin,
+      trialStart:         user.trial_start || null,
+      subscriptionExpiry: user.subscription_expiry || null,
+      upgradeRequest:     user.upgrade_request || 'none',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
