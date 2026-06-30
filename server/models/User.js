@@ -28,19 +28,47 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'],
     default: 'user'
   },
+
+  // ── Subscription fields ──────────────────────────────────────────────────
+  /** High-level subscription status — single source of truth for access checks */
+  subscriptionStatus: {
+    type: String,
+    enum: ['trial', 'active_pro', 'active_enterprise', 'expired'],
+    default: 'trial'
+  },
+  /** Legacy plan field — kept for backward compat with old code */
   subscriptionPlan: {
     type: String,
     enum: ['free', 'pro', 'enterprise'],
     default: 'free'
   },
-  planExpiresAt: {
+  /** When the 24-hour free trial started */
+  trialStart: {
     type: Date,
     default: null
   },
+  /** When the free trial expires — null means no trial set */
   trialExpiresAt: {
     type: Date,
     default: null
   },
+  /** When a paid plan expires — null means lifetime / no expiry */
+  subscriptionExpiry: {
+    type: Date,
+    default: null
+  },
+  /** Legacy field — same as subscriptionExpiry, kept for compat */
+  planExpiresAt: {
+    type: Date,
+    default: null
+  },
+  /** True when an admin manually assigned a Pro/Enterprise plan.
+   *  Users with this flag are NEVER downgraded back to trial. */
+  activatedByAdmin: {
+    type: Boolean,
+    default: false
+  },
+  // ── Upgrade requests ─────────────────────────────────────────────────────
   upgradeRequest: {
     type: String,
     enum: ['none', 'pro', 'enterprise'],
