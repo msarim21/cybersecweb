@@ -177,26 +177,63 @@ async function deleteUser(id) {
   await pg().query('DELETE FROM users WHERE id = $1', [id]);
 }
 
-async function updateUserPlan(id, plan) {
+async function updateUserPlan(id, plan, opts = {}) {
+  const { activatedByAdmin = true, subscriptionExpiry = null } = opts;
+  const subStatus = plan === 'pro' ? 'active_pro'
+    : plan === 'enterprise' ? 'active_enterprise'
+    : 'trial';
   if (isMongoMode()) {
     const { User } = M();
-    const u = await User.findByIdAndUpdate(id, { subscriptionPlan: plan, upgradeRequest: 'none' }, { new: true });
+    const update = {
+      subscriptionPlan: plan,
+      subscriptionStatus: subStatus,
+      upgradeRequest: 'none',
+      activatedByAdmin: plan !== 'free' ? true : false,
+    };
+    // When upgrading to paid: clear trial expiry so trial logic never fires
+    if (plan === 'pro' || plan === 'enterprise') {
+      update.trialExpiresAt = null;
+      if (subscriptionExpiry) update.subscriptionExpiry = subscriptionExpiry;
+    }
+    const u = await User.findByIdAndUpdate(id, update, { new: true });
     return u ? normUser(u) : null;
   }
-  const { rows } = await pg().query(
-    "UPDATE users SET subscription_plan = $1, upgrade_request = 'none' WHERE id = $2 RETURNING id, username, email, subscription_plan",
-    [plan, id]
-  );
+  let query, params;
+  if (plan === 'pro' || plan === 'enterprise') {
+    query = `UPDATE users SET
+      subscription_plan = $1,
+      subscription_status = $2,
+      upgrade_request = 'none',
+      activated_by_admin = true,
+      trial_expires_at = NULL,
+      subscription_expiry = $3
+    WHERE id = $4
+    RETURNING id, username, email, subscription_plan, subscription_status`;
+    params = [plan, subStatus, subscriptionExpiry, id];
+  } else {
+    query = `UPDATE users SET subscription_plan = $1, subscription_status = $2, upgrade_request = 'none' WHERE id = $3
+    RETURNING id, username, email, subscription_plan, subscription_status`;
+    params = [plan, subStatus, id];
+  }
+  const { rows } = await pg().query(query, params);
   return rows[0] || null;
 }
 
 async function setTrialExpiry(id, expiresAt) {
+  const trialStart = new Date();
   if (isMongoMode()) {
     const { User } = M();
-    await User.findByIdAndUpdate(id, { trialExpiresAt: expiresAt });
+    await User.findByIdAndUpdate(id, {
+      trialExpiresAt: expiresAt,
+      trialStart: trialStart,
+      subscriptionStatus: 'trial',
+    });
     return;
   }
-  await pg().query('UPDATE users SET trial_expires_at = $1 WHERE id = $2', [expiresAt, id]);
+  await pg().query(
+    'UPDATE users SET trial_expires_at = $1, trial_start = $2, subscription_status = $3 WHERE id = $4',
+    [expiresAt, trialStart, 'trial', id]
+  );
 }
 
 async function setLicenseKey(id, key) {
@@ -245,14 +282,30 @@ async function getPendingUpgradeRequests() {
 }
 
 async function approveUpgrade(id, plan) {
+  const subStatus = plan === 'pro' ? 'active_pro' : 'active_enterprise';
   if (isMongoMode()) {
     const { User } = M();
-    const u = await User.findByIdAndUpdate(id, { subscriptionPlan: plan, upgradeRequest: 'none' }, { new: true });
+    const u = await User.findByIdAndUpdate(id, {
+      subscriptionPlan: plan,
+      subscriptionStatus: subStatus,
+      upgradeRequest: 'none',
+      upgradeRequestAt: null,
+      activatedByAdmin: true,
+      trialExpiresAt: null,   // clear trial so it never re-triggers expiry
+    }, { new: true });
     return u ? normUser(u) : null;
   }
   const { rows } = await pg().query(
-    "UPDATE users SET subscription_plan = $1, upgrade_request = 'none', upgrade_request_at = NULL WHERE id = $2 RETURNING id, username, email, subscription_plan",
-    [plan, id]
+    `UPDATE users SET
+      subscription_plan = $1,
+      subscription_status = $2,
+      upgrade_request = 'none',
+      upgrade_request_at = NULL,
+      activated_by_admin = true,
+      trial_expires_at = NULL
+    WHERE id = $3
+    RETURNING id, username, email, subscription_plan, subscription_status`,
+    [plan, subStatus, id]
   );
   return rows[0] || null;
 }
@@ -959,10 +1012,12 @@ async function getExpiredUsers() {
   const now = new Date();
   if (isMongoMode()) {
     const { User } = M();
-    // Users whose trialExpiresAt has passed and plan is not 'free'
+    // Find users on 'trial' or 'free' plan whose trial has expired
+    // AND who have NOT been upgraded to a paid plan by admin
     const users = await User.find({
       trialExpiresAt: { $lt: now, $ne: null },
-      subscriptionPlan: { $ne: 'free' },
+      activatedByAdmin: { $ne: true },             // skip admin-activated paid users
+      subscriptionStatus: { $nin: ['active_pro', 'active_enterprise', 'expired'] },
       banned: { $ne: true },
     }).lean();
     return users.map(u => ({
@@ -976,9 +1031,11 @@ async function getExpiredUsers() {
   // PostgreSQL fallback
   try {
     const { rows } = await pg().query(
-      `SELECT id, username, email, subscription_plan, trial_expires_at FROM users
+      `SELECT id, username, email, subscription_plan, subscription_status, trial_expires_at FROM users
        WHERE trial_expires_at < $1 AND trial_expires_at IS NOT NULL
-         AND subscription_plan != 'free' AND (banned IS NULL OR banned = false)`,
+         AND (activated_by_admin IS NULL OR activated_by_admin = false)
+         AND (subscription_status IS NULL OR subscription_status NOT IN ('active_pro','active_enterprise','expired'))
+         AND (banned IS NULL OR banned = false)`,
       [now]
     );
     return rows.map(r => ({
@@ -1008,7 +1065,7 @@ async function disconnectAllUserDevices(userId) {
       }
       // Downgrade user plan to free
       const { User } = M();
-      await User.findByIdAndUpdate(userId, { $set: { subscriptionPlan: 'free', trialExpiresAt: null } });
+      await User.findByIdAndUpdate(userId, { $set: { subscriptionPlan: 'free', subscriptionStatus: 'expired', trialExpiresAt: null } });
     } else {
       const { rows } = await pg().query(
         "UPDATE linked_numbers SET status='inactive', last_active=NOW() WHERE owner_id=$1 AND status='active' RETURNING id",
@@ -1016,7 +1073,7 @@ async function disconnectAllUserDevices(userId) {
       );
       disconnected = rows.length;
       await pg().query(
-        "UPDATE users SET subscription_plan='free', trial_expires_at=NULL WHERE id=$1",
+        "UPDATE users SET subscription_plan='free', subscription_status='expired', trial_expires_at=NULL WHERE id=$1",
         [userId]
       );
     }
@@ -1349,16 +1406,28 @@ function isPlanExpired(user) {
   if (!user) return false;
   // Admins never expire
   if (user.role === 'admin') return false;
+
+  // ── Priority 1: subscriptionStatus field (new system) ──
+  const subStatus = user.subscription_status || user.subscriptionStatus || null;
+  if (subStatus === 'expired') return true;
+  if (subStatus === 'active_pro' || subStatus === 'active_enterprise') return false;
+
+  // ── Priority 2: activatedByAdmin flag — paid users are never downgraded ──
+  const adminActivated = user.activated_by_admin || user.activatedByAdmin || false;
+  if (adminActivated) return false;
+
   const plan = user.subscription_plan || user.subscriptionPlan || 'free';
-  // Paid plans expire via plan_expires_at if set by admin
+
+  // ── Priority 3: Paid plans — check plan_expires_at if admin set an end date ──
   if (plan === 'pro' || plan === 'enterprise') {
     const planExp = user.plan_expires_at || user.planExpiresAt || null;
-    if (!planExp) return false;
+    if (!planExp) return false;   // no expiry set = lifetime plan
     return new Date(planExp) < new Date();
   }
-  // Free trial: check trial_expires_at
+
+  // ── Priority 4: Free trial — check trial_expires_at ──
   const expiresAt = user.trial_expires_at || user.trialExpiresAt || null;
-  if (!expiresAt) return false;
+  if (!expiresAt) return false;   // no trial set = no expiry
   return new Date(expiresAt) < new Date();
 }
 
