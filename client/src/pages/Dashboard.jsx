@@ -188,6 +188,77 @@ const UpgradeRequestBanner = ({ plan }) => (
   </motion.div>
 );
 
+
+/* ─── Subscription Status Badge (header) ─── */
+const SubscriptionBadge = ({ user, stats }) => {
+  const subStatus = user?.subscriptionStatus || stats?.subscriptionStatus || 'trial';
+  const trialExpiresAt = user?.trialExpiresAt || stats?.trialExpiresAt || null;
+  const [countdown, setCountdown] = React.useState('');
+
+  React.useEffect(() => {
+    if (subStatus !== 'trial' || !trialExpiresAt) return;
+    const update = () => {
+      const diff = new Date(trialExpiresAt) - new Date();
+      if (diff <= 0) { setCountdown('EXPIRED'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setCountdown(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [trialExpiresAt, subStatus]);
+
+  if (subStatus === 'active_pro') {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+        style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)', color: '#a78bfa' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse inline-block" />
+        PRO ACTIVE
+      </div>
+    );
+  }
+  if (subStatus === 'active_enterprise') {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+        style={{ background: 'rgba(255,0,255,0.1)', border: '1px solid rgba(255,0,255,0.4)', color: '#f0abfc' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse inline-block" />
+        ENTERPRISE
+      </div>
+    );
+  }
+  if (subStatus === 'expired' || countdown === 'EXPIRED') {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+        style={{ background: 'rgba(255,68,68,0.12)', border: '1px solid rgba(255,68,68,0.4)', color: '#f87171' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
+        EXPIRED
+      </div>
+    );
+  }
+  if (subStatus === 'trial' && trialExpiresAt && countdown) {
+    const isLow = new Date(trialExpiresAt) - new Date() < 3 * 3600000;
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-mono"
+        style={{
+          background: isLow ? 'rgba(255,68,68,0.1)' : 'rgba(0,245,255,0.08)',
+          border: `1px solid ${isLow ? 'rgba(255,68,68,0.4)' : 'rgba(0,245,255,0.3)'}`,
+          color: isLow ? '#f87171' : '#22d3ee'
+        }}>
+        <span className={`w-1.5 h-1.5 rounded-full inline-block ${isLow ? 'bg-red-500 animate-ping' : 'bg-cyan-400 animate-pulse'}`} />
+        TRIAL {countdown}
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8' }}>
+      FREE
+    </div>
+  );
+};
+
 /* ─── Site Audio Player ─── */
 const SiteAudioPlayer = ({ audioUrl }) => {
   const audioRef = useRef(null);
@@ -968,6 +1039,9 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          <div className="mt-2 flex justify-center">
+            <SubscriptionBadge user={user} stats={stats} />
+          </div>
         </div>
         <nav className="flex-1 px-2 py-2 space-y-1 overflow-y-auto">
           {NAV.map(item => (
@@ -1008,7 +1082,8 @@ export default function Dashboard() {
               <div className="text-[11px] text-slate-500">CYBERSECPRO Control Center</div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <SubscriptionBadge user={user} stats={stats} />
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
             <div className="flex items-center gap-2 rounded-xl px-3 py-1.5 bg-white/5 border border-white/8">
               <span className="text-[11px] font-medium truncate max-w-[80px]" style={{ color: planColor }}>{user?.username}</span>
