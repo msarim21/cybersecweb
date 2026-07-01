@@ -74,7 +74,7 @@ function isWhatsAppWorker() {
 }
 
 const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 3 * 60 * 1000; // reduced from 10min to 3min for faster dead-socket detection
-const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 15 * 60 * 1000; // reduced from 45min to 15min
+const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 5 * 60 * 1000; // reduced from 15min to 5min — isolated child self-restart makes fast recovery safe (only this bot restarts, ~10s respawn)
 
 function _supervisorActive() {
     try {
@@ -156,13 +156,35 @@ async function sweepStaleWhatsAppSockets() {
 
         const wsState = nexus.ws?.readyState ?? -1;
 
-        // Isolated child: light wake only — never stopBot+pair (causes WA "Syncing" hang)
+        // Isolated child: light wake first. If the wake itself keeps failing
+        // (presence update times out) while the socket still LOOKS open (wsState===1),
+        // that is proof of a truly frozen/zombie socket — not just "nobody messaged
+        // it in a while". Previously this only ever light-woke and NEVER escalated
+        // (comment said stopBot+pair causes a WA "Syncing" hang) — so a genuinely
+        // zombie socket in isolated mode could stay stuck indefinitely (observed:
+        // 16+ min command-response delay). Fix: escalate to a controlled self-exit.
+        // bot-thread.js's child 'exit' handler auto-respawns ONLY this one bot
+        // process within ~10s — other bots are completely unaffected.
         if (_ownBot) {
             if (wsState === 1) {
                 const silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
                 if (silentMs >= WA_STALE_MS) {
                     const { lightWakeSocket } = require('./allfunc/socket-wake');
-                    await lightWakeSocket(nexus, tracker).catch(() => false);
+                    const woke = await lightWakeSocket(nexus, tracker).catch(() => false);
+                    if (!woke) {
+                        tracker._staleWakeFails = (tracker._staleWakeFails || 0) + 1;
+                        const zombie = silentMs >= WA_ZOMBIE_MS;
+                        const failLimit = zombie ? 2 : 4;
+                        if (tracker._staleWakeFails >= failLimit) {
+                            console.log(`[SocketKeepAlive] 💀 ${clean} zombie socket in isolated child (${Math.round(silentMs / 60000)}m idle, ${tracker._staleWakeFails} failed wakes) — self-restarting this bot only`);
+                            tracker._staleWakeFails = 0;
+                            try { await _backupOwnSession(); } catch (_) {}
+                            setTimeout(() => process.exit(1), 500);
+                            continue;
+                        }
+                    } else {
+                        tracker._staleWakeFails = 0;
+                    }
                 }
             }
             continue;
