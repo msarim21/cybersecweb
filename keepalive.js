@@ -375,13 +375,15 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-/** Bot memory restart interval (hours). 0 = off. Default 3h — clears per-bot heap leaks. */
+/** Bot memory restart interval (hours). 0 = off. Default 4h — matches the
+ *  4h minimum-uptime guarantee; bots must never be force-restarted before 4h.
+ *  An explicit BOT_RESTART_HOURS/AUTO_RESTART_HOURS env var always wins (admin override). */
 function getBotRestartHours() {
     const bot = Number(process.env.BOT_RESTART_HOURS);
-    if (Number.isFinite(bot)) return bot;
+    if (Number.isFinite(bot) && bot >= 0) return bot;
     const legacy = Number(process.env.AUTO_RESTART_HOURS);
     if (Number.isFinite(legacy) && legacy > 0) return legacy;
-    return 3;
+    return 4;
 }
 
 // ── Per-bot child restart (supervisor mode — web dyno stays up) ─────────────
@@ -499,6 +501,14 @@ function startBotChildKeepAlive() {
     // Those send sendPresenceUpdate every 90s which stacks with markOnlineOnConnect
     // + keepAlive WS pings → WhatsApp rate-overlimit → commands die ~1 min after connect.
     // TCP keepalive (30s) + pair.js watchdog presence (5min) is sufficient.
+    //
+    // ✅ FIX: self-heal THIS bot's own socket if it goes stale/unstable. Without
+    // this, an isolated child never proactively wakes its own idle/flaky socket —
+    // it just sits there until the supervisor's heartbeat check eventually decides
+    // to kill+restart the whole thread. sweepStaleWhatsAppSockets() already has an
+    // isolated-child branch (global.__ISOLATED_BOT) that only ever touches this
+    // bot's own connection — it can never affect any other bot.
+    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 90 * 1000);
     setInterval(() => backupAntideleteSessions().catch(() => {}), 5 * 60 * 1000);
 
     // Session-folder backup every 10 min — keeps DB creds fresh so a hard kill
@@ -569,11 +579,16 @@ function startKeepAlive() {
 
     const restartHours = getBotRestartHours();
     if (supervisorMode) {
-        // Full worker dyno restart every BOT_RESTART_HOURS
-        if (restartHours > 0) {
-            scheduleAutoRestart(restartHours * 60 * 60 * 1000);
-            console.log(`[KeepAlive] ✅ Full worker dyno restart every ${restartHours}h (supervisor mode)`);
-        }
+        // ✅ FIX: Do NOT schedule a restart timer here. worker.js already starts
+        // worker/auto-restarter.js in supervisor/isolated mode, which is the ONE
+        // authoritative BOT_RESTART_HOURS timer and does a proper *graceful*
+        // restart (flushes every bot's session to DB first, stops the
+        // supervisor cleanly). Previously this scheduleAutoRestart() ran in
+        // PARALLEL with auto-restarter.js — two independent timers racing on
+        // the same interval — and this one just did cleanupBotMemory()+exit(0)
+        // with no session flush. Whichever fired first won, which is why all
+        // bots appeared to restart together earlier than the intended 4h.
+        console.log(`[KeepAlive] Supervisor mode — restart scheduling owned solely by worker/auto-restarter.js (every ${restartHours}h, graceful)`);
     } else if (waHost && restartHours > 0) {
         scheduleAutoRestart(restartHours * 60 * 60 * 1000);
     } else if (restartHours <= 0) {
