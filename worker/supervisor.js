@@ -102,6 +102,8 @@ let _lastRotationAt = Date.now();
 //   _restartLimitBots — hit MAX_RESTARTS_PER_HOUR. Pause 30 min then retry.
 const _noSessionBots    = new Map(); // clean → timestamp of last clean exit
 const _restartLimitBots = new Map(); // clean → timestamp when limit was hit
+const _unhealthyStreak  = new Map(); // clean → consecutive unhealthy sync-tick count (debounce before full restart)
+const _restartJitterMs  = new Map(); // clean → random 0-30min jitter so scheduled memory restarts never bunch up
 const NO_SESSION_PAUSE_MS    = 30 * 60 * 1000; // 30 minutes
 const RESTART_LIMIT_PAUSE_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -461,28 +463,68 @@ async function syncBots() {
         if (_hasRegisteredCreds(clean) && isConnected(clean)) promotePairingToNormal(clean);
     }
 
-    // 2. Restart unhealthy threads
+    // 2. Restart unhealthy threads — debounced + staggered + 4h-guarded.
+    // A single stale heartbeat read is often just a slow-network moment, not a
+    // dead socket, so we require 2 consecutive unhealthy sync ticks (~16s+)
+    // before acting, and try a light wake first. Each bot is isolated in its
+    // own worker_thread, so healing/restarting one never touches the others,
+    // and we cap full restarts to 1 per sync tick so a network blip that makes
+    // several bots look stale at once can never mass-restart the fleet.
+    const { canFullyRestartBot, recordBotRestart } = require('../allfunc/bot-lifecycle');
+    let unhealthyRestarts = 0;
     for (const [clean, entry] of [...threads]) {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
         if (!myBots.has(clean)) continue;
-        if (_isThreadHealthy(clean, entry)) continue;
+
+        if (_isThreadHealthy(clean, entry)) {
+            _unhealthyStreak.delete(clean);
+            continue;
+        }
+
+        const streak = (_unhealthyStreak.get(clean) || 0) + 1;
+        _unhealthyStreak.set(clean, streak);
+        if (streak < 2) {
+            console.log(chalk.yellow(`[Supervisor] ⚠️ +${clean} looks unstable — light wake attempt (streak ${streak}, no restart yet)`));
+            // child self-heals its own idle/stale socket via startBotChildKeepAlive() sweep — just wait
+            continue;
+        }
 
         // ✅ FIX: Don't restart a paused bot — it would just re-enter the crash loop
         const pauseReason = _isBotPaused(clean);
         if (pauseReason) {
             console.log(chalk.gray(`[Supervisor] ⏸ +${clean} unhealthy but paused (${pauseReason}) — skipping restart`));
             killBot(clean, 'SIGTERM'); // Clean up dead thread, but don't respawn
+            _unhealthyStreak.delete(clean);
             continue;
         }
 
-        console.log(chalk.red(`[Supervisor] 💀 +${clean} unhealthy — restarting thread`));
+        // Hard 4h guard — this bot already got a full restart within the last
+        // 4h, so keep trying a light wake instead of nuking it again.
+        if (!canFullyRestartBot(clean)) {
+            console.log(chalk.gray(`[Supervisor] ⏳ +${clean} unstable but within 4h restart guard — light wake instead of full restart`));
+            // child self-heals its own idle/stale socket via startBotChildKeepAlive() sweep — just wait
+            continue;
+        }
+
+        if (unhealthyRestarts >= 1) {
+            console.log(chalk.gray(`[Supervisor] ⏭ +${clean} unhealthy too, but deferring restart to next sync (max 1/tick)`));
+            continue;
+        }
+        unhealthyRestarts += 1;
+
+        console.log(chalk.red(`[Supervisor] 💀 +${clean} confirmed unhealthy — restarting thread (isolated; other bots unaffected)`));
+        recordBotRestart(clean);
+        _unhealthyStreak.delete(clean);
         killBot(clean, 'SIGTERM');
         const ready = await _ensureBotSessionReady(clean);
         if (ready) spawnBot(clean);
     }
 
-    // 3. Scheduled memory restart
+    // 3. Scheduled memory restart — staggered + 4h-guarded so bots spawned
+    // around the same time (e.g. dyno boot) never all cross maxAgeMs and get
+    // killed in the same sync tick. Each bot gets a random 0-30min jitter added
+    // to its threshold, and only 1 bot per sync tick actually gets restarted.
     let maxAgeMs = 0;
     try {
         const { getBotRestartHours } = require('../keepalive');
@@ -490,11 +532,29 @@ async function syncBots() {
         if (hrs > 0) maxAgeMs = hrs * 60 * 60 * 1000;
     } catch (_) {}
     if (maxAgeMs > 0) {
+        const { canFullyRestartBot: canFullyRestart3, recordBotRestart: recordRestart3 } = require('../allfunc/bot-lifecycle');
+        let memRestarts = 0;
         for (const [clean, entry] of [...threads]) {
             if (entry?.pairing) continue;
             if (!myBots.has(clean)) continue;
-            if (!entry.spawnedAt || Date.now() - entry.spawnedAt < maxAgeMs) continue;
-            console.log(chalk.cyan(`[Supervisor] 🔄 +${clean} memory restart (${Math.round((Date.now()-entry.spawnedAt)/3600000)}h uptime)`));
+            if (!entry.spawnedAt) continue;
+
+            if (!_restartJitterMs.has(clean)) {
+                _restartJitterMs.set(clean, Math.floor(Math.random() * 30 * 60 * 1000));
+            }
+            const jitter = _restartJitterMs.get(clean);
+            if (Date.now() - entry.spawnedAt < maxAgeMs + jitter) continue;
+
+            // Hard floor — never fully restart the same bot more than once
+            // every 4h, no matter what BOT_RESTART_HOURS is configured to.
+            if (!canFullyRestart3(clean)) continue;
+
+            if (memRestarts >= 1) break; // max 1 scheduled memory restart per sync tick
+            memRestarts += 1;
+
+            console.log(chalk.cyan(`[Supervisor] 🔄 +${clean} memory restart (${Math.round((Date.now()-entry.spawnedAt)/3600000)}h uptime) — isolated, other bots unaffected`));
+            recordRestart3(clean);
+            _restartJitterMs.delete(clean);
             killBot(clean, 'SIGTERM');
             const ready = await _ensureBotSessionReady(clean);
             if (ready) spawnBot(clean);
