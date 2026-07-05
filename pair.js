@@ -498,12 +498,23 @@ async function startpairing(nexusDevNumber) {
         nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
 
         // ✅ ANTIDELETE CACHE — must run BEFORE the private-mode guard below.
-        // Bug: when bot is in private/self mode the guard did an early `return`
-        // which skipped caching entirely — messages from others were never stored,
-        // so delete events always showed "[Original message not in cache]".
+        // ✅ FIX: Cache ALL messages in the batch, not just messages[0].
+        // When messages arrive in bulk (history sync on reconnect, or batched delivery
+        // from WhatsApp servers), Baileys fires ONE messages.upsert event with many
+        // items in chatUpdate.messages. The old code only cached [0], so any message
+        // at index > 0 was silently missed. When that message was later deleted, the
+        // cache lookup failed and antidelete reported "[Original message not in cache]".
         try {
             if (typeof global._cacheMessageForAntidelete === 'function') {
-                global._cacheMessageForAntidelete(nexusboijid, nexus);
+                for (const _adRawMsg of chatUpdate.messages) {
+                    if (!_adRawMsg?.message || !Object.keys(_adRawMsg.message).length) continue;
+                    // Unwrap ephemeral wrapper the same way we do for messages[0]
+                    const _adMsg = { ..._adRawMsg };
+                    if (Object.keys(_adMsg.message)[0] === 'ephemeralMessage') {
+                        _adMsg.message = _adMsg.message.ephemeralMessage.message;
+                    }
+                    global._cacheMessageForAntidelete(_adMsg, nexus);
+                }
             }
         } catch (_adCacheErr) {}
 
