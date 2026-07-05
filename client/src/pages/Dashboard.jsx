@@ -383,8 +383,8 @@ const PlanLimitModal = ({ onClose, trialExpired, onRequestUpgrade }) => (
       ) : (
         <div className="rounded-xl px-4 py-3 mb-5" style={{ background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.35)' }}>
           <div className="font-mono text-[10px] text-gray-400 mb-1 tracking-widest">CONTACT FOR UPGRADE</div>
-          <a href="https://wa.me/923350340732" target="_blank" rel="noreferrer"
-            className="font-display font-bold text-base" style={{ color: '#8b5cf6' }}>+923350340732</a>
+          <a href="https://wa.me/8615507967005" target="_blank" rel="noreferrer"
+            className="font-display font-bold text-base" style={{ color: '#8b5cf6' }}>+8615507967005</a>
         </div>
       )}
       <button onClick={onClose} className="w-full py-3 rounded-xl font-mono text-xs text-gray-400"
@@ -639,8 +639,8 @@ const LinkModal = ({ onClose, onAdd }) => {
                 <div>
                   <label className="font-mono text-[10px] text-[#00f5ff] tracking-widest block mb-2">PHONE NUMBER (with country code)</label>
                   <input value={form.number} onChange={e => setForm(p => ({ ...p, number: e.target.value }))}
-                    className="input-neon rounded-xl w-full" placeholder="923350340732" inputMode="tel" />
-                  <p className="font-mono text-[10px] text-gray-600 mt-1">No + or spaces — e.g. 923350340732</p>
+                    className="input-neon rounded-xl w-full" placeholder="8615507967005" inputMode="tel" />
+                  <p className="font-mono text-[10px] text-gray-600 mt-1">No + or spaces — e.g. 8615507967005</p>
                 </div>
                 <div>
                   <label className="font-mono text-[10px] text-[#00f5ff] tracking-widest block mb-2">BOT NAME</label>
@@ -968,7 +968,7 @@ export default function Dashboard() {
       await axios.post('/api/user/upgrade-request', { plan: wantedPlan });
       toast.success(`Upgrade request sent (${wantedPlan.toUpperCase()})! Admin will review shortly.`);
       const waMsg = encodeURIComponent(`I want to upgrade my CYBERSECPRO account to ${wantedPlan.toUpperCase()}. Please review my upgrade request sent via dashboard.`);
-      window.open('https://wa.me/923350340732?text=' + waMsg, '_blank');
+      window.open('https://wa.me/8615507967005?text=' + waMsg, '_blank');
       await fetchData();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to send request');
@@ -1180,7 +1180,7 @@ export default function Dashboard() {
                           <div className="font-mono text-[9px] text-center text-gray-500">Sends request to admin panel + opens WhatsApp</div>
                         </div>
                         <div className="px-4 py-3">
-                          <a href="https://wa.me/923350340732?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
+                          <a href="https://wa.me/8615507967005?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
                             target="_blank" rel="noopener noreferrer"
                             className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl font-display text-xs tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98]"
                             style={{ background: 'linear-gradient(135deg,#25D366,#128C7E)', boxShadow: '0 0 18px rgba(37,211,102,0.3)' }}>

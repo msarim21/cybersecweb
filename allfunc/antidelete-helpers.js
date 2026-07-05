@@ -999,7 +999,6 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     const isGroup = String(chatId).endsWith('@g.us');
     if (mode === 'private_pm' && isGroup) return false;
     if (mode === 'private_groups' && !isGroup) return false;
-    if (mode === 'chat' && isGroup) return false;
     if (mode === 'chat_groups' && !isGroup) return false;
 
     const deletedByNum = cleanBotNum(String(deletedBy).split(':')[0].split('@')[0] || deletedBy);

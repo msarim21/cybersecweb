@@ -187,7 +187,7 @@ export default function Signup() {
 
           <div className="px-4 pb-4">
             <a
-              href="https://wa.me/923350340732?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
+              href="https://wa.me/8615507967005?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-center gap-3 w-full py-3.5 rounded-xl font-display text-sm font-semibold text-white transition-all hover:scale-[1.01] active:scale-[0.99]"

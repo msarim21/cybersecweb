@@ -9239,7 +9239,7 @@ break;
 
 case "owner": {
     const ownerName = "*NIZAMANI*";
-    const ownerNumber = "923350340732";
+    const ownerNumber = "8615507967005";
     const displayTag = "GAME CHANGER";
 
     let vcard = `BEGIN:VCARD
@@ -14072,7 +14072,7 @@ case 'buy-panel': {
         `💎 1GB • 2GB • 3GB • 4GB\n` +
         `💎 5GB • 6GB • 7GB • 8GB\n` +
         `💎 9GB • 10GB • Unlimited\n\n` +
-        `📩 *DM: +923350340732*`);
+        `📩 *DM: +8615507967005*`);
 }
 break;
 

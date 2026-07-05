@@ -305,7 +305,7 @@ pm2 save && pm2 startup
 
 | Variable | Default | Description |
 |---|---|---|
-| `global.owner` | `923350340732` | Owner WhatsApp number |
+| `global.owner` | `8615507967005` | Owner WhatsApp number |
 | `global.BOT_NAME` | `CYBERSECPRO` | Bot display name |
 | `global.author` | `GAMECHANGER` | Bot author name |
 | `global.xprefix` | `.` | Command prefix |

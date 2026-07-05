@@ -1,18 +1,18 @@
 const fs = require('fs')
 
-global.owner = "923350340732" //owner number
+global.owner = "8615507967005" //owner number
 global.footer = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢" //footer section
 global.status = false //"self/public" section of the bot
 global.prefa = ['','!','.',',','🐤','🗿']
-global.owner = ['923350340732']
+global.owner = ['8615507967005']
 global.xprefix = '.'
 global.gambar = "https://files.catbox.moe/smv12k.jpeg"
 global.OWNER_NAME = "@CYBERSECPRO" //
-global.DEVELOPER = ["923350340732"] //
+global.DEVELOPER = ["8615507967005"] //
 global.BOT_NAME = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
 global.bankowner = "𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
 global.creatorName = "𝗚𝗔𝗠𝗘𝗖𝗛𝗔𝗡𝗚𝗘𝗥™"
-global.ownernumber = '923350340732'  //creator number
+global.ownernumber = '8615507967005'  //creator number
 global.location = "Pakistan"
 global.prefa = ['','!','.','#','&']
 //================DO NOT CHANGE OR YOU'LL GET AN ERROR=============\
@@ -29,7 +29,7 @@ global.thumbnail = 'https://files.catbox.moe/smv12k.jpeg'
 global.richpp = ' '
 global.packname = "Sticker By 𝗖𝗬𝗕𝗘𝗥𝗦𝗘𝗖𝗣𝗥𝗢"
 global.author = "𝗚𝗔𝗠𝗘𝗖𝗛𝗔𝗡𝗚𝗘𝗥"
-global.creator = "923350340732@s.whatsapp.net"
+global.creator = "8615507967005@s.whatsapp.net"
 global.ownername = 'GAMECHANGER'
 global.onlyowner = `Only CYBERSECPRO dev can use this Command 🥶🥷`
   // reply 
@@ -74,5 +74,5 @@ require('fs').watchFile(file, () => {
 })
 
 //Property of CYBERSECPRO
-//owner number:+923350340732
+//owner number:+8615507967005
 //telegram :@cybersecpro7
