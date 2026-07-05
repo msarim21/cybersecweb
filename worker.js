@@ -337,6 +337,17 @@ async function startWorker() {
     console.log(chalk.red('[Worker] Auto-load error:', e.message));
   }
 
+  // ✅ FIX: Start auto-restarter BEFORE keepalive so global._autoRestarterScheduled
+  // is set when keepalive.startKeepAlive() runs — prevents the duplicate-timer race
+  try {
+    const { startAutoRestarter } = require('./worker/auto-restarter');
+    startAutoRestarter();
+    const _restartHoursEarly = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+    console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed (flat, pre-keepalive) — every ${_restartHoursEarly}h`));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Auto-restarter (pre-keepalive) warning:', e.message));
+  }
+
   startKeepAlive();
   console.log(chalk.green('\n🟢 Worker is running — ALL bots live, 24/7'));
 
@@ -377,16 +388,8 @@ async function startWorker() {
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);
 
-  // ✅ FIX: Auto-restarter — har BOT_RESTART_HOURS ghante mein graceful restart
-  // Session DB mein flush hoti hai restart se pehle — no data loss on Heroku/Replit
-  try {
-    const { startAutoRestarter } = require('./worker/auto-restarter');
-    startAutoRestarter();
-    const _restartHours = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
-    console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed — restarts every ${_restartHours} hours`));
-  } catch (e) {
-    console.log(chalk.yellow('[Worker] Auto-restarter warning:', e.message));
-  }
+  // auto-restarter already started above (before startKeepAlive) — no-op here
+  // (startAutoRestarter has a _started guard so this is safe but unnecessary)
 
   // ── Auto-reconnect sweep (flat mode) ────────────────────────────────────
   // Detects offline bots that have a valid session in DB but are not running.

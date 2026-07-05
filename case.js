@@ -9481,7 +9481,7 @@ case "removebg": {
         );
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        console.error('RemoveBG error:', e);
+        console.error('RemoveBG error:', e.message, e.response?.status);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         await reply("⚠️ *Failed to remove background.* The service might be down. Try again later.");
     }
@@ -10369,8 +10369,8 @@ break;
 
 case "bchcn": {
     try {
-        const res = await axios.get("https://some-random-api.com/animals/koala");
-        const img = res.data?.image?.link || res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animal/koala");
+        const img = res.data?.image || res.data?.link;
         if (!img) return reply("❌ *Koala hiding* • Try again");
         
         await devtrust.sendMessage(m.chat, 
@@ -10389,8 +10389,8 @@ break;
 
 case "hxjxjjkm": {
     try {
-        const res = await axios.get("https://some-random-api.com/animals/birb");
-        const img = res.data?.image?.link || res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animal/birb");
+        const img = res.data?.image || res.data?.link;
         if (!img) return reply("❌ *Bird flew away* • Try again");
         
         await devtrust.sendMessage(m.chat, 
@@ -10409,8 +10409,8 @@ break;
 
 case "panda": {
     try {
-        const res = await axios.get("https://some-random-api.com/animals/panda");
-        const img = res.data?.image?.link || res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animal/panda");
+        const img = res.data?.image || res.data?.link;
         
         await devtrust.sendMessage(m.chat, 
             addNewsletterContext({
