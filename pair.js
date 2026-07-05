@@ -113,17 +113,13 @@ function queuePairing(nexusDevNumber) {
 }
 
 function deleteFolderRecursive(folderPath) {
-    if (fs.existsSync(folderPath)) {
-        fs.readdirSync(folderPath).forEach(file => {
-            const curPath = path.join(folderPath, file);
-            if (fs.lstatSync(curPath).isDirectory()) {
-                deleteFolderRecursive(curPath);
-            } else {
-                fs.unlinkSync(curPath);
-            }
-        });
-        fs.rmdirSync(folderPath);
-    }
+    // ✅ FIX: use fs.rmSync with force:true — the old recursive unlinkSync crashed
+    // with ENOENT when two sessions tried to clean the same folder concurrently.
+    try {
+        if (fs.existsSync(folderPath)) {
+            fs.rmSync(folderPath, { recursive: true, force: true });
+        }
+    } catch (_) { /* concurrent delete — ignore */ }
 }
 
 // Session validation function

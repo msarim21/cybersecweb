@@ -7738,7 +7738,8 @@ break;
 // ======================[ 🔍 WHOIS ]======================
 case 'whois':
 case 'profile': {
-    const user = m.mentionedJid[0] || m.quoted?.sender || m.sender;
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    const user = m.mentionedJid?.[0] || m.quoted?.sender || m.sender;
     
     let pp;
     try {
@@ -7782,10 +7783,17 @@ case 'revoke':
 case 'revokelink': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isAdmins && !isCreator) return reply("🔒 *Admins only*");
-    
-    await devtrust.groupRevokeInvite(m.chat);
-    const code = await devtrust.groupInviteCode(m.chat);
-    reply(`✅ *Group link reset*\n🔗 https://chat.whatsapp.com/${code}`);
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to revoke the link!*");
+
+    try {
+        await devtrust.groupRevokeInvite(m.chat);
+        // Small delay so WhatsApp generates the new code before we fetch it
+        await new Promise(r => setTimeout(r, 1000));
+        const code = await devtrust.groupInviteCode(m.chat);
+        reply(`✅ *Group link reset*\n🔗 https://chat.whatsapp.com/${code}`);
+    } catch (e) {
+        reply(`❌ *Revoke failed:* ${e.message}`);
+    }
 }
 break;
 
@@ -9532,7 +9540,10 @@ case 'tt': {
         if (!videoUrl) {
             try {
                 const r3 = await axios.get(`https://www.tikwm.com/api/?url=${encodeURIComponent(text)}`, { timeout: 12000 });
-                if (r3.data?.data?.video) videoUrl = r3.data.data.video;
+                // ✅ FIX: tikwm GET uses 'play' field (same as POST), not 'video'
+                if (r3.data?.data?.play || r3.data?.data?.video) {
+                    videoUrl = r3.data.data.play || r3.data.data.video;
+                }
             } catch (_) {}
         }
 
@@ -12688,14 +12699,20 @@ break;
 
 case 'kick': {
     if (!isCreator) return reply("🔒 *Owner only*");
-    if (!m.quoted) return reply("👤 *Tag or quote user to kick*");
     if (!m.isGroup) return reply("👥 *Groups only*");
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to kick!*");
 
-    let users = m.mentionedJid[0] || m.quoted?.sender || 
-                text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    
-    await devtrust.groupParticipantsUpdate(m.chat, [users], 'remove');
-    reply("✅ *User kicked*");
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    let users = m.mentionedJid?.[0] || m.quoted?.sender ||
+                (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null);
+    if (!users) return reply("👤 *Tag or quote a user to kick*");
+
+    try {
+        await devtrust.groupParticipantsUpdate(m.chat, [users], 'remove');
+        reply("✅ *User kicked*");
+    } catch (e) {
+        reply(`❌ *Kick failed:* ${e.message}`);
+    }
 }
 break;
 
@@ -12739,9 +12756,15 @@ break;
 case 'grouplink': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isCreator && !isSudo) return reply('🔒 *Owner/Sudo only*');
-    
-    let response = await devtrust.groupInviteCode(m.chat);
-    reply(`🔗 *Group Link*\nhttps://chat.whatsapp.com/${response}`);
+    // ✅ FIX: groupInviteCode requires bot to be admin
+    if (!isBotAdmins) return reply('🤖 *Bot needs admin rights to get the group link!*');
+
+    try {
+        const response = await devtrust.groupInviteCode(m.chat);
+        reply(`🔗 *Group Link*\nhttps://chat.whatsapp.com/${response}\n\n_Share responsibly!_`);
+    } catch (e) {
+        reply(`❌ *Failed to get link:* ${e.message}`);
+    }
 }
 break;
 
@@ -13017,13 +13040,15 @@ break;
 
 case 'hidetag': {
     if (!isCreator) return reply("🔒 *Owner only*");
-    
-    const groupMetadata = await devtrust.groupMetadata(m.chat);
-    const participants = groupMetadata.participants;
-    
+    // ✅ FIX: groupMetadata throws if called in a PM — check isGroup first
+    if (!m.isGroup) return reply("👥 *Groups only*");
+
+    const _htMeta = await devtrust.groupMetadata(m.chat);
+    const _htParts = _htMeta.participants;
+
     devtrust.sendMessage(m.chat, {
         text: q || ' ',
-        mentions: participants.map(a => a.id)
+        mentions: _htParts.map(a => a.id)
     }, { quoted: m });
 }
 break;
@@ -13031,38 +13056,68 @@ break;
 case 'promote': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isCreator) return reply("🔒 *Owner only*");
-    
-    let users = m.mentionedJid[0] || m.quoted?.sender || text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    await devtrust.groupParticipantsUpdate(m.chat, [users], 'promote');
-    reply("👑 *User promoted to admin*");
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to promote!*");
+
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    let users = m.mentionedJid?.[0] || m.quoted?.sender ||
+                (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null);
+    if (!users) return reply("👤 *Tag or quote a user to promote*");
+
+    try {
+        await devtrust.groupParticipantsUpdate(m.chat, [users], 'promote');
+        reply("👑 *User promoted to admin*");
+    } catch (e) {
+        reply(`❌ *Promote failed:* ${e.message}`);
+    }
 }
 break;
 
 case 'demote': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isCreator) return reply("🔒 *Owner only*");
-    
-    let users = m.mentionedJid[0] || m.quoted?.sender || text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    await devtrust.groupParticipantsUpdate(m.chat, [users], 'demote');
-    reply("⬇️ *User demoted from admin*");
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to demote!*");
+
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    let users = m.mentionedJid?.[0] || m.quoted?.sender ||
+                (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null);
+    if (!users) return reply("👤 *Tag or quote a user to demote*");
+
+    try {
+        await devtrust.groupParticipantsUpdate(m.chat, [users], 'demote');
+        reply("⬇️ *User demoted from admin*");
+    } catch (e) {
+        reply(`❌ *Demote failed:* ${e.message}`);
+    }
 }
 break;
 
 case 'mute': {
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!m.isGroup) return reply("👥 *Groups only*");
-    
-    await devtrust.groupSettingUpdate(m.chat, 'announcement');
-    reply("🔇 *Group muted* • Only admins can message");
+    // ✅ FIX: groupSettingUpdate throws if bot isn't admin
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to mute the group!*");
+
+    try {
+        await devtrust.groupSettingUpdate(m.chat, 'announcement');
+        reply("🔇 *Group muted* • Only admins can message");
+    } catch (e) {
+        reply(`❌ *Mute failed:* ${e.message}`);
+    }
 }
 break;
 
 case 'unmute': {
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!m.isGroup) return reply("👥 *Groups only*");
-    
-    await devtrust.groupSettingUpdate(m.chat, 'not_announcement');
-    reply("🔊 *Group unmuted* • Everyone can message");
+    // ✅ FIX: groupSettingUpdate throws if bot isn't admin
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to unmute the group!*");
+
+    try {
+        await devtrust.groupSettingUpdate(m.chat, 'not_announcement');
+        reply("🔊 *Group unmuted* • Everyone can message");
+    } catch (e) {
+        reply(`❌ *Unmute failed:* ${e.message}`);
+    }
 }
 break;
 
@@ -17647,13 +17702,8 @@ case 'goodbye': {
 break;
 
 case 'linkgc':
-case 'grouplink': {
-    if (!m.isGroup) return reply(`👥 *Groups only!*`);
-    if (!isBotAdmins) return reply(`🤖 *I need admin rights!*`);
-    const code = await devtrust.groupInviteCode(m.chat);
-    reply(`🔗 *Group Link*\n\nhttps://chat.whatsapp.com/${code}\n\n_Share responsibly!_`);
-}
-break;
+// ✅ FIX: duplicate 'grouplink' case removed — first occurrence at line ~12745 is the active one
+// (In JS switch, only the first matching case runs; this was dead code)
 
 case 'listadmins':
 case 'admins':
