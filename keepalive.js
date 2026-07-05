@@ -612,7 +612,14 @@ function startKeepAlive() {
         // bots appeared to restart together earlier than the intended 4h.
         console.log(`[KeepAlive] Supervisor mode — restart scheduling owned solely by worker/auto-restarter.js (every ${restartHours}h, graceful)`);
     } else if (waHost && restartHours > 0) {
-        scheduleAutoRestart(restartHours * 60 * 60 * 1000);
+        // ✅ FIX: Skip duplicate timer — worker.js already calls startAutoRestarter()
+        // in both flat and isolated modes. If that ran first, global._autoRestarterScheduled
+        // is set and we must NOT schedule a second timer that races the first one.
+        if (global._autoRestarterScheduled) {
+            console.log(`[KeepAlive] Auto-restarter already armed via worker/auto-restarter.js (every ${restartHours}h) — skipping duplicate timer`);
+        } else {
+            scheduleAutoRestart(restartHours * 60 * 60 * 1000);
+        }
     } else if (restartHours <= 0) {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }

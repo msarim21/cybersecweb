@@ -95,6 +95,8 @@ async function performGracefulRestart(reason = 'scheduled') {
 function startAutoRestarter(opts = {}) {
   if (_started) return;
   _started = true;
+  // Signal keepalive.js so it skips its own duplicate scheduleAutoRestart timer
+  global._autoRestarterScheduled = true;
 
   const hours = opts.hours
     || parseInt(process.env.BOT_RESTART_HOURS || '4', 10);

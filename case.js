@@ -9452,22 +9452,34 @@ case "removebg": {
             throw new Error('Upload failed');
         }
         
-        // Call removebg API
-        let response = await fetch(`https://image.pollinations.ai/prompt/Remove%20background%20from%20image%20${encodeURIComponent(uploadedUrl)}?width=1024&height=1024&nologo=true`);
-        let data = await response.json();
-
-        if (data.status && data.data) {
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    image: { url: data.data },
-                    caption: "✨ *Background Removed*"
-                }),
-                { quoted: m }
-            );
-            await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        } else {
-            throw new Error('API returned error');
+        // Call remove.bg API (set REMOVEBG_API_KEY in env vars for this to work)
+        const _rmbgKey = process.env.REMOVEBG_API_KEY || process.env.REMOVE_BG_API_KEY || '';
+        if (!_rmbgKey) {
+            throw new Error('REMOVEBG_API_KEY not set in environment variables. Get a free key at remove.bg');
         }
+        // Send image URL to remove.bg (form-urlencoded, returns binary PNG)
+        const _rmbgRes = await axios.post(
+            'https://api.remove.bg/v1.0/removebg',
+            `image_url=${encodeURIComponent(uploadedUrl)}&size=auto`,
+            {
+                headers: {
+                    'X-Api-Key': _rmbgKey,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                responseType: 'arraybuffer',
+                timeout: 30000,
+            }
+        );
+        const _rmbgBuf = Buffer.from(_rmbgRes.data);
+        if (!_rmbgBuf || _rmbgBuf.length < 100) throw new Error('remove.bg returned empty response');
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: _rmbgBuf,
+                caption: "✨ *Background Removed*\n_Powered by remove.bg_"
+            }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
         console.error('RemoveBG error:', e);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
@@ -10357,8 +10369,8 @@ break;
 
 case "bchcn": {
     try {
-        const res = await axios.get("https://some-random-api.ml/img/koala");
-        const img = res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animals/koala");
+        const img = res.data?.image?.link || res.data?.link;
         if (!img) return reply("❌ *Koala hiding* • Try again");
         
         await devtrust.sendMessage(m.chat, 
@@ -10377,8 +10389,8 @@ break;
 
 case "hxjxjjkm": {
     try {
-        const res = await axios.get("https://some-random-api.ml/img/birb");
-        const img = res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animals/birb");
+        const img = res.data?.image?.link || res.data?.link;
         if (!img) return reply("❌ *Bird flew away* • Try again");
         
         await devtrust.sendMessage(m.chat, 
@@ -10397,8 +10409,8 @@ break;
 
 case "panda": {
     try {
-        const res = await axios.get("https://some-random-api.ml/img/panda");
-        const img = res.data?.link;  
+        const res = await axios.get("https://some-random-api.com/animals/panda");
+        const img = res.data?.image?.link || res.data?.link;
         
         await devtrust.sendMessage(m.chat, 
             addNewsletterContext({
@@ -10428,9 +10440,9 @@ break;
 
 case "vkfkk": {
     try {
-        const res = await axios.get("https://api.quotable.io/random");
-        const quote = res.data?.content || "Keep pushing forward!";
-        const author = res.data?.author || "Unknown";
+        const res = await axios.get("https://zenquotes.io/api/random", { timeout: 8000 });
+        const quote = (Array.isArray(res.data) ? res.data[0]?.q : res.data?.content) || "Keep pushing forward!";
+        const author = (Array.isArray(res.data) ? res.data[0]?.a : res.data?.author) || "Unknown";
         reply(`🖋 *"${quote}"*\n— ${author}`);
     } catch (e) {
         console.error("QUOTEMEME ERROR:", e);
@@ -10547,10 +10559,10 @@ break;
 
 case "cbhcchhcx": {
     try {
-        const res = await axios.get("https://type.fit/api/quotes");
-        const quotes = res.data;
+        const res = await axios.get("https://zenquotes.io/api/random", { timeout: 8000 });
+        const quotes = Array.isArray(res.data) ? res.data : [res.data];
         const q = quotes[Math.floor(Math.random() * quotes.length)];
-        reply(`🌟 *"${q.text}"*\n— ${q.author || "Unknown"}`);
+        reply(`🌟 *"${q.q || q.text}"*\n— ${q.a || q.author || "Unknown"}`);
     } catch (e) {
         console.error("INSPIRE ERROR:", e);
         reply("❌ *Inspiration unavailable*");
@@ -13794,37 +13806,33 @@ case 'xvideosearch':{
     const _xvsrch_banned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
     if (_xvsrch_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvsrch_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
-  if (!text) return m.reply(example(`Milf`))
+  if (!text) return reply(`🔍 *Usage:* ${prefix}xvideosearch <keyword>\nExample: ${prefix}xvideosearch milf`);
   try {
-    // checking data from api
-    let res = await fetch(null /* XVideos search disabled */);
-    let json = await res.json();
-
-    // checking api response status
-    if (json.status !== 200 || !json.data || json.data.length === 0) {
-      throw 'No videos found for this keyword.';
+    reply(mess.wait);
+    // Use PrinceTech API (same as xvideos command)
+    const searchRes = await axios.get(
+      `https://api.princetechn.com/api/search/xvideossearch?apikey=prince&query=${encodeURIComponent(text)}`,
+      { timeout: 20000 }
+    );
+    const results = searchRes.data?.result || searchRes.data?.data || [];
+    if (!results || results.length === 0) {
+      return reply(`❌ *No results found for "${text}"*\nTry a different keyword.`);
     }
-
-    // fetching search data from api
-    let videos = json.data;
-    let message = `🍑\nxvideo search result\n\n *"${text}"*:\n`;
-
-    // Composing messages with video information
-    videos.forEach(video => {
-      message += `Title: ${video.title || 'no name'}\n` +
-                 `  Duration: ${video.duration || 'no duration'}\n` +
-                 `  URL: ${video.url || 'no URL'}\n` +
-                 `  Thumbnail: ${video.thumb || 'no thumbnail'}\n\n`;
+    const top = results.slice(0, 8);
+    let message = `╭━━━━━━━━━━━━━━━╮\n`;
+    message += `┃ 🍑 *XVIDEO SEARCH*\n`;
+    message += `┃ 🔎 Query: ${text}\n`;
+    message += `╰━━━━━━━━━━━━━━━╯\n\n`;
+    top.forEach((v, i) => {
+      message += `*${i + 1}.* ${v.title || v.name || 'No title'}\n`;
+      message += `   ⏱️ ${v.duration || v.time || 'N/A'} | 👁️ ${v.views || 'N/A'}\n`;
+      message += `   🔗 ${v.url || v.link || ''}\n\n`;
     });
-
-    // Sending messages with video lists
-    await devtrust.sendMessage(m.chat, {
-      text: message,
-    });
-
+    message += `_Type ${prefix}xvideos <URL> to download_`;
+    await devtrust.sendMessage(m.chat, { text: message });
   } catch (e) {
-    // Handling errors and sending error messages
-    await devtrust.sendMessage(m.chat, `can't fetch result from query`);
+    console.error('xvideosearch error:', e.message);
+    reply(`❌ *Search failed* • Try again later`);
   }
 }
 break; 
@@ -14443,18 +14451,37 @@ case "lyrics": {
     if (!query) return reply("🎵 *Usage:* lyrics song title");
 
     try {
-        const res = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
-        const json = await res.json();
+        // Step 1: Search for the song to get artist & title
+        const searchRes = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
+        const searchJson = await searchRes.json();
 
-        if (!json.status || !json.data || !json.data.lyrics) {
-            return reply(`❌ *Lyrics not found for "${query}"*`);
+        if (!searchJson.data || searchJson.data.length === 0) {
+            return reply(`❌ *Song not found for "${query}"*\nTry a more specific title.`);
         }
 
-        const { title, artist, album, lyrics } = json.data;
+        // Pick the best match (first result)
+        const topResult = searchJson.data[0];
+        const songTitle = topResult.title || query;
+        const artistName = topResult.artist?.name || '';
+
+        // Step 2: Fetch actual lyrics using artist + title endpoint
+        const lyricsRes = await fetch(
+            `https://api.lyrics.ovh/v1/${encodeURIComponent(artistName)}/${encodeURIComponent(songTitle)}`
+        );
+        const lyricsJson = await lyricsRes.json();
+
+        if (!lyricsJson.lyrics) {
+            return reply(`❌ *Lyrics not available for "${songTitle}"*\nThis song might not be in the database.`);
+        }
+
+        const lyrics = lyricsJson.lyrics.trim();
+        const album = topResult.album?.title || '';
         const chunks = lyrics.match(/[\s\S]{1,3500}/g) || [lyrics];
 
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? `🎵 *${title}* – *${artist}*\n📀 ${album || 'Unknown'}\n\n` : "";
+            const header = i === 0
+                ? `🎵 *${songTitle}*${artistName ? ` – *${artistName}*` : ''}\n${album ? `📀 ${album}\n` : ''}\n`
+                : "";
             await devtrust.sendMessage(chatId, { text: header + chunks[i] });
         }
     } catch (err) {

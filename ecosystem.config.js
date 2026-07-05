@@ -41,7 +41,7 @@ module.exports = {
         BOT_ROTATION_SWAP_MS: "800",
         BOT_ROTATIONS_PER_SYNC: "2",
         BOT_MIN_UPTIME_MS: "300000",
-        BOT_RESTART_HOURS: "3",
+        BOT_RESTART_HOURS: "4",
         SYNC_FULL_HISTORY: "0",
         WA_KEEPALIVE_MS: "30000",
         WA_MARK_ONLINE: "1",
