@@ -12352,15 +12352,9 @@ case 'spam': {
     const _spamProtected = [].concat(owner).map(v => v.replace(/[^0-9]/g, ''));
     if (_spamProtected.includes(_spamClean)) return reply('🔒 *Protected — owner number par spam nahi chalega*');
 
-    // Register session
-    const _spamSession = {
-        running: true, number: _spamClean,
-        total: _spamCount, completed: 0,
-        successCount: 0, failCount: 0
-    };
-    global._waBomberSessions.set(_spamChat, _spamSession);
-
-    // Send live-updating status card
+    // ✅ FIX: send init card FIRST — register session only after it succeeds.
+    // If sendMessage throws (network blip, rate-limit), the session would have
+    // been permanently stuck in the Map and .spam blocked for that chat forever.
     const _spamInitMsg = await devtrust.sendMessage(m.chat, {
         text: `🔥 *WhatsApp Bomber Started!*\n\n` +
               `📱 *Target:* ${_spamClean}\n` +
@@ -12370,6 +12364,14 @@ case 'spam': {
               `🛑 Use *${prefix}stopspam* to cancel`
     }, { quoted: m });
     const _spamStatusKey = _spamInitMsg?.key;
+
+    // Register session AFTER init card is sent
+    const _spamSession = {
+        running: true, number: _spamClean,
+        total: _spamCount, completed: 0,
+        successCount: 0, failCount: 0
+    };
+    global._waBomberSessions.set(_spamChat, _spamSession);
 
     const _spamEditStatus = async (txt) => {
         try {
@@ -12386,6 +12388,9 @@ case 'spam': {
     const _spamStart = Date.now();
     let _spamLastUpdate = Date.now(), _spamUpdateCtr = 0;
 
+    // ✅ FIX: try/finally guarantees session is always removed even if an
+    // unexpected error escapes the loop (e.g. out-of-memory, eval error).
+    try {
     for (let i = 1; i <= _spamCount; i++) {
         // Check if stopped
         const _sess = global._waBomberSessions.get(_spamChat);
@@ -12462,7 +12467,6 @@ case 'spam': {
     }
 
     // Complete
-    global._waBomberSessions.delete(_spamChat);
     const _el = ((Date.now() - _spamStart) / 1000).toFixed(1);
     await _spamEditStatus(
         `✅ *Bombing Complete!*\n\n` +
@@ -12472,6 +12476,10 @@ case 'spam': {
         `📊 *Success Rate:* ${Math.round((_sc / _spamCount) * 100)}%\n\n` +
         `_Target flooded. 🔥_`
     );
+    } finally {
+        // Always clean up so chat is never permanently locked
+        global._waBomberSessions.delete(_spamChat);
+    }
     break;
 }
 
@@ -12496,7 +12504,12 @@ case 'spamstop': {
 
     const _stopData = global._waBomberSessions.get(m.chat);
     _stopData.running = false;
-    // Session is cleaned up by the spam loop on next iteration check
+    // ✅ FIX: if the loop is no longer running (orphaned stale session from a
+    // previous crash), hard-delete so the chat isn't permanently locked.
+    // The spam loop also deletes on exit, so double-delete is safe (Map.delete is idempotent).
+    if (_stopData.completed >= _stopData.total || _stopData.completed === 0) {
+        global._waBomberSessions.delete(m.chat);
+    }
 
     reply(
         `🛑 *Spam Stop Signal Sent!*\n\n` +
