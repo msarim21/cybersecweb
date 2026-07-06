@@ -48,8 +48,16 @@ router.post('/signup', sanitizeBody, async (req, res) => {
 
     const user = await createUser(username, email, password);
 
+    // ✅ FIX: setTrialExpiry is non-fatal — if production DB schema is missing
+    // the trial_expires_at / subscription_status columns (stale migration), this
+    // used to throw and the entire signup returned 500. The user IS created; we
+    // just skip setting the trial expiry and let the defaults take effect.
     const trialExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await setTrialExpiry(user.id, trialExpiry);
+    try {
+      await setTrialExpiry(user.id, trialExpiry);
+    } catch (trialErr) {
+      console.error('Signup: setTrialExpiry non-fatal error:', trialErr.message);
+    }
 
     const token = generateToken(user.id);
     res.status(201).json({
@@ -69,7 +77,19 @@ router.post('/signup', sanitizeBody, async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Signup error:', err.message);
+    // ✅ FIX: MongoDB E11000 (duplicate key) and PG 23505 (unique_violation)
+    // were being swallowed as generic 500 instead of a proper 409. Happens when
+    // two concurrent signups race past the findUserByEmailOrUsername check.
+    const isDuplicate =
+      err.code === 11000 ||          // MongoDB duplicate key
+      err.code === '23505' ||        // PostgreSQL unique_violation
+      /duplicate key/i.test(err.message) ||
+      /already exists/i.test(err.message);
+    if (isDuplicate) {
+      return res.status(409).json({ error: 'Username or email already taken.' });
+    }
+    // Log full error (stack + message) so server logs reveal the real cause
+    console.error('Signup error:', err);
     res.status(500).json({ error: 'Server error during signup.' });
   }
 });

