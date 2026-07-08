@@ -82,13 +82,17 @@ async function runStorageGuard() {
       summary.chatMessagesArchived = oldChats.length;
     }
 
-    // ── 2. Drop resolved pairing requests (no archive — purely transient) ──
+    // ── 2. Archive + prune resolved pairing requests ────────────────────────
     const pairingCutoff = new Date(Date.now() - PAIRING_REQUEST_RETENTION_DAYS * 86400_000);
-    const pairingResult = await PairingRequest.deleteMany({
+    const oldPairing = await PairingRequest.find({
       status: { $in: ['code_ready', 'failed', 'expired'] },
       updatedAt: { $lt: pairingCutoff },
-    });
-    summary.pairingRequestsDeleted = pairingResult.deletedCount || 0;
+    }).lean();
+    if (oldPairing.length) {
+      writeArchive('pairing-requests', `pairing-requests-${stamp}.json`, oldPairing);
+      await PairingRequest.deleteMany({ _id: { $in: oldPairing.map(d => d._id) } });
+      summary.pairingRequestsDeleted = oldPairing.length;
+    }
 
     // ── 3. Archive + delete orphaned bot sessions (unlinked, long inactive) ─
     const sessionCutoff = new Date(Date.now() - ORPHAN_SESSION_RETENTION_DAYS * 86400_000);

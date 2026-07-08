@@ -1062,8 +1062,14 @@ async function getOwnerSubscriptionByNumber(number) {
   try {
     if (isMongoMode()) {
       const { LinkedNumber, User } = M();
-      const linked = await LinkedNumber.findOne({ number: { $regex: `^${clean}` } })
+      // Prefix regex only narrows candidates (numbers are stored in varying
+      // formats, e.g. with/without country-code prefix or '@s.whatsapp.net'
+      // suffix) — the exact match below prevents disconnecting the wrong
+      // owner when two numbers share a prefix (e.g. "923001234567" vs
+      // "923001234567890").
+      const candidates = await LinkedNumber.find({ number: { $regex: clean } })
         .sort({ createdAt: -1 }).lean();
+      const linked = candidates.find(c => String(c.number).replace(/[^0-9]/g, '') === clean);
       if (!linked) return null;
       const user = await User.findById(linked.ownerId).lean();
       if (!user) return null;

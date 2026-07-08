@@ -36,6 +36,7 @@ async function isNumberAuthorized(number) {
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.ok;
 
   let ok = true;
+  let dbError = false;
   try {
     const { getOwnerSubscriptionByNumber } = require('../server/db-service');
     const sub = await getOwnerSubscriptionByNumber(clean);
@@ -48,11 +49,14 @@ async function isNumberAuthorized(number) {
     // only enforces trial/ban state, it never blocks unlinked/legacy bots.
   } catch (err) {
     // DB hiccup — fail open so a transient DB error never kills a paying
-    // customer's live bot session.
+    // customer's live bot session. Don't cache this result though: caching
+    // a fail-open verdict would extend a real ban/expiry's grace period by
+    // up to CACHE_TTL_MS every time the DB happens to hiccup.
     ok = true;
+    dbError = true;
   }
 
-  _cache.set(clean, { ok, ts: Date.now() });
+  if (!dbError) _cache.set(clean, { ok, ts: Date.now() });
   return ok;
 }
 
