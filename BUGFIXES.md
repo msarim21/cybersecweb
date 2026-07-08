@@ -204,3 +204,41 @@ if (wsState === 1) {
 **Result:** Jab tak bot ka WebSocket open hai, har 60 seconds mein DB `lastActive` update hota hai. 15-minute online window ke andar bot always "ONLINE" dikhega, chahe koi message na aaye.
 
 **Files:** `pair.js`
+
+---
+
+## Bug 12 - Bot Keeps Working After Trial Expires (Delayed / Missed Disconnect)
+**Problem:** User ka free trial khatam hone ke baad bhi uska bot kaam karta rehta tha aur number disconnect nahi hota tha turant — sirf `server/jobs/planExpiryJob.js` (har 60s) database state update karta tha, lekin live WhatsApp socket alag process/dyno (worker) mein chalta hai, isliye DB update se socket foran band nahi hota tha.
+
+**Root Cause:** Trial-expiry enforcement sirf ek periodic DB sweep tha jo cross-process live connection ko force-kill nahi karta. Agar bot idle bhi ho (koi incoming message nahi), to us process ke andar koi check hi nahi tha jo owner ka subscription status dobara verify kare.
+
+**Fix:**
+- `allfunc/force-disconnect.js` (new): shared helper jo ek number ko turant socket-kill + DB creds wipe + `stopped-bots` list mein add + connected-flag remove karta hai (idempotent, planExpiryJob ki wipe-logic se consistent).
+- `allfunc/subscription-guard.js` (new): `isNumberAuthorized(number)` — 20s cache ke saath owner ka ban/trial-expiry status check karta hai; `enforceSubscriptionOrDisconnect()` agar unauthorized ho to foran `forceDisconnectNumber()` call karta hai.
+- `pair.js`: har incoming message se pehle aur 30s watchdog tick per (idle bots ke liye) subscription guard call hoti hai — expired/banned number ka reply turant drop ho jata hai aur socket turant disconnect ho jata hai (max ~30s latency for idle bots, near-instant for active ones).
+- `server/db-service.js`: naya `getOwnerSubscriptionByNumber()` — number se seedha owner ka banned/subscriptionStatus/trialExpiresAt resolve karta hai (Mongo + Postgres dono).
+- `server/routes/admin.js`: Ban toggle ab turant `forceDisconnectNumber()` call karta hai (pehle sirf DB flag set hota tha). Trial-extend / upgrade-approve / plan-update / plan-expiry endpoints ab `_reenableUserNumbers()` call karte hain jo `stopped-bots` clear karta hai aur guard cache invalidate karta hai, taake admin ke allow karne ke turant baad number dobara pair/reconnect ho sake.
+
+**Result:** Trial expire hote hi (ya admin ban karte hi) bot turant band ho jata hai aur number disconnect ho jata hai — chahe woh live message process kar raha ho ya idle ho. Number tab tak reconnect nahi ho sakta jab tak admin trial extend ya upgrade approve na kare.
+
+**Files:** `allfunc/force-disconnect.js` (new), `allfunc/subscription-guard.js` (new), `pair.js`, `server/db-service.js`, `server/routes/admin.js`
+
+---
+
+## Bug 13 - MongoDB Storage Quota Fills Up (~100 Users Ke Liye Scale Nahi Karta)
+**Problem:** Admin panel mein MongoDB Atlas storage quota warning (555MB used) aa rahi thi. `ChatMessage` aur `PairingRequest` collections ki koi retention limit nahi thi, aur unlinked/expired numbers ke `BotSession.sessionData` (WhatsApp credential blobs) bhi hamesha ke liye DB mein pade rehte the.
+
+**Root Cause:** Koi bhi automatic cleanup/archiving job nahi tha in teeno collections ke liye (sirf `antideletecaches` ka apna cleanup job tha), is liye storage sirf badhta hi jata tha.
+
+**Fix:**
+- `server/jobs/storageGuardJob.js` (new): har 6 ghante mein chalta hai —
+  1. 30 din se purane `ChatMessage` docs ko `database/archives/chat-messages/*.json` mein archive karke Mongo se delete karta hai.
+  2. 2 din se purane resolved `PairingRequest` docs (transient data, archive ki zarurat nahi) delete karta hai.
+  3. Unlinked numbers ke 14+ din purane inactive `BotSession` docs ko (credentials strip karke) `database/archives/bot-sessions/*.json` mein archive karke delete karta hai.
+- `server/models/ChatMessage.js` aur `server/models/PairingRequest.js`: TTL indexes add kiye taake collections khud-ba-khud bounded rahen (backlog cleanup ke liye job zaroori hai, lekin aage se TTL index bhi apna kaam karega).
+- Retention windows env vars se configurable hain: `CHAT_MESSAGE_RETENTION_DAYS` (default 30), `PAIRING_REQUEST_RETENTION_DAYS` (default 2), `ORPHAN_SESSION_RETENTION_DAYS` (default 14).
+- `database/archives/` (`.gitignore`'d, sirf disk per rehta hai) — purana data delete karne se pehle yahan JSON files mein save hota hai, is se MongoDB storage khali hoti hai lekin data zaya nahi hota.
+
+**Result:** MongoDB mein sirf recent/active data rehta hai (chat history 30 din, pairing requests 2 din, dead sessions 14 din), extra/purana data local JSON archives mein move ho jata hai — DB ~100 users ke liye scale karta hai bina quota hit kiye.
+
+**Files:** `server/jobs/storageGuardJob.js` (new), `server/models/ChatMessage.js`, `server/models/PairingRequest.js`, `server/index.js`, `.gitignore`

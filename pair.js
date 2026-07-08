@@ -527,6 +527,19 @@ async function startpairing(nexusDevNumber) {
         if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) return;
         if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
 
+        // ✅ SUBSCRIPTION GUARD — expired trial / banned owner must not get bot
+        // replies. isNumberAuthorized() is cached (20s) so this is cheap per
+        // message. If unauthorized, force-disconnect runs in the background
+        // and we drop the message silently instead of dispatching case.js.
+        try {
+            const { isNumberAuthorized, enforceSubscriptionOrDisconnect } = require('./allfunc/subscription-guard');
+            const _ownerNum = nexus.decodeJid(nexus.user.id).replace(/[^0-9]/g, '');
+            if (!(await isNumberAuthorized(_ownerNum))) {
+                enforceSubscriptionOrDisconnect(_ownerNum).catch(() => {});
+                return;
+            }
+        } catch (_) {}
+
         // ✅ IMMEDIATE: Fire case.js RIGHT AWAY — zero delay for commands
         nexusboiConnect = nexus;
         mek = smsg(nexusboiConnect, nexusboijid, store);
@@ -1200,6 +1213,14 @@ Your bot is ready. Send *.menu* to see all available commands.
                 const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
                 const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
                 touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
+            } catch (_) {}
+            // ✅ TRIAL/BAN ENFORCEMENT — catches idle bots too (no incoming
+            // messages to trigger the per-message guard). Runs every 30s so an
+            // expired/banned number is force-disconnected even in silent chats.
+            try {
+                const { enforceSubscriptionOrDisconnect } = require('./allfunc/subscription-guard');
+                const cleanForSub = nexusDevNumber.replace(/[^0-9]/g, '');
+                enforceSubscriptionOrDisconnect(cleanForSub).catch(() => {});
             } catch (_) {}
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect

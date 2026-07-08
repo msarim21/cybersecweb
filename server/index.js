@@ -144,6 +144,7 @@ const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
+const { startStorageGuardJob } = require('./jobs/storageGuardJob');
 const { protect: protectAuth, adminOnly } = require('./middleware/auth');
 
 const app  = express();
@@ -591,6 +592,9 @@ initDb()
     startPlanExpiryJob(60_000);
     // Auto-cleanup: purge stale antideletecaches & cap collection size daily
     startDbCleanupJob();
+    // Archives+prunes old chat history / stale pairing requests / orphaned
+    // bot sessions so MongoDB storage stays bounded as the user base grows.
+    startStorageGuardJob();
     // Orphan disconnect runs on worker dyno only (worker.js)
   })
   .catch(err => {

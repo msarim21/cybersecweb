@@ -1048,6 +1048,58 @@ async function getExpiredUsers() {
   } catch (_) { return []; }
 }
 
+/**
+ * Resolve the owning user's subscription status directly from a WhatsApp
+ * number. Used by allfunc/subscription-guard.js to enforce trial-expiry
+ * disconnects in real time (not just via the periodic planExpiryJob sweep).
+ *
+ * Returns null if the number isn't linked to any user (caller should treat
+ * that as "not authorized" — a bot with no owner has nothing to protect).
+ */
+async function getOwnerSubscriptionByNumber(number) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  try {
+    if (isMongoMode()) {
+      const { LinkedNumber, User } = M();
+      const linked = await LinkedNumber.findOne({ number: { $regex: `^${clean}` } })
+        .sort({ createdAt: -1 }).lean();
+      if (!linked) return null;
+      const user = await User.findById(linked.ownerId).lean();
+      if (!user) return null;
+      return {
+        userId: String(user._id),
+        banned: Boolean(user.banned),
+        subscriptionStatus: user.subscriptionStatus || null,
+        activatedByAdmin: Boolean(user.activatedByAdmin),
+        trialExpiresAt: user.trialExpiresAt || null,
+        linkedNumberStatus: linked.status,
+      };
+    }
+    const { rows } = await pg().query(
+      `SELECT u.id, u.banned, u.subscription_status, u.activated_by_admin, u.trial_expires_at, ln.status AS linked_status
+       FROM linked_numbers ln
+       JOIN users u ON u.id = ln.owner_id
+       WHERE REGEXP_REPLACE(ln.number, '[^0-9]', '', 'g') = $1
+       ORDER BY ln.created_at DESC LIMIT 1`,
+      [clean]
+    );
+    if (!rows.length) return null;
+    const r = rows[0];
+    return {
+      userId: String(r.id),
+      banned: Boolean(r.banned),
+      subscriptionStatus: r.subscription_status || null,
+      activatedByAdmin: Boolean(r.activated_by_admin),
+      trialExpiresAt: r.trial_expires_at || null,
+      linkedNumberStatus: r.linked_status,
+    };
+  } catch (err) {
+    console.error('[db-service] getOwnerSubscriptionByNumber:', err.message);
+    return null;
+  }
+}
+
 async function disconnectAllUserDevices(userId) {
   let disconnected = 0;
   try {
@@ -1665,7 +1717,7 @@ module.exports = {
   getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
   markPairingFailed, getPairingState, clearPairingRequest, ensurePairingRequest,
   setPairingCode, clearStalePairingRequests,
-  getExpiredUsers, disconnectAllUserDevices,
+  getExpiredUsers, disconnectAllUserDevices, getOwnerSubscriptionByNumber,
   deleteSessionCreds,
   hasFirstConnected, markFirstConnected,
   isPlanExpired,

@@ -31,6 +31,26 @@ const {
 
 router.use(protect, adminOnly);
 
+// ── Re-enable a user's numbers after an admin grants trial/upgrade/unban ────
+// Clears the manual "stopped" flag (set by force-disconnect on expiry/ban)
+// and drops the subscription-guard's cached verdict, so the user's numbers
+// are immediately eligible to reconnect / re-pair instead of staying stuck
+// until stale state naturally expires.
+async function _reenableUserNumbers(userId) {
+  try {
+    const { getNumbersByOwner } = require('../db-service');
+    const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
+    const { invalidateCache } = require('../../allfunc/subscription-guard');
+    const nums = await getNumbersByOwner(userId, null);
+    for (const n of nums) {
+      const clean = String(n.number).replace(/[^0-9]/g, '');
+      if (!clean) continue;
+      try { removeFromStoppedBots(clean); } catch (_) {}
+      try { invalidateCache(clean); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
 // ── Adult Secret Code Management ────────────────────────────────────────────
 const _adultFs = require('fs');
 const _adultPath = require('path');
@@ -362,6 +382,7 @@ router.put('/upgrade-requests/:id/approve', async (req, res) => {
       return res.status(400).json({ error: 'Invalid plan.' });
     const updated = await approveUpgrade(req.params.id, plan);
     if (!updated) return res.status(404).json({ error: 'User not found.' });
+    await _reenableUserNumbers(req.params.id);
     res.json({ message: `Upgrade to ${plan.toUpperCase()} approved.`, user: updated });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -380,6 +401,17 @@ router.put('/users/:id/ban', async (req, res) => {
     if (user.role === 'admin') return res.status(403).json({ error: 'Cannot ban admin.' });
     const newBanned = !user.banned;
     await banUser(user.id, newBanned);
+    if (newBanned) {
+      // Banning must disconnect immediately — same enforcement path as trial expiry.
+      const { getNumbersByOwner } = require('../db-service');
+      const { forceDisconnectNumber } = require('../../allfunc/force-disconnect');
+      const nums = await getNumbersByOwner(user.id, null);
+      for (const n of nums) {
+        forceDisconnectNumber(n.number, { reason: 'admin_ban' }).catch(() => {});
+      }
+    } else {
+      await _reenableUserNumbers(user.id);
+    }
     res.json({ message: `User ${newBanned ? 'banned' : 'unbanned'}.`, banned: newBanned });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -408,6 +440,7 @@ router.put('/users/:id/plan', async (req, res) => {
     }
 
     const user = await findUserById(req.params.id);
+    if (plan !== 'free' && !isPlanExpired(user)) await _reenableUserNumbers(req.params.id);
     res.json({ message: `Plan updated to ${plan}.`, user, planExpired: isPlanExpired(user) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -423,6 +456,7 @@ router.put('/users/:id/plan-expiry', async (req, res) => {
 
     await setPlanExpiry(user.id, new Date(expiresAt));
     const updated = await findUserById(user.id);
+    if (!isPlanExpired(updated)) await _reenableUserNumbers(user.id);
     res.json({ message: 'Plan expiry updated.', user: updated, planExpired: isPlanExpired(updated) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -641,6 +675,11 @@ router.post('/users/:id/trial', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found.' });
     const expiresAt = new Date(Date.now() + h * 60 * 60 * 1000);
     await setTrialExpiry(user.id, expiresAt);
+    // Trial extended — clear any previous force-disconnect state for this
+    // user's numbers so re-pairing / auto-reconnect isn't blocked, and drop
+    // the cached "unauthorized" verdict so subscription-guard picks this up
+    // on the next check instead of waiting out its cache window.
+    await _reenableUserNumbers(user.id);
     res.json({ message: `Trial set for ${h} hours.`, trialExpiresAt: expiresAt });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
