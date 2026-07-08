@@ -662,6 +662,39 @@ async function startpairing(nexusDevNumber) {
     }
     });
 
+    // ✅ ANTIDELETE HISTORY-SYNC CACHE — closes a real cache-miss gap.
+    // messages.upsert only fires for messages received live. On every reconnect
+    // (worker restart, network blip, 4h auto-restart, etc.) Baileys replays recent
+    // chat history via `messaging-history.set` instead — those messages never
+    // passed through cacheMessageForAntidelete, so if one gets deleted shortly
+    // after a reconnect, antidelete reports "[Original message not in cache]"
+    // even though the bot technically saw the message. Cache recent-enough
+    // history-sync messages too (skip old backlog — only last few hours matter,
+    // since anything older is already past the antidelete retention window anyway).
+    nexus.ev.on('messaging-history.set', ({ messages }) => {
+        try {
+            if (!Array.isArray(messages) || !messages.length) return;
+            if (typeof global._cacheMessageForAntidelete !== 'function') return;
+            const HISTORY_CACHE_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h — well within antidelete retention
+            const cutoff = Date.now() - HISTORY_CACHE_WINDOW_MS;
+            for (const raw of messages) {
+                try {
+                    if (!raw?.message || !Object.keys(raw.message).length) continue;
+                    // messageTimestamp can be a plain number, a numeric string, or a
+                    // Long-like object ({ low, high }) depending on Baileys version —
+                    // .toString() handles all three without throwing.
+                    const tsMs = (Number(raw.messageTimestamp?.toString?.() ?? raw.messageTimestamp) || 0) * 1000;
+                    if (tsMs && tsMs < cutoff) continue;
+                    const msg = { ...raw };
+                    if (Object.keys(msg.message)[0] === 'ephemeralMessage') {
+                        msg.message = msg.message.ephemeralMessage.message;
+                    }
+                    global._cacheMessageForAntidelete(msg, nexus);
+                } catch (_) {}
+            }
+        } catch (_) {}
+    });
+
     // ✅ ANTIDELETE DELETE HANDLER — catches every WhatsApp message deletion
     nexus.ev.on('messages.delete', async (item) => {
         try {
@@ -673,7 +706,15 @@ async function startpairing(nexusDevNumber) {
                 if (!key?.id || !key?.remoteJid) continue;
                 const chatId = key.remoteJid;
                 const msgId = key.id;
-                const deletedBy = item?.participant || key.participant || '';
+                // Fallback chain: participant (groups) → item-level participant →
+                // the chat itself ONLY for private (1:1) chats, where the chatId
+                // IS the other party's JID. Without this, private-chat deletions
+                // showed "Deleted By: @unknown" even though the deleter was known.
+                // Groups intentionally fall through to '' (→ "@unknown") when
+                // participant metadata is genuinely missing — the group JID is not
+                // a person and would be misleading as a "deleted by" attribution.
+                const isGroupChat = chatId.endsWith('@g.us');
+                const deletedBy = key.participant || item?.participant || (isGroupChat ? '' : chatId);
                 const fromMeDelete = Boolean(key.fromMe);
                 const altChatIds = (typeof global._adChatIdsFromKey === 'function')
                     ? global._adChatIdsFromKey(key).filter(id => id !== chatId)
