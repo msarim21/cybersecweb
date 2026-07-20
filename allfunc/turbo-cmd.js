@@ -100,12 +100,19 @@ async function tryTurboCommand(devtrust, m, ctx) {
             botMode: ctx.botMode || 'PUBLIC',
             totalCommands: ctx.totalCommands,
         });
-        await send({ text });
-        devtrust.sendMessage(chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
-        return true;
+        try {
+            await send({ text });
+            devtrust.sendMessage(chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
+            return true;
+        } catch (_sendErr) {
+            // sendMessage failed — return false so case.js switch handles it
+            return false;
+        }
     }
 
     return false;
 }
+
+// ── also make ping/alive robust ──────────────────────────────────────
 
 module.exports = { tryTurboCommand, isTurboCommand, buildMenuText, TURBO_COMMANDS };
