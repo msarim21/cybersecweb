@@ -23,7 +23,7 @@ const {
 } = require('@hapi/boom')
 const EventEmitter = require('events');
 const PhoneNumber = require('awesome-phonenumber')
-let phoneNumber = "8615507967005";
+let phoneNumber = process.env.BOT_NUMBER || process.argv[2] || "";
 const pairingCode = !!phoneNumber || process.argv.includes("--pairing-code");
 const useMobile = process.argv.includes("--mobile");
 const readline = require("readline");
