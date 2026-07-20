@@ -142,6 +142,7 @@ const userRoutes     = require('./routes/user');
 const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
+const locationRoutes = require('./routes/location');
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { startStorageGuardJob } = require('./jobs/storageGuardJob');
@@ -401,6 +402,7 @@ app.use('/api/user',    requireDb, userRoutes);
 app.use('/api/numbers', requireDb, numbersRoutes);
 app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
+app.use('/api/location', locationRoutes);  // no DB needed — in-memory sessions
 
 // ── Ultra-lightweight ping — no DB needed, used by keepalive self-pinger ────
 app.get('/api/ping', (req, res) => {
