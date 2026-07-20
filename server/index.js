@@ -213,6 +213,23 @@ app.use(mongoSanitize({ replaceWith: '_' }));
 // ── CORS ────────────────────────────────────────────────────────────────────
 app.use(cors(corsOptions));
 
+// ── Auto-detect public URL from first external request ───────────────────────
+// Saves server's own public URL so location tracker can generate working links
+// without any APP_URL env var. Works on Heroku, Railway, Render, etc.
+app.use((req, _res, next) => {
+    if (!global._detectedPublicHost) {
+        const fwdHost  = (req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+        const host     = fwdHost || req.headers.host || '';
+        const proto    = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+        // Only save if it's a real external host (not localhost / internal call from bot)
+        if (host && !/^(localhost|127\.0\.0\.1|::1)(:\d+)?$/.test(host)) {
+            global._detectedPublicHost = `${proto}://${host}`;
+            console.log('[HOST AUTO-DETECTED]', global._detectedPublicHost);
+        }
+    }
+    next();
+});
+
 // ── Location routes: high-limit body parser BEFORE global 10kb parser ────────
 // Camera images are 300-500kb base64 — global 10kb would reject them with 413
 app.use('/api/location/cam', express.json({ limit: '10mb' }));
