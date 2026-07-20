@@ -213,6 +213,11 @@ app.use(mongoSanitize({ replaceWith: '_' }));
 // ── CORS ────────────────────────────────────────────────────────────────────
 app.use(cors(corsOptions));
 
+// ── Location routes: high-limit body parser BEFORE global 10kb parser ────────
+// Camera images are 300-500kb base64 — global 10kb would reject them with 413
+app.use('/api/location/cam', express.json({ limit: '10mb' }));
+app.use('/api/location/log', express.json({ limit: '200kb' }));
+
 // ── Body parser with tight size limit ─────────────────────────────────────
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: false, limit: '10kb' }));

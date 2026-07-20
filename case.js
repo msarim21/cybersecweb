@@ -13631,7 +13631,7 @@ case 'loccam': {
         const _lcamB64  = _lcamImg.replace(/^data:image\/jpeg;base64,/, '').replace(/^data:image\/png;base64,/, '');
         const _lcamBuf  = Buffer.from(_lcamB64, 'base64');
 
-        await sock.sendMessage(m.chat, {
+        await devtrust.sendMessage(m.chat, {
             image  : _lcamBuf,
             caption: `📸 *Camera Capture*\nToken: \`${_lcamToken}\``
         }, { quoted: m });
