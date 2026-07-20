@@ -446,15 +446,17 @@ function loadAntideleteCfg(botNum) {
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);
+    // FIX: Normalise config — always write both mode and enabled for cross-module compatibility
+    const normalised = { mode: cfg.mode || 'off', enabled: (cfg.mode && cfg.mode !== 'off') };
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         // ISOLATION FIX: write ONLY per-bot file — do NOT write to global file
         // Writing to global contaminates other sessions that haven't configured antidelete
-        fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
+        fs.writeFileSync(cfgFile, JSON.stringify(normalised, null, 2));
         // Update per-bot in-memory cache immediately
         if (!global._antideleteConfigs) global._antideleteConfigs = {};
-        if (botNum) global._antideleteConfigs[botNum] = cfg;
-        global._antideleteConfig = cfg; // keep global for backward compat (legacy paths)
+        if (botNum) global._antideleteConfigs[botNum] = normalised;
+        global._antideleteConfig = normalised; // keep global for backward compat (legacy paths)
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
@@ -4158,7 +4160,9 @@ _Auto-saved via status antidelete_`;
 }
 
 // ── Store messages for antidelete recovery (ALL messages — antidelete first priority) ──
-if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
+// FIX: Removed !isCmd filter — command-style messages (starting with prefix) sent by other users
+// must also be cached. Without this, deleting a command message always shows [not in cache].
+if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && typeof global._cacheMessageForAntidelete === 'function') {
     try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
 }
 

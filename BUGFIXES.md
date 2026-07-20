@@ -242,3 +242,27 @@ if (wsState === 1) {
 **Result:** MongoDB mein sirf recent/active data rehta hai (chat history 30 din, pairing requests 2 din, dead sessions 14 din), extra/purana data local JSON archives mein move ho jata hai — DB ~100 users ke liye scale karta hai bina quota hit kiye.
 
 **Files:** `server/jobs/storageGuardJob.js` (new), `server/models/ChatMessage.js`, `server/models/PairingRequest.js`, `server/index.js`, `.gitignore`
+
+---
+
+## Bug 14 — Antidelete: "[Original message not in cache]" Always Shown (Critical Fix)
+
+**Problem:** Antidelete command is enabled and detecting deletes, but ALWAYS shows `[Original message not in cache]` — the deleted message content is never recovered.
+
+**Root Cause (3 issues):**
+
+1. **`!isCmd` filter in `case.js`** — The antidelete message cache (line ~4161) was guarded by `if (!isCmd && ...)`. `isCmd` is `true` for ANY message that starts with the bot prefix (`.`). This means every command-format message (e.g. `.hi`, `.menu`, `.sticker`) sent by other users was **never stored** in the antidelete cache. When those messages were deleted, the lookup always returned null → `[Original message not in cache]`.
+
+   The comment directly above even says *"ALL messages — antidelete first priority"*, revealing the intent was to cache all messages, but the filter was added incorrectly.
+
+2. **`saveAntideleteCfg` missing `enabled` field** — When the `.antidelete private` command saved the config, it only wrote `{"mode":"private"}`. Some lookup paths in `antidelete-helpers.js` also check the `enabled` field, causing inconsistency after a save.
+
+3. **Duplicate "not in cache" reports** — When a delete event fires back-to-back (WhatsApp sometimes sends type 0 + type 5 protocol messages for the same delete), the dedup guard was NOT marked on a cache-miss, causing two identical `[Original message not in cache]` reports to be sent.
+
+**Fix:**
+
+- **`case.js`**: Replaced `if (!isCmd && ...)` guard with `if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && ...)` — now ALL messages (including command-style messages from other users) are cached for antidelete recovery.
+- **`case.js` `saveAntideleteCfg`**: Normalises the saved config to always include both `mode` and `enabled` fields: `{ mode: cfg.mode || 'off', enabled: (cfg.mode && cfg.mode !== 'off') }`.
+- **`allfunc/antidelete-helpers.js` `_adHandleMessageDelete`**: Added `_adMarkDeleteProcessed()` call even when the cached message is not found (cache-miss path), preventing duplicate `[not in cache]` reports.
+
+**Files:** `case.js`, `allfunc/antidelete-helpers.js`

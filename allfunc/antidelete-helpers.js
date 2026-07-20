@@ -1037,7 +1037,9 @@ async function _adHandleMessageDelete(sock, opts = {}) {
             deletedBy,
             botNum: clean,
         });
-        // Do NOT mark dedup on cache miss — messages.delete handler may retry with warm socket
+        // FIX: Mark dedup on cache miss too — prevents duplicate "not in cache" reports
+        // when the delete event fires more than once (e.g. type 0 + type 5 back-to-back)
+        _adMarkDeleteProcessed(clean, chatId, msgId);
         return false;
     }
 
