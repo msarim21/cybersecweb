@@ -12270,23 +12270,24 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        // ── Use PrinceTech ytmusic API ────────────────────────────────────────
+        // ── PrinceTech YTDL API (returns audio_url + video_url) ──────────────
         const apiRes = await axios.get(
-            `https://api.princetechn.com/api/download/ytmusic?apikey=prince&quality=mp3&bitrate=192&url=${encodeURIComponent(videoUrl)}`,
+            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`,
             { timeout: 60000 }
         );
         const apiData = apiRes.data?.result;
-        if (!apiData?.download_url) throw new Error('API did not return download URL');
+        if (!apiData?.audio_url) throw new Error('API ne audio URL nahi diya');
 
         const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
         const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
-        const quality   = apiData.quality || '192kbps';
+        const quality   = apiData.audio_quality || '320kbps';
+        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
-        const caption   = `🎵 *${titleStr}*\n🎚️ Quality: ${quality}`;
+        const caption   = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
         if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
 
-        const audioBuf = await axios.get(apiData.download_url, {
+        const audioBuf = await axios.get(apiData.audio_url, {
             responseType: 'arraybuffer',
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
             timeout: 180000,
@@ -12548,36 +12549,37 @@ case 'play2': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytDownload(videoUrl);
-        if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
+        // ── PrinceTech YTDL API ───────────────────────────────────────────────
+        const p2Res = await axios.get(
+            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`,
+            { timeout: 60000 }
+        );
+        const p2Data = p2Res.data?.result;
+        if (!p2Data?.audio_url) throw new Error('API ne audio URL nahi diya');
 
-        const d = result.data;
-        if (!d.best_audio && !d.audio_formats?.length) throw new Error('No audio format found');
+        const titleStr = p2Data.title || videoInfo?.title || 'Unknown';
+        const thumb    = p2Data.thumbnail || videoInfo?.thumbnail || null;
+        const dur      = p2Data.duration || videoInfo?.timestamp || 'N/A';
+        const quality  = p2Data.audio_quality || '320kbps';
 
-        const audioFmt = d.best_audio || d.audio_formats[0];
-        const titleStr = d.title || videoInfo?.title || 'Unknown';
-        const thumb    = d.thumbnail || videoInfo?.thumbnail || null;
-        const dur      = d.duration_formatted || videoInfo?.timestamp || 'N/A';
+        const safeTitle2    = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
+        const audioCaption2 = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
-        const safeTitle2 = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
-        const audioCaption2 = `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}`;
-
-        // Download buffer + send thumbnail in parallel
         const [audioBuf2] = await Promise.all([
-            axios.get(audioFmt.url, {
+            axios.get(p2Data.audio_url, {
                 responseType: 'arraybuffer',
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption2 }), { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption2 }, { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
+        await devtrust.sendMessage(m.chat, {
             audio: audioBuf2,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle2}.mp3`
-        }), { quoted: m });
+        }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -12651,67 +12653,94 @@ break;
 
 case 'ytdl':
 case 'ytdown': {
-    if (!text) return reply(`🎬 *YouTube Downloader (VidsSave)*\n\nUsage: ${prefix + command} <YouTube URL>\nExample: ${prefix + command} https://youtu.be/dQw4w9WgXcQ\n\nSupports: Video (144P–2160P) + Audio formats`)
-    const isYtUrl = text.includes('youtube.com') || text.includes('youtu.be')
-    if (!isYtUrl) return reply(`❌ *Please send a valid YouTube URL*\nExample: ${prefix + command} https://youtu.be/dQw4w9WgXcQ`)
+    if (!text) return reply(`🎬 *YouTube Downloader*\n\nUsage: ${prefix + command} <YouTube URL or song name>\nExample: ${prefix + command} https://youtu.be/dQw4w9WgXcQ\n\nReply *1* = Video 🎬  |  Reply *2* = Audio 🎵`)
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
-        const result = await ytDownload(text)
-        const d = result.data
-        const vList = d.video_formats.map((v, i) => `${i + 1}. 🎬 ${v.quality} ${v.format} — ${v.size_mb}`).join('\n')
-        const aList = d.audio_formats.map((a, i) => `${d.video_formats.length + i + 1}. 🎵 ${a.quality} ${a.format} — ${a.size_mb}`).join('\n')
-        const menu = `🎬 *${d.title}*\n⏱️ *Duration:* ${d.duration_formatted || 'N/A'}\n\n*Video Formats:*\n${vList}\n\n*Audio Formats:*\n${aList}\n\n📌 Reply with number to download`
-        const sentMsg = await devtrust.sendMessage(m.chat,
-            { image: { url: d.thumbnail }, caption: menu },
+
+        const yts = require('yt-search');
+        let _ydUrl = text;
+        let _ydInfo = null;
+        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
+            const { videos } = await yts(text);
+            if (!videos?.length) {
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+                return reply(`❌ *"${text}"* nahi mila.`)
+            }
+            _ydInfo = videos.filter(v => !v.live)[0] || videos[0];
+            _ydUrl  = _ydInfo.url;
+        }
+
+        // ── PrinceTech YTDL API ───────────────────────────────────────────────
+        const _ydRes  = await axios.get(
+            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(_ydUrl)}`,
+            { timeout: 60000 }
+        );
+        const _yd = _ydRes.data?.result;
+        if (!_yd?.audio_url || !_yd?.video_url) throw new Error('API ne download URLs nahi diye');
+
+        const _ydTitle  = _yd.title || _ydInfo?.title || 'Unknown';
+        const _ydThumb  = _yd.thumbnail || _ydInfo?.thumbnail || null;
+        const _ydDur    = _yd.duration || _ydInfo?.timestamp || 'N/A';
+        const _ydVQ     = _yd.video_quality || '720p';
+        const _ydAQ     = _yd.audio_quality || '320kbps';
+        const _ydSafe   = _ydTitle.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
+
+        const _ydMenu = `🎬 *${_ydTitle}*\n⏱️ *Duration:* ${_ydDur}\n\n*1️⃣  Video* — ${_ydVQ} (MP4)\n*2️⃣  Audio* — ${_ydAQ} (MP3)\n\n📌 *Reply 1 ya 2 karo download ke liye* (3 min mein)`
+
+        const _ydSent = await devtrust.sendMessage(m.chat,
+            _ydThumb ? { image: { url: _ydThumb }, caption: _ydMenu } : { text: _ydMenu },
             { quoted: m }
         )
-        const allFormats = [...d.video_formats, ...d.audio_formats]
-        const _ytdlHandler = async (messageUpdate) => {
+
+        const _ydHandler = async (upd) => {
             try {
-                const msg = messageUpdate?.messages[0]
+                const msg = upd?.messages?.[0]
                 if (!msg?.message) return
-                const replyText = (msg.message.extendedTextMessage?.text || msg.message.conversation || '').trim()
+                const replyTxt = (msg.message.extendedTextMessage?.text || msg.message.conversation || '').trim()
                 const stanzaId = msg.message.extendedTextMessage?.contextInfo?.stanzaId
-                if (stanzaId !== sentMsg?.key?.id) return
-                const num = parseInt(replyText)
-                if (isNaN(num) || num < 1 || num > allFormats.length) return
-                devtrust.ev.off('messages.upsert', _ytdlHandler)
+                if (stanzaId !== _ydSent?.key?.id) return
+                if (replyTxt !== '1' && replyTxt !== '2') return
+
+                devtrust.ev.off('messages.upsert', _ydHandler)
+                const isVid = replyTxt === '1'
                 await devtrust.sendMessage(m.chat, { react: { text: '⬇️', key: msg.key } })
-                const selected = allFormats[num - 1]
-                const isVideo = num <= d.video_formats.length
-                await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${selected.quality} ${selected.format}...` }, { quoted: msg })
-                const ext = selected.format.toLowerCase() === 'opus' ? 'ogg' : selected.format.toLowerCase()
-                const fileName = `${(d.title || 'file').replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${selected.quality}.${ext}`
-                const dlBuf = await axios.get(selected.download_url, {
+                await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${isVid ? 'Video' : 'Audio'}...` }, { quoted: msg })
+
+                const dlUrl   = isVid ? _yd.video_url : _yd.audio_url;
+                const dlBuf   = await axios.get(dlUrl, {
                     responseType: 'arraybuffer',
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
                     timeout: 300000,
                     maxContentLength: 500 * 1024 * 1024
-                })
-                const fileBuffer = Buffer.from(dlBuf.data)
-                if (isVideo) {
+                });
+                const fileBuf = Buffer.from(dlBuf.data);
+                const sizeMB  = (fileBuf.length / 1024 / 1024).toFixed(2);
+
+                if (isVid) {
                     await devtrust.sendMessage(m.chat, {
-                        video: fileBuffer,
-                        caption: `🎬 *${d.title}*\n🎚️ *Quality:* ${selected.quality}\n📦 *Size:* ${selected.size_mb}`,
-                        mimetype: 'video/mp4', fileName
+                        video   : fileBuf,
+                        caption : `🎬 *${_ydTitle}*\n🎚️ ${_ydVQ}  |  📦 ${sizeMB} MB`,
+                        mimetype: 'video/mp4',
+                        fileName: `${_ydSafe}.mp4`
                     }, { quoted: msg })
                 } else {
                     await devtrust.sendMessage(m.chat, {
-                        audio: fileBuffer,
-                        mimetype: 'audio/mpeg', fileName,
-                        caption: `🎵 *${d.title}*\n🎚️ *Quality:* ${selected.quality}\n📦 *Size:* ${selected.size_mb}`
+                        audio   : fileBuf,
+                        mimetype: 'audio/mpeg',
+                        fileName: `${_ydSafe}.mp3`
                     }, { quoted: msg })
                 }
                 await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } })
             } catch (err) {
-                console.error('ytdl handler error:', err.message)
+                console.error('[ytdl handler]', err.message)
                 await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+                reply(`❌ Download failed: ${err.message}`)
             }
         }
-        devtrust.ev.on('messages.upsert', _ytdlHandler)
-        setTimeout(() => devtrust.ev.off('messages.upsert', _ytdlHandler), 180000)
+        devtrust.ev.on('messages.upsert', _ydHandler)
+        setTimeout(() => devtrust.ev.off('messages.upsert', _ydHandler), 180000)
     } catch (err) {
-        console.error('ytdl error:', err.message)
+        console.error('[ytdl]', err.message)
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
         reply(`❌ YouTube download failed: ${err.message}`)
     }
