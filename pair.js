@@ -490,22 +490,13 @@ async function startpairing(nexusDevNumber) {
         // ✅ GUARD: Skip if socket not authenticated yet
         if (!nexus.user) return;
 
-        const nexusboijid = chatUpdate.messages[0];
-        if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) return;
-        nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
-
-        // ✅ ANTIDELETE CACHE — must run BEFORE the private-mode guard below.
-        // ✅ FIX: Cache ALL messages in the batch, not just messages[0].
-        // When messages arrive in bulk (history sync on reconnect, or batched delivery
-        // from WhatsApp servers), Baileys fires ONE messages.upsert event with many
-        // items in chatUpdate.messages. The old code only cached [0], so any message
-        // at index > 0 was silently missed. When that message was later deleted, the
-        // cache lookup failed and antidelete reported "[Original message not in cache]".
+        // ✅ ANTIDELETE CACHE — cache ALL messages FIRST before any guards.
+        // When messages arrive in bulk (history sync / batched delivery), Baileys fires
+        // ONE upsert event with many items. Cache all so antidelete works on every one.
         try {
             if (typeof global._cacheMessageForAntidelete === 'function') {
                 for (const _adRawMsg of chatUpdate.messages) {
                     if (!_adRawMsg?.message || !Object.keys(_adRawMsg.message).length) continue;
-                    // Unwrap ephemeral wrapper the same way we do for messages[0]
                     const _adMsg = { ..._adRawMsg };
                     if (Object.keys(_adMsg.message)[0] === 'ephemeralMessage') {
                         _adMsg.message = _adMsg.message.ephemeralMessage.message;
@@ -515,23 +506,7 @@ async function startpairing(nexusDevNumber) {
             }
         } catch (_adCacheErr) {}
 
-        // ✅ FAST GUARD: Check mode FIRST — skip message entirely if self-mode + not fromMe
-        // Exception: .self / .public / .private commands always pass so any user can toggle mode
-        // Exception: protocolMessage (type=0 REVOKE / type=14 EDIT) must ALWAYS pass through
-        //   regardless of mode — antidelete & antiedit need these events even in private/self mode.
-        //   Without this, when someone deletes "for everyone" the revoke arrives with fromMe=false
-        //   and gets blocked here, so antidelete never fires for other people's deletions.
-        const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
-        const _fgFirst = _fastGuardBody.split('\n')[0].trim();
-        const _isModeCmd = /^[.!\/# ]*(self|public|private)\b/i.test(_fgFirst);
-        const _isSystemProto = Boolean(nexusboijid.message?.protocolMessage); // delete / edit events
-        if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) return;
-        if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) return;
-
-        // ✅ SUBSCRIPTION GUARD — expired trial / banned owner must not get bot
-        // replies. isNumberAuthorized() is cached (20s) so this is cheap per
-        // message. If unauthorized, force-disconnect runs in the background
-        // and we drop the message silently instead of dispatching case.js.
+        // ✅ SUBSCRIPTION GUARD — check once per batch (not per-message — saves DB round trips)
         try {
             const { isNumberAuthorized, enforceSubscriptionOrDisconnect } = require('./allfunc/subscription-guard');
             const _ownerNum = nexus.decodeJid(nexus.user.id).replace(/[^0-9]/g, '');
@@ -541,11 +516,56 @@ async function startpairing(nexusDevNumber) {
             }
         } catch (_) {}
 
-        // ✅ IMMEDIATE: Fire case.js RIGHT AWAY — zero delay for commands
-        nexusboiConnect = nexus;
-        mek = smsg(nexusboiConnect, nexusboijid, store);
-        require("./case")(nexusboiConnect, mek, chatUpdate, store)
-            .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
+        // ✅ PRE-LOAD owner list once per batch — used by private-mode bypass below
+        const _batchBotNum = nexus.decodeJid(nexus.user.id).replace(/[^0-9]/g, '');
+        let _batchOwnerList = [];
+        try {
+            const _oFile = './allfunc/owner.json';
+            if (require('fs').existsSync(_oFile))
+                _batchOwnerList = JSON.parse(require('fs').readFileSync(_oFile, 'utf-8'));
+        } catch (_) {}
+
+        // Reference to first message for background tasks (setImmediate below uses this)
+        const _bgMsg = chatUpdate.messages[0];
+
+        // ✅ FIX: Process ALL messages in the batch — not just messages[0].
+        // ceb2ee2 removed the loop, causing commands at batch index > 0 to be silently dropped.
+        for (const nexusboijid of chatUpdate.messages) {
+            try {
+                if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) continue;
+                nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
+
+                // ✅ FAST GUARD: skip if self-mode + not fromMe
+                // Exception: mode-toggle commands (.self/.public/.private) always pass
+                // Exception: protocolMessage (REVOKE/EDIT) must always pass — antidelete needs them
+                const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
+                const _fgFirst = _fastGuardBody.split('\n')[0].trim();
+                const _isModeCmd = /^[.!\/# ]*(self|public|private)\b/i.test(_fgFirst);
+                const _isSystemProto = Boolean(nexusboijid.message?.protocolMessage);
+                if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) {
+                    // ✅ FIX: Allow owner/creator numbers even in private/self mode.
+                    // Owner's messages arrive as fromMe=false (they use a different device than the bot),
+                    // so the old guard was blocking all their commands when bot was in self mode.
+                    const _pvSenderJid = nexusboijid.key?.participant || nexusboijid.key?.remoteJid || '';
+                    const _pvSenderNum = String(_pvSenderJid).split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+                    const _pvIsOwner = Boolean(_pvSenderNum && (
+                        _pvSenderNum === _batchBotNum ||
+                        (Array.isArray(_batchOwnerList) && _batchOwnerList.some(o =>
+                            String(o).replace(/[^0-9]/g, '') === _pvSenderNum))
+                    ));
+                    if (!_pvIsOwner) continue;
+                }
+                if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) continue;
+
+                // ✅ IMMEDIATE: Fire case.js with no delay
+                nexusboiConnect = nexus;
+                mek = smsg(nexusboiConnect, nexusboijid, store);
+                require("./case")(nexusboiConnect, mek, chatUpdate, store)
+                    .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
+            } catch (_msgErr) {
+                console.error('[pair.js] Message processing error:', _msgErr?.message || _msgErr);
+            }
+        }
 
         // ✅ BACKGROUND: Run optional features AFTER case.js fires — no blocking
         // These can be slow (media downloads) so they must NOT delay commands
@@ -559,13 +579,13 @@ async function startpairing(nexusDevNumber) {
                 let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
                     || global.db?.data?.settings?.[botNumber]?.antiswview
                     || false;
-                if (autoViewStatus && nexusboijid.key?.remoteJid === 'status@broadcast') {
-                    await nexus.readMessages([nexusboijid.key]);
+                if (autoViewStatus && _bgMsg.key?.remoteJid === 'status@broadcast') {
+                    await nexus.readMessages([_bgMsg.key]);
                 }
 
                 // Status-Reply-to-DM — when bot user replies to any status
-                const isFromMe = nexusboijid.key?.fromMe;
-                const msgContent = nexusboijid.message;
+                const isFromMe = _bgMsg.key?.fromMe;
+                const msgContent = _bgMsg.message;
                 const innerMsg = msgContent?.extendedTextMessage
                     || msgContent?.imageMessage
                     || msgContent?.videoMessage
@@ -608,8 +628,8 @@ async function startpairing(nexusDevNumber) {
                 }
 
                 // View-Once Auto-Save — when bot user replies to a one-time pic/video
-                const isFromMe2 = nexusboijid.key?.fromMe;
-                const msgContent2 = nexusboijid.message;
+                const isFromMe2 = _bgMsg.key?.fromMe;
+                const msgContent2 = _bgMsg.message;
                 const innerMsg2 = msgContent2?.extendedTextMessage
                     || msgContent2?.imageMessage
                     || msgContent2?.videoMessage
