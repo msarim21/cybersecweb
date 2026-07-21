@@ -51,8 +51,11 @@ ${_menuCategories(prefix, false)}
 ⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026`;
 }
 
+// NOTE: 'menu' and 'cyber' removed from turbo set.
+// They are handled exclusively by the switch in case.js using plain sendMessage
+// so they work reliably on "message yourself" (self-chat / append messages).
 const TURBO_COMMANDS = new Set([
-    'menu', 'cyber', 'ping', 'speed', 'alive', 'runtime', 'uptime',
+    'ping', 'speed', 'alive', 'runtime', 'uptime',
 ]);
 
 function isTurboCommand(cmd) {
@@ -90,24 +93,6 @@ async function tryTurboCommand(devtrust, m, ctx) {
         const sec = Math.floor(up % 60);
         await send({ text: `✅ *CYBER BOT ALIVE*\n\n⏱ Uptime: ${h}h ${min}m ${sec}s\n🤖 Mode: ${ctx.botMode || 'PUBLIC'}` });
         return true;
-    }
-
-    if (cmd === 'menu' || cmd === 'cyber') {
-        const text = buildMenuText({
-            pushname: ctx.pushname || m.pushName || 'User',
-            prefix: ctx.prefix || '.',
-            sender: m.sender,
-            botMode: ctx.botMode || 'PUBLIC',
-            totalCommands: ctx.totalCommands,
-        });
-        try {
-            await send({ text });
-            devtrust.sendMessage(chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
-            return true;
-        } catch (_sendErr) {
-            // sendMessage failed — return false so case.js switch handles it
-            return false;
-        }
     }
 
     return false;

@@ -5018,6 +5018,21 @@ if (m.message?.stickerMessage && !command) {
 // ============ MENU COMMAND ============
 
 switch(command) {
+
+// ============ DIAGNOSTIC TEST COMMAND ============
+case 'test':
+case 'bottest': {
+    // Plain no-frills send — confirms bot receives and can reply
+    try {
+        await devtrust.sendMessage(m.chat, {
+            text: `✅ *Bot is working!*\n\nCommand received: *${prefix}${command}*\nPrefix: ${prefix}\nSender: @${m.sender.split('@')[0]}\nTime: ${new Date().toISOString()}`
+        }, { priority: true });
+    } catch (_testErr) {
+        console.error('[TEST] sendMessage failed:', _testErr?.message);
+    }
+    break;
+}
+
 // ============ MENU WITH ALPHABETICAL ORDER ============
 
 case 'allmenu':
@@ -5755,7 +5770,7 @@ break;
 
 case 'menu':
 case 'CYBER': {
-   setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
     devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
 
     const uptime = formatUptime(process.uptime());
@@ -5763,22 +5778,18 @@ case 'CYBER': {
     const freeMem = os.freemem();
     const platform = os.platform();
     const date = getLagosTime();
-    const readmore = String.fromCharCode(8206).repeat(4001);
     const ramInfo = formatRam(totalMem, freeMem);
     const moodEmoji = getMoodEmoji();
     const totalCommands = countCommands();
     const hour = date.getHours();
     let greeting = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
-    
-    // Get professional features
+
     const ownerName = getOwnerName();
     const botVersion = getBotVersion();
     const botMode = getBotMode();
     const currentDateTime = getCurrentDateTime();
-    
-    // ALPHABETICAL SECTIONS
-    const menuText = `
-┏━━◆ *CYBER - 𝐌𝐀𝐈𝐍 𝐌𝐄𝐍𝐔* ◆━━┓
+
+    const menuText = `┏━━◆ *CYBER - 𝐌𝐀𝐈𝐍 𝐌𝐄𝐍𝐔* ◆━━┓
 ┃ ⧎ ʜᴇʟʟᴏ  ${pushname}
 ┃ ⧎ ʙᴏᴛ ɴᴀᴍᴇ 「 *CYBER* 」
 ┃ ⧎ ᴠᴇʀsɪᴏɴ : *${botVersion}*
@@ -5792,12 +5803,6 @@ case 'CYBER': {
 ┃ *${greeting}*, @${m?.sender.split('@')[0]}
 ┃ 🕒 ${currentDateTime} ${moodEmoji}
 ┗━━━━━━━━━━━━━━━━━━━━┛
-
-❖═━═══𖠁𐂃𖠁══━═❖
-♱  ${greeting}, *${pushname}*
-*CYBER* ᴀᴛ ʏᴏᴜʀ sᴇʀᴠɪᴄᴇ
-⚙️ *Powered by CYBER SEC PRO*
-❖═━═══𖠁𐂃𖠁══━═❖
 
 ┏━━◆ *CYBER - 𝐌𝐄𝐍𝐔 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒* ◆━━┓
 │❖ ${prefix}allmenu
@@ -5820,10 +5825,16 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 │❖ ${prefix}othermenu
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
-⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
-`;
+⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026`;
 
-    await reply(menuText);
+    // Use plain sendMessage — no newsletter context, no quoted — most reliable for self-chat
+    try {
+        await devtrust.sendMessage(m.chat, { text: menuText }, { priority: true });
+    } catch (_menuErr) {
+        console.error('[MENU] sendMessage failed:', _menuErr?.message);
+        // Last-resort fallback via reply()
+        await reply(menuText).catch(() => {});
+    }
 }
 break;
 
