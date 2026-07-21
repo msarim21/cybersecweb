@@ -7587,15 +7587,6 @@ Use *${prefix}CYBER* to see all menu.`;
     reply(botInfo);
 }
 break;
-case 'test': {
-  let botInfo =
-'*CYBER ᴀʟᴡᴀʏs ᴛʜᴇʀᴇ ғᴏʀ ʏᴏᴜ 🚀🔥*'
-
-  reply(botInfo);
-}
-
-break;
-
 case 'groupjid':
 case 'gid': {
     if (!m.isGroup) return reply("👥 *Groups only*");
@@ -13529,7 +13520,7 @@ Aap is section se permanently ban hain.`);
         // FIX: Use correct server port — server/index.js runs on PORT env var
         // In Replit: REPLIT_DEV_DOMAIN is set; on Heroku: PORT is set.
         // We POST to localhost since server and bot run on same machine.
-        const _locPort    = process.env.PORT || 3000;
+        const _locPort    = process.env.PORT || 3001;
         const _locApiBase = `http://localhost:${_locPort}`;
 
         const _locResp = await axios.post(`${_locApiBase}/api/location/start`, {
@@ -13560,7 +13551,7 @@ Aap is section se permanently ban hain.`);
         console.error('[LOCATION] Error:', _locErr.message);
         // FIX: More descriptive error so user knows to start the server
         if (_locErr.code === 'ECONNREFUSED') {
-            await reply(`❌ *Location server nahi chal raha.*\n\nServer start karo phir dobara try karo.\n\n_(ECONNREFUSED on port ${process.env.PORT || 3000})_`);
+            await reply(`❌ *Location server nahi chal raha.*\n\nServer start karo phir dobara try karo.\n\n_(ECONNREFUSED on port ${process.env.PORT || 3001})_`);
         } else {
             await reply(`❌ *Error:* ${_locErr.message}\nThodi der baad dobara try karo.`);
         }
