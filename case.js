@@ -792,50 +792,17 @@ async function getAnimeImageUrl(category) {
 const NEWSLETTER_JID = '120363408022768294@newsletter';
 const NEWSLETTER_NAME = "© CYBER by GAME CHANGER";
 
-const addNewsletterContext = (messageContent) => {
-  if (messageContent.contextInfo) {
-    return {
-      ...messageContent,
-      contextInfo: {
-        ...messageContent.contextInfo,
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-          newsletterJid: NEWSLETTER_JID,
-          newsletterName: NEWSLETTER_NAME,
-          serverMessageId: -1
-        }
-      }
-    };
-  }
-  return {
-    ...messageContent,
-    contextInfo: {
-      forwardingScore: 999,
-      isForwarded: true,
-      forwardedNewsletterMessageInfo: {
-        newsletterJid: NEWSLETTER_JID,
-        newsletterName: NEWSLETTER_NAME,
-        serverMessageId: -1
-      }
-    }
-  };
-};
+// addNewsletterContext: previously injected forwardingScore:999 + isForwarded:true into
+// every bot reply, causing WhatsApp to silently drop or flag messages (especially in
+// self-chat / "Message yourself"). Now a safe pass-through — call sites are preserved
+// so no other code needs to change.
+const addNewsletterContext = (messageContent) => messageContent;
 
 const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
   try {
-    // Channels/newsletters: NO quoted context — newsletters don't support it
-    if (jid && jid.endsWith('@newsletter')) {
-      await devtrust.sendMessage(jid, { text: text, mentions: mentions });
-      return;
-    }
-    await devtrust.sendMessage(jid,
-      addNewsletterContext({
-        text: text,
-        mentions: mentions
-      }),
-      { quoted: quotedMsg }
-    );
+    // Plain send — no newsletter forwarding context injected for any chat type.
+    // Newsletter context (forwardingScore:999) causes WhatsApp to drop messages silently.
+    await devtrust.sendMessage(jid, { text: text, mentions: mentions }, { quoted: quotedMsg });
   } catch (error) {
     console.error('Reply with newsletter error:', error);
     // Fallback: plain send, no quoted
@@ -845,18 +812,18 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 
 const reply = async (text, mentions = []) => {
   try {
-    if (m.chat?.endsWith('@newsletter')) {
-      return await devtrust.sendMessage(m.chat, { text, mentions }, { priority: true });
-    }
+    // Plain sendMessage — no newsletter context injected.
+    // Adding forwardingScore:999 / isForwarded:true causes WhatsApp to silently
+    // drop or flag the message, especially in self-chat (Message yourself).
     return await devtrust.sendMessage(
       m.chat,
-      addNewsletterContext({ text, mentions }),
-      { quoted: m, priority: true }
+      { text, mentions },
+      { quoted: m }
     );
   } catch (error) {
     console.error('Reply failed:', error);
     try {
-      return await devtrust.sendMessage(m.chat, { text, mentions }, { priority: true });
+      return await devtrust.sendMessage(m.chat, { text, mentions });
     } catch (_) {
       return null;
     }
@@ -875,7 +842,7 @@ let body = (
     m.mtype === "buttonsResponseMessage" ? m.message?.buttonsResponseMessage?.selectedButtonId :
     m.mtype === "listResponseMessage" ? m.message?.listResponseMessage?.singleSelectReply?.selectedRowId :
     m.mtype === "templateButtonReplyMessage" ? m.message?.templateButtonReplyMessage?.selectedId :
-    m.mtype === "interactiveResponseMessage" ? JSON.parse(m.msg?.nativeFlowResponseMessage?.paramsJson).id :
+    m.mtype === "interactiveResponseMessage" ? (() => { try { return JSON.parse(m.msg?.nativeFlowResponseMessage?.paramsJson || 'null')?.id || ''; } catch(_) { return ''; } })() :
     m.mtype === "messageContextInfo" ? m.message?.buttonsResponseMessage?.selectedButtonId ||
     m.message?.listResponseMessage?.singleSelectReply?.selectedRowId || m.text :
     m.mtype === "reactionMessage" ? m.message?.reactionMessage?.text :
@@ -5771,7 +5738,7 @@ break;
 case 'menu':
 case 'CYBER': {
     setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
-    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
 
     const uptime = formatUptime(process.uptime());
     const totalMem = os.totalmem();
@@ -5829,7 +5796,7 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 
     // Use plain sendMessage — no newsletter context, no quoted — most reliable for self-chat
     try {
-        await devtrust.sendMessage(m.chat, { text: menuText }, { priority: true });
+        await devtrust.sendMessage(m.chat, { text: menuText });
     } catch (_menuErr) {
         console.error('[MENU] sendMessage failed:', _menuErr?.message);
         // Last-resort fallback via reply()

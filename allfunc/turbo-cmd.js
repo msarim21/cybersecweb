@@ -73,7 +73,14 @@ async function tryTurboCommand(devtrust, m, ctx) {
     const chat = m.chat || m.key?.remoteJid;
     if (!chat) return false;
 
-    const send = (payload) => devtrust.sendMessage(chat, payload, { priority: true, quoted: m });
+    const send = async (payload) => {
+        try {
+            // Try with quoted first; fall back to plain send if quoted causes issues (e.g. self-chat)
+            return await devtrust.sendMessage(chat, payload, { quoted: m });
+        } catch (_qErr) {
+            return await devtrust.sendMessage(chat, payload);
+        }
+    };
 
     if (cmd === 'ping' || cmd === 'speed') {
         const _t1 = Date.now();
