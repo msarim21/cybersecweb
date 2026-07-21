@@ -568,18 +568,23 @@ if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 // pair.js already BAE5 IDs filter karta hai (Baileys-generated bot replies).
 // Yahan sirf woh 'append' block karo jo command prefix se shuru nahi hote.
 if (chatUpdate && chatUpdate.type === 'append') {
-    const _appendBody = m.message?.conversation
-        || m.message?.extendedTextMessage?.text
-        || m.body
-        || m.text
-        || '';
-    const _appendBodyStr = String(_appendBody || '').trim();
-    // Allow through if it starts with any known command prefix
-    const _knownPrefixes = (Array.isArray(global.prefa) && global.prefa.length)
-        ? global.prefa.filter(p => p)
-        : ['.', '!', '#', '&'];
-    const _appendIsCmd = _knownPrefixes.some(p => _appendBodyStr.startsWith(p));
-    if (!_appendIsCmd) return;
+    // FIX: fromMe messages (owner's own commands from phone) — ALWAYS allow through.
+    // "Message yourself" self-chat messages arrive as append+fromMe=true.
+    // Blocking them here was causing .menu/.ping to silently fail.
+    if (!m.key?.fromMe) {
+        const _appendBody = m.message?.conversation
+            || m.message?.extendedTextMessage?.text
+            || m.body
+            || m.text
+            || '';
+        const _appendBodyStr = String(_appendBody || '').trim();
+        // Allow through if it starts with any known command prefix
+        const _knownPrefixes = (Array.isArray(global.prefa) && global.prefa.length)
+            ? global.prefa.filter(p => p)
+            : ['.', '!', '#', '&'];
+        const _appendIsCmd = _knownPrefixes.some(p => _appendBodyStr.startsWith(p));
+        if (!_appendIsCmd) return;
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -13521,20 +13526,24 @@ Aap is section se permanently ban hain.`);
     // ── Build session on the local API server ──
     try {
         const _locUserId  = m.sender;
-        const _locPort    = process.env.PORT || 3001;
+        // FIX: Use correct server port — server/index.js runs on PORT env var
+        // In Replit: REPLIT_DEV_DOMAIN is set; on Heroku: PORT is set.
+        // We POST to localhost since server and bot run on same machine.
+        const _locPort    = process.env.PORT || 3000;
         const _locApiBase = `http://localhost:${_locPort}`;
 
         const _locResp = await axios.post(`${_locApiBase}/api/location/start`, {
             userId: _locUserId
-        }, { timeout: 8000 });
+        }, { 
+            timeout: 10000,
+            headers: { 'Content-Type': 'application/json' }
+        });
 
         const _locToken = _locResp.data.sessionToken;
         const _locLink  = _locResp.data.link;
 
         if (!_locToken || !_locLink) throw new Error('Bad response from location server');
 
-        // Store token in message context so owner can check results later
-        // using .loccheck <token>
         const _locMsg =
             `🎯 *Location Tracker Link Generated!*\n\n` +
             `*🔗 Link:*\n${_locLink}\n\n` +
@@ -13545,11 +13554,16 @@ Aap is section se permanently ban hain.`);
             `3️⃣  Results check karo: *${prefix}loccheck ${_locToken}*\n\n` +
             `⏳ Link 2 ghante baad expire ho jata hai.`;
 
-        reply(_locMsg);
+        await reply(_locMsg);
 
     } catch (_locErr) {
         console.error('[LOCATION] Error:', _locErr.message);
-        reply(`❌ *Error generating tracking link.*\nServer se connection nahi ho saka.\nThodi der baad dobara try karo.`);
+        // FIX: More descriptive error so user knows to start the server
+        if (_locErr.code === 'ECONNREFUSED') {
+            await reply(`❌ *Location server nahi chal raha.*\n\nServer start karo phir dobara try karo.\n\n_(ECONNREFUSED on port ${process.env.PORT || 3000})_`);
+        } else {
+            await reply(`❌ *Error:* ${_locErr.message}\nThodi der baad dobara try karo.`);
+        }
     }
     break;
 }
@@ -13807,10 +13821,12 @@ break;
 
 case 'ping':
 case 'speed': {
-    const _t1 = process.hrtime.bigint();
-    const _t2 = process.hrtime.bigint();
-    const latensi = Number(_t2 - _t1) / 1e6; // nanoseconds → ms
-    reply(`⚡ *CYBER Ping*\n\n📡 ${latensi.toFixed(4)} ms`);
+    const _t1 = Date.now();
+    await devtrust.sendMessage(m.chat, { text: `⚡ *CYBER Ping*\n\n📡 Calculating...` }).catch(() => {});
+    const _ms = Date.now() - _t1;
+    const _upH = Math.floor(process.uptime() / 3600);
+    const _upM = Math.floor((process.uptime() % 3600) / 60);
+    await reply(`⚡ *CYBER BOT - PING*\n\n📡 Response: *${_ms}ms*\n⏱ Uptime: ${_upH}h ${_upM}m\n✅ Bot is Online!`);
 }
 break;
 
