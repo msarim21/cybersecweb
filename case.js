@@ -824,20 +824,25 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 };
 
 const reply = async (text, mentions = []) => {
+  // FIX: normalize chat JID — strip device suffix (e.g. '123:5@s.whatsapp.net' → '123@s.whatsapp.net')
+  // Newer Baileys versions can produce JIDs with device suffix that cause sendMessage to fail silently.
+  const _replyJid = devtrust.decodeJid ? devtrust.decodeJid(m.chat) : m.chat;
+  // FIX: for self-chat ("Message yourself"), { quoted: m } can silently fail.
+  // Detect self-chat: remoteJid equals the bot's own JID.
+  const _botJidClean = String(devtrust._cachedBotNumber || devtrust.user?.id || '').replace(/:\d+@/, '@');
+  const _isSelfChat = _replyJid && _botJidClean && _replyJid.split('@')[0] === _botJidClean.split('@')[0];
   try {
-    // Plain sendMessage — no newsletter context injected.
-    // Adding forwardingScore:999 / isForwarded:true causes WhatsApp to silently
-    // drop or flag the message, especially in self-chat (Message yourself).
-    return await devtrust.sendMessage(
-      m.chat,
-      { text, mentions },
-      { quoted: m }
-    );
+    if (_isSelfChat) {
+      // Self-chat: plain send without quoted (quoted causes silent drop in "Message yourself")
+      return await devtrust.sendMessage(_replyJid, { text, mentions });
+    }
+    return await devtrust.sendMessage(_replyJid, { text, mentions }, { quoted: m });
   } catch (error) {
-    console.error('Reply failed:', error);
+    console.error('Reply failed:', error?.message || error);
     try {
-      return await devtrust.sendMessage(m.chat, { text, mentions });
-    } catch (_) {
+      return await devtrust.sendMessage(_replyJid, { text, mentions });
+    } catch (_e) {
+      console.error('Reply fallback also failed:', _e?.message || _e);
       return null;
     }
   }
@@ -982,7 +987,8 @@ const qtext = args.join(" ");
 const q = args.join(" ");
 const tempMailData = {};
 const quoted = m.quoted ? m.quoted : m;
-const from = m.key.remoteJid;
+// FIX: use normalized m.chat (stripped of ':device' suffix) instead of raw remoteJid
+const from = m.chat;
 const sender = (m.isGroup || m.isNewsletter) ? (m.key.participant ? m.key.participant : m.participant) : m.key.remoteJid;
 const userMovieSessions = {};
 // ── Cache botNumber per-connection (unchanged until reconnect) ──
@@ -5004,15 +5010,20 @@ case 'hi':
 case 'hello':
 case 'bot': {
     // Simplest possible response — plain text, no image, no quote, no complex logic
-    // If this works but .menu doesn't, the problem is in a specific command's code
-    // If this ALSO doesn't work, case.js is being called but sendMessage is failing
+    // FIX: use normalized JID for sendMessage (strips device suffix that causes silent failure)
+    const _hiJid = devtrust.decodeJid ? devtrust.decodeJid(m.chat) : m.chat;
     try {
-        await devtrust.sendMessage(m.chat, {
-            text: `✅ *Bot Alive!*\n\nSender: @${m.sender.split('@')[0]}\nChat: ${m.chat}\nType: ${chatUpdate?.type}\nFromMe: ${m.key?.fromMe}\nTime: ${new Date().toISOString()}`
+        await devtrust.sendMessage(_hiJid, {
+            text: `✅ *Bot Alive!*\n\nSender: @${m.sender.split('@')[0]}\nChat: ${_hiJid}\nType: ${chatUpdate?.type}\nFromMe: ${m.key?.fromMe}\nTime: ${new Date().toISOString()}`
         });
-        console.log('[HI CMD] Response sent successfully');
+        console.log('[HI CMD] Response sent successfully to', _hiJid);
     } catch (_hiErr) {
         console.error('[HI CMD] sendMessage FAILED:', _hiErr?.message || _hiErr);
+        // Last resort: try sending to sender JID
+        try {
+            const _senderJid = devtrust.decodeJid ? devtrust.decodeJid(m.sender) : m.sender;
+            await devtrust.sendMessage(_senderJid, { text: `✅ Bot is alive! (fallback send)` });
+        } catch (_) {}
     }
     break;
 }

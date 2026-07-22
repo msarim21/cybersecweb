@@ -221,7 +221,12 @@ exports.smsg = (client, m, store) => {
     if (m.key) {
         m.id = m.key.id
         m.isBaileys = m.id.startsWith('BAE5') && m.id.length === 16
-        m.chat = m.key.remoteJid
+        // FIX: normalize remoteJid — newer Baileys versions can have ':device@server' format
+        // which causes sendMessage to silently fail. Strip device suffix.
+        const _rawJid = m.key.remoteJid || '';
+        m.chat = (/:\d+@/.test(_rawJid))
+            ? _rawJid.replace(/:\d+@/, '@')
+            : _rawJid;
         m.fromMe = m.key.fromMe
         m.isGroup = m.chat.endsWith('@g.us')
         m.isNewsletter = m.chat.endsWith('@newsletter')

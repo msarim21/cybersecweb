@@ -70,15 +70,26 @@ async function tryTurboCommand(devtrust, m, ctx) {
     const cmd = String(ctx.command || '').toLowerCase();
     if (!isTurboCommand(cmd)) return false;
 
-    const chat = m.chat || m.key?.remoteJid;
-    if (!chat) return false;
+    const _rawChat = m.chat || m.key?.remoteJid;
+    if (!_rawChat) return false;
+    // FIX: normalize JID — strip ':device' suffix that causes sendMessage to fail silently
+    const chat = devtrust.decodeJid ? devtrust.decodeJid(_rawChat) : _rawChat.replace(/:\d+@/, '@');
+
+    // FIX: detect self-chat ("Message yourself") — quoted messages fail silently there
+    const _tcBotNum = String(devtrust._cachedBotNumber || devtrust.user?.id || '').replace(/:\d+@/, '@').split('@')[0];
+    const _tcChatNum = chat.split('@')[0];
+    const _isSelfChat = _tcBotNum && _tcChatNum && _tcBotNum === _tcChatNum;
 
     const send = async (payload) => {
         try {
-            // Try with quoted first; fall back to plain send if quoted causes issues (e.g. self-chat)
+            if (_isSelfChat) {
+                // Self-chat: plain send without quoted (quoted causes silent drop)
+                return await devtrust.sendMessage(chat, payload);
+            }
             return await devtrust.sendMessage(chat, payload, { quoted: m });
         } catch (_qErr) {
-            return await devtrust.sendMessage(chat, payload);
+            // fallback: plain send
+            return await devtrust.sendMessage(chat, payload).catch(() => {});
         }
     };
 
