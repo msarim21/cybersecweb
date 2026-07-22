@@ -561,6 +561,14 @@ if (!devtrust || !devtrust.user) return;
 // Keep latest socket reference for background scanners
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
+// 🔍 DIAGNOSTIC LOG — shows every message that enters case.js
+{
+    const _diagB = m?.message?.conversation
+        || m?.message?.extendedTextMessage?.text
+        || m?.body || '';
+    console.log(`[CASE.JS] type=${chatUpdate?.type} fromMe=${m?.key?.fromMe} sender=${m?.sender?.split('@')[0]} body=${JSON.stringify(String(_diagB).slice(0,40))}`);
+}
+
 // ✅ GUARD: Bot ke automatic reply messages block karo (infinite loop fix)
 // 'append' = device ka outgoing message (user ka command YA bot ka reply dono)
 // 'notify' = kisi aur ka incoming message
@@ -4990,6 +4998,24 @@ if (m.message?.stickerMessage && !command) {
 // ============ MENU COMMAND ============
 
 switch(command) {
+
+// ============ ULTRA-SIMPLE ALIVE CHECK — responds before any complex logic ============
+case 'hi':
+case 'hello':
+case 'bot': {
+    // Simplest possible response — plain text, no image, no quote, no complex logic
+    // If this works but .menu doesn't, the problem is in a specific command's code
+    // If this ALSO doesn't work, case.js is being called but sendMessage is failing
+    try {
+        await devtrust.sendMessage(m.chat, {
+            text: `✅ *Bot Alive!*\n\nSender: @${m.sender.split('@')[0]}\nChat: ${m.chat}\nType: ${chatUpdate?.type}\nFromMe: ${m.key?.fromMe}\nTime: ${new Date().toISOString()}`
+        });
+        console.log('[HI CMD] Response sent successfully');
+    } catch (_hiErr) {
+        console.error('[HI CMD] sendMessage FAILED:', _hiErr?.message || _hiErr);
+    }
+    break;
+}
 
 // ============ DIAGNOSTIC TEST COMMAND ============
 case 'test':

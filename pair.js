@@ -560,6 +560,12 @@ async function startpairing(nexusDevNumber) {
                 // ✅ IMMEDIATE: Fire case.js with no delay
                 nexusboiConnect = nexus;
                 mek = smsg(nexusboiConnect, nexusboijid, store);
+
+                // 🔍 DIAGNOSTIC LOG — shows every message that reaches case.js
+                const _diagBody = nexusboijid.message?.conversation
+                    || nexusboijid.message?.extendedTextMessage?.text || '';
+                console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_diagBody.slice(0,40))}`);
+
                 require("./case")(nexusboiConnect, mek, chatUpdate, store)
                     .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
             } catch (_msgErr) {
