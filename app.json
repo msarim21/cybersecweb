@@ -46,14 +46,9 @@
       "description": "Runtime environment.",
       "value": "production"
     },
-    "TOTAL_WORKER_DYNOS": {
-      "description": "Number of worker dynos running in parallel. Must match 'heroku ps:scale worker=N'. Each dyno manages an equal share of bots. Default: 1 (no sharding).",
-      "value": "1",
-      "required": false
-    },
     "WHATSAPP_HOST_DYNO": {
-      "description": "Which dyno type runs WhatsApp bots. Set to 'worker' for paid worker dynos (recommended for 1GB Standard-2X). Default on Heroku: 'web'.",
-      "value": "worker",
+      "description": "Which dyno type runs WhatsApp bots. 'web' = bots run on the web dyno (Eco plan friendly). No worker dyno needed.",
+      "value": "web",
       "required": false
     },
     "BOT_ISOLATION": {
@@ -62,12 +57,12 @@
       "required": false
     },
     "DYNO_TOTAL_RAM_MB": {
-      "description": "Actual RAM ceiling of the worker dyno. Use 1024 for a Standard-2X worker.",
-      "value": "1024",
+      "description": "Actual RAM ceiling of the dyno. Eco/Basic web dynos have 512MB.",
+      "value": "512",
       "required": false
     },
     "BOT_CHILD_HEAP_MB": {
-      "description": "V8 heap limit for each bot child process. Keep this lean on 1GB worker dynos.",
+      "description": "V8 heap limit for each bot child process. Keep this lean on Eco dynos.",
       "value": "128",
       "required": false
     },
@@ -77,7 +72,7 @@
       "required": false
     },
     "MAX_BOTS_PER_DYNO": {
-      "description": "Hard cap on bots per dyno. Leave empty for no limit (recommended with TOTAL_WORKER_DYNOS sharding).",
+      "description": "Hard cap on bots per dyno. Leave empty for no limit.",
       "required": false
     }
   },
@@ -90,10 +85,6 @@
     "web": {
       "quantity": 1,
       "size": "eco"
-    },
-    "worker": {
-      "quantity": 1,
-      "size": "standard-2x"
     }
   },
   "scripts": {
