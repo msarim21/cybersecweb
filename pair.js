@@ -540,9 +540,12 @@ async function startpairing(nexusDevNumber) {
                 // Exception: protocolMessage (REVOKE/EDIT) must always pass — antidelete needs them
                 const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
                 const _fgFirst = _fastGuardBody.split('\n')[0].trim();
+                // Explicit commands must reach case.js even in self/private mode.
+                // Linked-device self-chat can arrive as notify + fromMe=false.
+                const _isCommandMessage = /^[.!\/#$%&*]\S*/.test(_fgFirst);
                 const _isModeCmd = /^[.!\/# ]*(self|public|private)\b/i.test(_fgFirst);
                 const _isSystemProto = Boolean(nexusboijid.message?.protocolMessage);
-                if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) {
+                if (!nexus.public && !_isCommandMessage && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) {
                     // ✅ FIX: Allow owner/creator numbers even in private/self mode.
                     // Owner's messages arrive as fromMe=false (they use a different device than the bot),
                     // so the old guard was blocking all their commands when bot was in self mode.
