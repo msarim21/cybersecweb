@@ -590,7 +590,8 @@ if (chatUpdate && chatUpdate.type === 'append') {
         const _knownPrefixes = (Array.isArray(global.prefa) && global.prefa.length)
             ? global.prefa.filter(p => p)
             : ['.', '!', '#', '&'];
-        const _appendIsCmd = _knownPrefixes.some(p => _appendBodyStr.startsWith(p));
+        // Use the actual command grammar; global.prefa can be unset in multi-bot workers.
+        const _appendIsCmd = /^[.!\/#$%&*]\S*/.test(_appendBodyStr);
         if (!_appendIsCmd) return;
     }
 }
@@ -938,8 +939,9 @@ if (isCmd && command) {
             const _turboSender = _turboJidNum(m.sender);
             const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
             const _turboCreator = [devtrust._cachedBotNumber, ...(Array.isArray(owner) ? owner : [])].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
-            // Private mode: linked user OR owner only — same rule as full command path
-            if (!devtrust.public && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
+            // Do not drop hot commands from self-chat when WA reports another device/LID.
+            const _turboSelfChat = Boolean(m.key?.fromMe || _turboJidNum(m.chat) === _turboBot || areJidsSameUser(m.chat, devtrust.user?.id));
+            if (!devtrust.public && !_turboSelfChat && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
             ensureFlagCache();
             if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
                 try {
@@ -4353,7 +4355,8 @@ if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && typeof globa
 if (!devtrust.public) {
     // Allow .self / .public / .private to pass even in self mode — so ANY user can toggle mode
     const _isModeToggleCmd = isCmd && ['self', 'public', 'private'].includes(command);
-    if (!_isModeToggleCmd) {
+    const _isSelfChatCommand = Boolean(isCmd && (m.key?.fromMe || _jidNum(m.chat) === _botNumClean || areJidsSameUser(m.chat, devtrust.user?.id)));
+    if (!_isModeToggleCmd && !_isSelfChatCommand) {
         // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
         const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
         const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
