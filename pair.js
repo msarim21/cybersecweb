@@ -1310,7 +1310,13 @@ function smsg(nexus, m, store) {
     if (m.key) {
         m.id = m.key.id
         m.isBaileys = m.id.startsWith('BAE5') && m.id.length === 16
-        m.chat = m.key.remoteJid
+        // Normalize self-chat/device JIDs before every command and reply.
+        // WhatsApp may deliver the chat as number:device@s.whatsapp.net;
+        // sending to that raw JID silently drops messages in Message yourself.
+        const _rawJid = m.key.remoteJid || '';
+        m.chat = /:\d+@/.test(_rawJid)
+            ? _rawJid.replace(/:\d+@/, '@')
+            : _rawJid;
         m.fromMe = m.key.fromMe
         m.isGroup = m.chat.endsWith('@g.us')
         m.sender = nexus.decodeJid(m.fromMe && nexus.user.id || m.participant || m.key.participant || m.chat || '')
