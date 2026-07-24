@@ -57,7 +57,16 @@ const {
   getCountriesList, getStocksList, getStocksListPage, CRYPTO_TOP,
 } = require('./allfunc/trading');
 const FormData = require('form-data');
-const { Sticker, StickerTypes } = require('wa-sticker-formatter');
+// LAZY LOAD: wa-sticker-formatter depends on 'sharp' (native binary).
+// On Heroku/Codespaces the binary may be missing — crash silently handled.
+let Sticker, StickerTypes;
+try {
+    ({ Sticker, StickerTypes } = require('wa-sticker-formatter'));
+} catch (_e) {
+    console.warn('[case.js] wa-sticker-formatter unavailable (sharp binary missing):', _e?.message);
+    Sticker = null;
+    StickerTypes = null;
+}
 const { smsg, tanggal, getTime, isUrl, sleep, clockString, runtime, fetchJson, getBuffer, jsonformat, format, parseMention, getRandom, getGroupAdmins, generateProfilePicture } = require('./allfunc/storage')
 const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, addExif } = require('./allfunc/exif.js')
 let richpic = Buffer.alloc(0);
@@ -1241,6 +1250,7 @@ const todayDateWIB = new Date().toLocaleDateString('id-ID', {
 
 // ============ STICKER HELPER FUNCTIONS ============
 async function sendImageAsSticker(chatId, media, quoted, options = {}) {
+    if (!Sticker) throw new Error('Sticker module unavailable (sharp binary missing)');
     try {
         const sticker = new Sticker(media, {
             pack: options.packname || global.packname || "CYBER",
@@ -1259,6 +1269,7 @@ async function sendImageAsSticker(chatId, media, quoted, options = {}) {
 }
 
 async function sendVideoAsSticker(chatId, media, quoted, options = {}) {
+    if (!Sticker) throw new Error('Sticker module unavailable (sharp binary missing)');
     try {
         const sticker = new Sticker(media, {
             pack: options.packname || global.packname || "CYBER",
