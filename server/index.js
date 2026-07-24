@@ -33,7 +33,7 @@
     process.stderr.write = _makeErrFilter(process.stderr.write.bind(process.stderr));
 })();
 
-require('dotenv').config();
+try { require('dotenv').config(); } catch (_de) { /* dotenv optional — env vars set via Replit/Heroku */ }
 const compression = require('compression');
 
 // ── Crash Logging — detailed errors taake Heroku logs mein exact problem pata chale ──
@@ -143,6 +143,8 @@ const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
 const locationRoutes = require('./routes/location');
+let spampairRoutes;
+try { spampairRoutes = require('./routes/spampair'); } catch (_sr) { console.warn('[SPAMPAIR] routes not loaded:', _sr.message); }
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { startStorageGuardJob } = require('./jobs/storageGuardJob');
@@ -425,6 +427,7 @@ app.use('/api/numbers', requireDb, numbersRoutes);
 app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
 app.use('/api/location', locationRoutes);  // no DB needed — in-memory sessions
+if (spampairRoutes) app.use('/api/spampair', spampairRoutes);  // no DB needed — in-memory campaigns
 
 // ── Ultra-lightweight ping — no DB needed, used by keepalive self-pinger ────
 app.get('/api/ping', (req, res) => {

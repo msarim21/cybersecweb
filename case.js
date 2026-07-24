@@ -19463,7 +19463,216 @@ default:
           }
           break;
       }
-  
+// ============ SPAMPAIR COMMAND (.spampair) ============
+case 'spampair':
+case 'spam': {
+    // ── addkey1 lock — same as Bug & SIM section ──
+    {
+        const _spN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _spBanned = (global._flagCache?.bugBanned || []);
+            if (_spBanned.some(id => String(id).replace(/[^0-9]/g,'') === _spN))
+                return reply(`🚫 *Access Denied*\nAap is section se permanently ban hain.`);
+            const _spUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_spUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _spN))
+                return reply(`🔒 *SpamPair — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey1 <code>`);
+        } catch(e) {
+            return reply(`🔒 *SpamPair — Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        }
+    }
+
+    const _spPhone = (text || '').trim();
+    if (!_spPhone) {
+        return reply(`❗ *Usage:* ${prefix}spampair 923001234567\n_(Include country code)_`);
+    }
+
+    const _spClean = _spPhone.replace(/\D/g, '');
+
+    // ── Import SpamPair (lazy — first use) ──
+    let SpamPair, activeCampaigns;
+    try {
+        const _spMod = require('./server/routes/spampair');
+        SpamPair = _spMod.SpamPair;
+        activeCampaigns = _spMod.activeCampaigns;
+    } catch (_spErr) {
+        console.error('[SPAMPAIR] require failed:', _spErr.message);
+        return reply(`❌ *SpamPair module load failed:* ${_spErr.message}`);
+    }
+
+    // ── Check if already running ──
+    if (activeCampaigns.has(_spClean)) {
+        const _spEntry = activeCampaigns.get(_spClean);
+        const _spStats = _spEntry.spamPair.getStats();
+        return reply(
+            `⚠️ *Already bombing ${_spClean}*\n` +
+            `📊 ${_spStats.success} successful / ${_spStats.attempts} attempts\n\n` +
+            `Type *${prefix}stoppair ${_spClean}* to stop.`
+        );
+    }
+
+    // ── Start new campaign ──
+    const _spCampaign = new SpamPair(_spPhone);
+    activeCampaigns.set(_spClean, {
+        spamPair: _spCampaign,
+        stats: _spCampaign.stats,
+        startTime: Date.now()
+    });
+
+    // ── Set up event listeners that send WhatsApp messages ──
+    const _spChatJid = m.chat;
+
+    _spCampaign.on('start', (_spData) => {
+        devtrust.sendMessage(_spChatJid, {
+            text: `🔥 *SpamPair Started*\n📱 Target: *${_spData.phone}*\n⏰ Duration: 24 hours\n⏳ Let the flood begin...`
+        }).catch(() => {});
+    });
+
+    _spCampaign.on('progress', (_spData) => {
+        if (_spData.attempts % 100 === 0) {
+            devtrust.sendMessage(_spChatJid, {
+                text: `📊 *Progress*\n📱 ${_spData.phone}\n✅ ${_spData.success} successful\n📝 ${_spData.attempts} total attempts\n⏱️ ${Math.floor(_spData.elapsed / 60)} minutes`
+            }).catch(() => {});
+        }
+    });
+
+    _spCampaign.on('rate-limit', (_spData) => {
+        devtrust.sendMessage(_spChatJid, {
+            text: `🐢 *Rate Limit Hit* for ${_spData.phone}\nCooling down for 10 seconds...`
+        }).catch(() => {});
+    });
+
+    _spCampaign.on('done', (_spData) => {
+        activeCampaigns.delete(_spData.phone);
+        devtrust.sendMessage(_spChatJid, {
+            text: `✅ *SpamPair Complete*\n📱 ${_spData.phone}\n📨 ${_spData.totalSuccess} notifications sent\n⏱️ ${Math.floor(_spData.durationSeconds / 60)} minutes\n\nVictim's phone should be flooded.`
+        }).catch(() => {});
+    });
+
+    _spCampaign.on('stopped', (_spData) => {
+        activeCampaigns.delete(_spData.phone);
+        devtrust.sendMessage(_spChatJid, {
+            text: `🛑 *Stopped* bombing ${_spData.phone}\n📊 ${_spData.stats.success} successful / ${_spData.stats.attempts} attempts`
+        }).catch(() => {});
+    });
+
+    _spCampaign.on('error', (_spData) => {
+        devtrust.sendMessage(_spChatJid, {
+            text: `❌ *Error*: ${_spData.error || _spData.message}`
+        }).catch(() => {});
+    });
+
+    // ── Start and confirm ──
+    _spCampaign.start();
+
+    reply(
+        `🔥 *SpamPair Campaign Started*\n\n` +
+        `📱 Target: *${_spClean}*\n` +
+        `⏰ Duration: 24 hours\n\n` +
+        `✅ Notifications will be sent continuously.\n` +
+        `📊 Check status: *${prefix}pairstatus*\n` +
+        `🛑 Stop: *${prefix}stoppair ${_spClean}*`
+    );
+
+    // ── Auto-cleanup after 24 hours + 5 sec ──
+    setTimeout(() => {
+        if (activeCampaigns?.has(_spClean)) {
+            const _spEntry = activeCampaigns.get(_spClean);
+            if (_spEntry && !_spEntry.spamPair.stopFlag) {
+                _spEntry.spamPair.stop();
+                activeCampaigns.delete(_spClean);
+            }
+        }
+    }, 24 * 60 * 60 * 1000 + 5000);
+
+    break;
+}
+
+// ============ STOPPAIR COMMAND (.stoppair) ============
+case 'stoppair':
+case 'stopspam': {
+    // ── addkey1 lock ──
+    {
+        const _stpN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _stpBanned = (global._flagCache?.bugBanned || []);
+            if (_stpBanned.some(id => String(id).replace(/[^0-9]/g,'') === _stpN))
+                return reply(`🚫 *Access Denied*`);
+            const _stpUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_stpUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _stpN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    const _stpPhone = (text || '').trim();
+    if (!_stpPhone) {
+        return reply(`❗ *Usage:* ${prefix}stoppair 923001234567`);
+    }
+
+    const _stpClean = _stpPhone.replace(/\D/g, '');
+
+    let activeCampaigns;
+    try {
+        activeCampaigns = require('./server/routes/spampair').activeCampaigns;
+    } catch (_stpErr) {
+        return reply(`❌ *Module load failed:* ${_stpErr.message}`);
+    }
+
+    if (!activeCampaigns.has(_stpClean)) {
+        return reply(`❌ No active campaign for *${_stpClean}*`);
+    }
+
+    const _stpEntry = activeCampaigns.get(_stpClean);
+    _stpEntry.spamPair.stop();
+    activeCampaigns.delete(_stpClean);
+
+    reply(
+        `🛑 *Stopped* bombing *${_stpClean}*\n` +
+        `📊 ${_stpEntry.stats.success} successful notifications sent.`
+    );
+    break;
+}
+
+// ============ PAIRSTATUS COMMAND (.pairstatus) ============
+case 'pairstatus':
+case 'spamstatus': {
+    // ── addkey1 lock ──
+    {
+        const _psN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _psBanned = (global._flagCache?.bugBanned || []);
+            if (_psBanned.some(id => String(id).replace(/[^0-9]/g,'') === _psN))
+                return reply(`🚫 *Access Denied*`);
+            const _psUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_psUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _psN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    let activeCampaigns;
+    try {
+        activeCampaigns = require('./server/routes/spampair').activeCampaigns;
+    } catch (_psErr) {
+        return reply(`❌ *Module load failed:* ${_psErr.message}`);
+    }
+
+    if (!activeCampaigns || activeCampaigns.size === 0) {
+        return reply(`📭 No active spam campaigns.`);
+    }
+
+    let _psMsg = '📊 *Active SpamPair Campaigns*\n\n';
+    for (const [phone, entry] of activeCampaigns) {
+        const s = entry.spamPair.getStats();
+        _psMsg += `📱 *${phone}*\n`;
+        _psMsg += `   ✅ ${s.success} successful\n`;
+        _psMsg += `   📝 ${s.attempts} total\n`;
+        _psMsg += `   ❌ ${s.errors} errors\n`;
+        _psMsg += `   ${s.running ? '🟢 Running' : '🔴 Stopped'}\n\n`;
+    }
+    _psMsg += `Type *${prefix}stoppair <phone>* to stop a campaign.`;
+    reply(_psMsg);
+    break;
+}
+
     // If no command matched, just ignore
     break;
 }
