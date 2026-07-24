@@ -1,0 +1,445 @@
+2026-07-24T18:45:04.180404+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~154/512 MB projected (30%) — parent RSS 154 MB
+2026-07-24T18:45:04.367265+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:05.117096+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:12.180328+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~154/512 MB projected (30%) — parent RSS 154 MB
+2026-07-24T18:45:12.371652+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:13.119891+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:20.181028+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~158/512 MB projected (31%) — parent RSS 158 MB
+2026-07-24T18:45:20.367884+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:20.929694+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:24.809704+00:00 app[api]: Log session created by user zerodaymemes@gmail.com
+2026-07-24T18:45:28.178704+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~158/512 MB projected (31%) — parent RSS 158 MB
+2026-07-24T18:45:28.364548+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:29.109890+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:36.179325+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~159/512 MB projected (31%) — parent RSS 159 MB
+2026-07-24T18:45:36.365102+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:37.109686+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:44.190534+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~159/512 MB projected (31%) — parent RSS 159 MB
+2026-07-24T18:45:44.227871+00:00 app[web.1]: [AutoReconnect] 🔍 Sweep found 2 offline bot(s) to reconnect
+2026-07-24T18:45:44.227875+00:00 app[web.1]: [AutoReconnect] 🔄 Auto-reconnecting +255711817155...
+2026-07-24T18:45:44.376395+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:44.413747+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:44.413754+00:00 app[web.1]: [AutoReconnect] ⚠️  +255711817155 — no valid DB session, skipping (re-pair required)
+2026-07-24T18:45:44.758966+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:47.413762+00:00 app[web.1]: [AutoReconnect] 🔄 Auto-reconnecting +923471008971...
+2026-07-24T18:45:47.608014+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:47.608038+00:00 app[web.1]: [AutoReconnect] ⚠️  +923471008971 — no valid DB session, skipping (re-pair required)
+2026-07-24T18:45:49.504803+00:00 heroku[router]: at=info method=GET path="/dashboard" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=4d5dbb50-01b7-0801-eba6-2e3bddca4843 fwd="223.123.8.230" dyno=web.1 connect=0ms service=14ms status=200 bytes=457 protocol=http1.1 tls=false
+2026-07-24T18:45:50.855557+00:00 heroku[router]: at=info method=GET path="/favicon.ico" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=bcdea83a-4789-57fe-a629-9d2754395cae fwd="223.123.8.230" dyno=web.1 connect=0ms service=3ms status=200 bytes=457 protocol=http1.1 tls=false
+2026-07-24T18:45:51.594441+00:00 heroku[router]: at=info method=GET path="/api/user/profile" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=25934a97-f7f0-c1ba-730c-ff7433697efc fwd="223.123.8.230" dyno=web.1 connect=0ms service=749ms status=200 bytes=446 protocol=http1.1 tls=false
+2026-07-24T18:45:52.178270+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~161/512 MB projected (31%) — parent RSS 161 MB
+2026-07-24T18:45:52.364061+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:45:52.861194+00:00 heroku[router]: at=info method=GET path="/api/numbers" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=f65cb6d2-b4fc-a3bf-0f96-fe38ca8468a0 fwd="223.123.8.230" dyno=web.1 connect=0ms service=571ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:45:53.026974+00:00 heroku[router]: at=info method=GET path="/api/site/audio" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=e788871a-aa00-68c7-3741-b6e46cd5091c fwd="223.123.8.230" dyno=web.1 connect=0ms service=198ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:45:53.049152+00:00 heroku[router]: at=info method=GET path="/api/user/stats" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=5a0544ca-fb1f-9d96-6c90-47901a522f41 fwd="223.123.8.230" dyno=web.1 connect=0ms service=748ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:45:53.108124+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:45:53.586956+00:00 heroku[router]: at=info method=GET path="/api/user/profile" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=185f1584-07d0-7126-8c44-dcf498e1951f fwd="223.123.8.230" dyno=web.1 connect=1ms service=756ms status=200 bytes=446 protocol=http1.1 tls=false
+2026-07-24T18:45:53.623784+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=da0b4d13-a196-db1f-90ea-dfdc2d74aa30 fwd="223.123.8.230" dyno=web.1 connect=0ms service=779ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:45:54.208858+00:00 heroku[router]: at=info method=GET path="/api/site/broadcast" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=7ddd2724-8b3a-e4ee-7bc0-a1c34023b746 fwd="223.123.8.230" dyno=web.1 connect=0ms service=1369ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:45:56.058501+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=01e673b3-494b-23e9-e450-27ca5a5aac69 fwd="223.123.8.230" dyno=web.1 connect=0ms service=758ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:45:57.388805+00:00 heroku[router]: sock=client at=warning code=H27 desc="Client Request Interrupted" method=GET path="/api/site/audio/file?v=1784918753218" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=010b80d3-bfeb-02ca-0971-f6e0ee78934c fwd="223.123.8.230" dyno=web.1 connect=0ms service=3504ms status=206 bytes=2320057 protocol=http1.1 tls=false
+2026-07-24T18:45:59.448450+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=be5af297-2139-415c-6584-23fed0185bc0 fwd="223.123.8.230" dyno=web.1 connect=0ms service=769ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:00.178863+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~177/512 MB projected (35%) — parent RSS 177 MB
+2026-07-24T18:46:00.377897+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:01.124143+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+Disconnected from log stream. There may be events happening that you do not see here! Attempting to reconnect...
+2026-07-24T18:46:00.377897+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:01.124143+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:46:02.563064+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=da36ac49-2d9a-35e1-2922-41decd52fbf5 fwd="223.123.8.230" dyno=web.1 connect=0ms service=759ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:08.180825+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~180/512 MB projected (35%) — parent RSS 180 MB
+2026-07-24T18:46:08.367091+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:08.930360+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:46:16.179796+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~180/512 MB projected (35%) — parent RSS 180 MB
+2026-07-24T18:46:16.365742+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:17.111458+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:46:17.457629+00:00 app[api]: Log session created by user zerodaymemes@gmail.com
+2026-07-24T18:46:18.636004+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=098acf37-afcb-d0fc-3466-0b70c4f06293 fwd="223.123.8.230" dyno=web.1 connect=0ms service=788ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:20.055612+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=ba42284d-0f73-1ca4-242e-0233aeae5bd7 fwd="223.123.8.230" dyno=web.1 connect=0ms service=776ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:21.090605+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=0c40e68b-b648-9ba7-8ddc-2fdbc038ccb1 fwd="223.123.8.230" dyno=web.1 connect=0ms service=768ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:23.405644+00:00 heroku[router]: at=info method=GET path="/api/site/audio" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=b0b67cdc-d4c4-64d3-3bb2-b455dbd7c973 fwd="223.123.8.230" dyno=web.1 connect=0ms service=187ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:23.470079+00:00 heroku[router]: at=info method=GET path="/api/numbers" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=5de94594-e832-d019-7f33-0dd178f5d06f fwd="223.123.8.230" dyno=web.1 connect=0ms service=561ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:23.482477+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=9bc474f3-8d59-e811-9d5d-1d398799b3ee fwd="223.123.8.230" dyno=web.1 connect=0ms service=758ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:23.430563+00:00 app[web.1]: [Pairing] 923326942269: No active connection found — clearing stale DB session for fresh pairing
+2026-07-24T18:46:23.617418+00:00 app[web.1]: [session-db] ✅ Session creds deleted from DB: 923326942269
+2026-07-24T18:46:23.972379+00:00 heroku[router]: at=info method=GET path="/api/user/stats" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=73897089-5396-26c4-d317-6e0a11de6b22 fwd="223.123.8.230" dyno=web.1 connect=0ms service=759ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:23.971812+00:00 heroku[router]: at=info method=GET path="/api/user/profile" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=b6e85240-a056-58ef-a43c-adb7a838c564 fwd="223.123.8.230" dyno=web.1 connect=1ms service=751ms status=200 bytes=446 protocol=http1.1 tls=false
+2026-07-24T18:46:23.995586+00:00 app[web.1]: [session-db] ✅ Auto-removed linked number on logout: 923326942269
+2026-07-24T18:46:23.995690+00:00 app[web.1]: [Pairing] 923326942269: Generating fresh pairing code
+2026-07-24T18:46:24.179472+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~181/512 MB projected (35%) — parent RSS 181 MB
+2026-07-24T18:46:24.187347+00:00 app[web.1]: [Pairing] 923326942269: Pairing owner saved (userId=6a323b048ed52462b1670128)
+2026-07-24T18:46:24.222459+00:00 app[web.1]: 📁 Created directory: ./nexstore/pairing/923326942269@s.whatsapp.net
+2026-07-24T18:46:24.281666+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.281691+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.281691+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.281692+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.281692+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.281693+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.281712+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:46:24.365467+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:24.603396+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=dfffc0f2-1811-75fe-2a44-14bc9d956160 fwd="223.123.8.230" dyno=web.1 connect=0ms service=842ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:25.151218+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:46:25.629085+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=eee061b5-aef1-9ef7-53d1-11d4e8de6532 fwd="223.123.8.230" dyno=web.1 connect=0ms service=757ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:26.701719+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=854ef775-a413-f78d-3bb8-f9f0d06c00b7 fwd="223.123.8.230" dyno=web.1 connect=0ms service=773ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:27.322070+00:00 app[web.1]: 📱 Pairing code for 923326942269@s.whatsapp.net: S4HJ-QBEV
+2026-07-24T18:46:27.322304+00:00 app[web.1]: ✓ Pairing code saved to pairing_923326942269.json
+2026-07-24T18:46:28.204228+00:00 heroku[router]: at=info method=POST path="/api/pairing/request" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=bc9eb007-fa95-6448-fc3b-9db6fc290506 fwd="223.123.8.230" dyno=web.1 connect=0ms service=5344ms status=200 bytes=44 protocol=http1.1 tls=false
+2026-07-24T18:46:28.203041+00:00 app[web.1]: [Pairing] 923326942269: Pairing code generated successfully
+2026-07-24T18:46:28.943648+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=3b908081-6091-20d6-37cf-cc1ad350b087 fwd="223.123.8.230" dyno=web.1 connect=0ms service=376ms status=200 bytes=19 protocol=http1.1 tls=false
+2026-07-24T18:46:29.066395+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=1868bb2a-05c1-475a-a2e7-0f3d6fc1f05b fwd="223.123.8.230" dyno=web.1 connect=0ms service=769ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:30.931055+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=a8b12b4a-e86c-67a8-fbb1-68aec4dc2f9f fwd="223.123.8.230" dyno=web.1 connect=0ms service=386ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:32.361466+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=ec74bb5e-4c1d-3bdd-1f6c-32e3c24c7bb6 fwd="223.123.8.230" dyno=web.1 connect=0ms service=758ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:32.179552+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~176/512 MB projected (34%) — parent RSS 176 MB
+2026-07-24T18:46:32.365283+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:33.109539+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:46:33.741530+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=196000f7-d44b-02f8-d832-7cd7a3cea4bc fwd="223.123.8.230" dyno=web.1 connect=0ms service=376ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:35.411690+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=96b5ee5f-e9a0-9657-0ac5-014b215cd2b6 fwd="223.123.8.230" dyno=web.1 connect=0ms service=376ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:35.774854+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=243e3770-fdd9-a612-4f8f-cc01264242e8 fwd="223.123.8.230" dyno=web.1 connect=0ms service=757ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:37.105124+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=d979fe53-b0d5-a0d0-1c91-131851ba041f fwd="223.123.8.230" dyno=web.1 connect=0ms service=375ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:38.437500+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=4d5a52d7-cf21-94f8-74a3-a84fa746dbf5 fwd="223.123.8.230" dyno=web.1 connect=0ms service=770ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:39.047501+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=3247b372-aa25-c048-f16f-0fe18e37d406 fwd="223.123.8.230" dyno=web.1 connect=0ms service=380ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:40.180692+00:00 app[web.1]: [Supervisor] Managing 3 bot(s) | max 2 concurrent | turbo LRU ON (3 linked > 2 slots) | Dyno ~176/512 MB projected (34%) — parent RSS 176 MB
+2026-07-24T18:46:40.366739+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 255711817155
+2026-07-24T18:46:41.025941+00:00 heroku[router]: at=info method=GET path="/api/pairing/status/923326942269" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=f8c87d48-b591-d807-25c2-8c1f2034a9d8 fwd="223.123.8.230" dyno=web.1 connect=0ms service=376ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:46:41.121659+00:00 app[web.1]: [session-db] ⚠️  No valid session in DB for 923471008971
+2026-07-24T18:46:41.386247+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=3b09edc5-a6dd-ddbe-8576-1043897b9140 fwd="223.123.8.230" dyno=web.1 connect=0ms service=758ms status=304 bytes=0 protocol=http1.1 tls=false
+Disconnected from log stream. There may be events happening that you do not see here! Attempting to reconnect...
+2026-07-24T18:47:28.390634+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:47:34.790133+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=96c51055-a68e-923c-5ecc-ae637b953645 fwd="223.123.8.230" dyno=web.1 connect=0ms service=759ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:36.182539+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~186/512 MB projected (36%) — parent RSS 186 MB
+2026-07-24T18:47:36.182765+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:47:38.261389+00:00 app[web.1]: [Supervisor] Bot +923326942269 child exited (code=184, restarts=0)
+2026-07-24T18:47:38.756399+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=62f8552d-8e4a-914c-6126-13e894beb9a5 fwd="223.123.8.230" dyno=web.1 connect=0ms service=757ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:39.046556+00:00 app[api]: Log session created by user zerodaymemes@gmail.com
+2026-07-24T18:47:39.957435+00:00 heroku[router]: at=info method=GET path="/api/numbers" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=c1dd179a-ef5c-9c73-ba21-886ad856a818 fwd="223.123.8.230" dyno=web.1 connect=0ms service=750ms status=200 bytes=413 protocol=http1.1 tls=false
+2026-07-24T18:47:40.334369+00:00 heroku[router]: at=info method=GET path="/api/user/stats" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=0ee498c8-874c-6ec4-497b-0d69bba1dc67 fwd="223.123.8.230" dyno=web.1 connect=0ms service=750ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:40.454427+00:00 heroku[router]: at=info method=GET path="/api/site/audio" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=1b740991-4d4c-53b3-f3da-b1da917b640f fwd="223.123.8.230" dyno=web.1 connect=1ms service=187ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:40.847165+00:00 app[web.1]: [32mLoading Chat [11%][39m
+2026-07-24T18:47:41.151896+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=3a7e314e-0fe4-6bf9-8806-2abff162c52b fwd="223.123.8.230" dyno=web.1 connect=0ms service=888ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:41.150746+00:00 heroku[router]: at=info method=GET path="/api/user/profile" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=65038247-7d82-316a-64e4-f932ef8fd478 fwd="223.123.8.230" dyno=web.1 connect=0ms service=908ms status=200 bytes=446 protocol=http1.1 tls=false
+2026-07-24T18:47:41.339986+00:00 app[web.1]: [PAIR→CASE] type=notify fromMe=true id=A5E1092C body=""
+2026-07-24T18:47:41.346037+00:00 app[web.1]: [pair.js] Message processing error: 
+2026-07-24T18:47:41.346039+00:00 app[web.1]: Something went wrong installing the "sharp" module
+2026-07-24T18:47:41.346040+00:00 app[web.1]: 
+2026-07-24T18:47:41.346040+00:00 app[web.1]: Cannot find module '../build/Release/sharp-linux-x64.node'
+2026-07-24T18:47:41.346040+00:00 app[web.1]: Require stack:
+2026-07-24T18:47:41.346041+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/sharp.js
+2026-07-24T18:47:41.346041+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/constructor.js
+2026-07-24T18:47:41.346042+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/index.js
+2026-07-24T18:47:41.346042+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/internal/convert.js
+2026-07-24T18:47:41.346042+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/Sticker.js
+2026-07-24T18:47:41.346043+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/index.js
+2026-07-24T18:47:41.346043+00:00 app[web.1]: - /app/case.js
+2026-07-24T18:47:41.346043+00:00 app[web.1]: - /app/pair.js
+2026-07-24T18:47:41.346044+00:00 app[web.1]: - /app/server/routes/pairing.js
+2026-07-24T18:47:41.346044+00:00 app[web.1]: - /app/server/index.js
+2026-07-24T18:47:41.346044+00:00 app[web.1]: 
+2026-07-24T18:47:41.346044+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:47:41.346045+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:47:41.346046+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:47:41.346046+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:47:41.346152+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346168+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346190+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346225+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346225+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346245+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346259+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346278+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346301+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346425+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346448+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346470+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346489+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346515+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346527+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346548+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346565+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346591+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346599+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346622+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346642+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346677+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346677+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346702+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346723+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346752+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch audio: Cannot derive from empty media key
+2026-07-24T18:47:41.346763+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch audio: Cannot derive from empty media key
+2026-07-24T18:47:41.346789+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346811+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346840+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346855+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346880+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346898+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346917+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346943+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346960+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.346980+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347001+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347025+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347043+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347061+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347089+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347103+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347141+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347172+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347172+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347197+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347216+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347297+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347298+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347298+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347299+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347322+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347344+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347362+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347382+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347407+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347426+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347444+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347466+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347487+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347505+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347524+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347547+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347567+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347605+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347610+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347631+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347666+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347682+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347702+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347725+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347796+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347820+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347830+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:41.347853+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: Cannot derive from empty media key
+2026-07-24T18:47:41.347875+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch image: Cannot derive from empty media key
+2026-07-24T18:47:43.253404+00:00 heroku[web.1]: Process running mem=637M(121.2%)
+2026-07-24T18:47:43.255913+00:00 heroku[web.1]: Error R14 (Memory quota exceeded)
+2026-07-24T18:47:44.600987+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=8494a18c-1d27-3764-511e-667cacdf26c2 fwd="223.123.8.230" dyno=web.1 connect=0ms service=3141ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:47.727818+00:00 app[web.1]: [ANTIDELETE][923326942269] prefetch video: error:1C800064:Provider routines::bad decrypt
+2026-07-24T18:47:52.557588+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~338/512 MB projected (66%) — parent RSS 338 MB
+2026-07-24T18:47:52.559192+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:47:53.046296+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=f332a996-98f3-a09c-d68c-bc7ac75936b3 fwd="223.123.8.230" dyno=web.1 connect=0ms service=6783ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:52.905470+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~338/512 MB projected (66%) — parent RSS 338 MB
+2026-07-24T18:47:52.911910+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:47:53.355565+00:00 app[web.1]: 
+2026-07-24T18:47:53.355606+00:00 app[web.1]: ╔══════════════════════════════════════╗
+2026-07-24T18:47:53.355830+00:00 app[web.1]: ║  ISOLATED BOT: +923326942269         ║
+2026-07-24T18:47:53.355831+00:00 app[web.1]: ╚══════════════════════════════════════╝
+2026-07-24T18:47:53.355831+00:00 app[web.1]: 
+2026-07-24T18:47:53.357689+00:00 app[web.1]: [BotWorkspace] ✅ Isolated workspace ready: database/bots/923326942269
+2026-07-24T18:47:53.871905+00:00 app[web.1]: [32mLoading Chat [22%][39m
+2026-07-24T18:47:54.144545+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=0d9fae7b-8709-7488-7017-c173a7ab4679 fwd="223.123.8.230" dyno=web.1 connect=0ms service=763ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:54.267548+00:00 app[web.1]: [PAIR→CASE] type=notify fromMe=true id=A5120775 body=""
+2026-07-24T18:47:54.288656+00:00 app[web.1]: [pair.js] Message processing error: 
+2026-07-24T18:47:54.288658+00:00 app[web.1]: Something went wrong installing the "sharp" module
+2026-07-24T18:47:54.288658+00:00 app[web.1]: 
+2026-07-24T18:47:54.288659+00:00 app[web.1]: Cannot find module '../build/Release/sharp-linux-x64.node'
+2026-07-24T18:47:54.288659+00:00 app[web.1]: Require stack:
+2026-07-24T18:47:54.288660+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/sharp.js
+2026-07-24T18:47:54.288660+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/constructor.js
+2026-07-24T18:47:54.288660+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/index.js
+2026-07-24T18:47:54.288660+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/internal/convert.js
+2026-07-24T18:47:54.288661+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/Sticker.js
+2026-07-24T18:47:54.288661+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/index.js
+2026-07-24T18:47:54.288661+00:00 app[web.1]: - /app/case.js
+2026-07-24T18:47:54.288662+00:00 app[web.1]: - /app/pair.js
+2026-07-24T18:47:54.288662+00:00 app[web.1]: - /app/server/routes/pairing.js
+2026-07-24T18:47:54.288663+00:00 app[web.1]: - /app/server/index.js
+2026-07-24T18:47:54.288663+00:00 app[web.1]: 
+2026-07-24T18:47:54.288663+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:47:54.288663+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:47:54.288671+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:47:54.288671+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:47:55.225757+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=ba2e69c2-3c72-c984-97ac-1e9bcac22518 fwd="223.123.8.230" dyno=web.1 connect=0ms service=823ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:55.328144+00:00 app[web.1]: ✅ MongoDB connected
+2026-07-24T18:47:55.355983+00:00 app[web.1]: [ANTIDELETE] Cache retention: 24h | max 2000 entries per bot
+2026-07-24T18:47:56.812423+00:00 app[web.1]: [BotRunner:923326942269] case.js warning: 
+2026-07-24T18:47:56.812445+00:00 app[web.1]: Something went wrong installing the "sharp" module
+2026-07-24T18:47:56.812445+00:00 app[web.1]: 
+2026-07-24T18:47:56.812446+00:00 app[web.1]: Cannot find module '../build/Release/sharp-linux-x64.node'
+2026-07-24T18:47:56.812446+00:00 app[web.1]: Require stack:
+2026-07-24T18:47:56.812447+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/sharp.js
+2026-07-24T18:47:56.812447+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/constructor.js
+2026-07-24T18:47:56.812448+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/index.js
+2026-07-24T18:47:56.812448+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/internal/convert.js
+2026-07-24T18:47:56.812448+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/Sticker.js
+2026-07-24T18:47:56.812449+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/index.js
+2026-07-24T18:47:56.812449+00:00 app[web.1]: - /app/case.js
+2026-07-24T18:47:56.812450+00:00 app[web.1]: - /app/worker/bot-runner.js
+2026-07-24T18:47:56.812450+00:00 app[web.1]: 
+2026-07-24T18:47:56.812451+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:47:56.812451+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:47:56.812451+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:47:56.812452+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:47:57.377791+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=5b8567b2-88bc-b8d5-1d5b-81347209ba5c fwd="223.123.8.230" dyno=web.1 connect=0ms service=879ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:47:57.238368+00:00 app[web.1]: [session-db] ✅ Valid local creds found for 923326942269: /app/nexstore/pairing/923326942269@s.whatsapp.net
+2026-07-24T18:47:57.238439+00:00 app[web.1]: [BotRunner:923326942269] ✅ Session ready (local or restored from DB)
+2026-07-24T18:47:57.289937+00:00 app[web.1]: [BotRunner:923326942269] Connecting WhatsApp...
+2026-07-24T18:47:57.332669+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.332675+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.332699+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.332711+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.332729+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.332740+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.332758+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:47:57.713475+00:00 app[web.1]: [AutoRestart] ✅ Bot memory restart at 10:47 pm (every 4h)
+2026-07-24T18:47:57.713505+00:00 app[web.1]: [KeepAlive] Bot-child keepalive (antidelete + session backup 10min, no presence spam)
+2026-07-24T18:47:57.714528+00:00 app[web.1]: [BotRunner:923326942269] 🟢 Running in isolated mode
+2026-07-24T18:47:58.659806+00:00 app[web.1]: [32mLoading Chat [null%][39m
+2026-07-24T18:47:58.780277+00:00 app[web.1]: 🔌 Connection closed for 923326942269@s.whatsapp.net, reason: 440
+2026-07-24T18:47:58.780341+00:00 app[web.1]: ⚠️ Error 440 for 923326942269@s.whatsapp.net. Retry 0/3...
+2026-07-24T18:47:58.789450+00:00 app[web.1]: ✅ Connected: 923326942269@s.whatsapp.net
+2026-07-24T18:48:00.897369+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~318/512 MB projected (62%) — parent RSS 318 MB
+2026-07-24T18:48:00.898391+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:01.405432+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=97132afe-d2be-b1b9-2e96-9607b5fe63e7 fwd="223.123.8.230" dyno=web.1 connect=0ms service=759ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:01.420888+00:00 heroku[router]: sock=client at=warning code=H27 desc="Client Request Interrupted" method=GET path="/api/site/audio/file?v=1784918831553" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=2a44b715-fdbc-69ee-7d32-1d25ce2b5416 fwd="223.123.8.230" dyno=web.1 connect=0ms service=14570ms status=206 bytes=3946153 protocol=http1.1 tls=false
+2026-07-24T18:48:02.709822+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=c2b418be-7265-4ee9-e5ac-3c00406e4cfd fwd="223.123.8.230" dyno=web.1 connect=0ms service=776ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:03.739795+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=44f4e7fc-a6f3-a987-8658-6bca9646805b fwd="223.123.8.230" dyno=web.1 connect=0ms service=760ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:03.841623+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:03.841651+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:03.841651+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:03.841652+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:03.841652+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:03.841652+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:03.841653+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:48:04.314804+00:00 app[web.1]: [session-db] 📦 Compacted backup: 827 essential files (was 4800 total)
+2026-07-24T18:48:04.516474+00:00 app[web.1]: 🔌 Connection closed for 923326942269@s.whatsapp.net, reason: 440
+2026-07-24T18:48:04.516501+00:00 app[web.1]: ⚠️ Error 440 (isolated) for 923326942269@s.whatsapp.net — waiting 30s then exiting (Supervisor will restart with 60s delay)
+2026-07-24T18:48:04.569288+00:00 app[web.1]: [32mLoading Chat [null%][39m
+2026-07-24T18:48:04.683324+00:00 app[web.1]: ✅ Connected: 923326942269@s.whatsapp.net
+2026-07-24T18:48:05.005821+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=96bfb232-509c-f5f2-1bc3-1b3ccf74f18d fwd="223.123.8.230" dyno=web.1 connect=0ms service=898ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:06.286763+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=1edad996-3d2c-fecc-5193-a82ef43397a9 fwd="223.123.8.230" dyno=web.1 connect=0ms service=872ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:06.194642+00:00 app[web.1]: [session-db] ✅ Session backed up to DB: 923326942269 (827 essential files)
+2026-07-24T18:48:06.194681+00:00 app[web.1]: [Session] ✅ Session backed up to DB on connect: 923326942269
+2026-07-24T18:48:06.200477+00:00 app[web.1]: [923326942269@s.whatsapp.net] ℹ️  Reconnected — welcome message already sent (flag exists), skipping.
+2026-07-24T18:48:06.255032+00:00 app[web.1]: ⚠️ Auto-actions failed: 
+2026-07-24T18:48:06.255035+00:00 app[web.1]: Something went wrong installing the "sharp" module
+2026-07-24T18:48:06.255035+00:00 app[web.1]: 
+2026-07-24T18:48:06.255035+00:00 app[web.1]: Cannot find module '../build/Release/sharp-linux-x64.node'
+2026-07-24T18:48:06.255036+00:00 app[web.1]: Require stack:
+2026-07-24T18:48:06.255046+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/sharp.js
+2026-07-24T18:48:06.255046+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/constructor.js
+2026-07-24T18:48:06.255046+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/index.js
+2026-07-24T18:48:06.255047+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/internal/convert.js
+2026-07-24T18:48:06.255047+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/Sticker.js
+2026-07-24T18:48:06.255047+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/index.js
+2026-07-24T18:48:06.255048+00:00 app[web.1]: - /app/case.js
+2026-07-24T18:48:06.255048+00:00 app[web.1]: - /app/pair.js
+2026-07-24T18:48:06.255048+00:00 app[web.1]: - /app/worker/bot-runner.js
+2026-07-24T18:48:06.255048+00:00 app[web.1]: 
+2026-07-24T18:48:06.255049+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:48:06.255050+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:48:06.255050+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:48:06.255050+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:48:07.268880+00:00 heroku[web.1]: Process running mem=781M(152.6%)
+2026-07-24T18:48:07.270897+00:00 heroku[web.1]: Error R14 (Memory quota exceeded)
+2026-07-24T18:48:07.554473+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=31d683d6-3990-6d76-c2bc-c10cc4389cf2 fwd="223.123.8.230" dyno=web.1 connect=0ms service=986ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:09.049265+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=dbb5ce62-9f7e-b62c-947a-b788a9a63fae fwd="223.123.8.230" dyno=web.1 connect=0ms service=970ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:09.140336+00:00 heroku[router]: at=info method=GET path="/api/site/audio" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=17f60d43-7892-2eb5-be03-c184ead35b96 fwd="223.123.8.230" dyno=web.1 connect=0ms service=466ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:09.097099+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~305/512 MB projected (60%) — parent RSS 305 MB
+2026-07-24T18:48:09.103562+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:09.602288+00:00 heroku[router]: at=info method=GET path="/api/numbers" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=24852e27-a5f0-917a-360d-01d9cbd6c2e7 fwd="223.123.8.230" dyno=web.1 connect=0ms service=952ms status=200 bytes=413 protocol=http1.1 tls=false
+2026-07-24T18:48:09.622531+00:00 heroku[router]: at=info method=GET path="/api/user/stats" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=727d21c9-476b-1191-45ca-bfe6bf85e31b fwd="223.123.8.230" dyno=web.1 connect=0ms service=972ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:09.665790+00:00 heroku[router]: at=info method=GET path="/api/user/profile" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=9fb974fe-5fd8-7eec-cc6e-b8040015d3b2 fwd="223.123.8.230" dyno=web.1 connect=0ms service=1011ms status=200 bytes=446 protocol=http1.1 tls=false
+2026-07-24T18:48:14.966126+00:00 app[web.1]: [session-db] 📦 Compacted backup: 827 essential files (was 4800 total)
+2026-07-24T18:48:15.954702+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=c3501458-cbb5-2a26-ffb7-ec5d58eaff98 fwd="223.123.8.230" dyno=web.1 connect=0ms service=6405ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:16.745019+00:00 app[web.1]: [session-db] ✅ Session backed up to DB: 923326942269 (827 essential files)
+2026-07-24T18:48:16.745036+00:00 app[web.1]: [Session] ✅ Session backed up to DB on connect: 923326942269
+2026-07-24T18:48:16.746036+00:00 app[web.1]: [923326942269@s.whatsapp.net] ℹ️  Reconnected — welcome message already sent (flag exists), skipping.
+2026-07-24T18:48:16.777397+00:00 app[web.1]: ⚠️ Auto-actions failed: 
+2026-07-24T18:48:16.777399+00:00 app[web.1]: Something went wrong installing the "sharp" module
+2026-07-24T18:48:16.777399+00:00 app[web.1]: 
+2026-07-24T18:48:16.777400+00:00 app[web.1]: Cannot find module '../build/Release/sharp-linux-x64.node'
+2026-07-24T18:48:16.777400+00:00 app[web.1]: Require stack:
+2026-07-24T18:48:16.777402+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/sharp.js
+2026-07-24T18:48:16.777402+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/constructor.js
+2026-07-24T18:48:16.777402+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/index.js
+2026-07-24T18:48:16.777403+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/internal/convert.js
+2026-07-24T18:48:16.777403+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/Sticker.js
+2026-07-24T18:48:16.777403+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/index.js
+2026-07-24T18:48:16.777404+00:00 app[web.1]: - /app/case.js
+2026-07-24T18:48:16.777404+00:00 app[web.1]: - /app/pair.js
+2026-07-24T18:48:16.777404+00:00 app[web.1]: - /app/server/routes/pairing.js
+2026-07-24T18:48:16.777405+00:00 app[web.1]: - /app/server/index.js
+2026-07-24T18:48:16.777405+00:00 app[web.1]: 
+2026-07-24T18:48:16.777405+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:48:16.777406+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:48:16.777406+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:48:16.777407+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:48:16.904928+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~305/512 MB projected (60%) — parent RSS 305 MB
+2026-07-24T18:48:16.906465+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:18.142729+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=79de09d6-67da-6f1f-1d81-938c00ef328d fwd="223.123.8.230" dyno=web.1 connect=0ms service=763ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:20.507837+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=09740bf3-1a1d-4b7c-b495-bfc700595cc9 fwd="223.123.8.230" dyno=web.1 connect=0ms service=762ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:22.656139+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=34e8f9bb-68cf-2ed8-7fc4-e2ffdb3e6f87 fwd="223.123.8.230" dyno=web.1 connect=0ms service=759ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:23.448181+00:00 heroku[web.1]: Process running mem=793M(155.0%)
+2026-07-24T18:48:23.450567+00:00 heroku[web.1]: Error R14 (Memory quota exceeded)
+2026-07-24T18:48:24.925257+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~304/512 MB projected (59%) — parent RSS 304 MB
+2026-07-24T18:48:24.926681+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:25.354292+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=3367ba23-f30d-c371-b26c-80faa0e348b8 fwd="223.123.8.230" dyno=web.1 connect=0ms service=765ms status=304 bytes=0 protocol=http1.1 tls=false
+Disconnected from log stream. There may be events happening that you do not see here! Attempting to reconnect...
+2026-07-24T18:48:31.400763+00:00 app[web.1]: 
+2026-07-24T18:48:31.400763+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:48:31.400763+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:48:31.400763+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:48:31.400764+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:48:33.339891+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~350/512 MB projected (68%) — parent RSS 350 MB
+2026-07-24T18:48:33.341319+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:34.649355+00:00 app[web.1]: [Supervisor] Bot +923326942269 child exited (code=184, restarts=1)
+2026-07-24T18:48:35.296304+00:00 app[api]: Log session created by user zerodaymemes@gmail.com
+2026-07-24T18:48:36.265198+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=c7710545-1bbf-a4de-3ca0-17369c265ef1 fwd="223.123.8.230" dyno=web.1 connect=0ms service=763ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:37.970892+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=de351e8b-110f-4001-9b74-0abc7c4e5314 fwd="223.123.8.230" dyno=web.1 connect=0ms service=756ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:38.990884+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=83ed9e05-f30e-0087-dce0-3aa647afb98f fwd="223.123.8.230" dyno=web.1 connect=0ms service=758ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:40.100430+00:00 heroku[router]: at=info method=GET path="/api/user/chat/messages" host=cybersecweb-4ce8fd574a5b.herokuapp.com request_id=6c0f17f0-f21b-d9ab-795b-0a361cd9362f fwd="223.123.8.230" dyno=web.1 connect=0ms service=767ms status=304 bytes=0 protocol=http1.1 tls=false
+2026-07-24T18:48:41.340313+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~351/512 MB projected (69%) — parent RSS 351 MB
+2026-07-24T18:48:41.340532+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:44.278998+00:00 heroku[web.1]: Process running mem=751M(142.1%)
+2026-07-24T18:48:44.280867+00:00 heroku[web.1]: Error R14 (Memory quota exceeded)
+2026-07-24T18:48:49.338641+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~300/512 MB projected (59%) — parent RSS 300 MB
+2026-07-24T18:48:49.338830+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:57.242758+00:00 app[web.1]: 
+2026-07-24T18:48:57.242778+00:00 app[web.1]: ╔══════════════════════════════════════╗
+2026-07-24T18:48:57.242951+00:00 app[web.1]: ║  ISOLATED BOT: +923326942269         ║
+2026-07-24T18:48:57.242978+00:00 app[web.1]: ╚══════════════════════════════════════╝
+2026-07-24T18:48:57.242978+00:00 app[web.1]: 
+2026-07-24T18:48:57.244558+00:00 app[web.1]: [BotWorkspace] ✅ Isolated workspace ready: database/bots/923326942269
+2026-07-24T18:48:57.338334+00:00 app[web.1]: [Supervisor] Managing 4 bot(s) | max 2 concurrent | turbo LRU ON (4 linked > 2 slots) | Dyno ~301/512 MB projected (59%) — parent RSS 301 MB
+2026-07-24T18:48:57.338548+00:00 app[web.1]: [Supervisor] ⏸ At cap (2/2) — 2 queued (next sync in 8000ms)
+2026-07-24T18:48:59.223244+00:00 app[web.1]: ✅ MongoDB connected
+2026-07-24T18:48:59.244949+00:00 app[web.1]: [ANTIDELETE] Cache retention: 24h | max 2000 entries per bot
+2026-07-24T18:48:59.865199+00:00 app[web.1]: [BotRunner:923326942269] case.js warning: 
+2026-07-24T18:48:59.865221+00:00 app[web.1]: Something went wrong installing the "sharp" module
+2026-07-24T18:48:59.865222+00:00 app[web.1]: 
+2026-07-24T18:48:59.865222+00:00 app[web.1]: Cannot find module '../build/Release/sharp-linux-x64.node'
+2026-07-24T18:48:59.865222+00:00 app[web.1]: Require stack:
+2026-07-24T18:48:59.865223+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/sharp.js
+2026-07-24T18:48:59.865224+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/constructor.js
+2026-07-24T18:48:59.865224+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/node_modules/sharp/lib/index.js
+2026-07-24T18:48:59.865224+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/internal/convert.js
+2026-07-24T18:48:59.865224+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/Sticker.js
+2026-07-24T18:48:59.865225+00:00 app[web.1]: - /app/node_modules/wa-sticker-formatter/dist/index.js
+2026-07-24T18:48:59.865225+00:00 app[web.1]: - /app/case.js
+2026-07-24T18:48:59.865226+00:00 app[web.1]: - /app/worker/bot-runner.js
+2026-07-24T18:48:59.865226+00:00 app[web.1]: 
+2026-07-24T18:48:59.865226+00:00 app[web.1]: Possible solutions:
+2026-07-24T18:48:59.865227+00:00 app[web.1]: - Install with verbose logging and look for errors: "npm install --ignore-scripts=false --foreground-scripts --verbose sharp"
+2026-07-24T18:48:59.865227+00:00 app[web.1]: - Install for the current linux-x64 runtime: "npm install --platform=linux --arch=x64 sharp"
+2026-07-24T18:48:59.865228+00:00 app[web.1]: - Consult the installation documentation: https://sharp.pixelplumbing.com/install
+2026-07-24T18:49:00.292145+00:00 app[web.1]: [session-db] ✅ Valid local creds found for 923326942269: /app/nexstore/pairing/923326942269@s.whatsapp.net
+2026-07-24T18:49:00.292245+00:00 app[web.1]: [BotRunner:923326942269] ✅ Session ready (local or restored from DB)
+2026-07-24T18:49:00.353195+00:00 app[web.1]: [BotRunner:923326942269] Connecting WhatsApp...
+2026-07-24T18:49:00.408449+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.408575+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.408603+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.408626+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.408646+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.408666+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.408685+00:00 app[web.1]: [32mLoading Chat [undefined%][39m
+2026-07-24T18:49:00.768985+00:00 app[web.1]: [AutoRestart] ✅ Bot memory restart at 10:49 pm (every 4h)
+2026-07-24T18:49:00.769071+00:00 app[web.1]: [KeepAlive] Bot-child keepalive (antidelete + session backup 10min, no presence spam)
+2026-07-24T18:49:00.770246+00:00 app[web.1]: [BotRunner:923326942269] 🟢 Running in isolated mode
+2026-07-24T18:49:01.456285+00:00 app[web.1]: 🔌 Connection closed for 923326942269@s.whatsapp.net, reason: 440
+2026-07-24T18:49:01.456898+00:00 app[web.1]: ⚠️ Error 440 for 923326942269@s.whatsapp.net. Retry 0/3...
+2026-07-24T18:49:01.974181+00:00 app[web.1]: [32mLoading Chat [null%][39m
+2026-07-24T18:49:02.091012+00:00 app[web.1]: ✅ Connected: 923326942269@s.whatsapp.net
