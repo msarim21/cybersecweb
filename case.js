@@ -561,6 +561,19 @@ if (!devtrust || !devtrust.user) return;
 // Keep latest socket reference for background scanners
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
+// 🔍 DIAGNOSTIC REPLY — send a reply for EVERY message to test if case.js can respond
+// This runs before any guard or processing. If you see "🟢 CASE.JS ENTERED" 
+// but commands still don't work, the issue is between here and the command handler.
+try {
+    const _cJid = m.chat || m.key?.remoteJid || '';
+    const _cBody = m.message?.conversation || m.message?.extendedTextMessage?.text || m.body || '';
+    if (_cJid && !_cBody.includes('CASE.JS ENTERED') && !_cBody.includes('DIAG ')) {
+        await devtrust.sendMessage(_cJid, { text: `🟢 CASE.JS ENTERED — body="${String(_cBody).slice(0,20)}" fromMe=${m.key?.fromMe}` });
+    }
+} catch(_cErr) {
+    console.error('[CASE-DIAG] send failed:', _cErr?.message);
+}
+
 // 🔍 DIAGNOSTIC LOG — shows every message that enters case.js
 {
     const _diagB = m?.message?.conversation
@@ -912,6 +925,9 @@ let prefix = getUserPrefix(m.sender);
 
 // STRICT command detection - ONLY detect if message STARTS WITH user's prefix
 const isCmd = body && typeof body === 'string' && body.startsWith(prefix);
+
+// 🔍 DIAG: log body + prefix + isCmd
+console.log(`[CASE-CMD] prefix="${prefix}" isCmd=${isCmd} body="${String(body).slice(0,30)}" mtype=${m.mtype}`);
 
 let command = '';
 let args = [];
