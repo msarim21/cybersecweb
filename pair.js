@@ -569,6 +569,65 @@ async function startpairing(nexusDevNumber) {
                     || nexusboijid.message?.extendedTextMessage?.text || '';
                 console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_diagBody.slice(0,40))}`);
 
+                // ✅ DIRECT DIAGNOSTIC HANDLER — responds for basic commands BEFORE case.js
+                // This bypasses the entire 4000-line case.js chain to determine if the
+                // issue is in message receiving or case.js processing.
+                {
+                    const _rawCmd = (_diagBody || '').trim().toLowerCase();
+                    const _prefix = global.prefa || '.';
+                    const _cmdMatch = _rawCmd.startsWith(_prefix) ? _rawCmd.slice(_prefix.length).split(/\s+/)[0] : '';
+                    if (_cmdMatch) {
+                        console.log(`[PAIR-DIAG] Command detected: ${_cmdMatch} — responding directly`);
+                        try {
+                            const _chat = mek.chat || mek.key?.remoteJid || '';
+                            if (_cmdMatch === 'ping' || _cmdMatch === 'speed') {
+                                const _t1 = Date.now();
+                                await nexus.sendMessage(_chat, { text: `⚡ *DIAGNOSTIC PING*\n\nProcessing: _${_cmdMatch}_` });
+                                const _ms = Date.now() - _t1;
+                                await nexus.sendMessage(_chat, { text: `⚡ *DIAGNOSTIC PONG*\n\nResponse: *${_ms}ms*\n\n✅ Pair.js handler is receiving messages!` });
+                                console.log(`[PAIR-DIAG] ✅ ping responded in ${_ms}ms`);
+                                return; // Skip case.js for diagnostic response
+                            }
+                            if (_cmdMatch === 'alive' || _cmdMatch === 'runtime') {
+                                const up = process.uptime();
+                                const h = Math.floor(up / 3600);
+                                const m = Math.floor((up % 3600) / 60);
+                                await nexus.sendMessage(_chat, { text: `✅ *DIAGNOSTIC ALIVE*\n\nUptime: ${h}h ${m}m\n\n✅ Pair.js handler is receiving messages!` });
+                                console.log(`[PAIR-DIAG] ✅ alive responded`);
+                                return; // Skip case.js for diagnostic response
+                            }
+                            if (_cmdMatch === 'menu' || _cmdMatch === 'allmenu') {
+                                await nexus.sendMessage(_chat, { text: `📋 *DIAGNOSTIC MENU*\n\nYour commands ARE reaching the bot's message handler.\n\nThis is a direct response from pair.js (before case.js).\n\nIf you see this but normal commands don't work,\nthe issue is in case.js processing.` });
+                                console.log(`[PAIR-DIAG] ✅ menu responded`);
+                                return; // Skip case.js for diagnostic response
+                            }
+                            if (_cmdMatch === 'diag') {
+                                const wsState = nexus.ws?.readyState ?? -1;
+                                const botNum = nexus.user?.id || 'unknown';
+                                const trackerEntry = global._rentbotTracker?.get?.(mek.key?.remoteJid?.replace(/:\d+@/, '@') || '');
+                                const lastMsg = trackerEntry?.lastWAMessage ? new Date(trackerEntry.lastWAMessage).toLocaleString() : 'never';
+                                const online = ['🟢', '🟡', '🔴', '⚫'][wsState] || '❓';
+                                await nexus.sendMessage(_chat, {
+                                    text: `🔧 *DIAGNOSTIC REPORT*
+━━━━━━━━━━━━━━━━
+🤖 Bot: ${botNum.split('@')[0]}
+🔌 Socket: ${['OPEN','CONNECTING','CLOSING','CLOSED'][wsState] || 'UNKNOWN'} ${online}
+⏱ Uptime: ${Math.floor(process.uptime() / 60)}m
+📨 Last msg: ${lastMsg}
+🔄 Restart: ${process.env.BOT_RESTART_HOURS || 4}h
+📡 Mode: ${nexus.public ? 'PUBLIC' : 'PRIVATE'}
+━━━━━━━━━━━━━━━━
+✅ Pair.js handler is working correctly.`
+                                });
+                                console.log(`[PAIR-DIAG] ✅ diag responded`);
+                                return;
+                            }
+                        } catch (_diagErr) {
+                            console.error(`[PAIR-DIAG] Error responding to ${_cmdMatch}:`, _diagErr?.message || _diagErr);
+                        }
+                    }
+                }
+
                 require("./case")(nexusboiConnect, mek, chatUpdate, store)
                     .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
             } catch (_msgErr) {
