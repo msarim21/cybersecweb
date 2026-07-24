@@ -387,33 +387,70 @@ async function startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
-        setTimeout(async () => {
-            try {
-                let code = await nexus.requestPairingCode(phoneNumber);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                
-                console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+        // ✅ FIX: Replace fixed 3-second delay with proper connection-aware retry.
+        // The old setTimeout(3s) failed when Baileys WebSocket took >3s to connect
+        // (common with high-latency regions like US→Pakistan).
+        // Now: wait for ws.readyState === 1 (OPEN), then request pairing code.
+        // Retry every 2s up to 90s (matching WhatsApp's ~2min code expiry).
+        (async function requestPairingWhenReady() {
+            for (let retry = 0; retry < 45; retry++) {
+                // Check if already paired (connection.update 'open' fired during our wait)
+                const credsCheck = (() => {
+                    try {
+                        const _c = JSON.parse(fs.readFileSync(
+                            `./nexstore/pairing/${nexusDevNumber}/creds.json`, 'utf-8'));
+                        return !!(_c.me || _c.registered);
+                    } catch(_) { return false; }
+                })();
+                if (credsCheck) {
+                    console.log(chalk.green(`✓ ${nexusDevNumber} already paired during wait — skipping pairing code request`));
+                    return;
+                }
+                const wsReady = nexus.ws?.readyState === 1;
+                if (!wsReady) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    continue;
+                }
+                try {
+                    let code = await nexus.requestPairingCode(phoneNumber);
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
 
-                // Ensure pairing directory exists
-                ensureDirectoryExists('./nexstore/pairing');
-                
-                // Per-bot pairing file — multiple users can pair simultaneously
+                    console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+
+                    ensureDirectoryExists('./nexstore/pairing');
+                    const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
+                    fs.writeFileSync(
+                        `./nexstore/pairing/pairing_${cleanPairNum}.json`,
+                        JSON.stringify({
+                            number: nexusDevNumber,
+                            code: code,
+                            timestamp: new Date().toISOString()
+                        }, null, 2),
+                        'utf8'
+                    );
+                    console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
+                    return;
+                } catch (err) {
+                    console.log(chalk.yellow(`⚠️ Pairing code attempt ${retry + 1} failed: ${err.message} — retrying in 2s...`));
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
+            console.log(chalk.red(`❌ Failed to get pairing code for ${nexusDevNumber} after 45 retries (~90s)`));
+            // Write a failure indicator so HTTP route can surface the error
+            try {
                 const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
                 fs.writeFileSync(
                     `./nexstore/pairing/pairing_${cleanPairNum}.json`,
-                    JSON.stringify({ 
+                    JSON.stringify({
                         number: nexusDevNumber,
-                        code: code,
+                        code: null,
+                        error: 'Failed to get pairing code after 90s — network or WhatsApp issue',
                         timestamp: new Date().toISOString()
                     }, null, 2),
                     'utf8'
                 );
-                
-                console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
-            } catch (err) {
-                console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
-            }
-        }, 3000);
+            } catch (_) {}
+        })();
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
