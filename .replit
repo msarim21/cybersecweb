@@ -46,6 +46,22 @@ waitForPort = 3001
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3000
+
+[[ports]]
+localPort = 5002
+externalPort = 3002
+
 [userenv]
 
 [userenv.shared]
@@ -55,7 +71,3 @@ NODE_ENV = "development"
 [deployment]
 deploymentTarget = "cloudrun"
 run = ["sh", "-c", "/nix/store/1lagpgadaybvs1n2312gysg2phjk89y8-nodejs-20.20.0-wrapped/bin/node $file"]
-
-[[ports]]
-localPort = 8080
-externalPort = 80
