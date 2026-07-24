@@ -564,10 +564,19 @@ async function startpairing(nexusDevNumber) {
                 nexusboiConnect = nexus;
                 mek = smsg(nexusboiConnect, nexusboijid, store);
 
-                // 🔍 DIAGNOSTIC LOG — shows every message that reaches case.js
-                const _diagBody = nexusboijid.message?.conversation
-                    || nexusboijid.message?.extendedTextMessage?.text || '';
-                console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_diagBody.slice(0,40))}`);
+                // 🔍 DIAGNOSTIC: send an ECHO reply for every single message
+                // This proves that messages reach the handler. If you see "✅ ECHO OK" 
+                // but not your command response, the issue is in case.js processing.
+                // If you don't see even this echo, the socket isn't receiving messages.
+                try {
+                    const _dChat = mek.chat || nexusboijid.key?.remoteJid || '';
+                    const _dBody = nexusboijid.message?.conversation
+                        || nexusboijid.message?.extendedTextMessage?.text || '';
+                    console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_dBody.slice(0,40))}`);
+                    await nexus.sendMessage(_dChat, { text: `✅ ECHO OK — received: ${_dBody.slice(0,30)}` });
+                } catch (_dErr) {
+                    console.error('[PAIR-ECHO] Failed to send echo:', _dErr?.message || _dErr);
+                }
 
                 require("./case")(nexusboiConnect, mek, chatUpdate, store)
                     .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
