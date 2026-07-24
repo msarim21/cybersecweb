@@ -561,19 +561,6 @@ if (!devtrust || !devtrust.user) return;
 // Keep latest socket reference for background scanners
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
-// 🔍 DIAGNOSTIC REPLY — send a reply for EVERY message to test if case.js can respond
-// This runs before any guard or processing. If you see "🟢 CASE.JS ENTERED" 
-// but commands still don't work, the issue is between here and the command handler.
-try {
-    const _cJid = m.chat || m.key?.remoteJid || '';
-    const _cBody = m.message?.conversation || m.message?.extendedTextMessage?.text || m.body || '';
-    if (_cJid && !_cBody.includes('CASE.JS ENTERED') && !_cBody.includes('DIAG ')) {
-        await devtrust.sendMessage(_cJid, { text: `🟢 CASE.JS ENTERED — body="${String(_cBody).slice(0,20)}" fromMe=${m.key?.fromMe}` });
-    }
-} catch(_cErr) {
-    console.error('[CASE-DIAG] send failed:', _cErr?.message);
-}
-
 // 🔍 DIAGNOSTIC LOG — shows every message that enters case.js
 {
     const _diagB = m?.message?.conversation
@@ -910,6 +897,22 @@ if (body === '[object Object]') {
     body = typeof m.body === 'string' ? m.body
         : typeof m.text === 'string' ? m.text
         : '';
+}
+
+// 🛠️ CRITICAL FIX: If enriched body is still empty, try reading the raw message directly.
+// WhatsApp self-chat ("Message yourself") can deliver messages with unexpected mtype values
+// (e.g. 'protocolMessage', 'messageContextInfo' with nested content) that skip normal extraction.
+// This fallback catches those edge cases so commands are never silently dropped.
+if (!body || body === '[Pesan interaktif]' || body === '[Pesan telah dihapus]' || body === '[Pesan sementara]') {
+    const _rawText = m?.message?.conversation
+        || m?.message?.extendedTextMessage?.text
+        || m?.message?.ephemeralMessage?.message?.conversation
+        || m?.message?.ephemeralMessage?.message?.extendedTextMessage?.text
+        || m?.message?.protocolMessage?.text
+        || '';
+    if (_rawText) {
+        body = _rawText;
+    }
 }
 
 // ============ COMMAND DETECTION (PER-USER PREFIX) ============

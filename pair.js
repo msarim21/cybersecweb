@@ -569,39 +569,6 @@ async function startpairing(nexusDevNumber) {
                     || nexusboijid.message?.extendedTextMessage?.text || '';
                 console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_diagBody.slice(0,40))}`);
 
-                // ✅ DIRECT DIAGNOSTIC HANDLER — bypass case.js for basic commands
-                // This tests if the bot CAN send replies (proven by echo above)
-                // and if the message content extraction works correctly.
-                {
-                    const _rawCmd = (_diagBody || '').trim().toLowerCase();
-                    const _prefix = global.prefa || '.';
-                    const _cmdMatch = _rawCmd.startsWith('.') ? _rawCmd.slice(1).split(/\s+/)[0] : '';
-                    if (_cmdMatch === 'ping' || _cmdMatch === 'speed') {
-                        try {
-                            const _t1 = Date.now();
-                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `⚡ *DIAG PING* → processing...` });
-                            const _ms = Date.now() - _t1;
-                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `⚡ *DIAG PONG* — ${_ms}ms\n\n✅ pair.js handler works` });
-                            console.log(`[PAIR-DIAG] ✅ ping responded in ${_ms}ms`);
-                        } catch(_e) { console.error('[PAIR-DIAG] ping fail:', _e?.message); }
-                    }
-                    if (_cmdMatch === 'alive' || _cmdMatch === 'runtime') {
-                        try {
-                            const up = process.uptime();
-                            const h = Math.floor(up / 3600);
-                            const m = Math.floor((up % 3600) / 60);
-                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `✅ *DIAG ALIVE* — ${h}h ${m}m\n\n✅ pair.js handler works` });
-                            console.log(`[PAIR-DIAG] ✅ alive responded`);
-                        } catch(_e) { console.error('[PAIR-DIAG] alive fail:', _e?.message); }
-                    }
-                    if (_cmdMatch === 'menu' || _cmdMatch === 'allmenu') {
-                        try {
-                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `📋 *DIAG MENU*\n\nCommands reach pair.js handler.\nThis is NOT from case.js.\n\nIf you see this but .menu doesn't work,\nthe issue is in case.js processing.` });
-                            console.log(`[PAIR-DIAG] ✅ menu responded`);
-                        } catch(_e) { console.error('[PAIR-DIAG] menu fail:', _e?.message); }
-                    }
-                }
-
                 require("./case")(nexusboiConnect, mek, chatUpdate, store)
                     .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
             } catch (_msgErr) {
@@ -1403,7 +1370,17 @@ function smsg(nexus, m, store) {
     }
     if (m.msg?.url) m.download = () => nexus.downloadMediaMessage(m.msg)
     m.text = m.msg?.text || m.msg?.caption || m.message?.conversation || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || ''
-    m.reply = (text, chatId = m.chat, options = {}) => Buffer.isBuffer(text) ? nexus.sendMedia(chatId, text, 'file', '', m, { ...options }) : nexus.sendText(chatId, text, m, { ...options })
+    m.reply = (text, chatId = m.chat, options = {}) => {
+        // SELF-CHAT FIX: "Message yourself" silently drops { quoted: m } messages.
+        // Detect and send without quoted in that case.
+        const _repBotNum = String(nexus.user?.id || '').replace(/:\d+@/, '@').split('@')[0];
+        const _repChatNum = String(chatId || '').split('@')[0];
+        const _repSelfChat = _repBotNum && _repChatNum && _repBotNum === _repChatNum;
+        if (_repSelfChat) {
+            return nexus.sendMessage(chatId, { text: Buffer.isBuffer(text) ? '[media]' : text, ...options });
+        }
+        return Buffer.isBuffer(text) ? nexus.sendMedia(chatId, text, 'file', '', m, { ...options }) : nexus.sendText(chatId, text, m, { ...options });
+    }
     m.copy = () => exports.smsg(nexus, M.fromObject(M.toObject(m)))
     m.copyNForward = (jid = m.chat, forceForward = false, options = {}) => nexus.copyNForward(jid, m, forceForward, options)
 
