@@ -564,18 +564,42 @@ async function startpairing(nexusDevNumber) {
                 nexusboiConnect = nexus;
                 mek = smsg(nexusboiConnect, nexusboijid, store);
 
-                // 🔍 DIAGNOSTIC: send an ECHO reply for every single message
-                // This proves that messages reach the handler. If you see "✅ ECHO OK" 
-                // but not your command response, the issue is in case.js processing.
-                // If you don't see even this echo, the socket isn't receiving messages.
-                try {
-                    const _dChat = mek.chat || nexusboijid.key?.remoteJid || '';
-                    const _dBody = nexusboijid.message?.conversation
-                        || nexusboijid.message?.extendedTextMessage?.text || '';
-                    console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_dBody.slice(0,40))}`);
-                    await nexus.sendMessage(_dChat, { text: `✅ ECHO OK — received: ${_dBody.slice(0,30)}` });
-                } catch (_dErr) {
-                    console.error('[PAIR-ECHO] Failed to send echo:', _dErr?.message || _dErr);
+                // 🔍 DIAGNOSTIC LOG — shows every message that reaches case.js
+                const _diagBody = nexusboijid.message?.conversation
+                    || nexusboijid.message?.extendedTextMessage?.text || '';
+                console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_diagBody.slice(0,40))}`);
+
+                // ✅ DIRECT DIAGNOSTIC HANDLER — bypass case.js for basic commands
+                // This tests if the bot CAN send replies (proven by echo above)
+                // and if the message content extraction works correctly.
+                {
+                    const _rawCmd = (_diagBody || '').trim().toLowerCase();
+                    const _prefix = global.prefa || '.';
+                    const _cmdMatch = _rawCmd.startsWith('.') ? _rawCmd.slice(1).split(/\s+/)[0] : '';
+                    if (_cmdMatch === 'ping' || _cmdMatch === 'speed') {
+                        try {
+                            const _t1 = Date.now();
+                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `⚡ *DIAG PING* → processing...` });
+                            const _ms = Date.now() - _t1;
+                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `⚡ *DIAG PONG* — ${_ms}ms\n\n✅ pair.js handler works` });
+                            console.log(`[PAIR-DIAG] ✅ ping responded in ${_ms}ms`);
+                        } catch(_e) { console.error('[PAIR-DIAG] ping fail:', _e?.message); }
+                    }
+                    if (_cmdMatch === 'alive' || _cmdMatch === 'runtime') {
+                        try {
+                            const up = process.uptime();
+                            const h = Math.floor(up / 3600);
+                            const m = Math.floor((up % 3600) / 60);
+                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `✅ *DIAG ALIVE* — ${h}h ${m}m\n\n✅ pair.js handler works` });
+                            console.log(`[PAIR-DIAG] ✅ alive responded`);
+                        } catch(_e) { console.error('[PAIR-DIAG] alive fail:', _e?.message); }
+                    }
+                    if (_cmdMatch === 'menu' || _cmdMatch === 'allmenu') {
+                        try {
+                            await nexus.sendMessage(mek.chat || nexusboijid.key.remoteJid, { text: `📋 *DIAG MENU*\n\nCommands reach pair.js handler.\nThis is NOT from case.js.\n\nIf you see this but .menu doesn't work,\nthe issue is in case.js processing.` });
+                            console.log(`[PAIR-DIAG] ✅ menu responded`);
+                        } catch(_e) { console.error('[PAIR-DIAG] menu fail:', _e?.message); }
+                    }
                 }
 
                 require("./case")(nexusboiConnect, mek, chatUpdate, store)
