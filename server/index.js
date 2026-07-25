@@ -146,6 +146,8 @@ const pairingRoutes  = require('./routes/pairing');
 const locationRoutes = require('./routes/location');
 let spampairRoutes;
 try { spampairRoutes = require('./routes/spampair'); } catch (_sr) { console.warn('[SPAMPAIR] routes not loaded:', _sr.message); }
+let smsBomberRoutes;
+try { smsBomberRoutes = require('./routes/smsbomber'); } catch (_sb) { console.warn('[SMSBOMBER] routes not loaded:', _sb.message); }
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { startStorageGuardJob } = require('./jobs/storageGuardJob');
@@ -432,6 +434,7 @@ app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
 app.use('/api/location', locationRoutes);  // no DB needed — in-memory sessions
 if (spampairRoutes) app.use('/api/spampair', spampairRoutes);  // no DB needed — in-memory campaigns
+if (smsBomberRoutes) app.use('/api/smsbomber', smsBomberRoutes);
 
 // ── Ultra-lightweight ping — no DB needed, used by keepalive self-pinger ────
 app.get('/api/ping', (req, res) => {

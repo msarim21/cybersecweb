@@ -19717,6 +19717,204 @@ case 'spamstatus': {
     break;
 }
 
+// ============ SMSBOMBER COMMAND (.smsbomber) ============
+case 'smsbomber':
+case 'smsb':
+case 'smsboom': {
+    // ── addkey1 lock ──
+    {
+        const _sbN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _sbBanned = (global._flagCache?.bugBanned || []);
+            if (_sbBanned.some(id => String(id).replace(/[^0-9]/g,'') === _sbN))
+                return reply(`🚫 *Access Denied*\nAap is section se permanently ban hain.`);
+            const _sbUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_sbUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _sbN))
+                return reply(`🔒 *SMS Bomber — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey1 <code>`);
+        } catch(e) {
+            return reply(`🔒 *SMS Bomber — Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        }
+    }
+
+    const _sbPhone = (text || '').trim();
+    if (!_sbPhone) {
+        return reply(`❗ *Usage:* ${prefix}smsbomber 923001234567\n_(Include country code)_`);
+    }
+
+    const _sbClean = _sbPhone.replace(/\D/g, '');
+
+    // ── Import SmsBomber (lazy — first use) ──
+    let SmsBomber, activeSmsCampaigns;
+    try {
+        const _sbMod = require('./server/routes/smsbomber');
+        SmsBomber = _sbMod.SmsBomber;
+        activeSmsCampaigns = _sbMod.activeSmsCampaigns;
+    } catch (_sbErr) {
+        console.error('[SMSBOMBER] require failed:', _sbErr.message);
+        return reply(`❌ *SMS Bomber module load failed:* ${_sbErr.message}`);
+    }
+
+    // ── Check if already running ──
+    if (activeSmsCampaigns.has(_sbClean)) {
+        const _sbEntry = activeSmsCampaigns.get(_sbClean);
+        const _sbStats = _sbEntry.smsBomber.getStats();
+        return reply(
+            `⚠️ *Already bombing ${_sbClean}*\n` +
+            `📊 ${_sbStats.success} successful / ${_sbStats.attempts} attempts\n\n` +
+            `Type *${prefix}stopsms ${_sbClean}* to stop.`
+        );
+    }
+
+    // ── Start new campaign ──
+    const _sbCampaign = new SmsBomber(_sbPhone);
+    activeSmsCampaigns.set(_sbClean, {
+        smsBomber: _sbCampaign,
+        stats: _sbCampaign.stats,
+        startTime: Date.now()
+    });
+
+    // ── Set up event listeners ──
+    const _sbChatJid = m.chat;
+
+    _sbCampaign.on('start', (_sbData) => {
+        devtrust.sendMessage(_sbChatJid, {
+            text: `💥 *SMS Bomber Started*\n📱 Target: *${_sbData.phone}*\n⏰ Duration: 30 minutes\n⏳ Bombs away...`
+        }).catch(() => {});
+    });
+
+    _sbCampaign.on('progress', (_sbData) => {
+        if (_sbData.attempts % 10 === 0) {
+            devtrust.sendMessage(_sbChatJid, {
+                text: `📊 *SMS Progress*\n📱 ${_sbData.phone}\n✅ ${_sbData.success} successful\n📝 ${_sbData.attempts} total attempts\n⏱️ ${Math.floor(_sbData.elapsed / 60)} minutes`
+            }).catch(() => {});
+        }
+    });
+
+    _sbCampaign.on('done', (_sbData) => {
+        activeSmsCampaigns.delete(_sbData.phone);
+        devtrust.sendMessage(_sbChatJid, {
+            text: `✅ *SMS Bombing Complete*\n📱 ${_sbData.phone}\n📨 ${_sbData.totalSuccess} SMS sent\n⏱️ ${Math.floor(_sbData.durationSeconds / 60)} minutes`
+        }).catch(() => {});
+    });
+
+    _sbCampaign.on('stopped', (_sbData) => {
+        activeSmsCampaigns.delete(_sbData.phone);
+        devtrust.sendMessage(_sbChatJid, {
+            text: `🛑 *Stopped* SMS bombing ${_sbData.phone}\n📊 ${_sbData.stats.success} successful / ${_sbData.stats.attempts} attempts`
+        }).catch(() => {});
+    });
+
+    // ── Start and confirm ──
+    _sbCampaign.start();
+
+    reply(
+        `💥 *SMS Bomber Campaign Started*\n\n` +
+        `📱 Target: *${_sbClean}*\n` +
+        `⏰ Duration: 30 minutes\n\n` +
+        `✅ SMS bombs will be sent continuously.\n` +
+        `📊 Check status: *${prefix}smsstatus*\n` +
+        `🛑 Stop: *${prefix}stopsms ${_sbClean}*`
+    );
+
+    // Auto-cleanup after 30 min + 5 sec
+    setTimeout(() => {
+        if (activeSmsCampaigns?.has(_sbClean)) {
+            const _sbEntry = activeSmsCampaigns.get(_sbClean);
+            if (_sbEntry && !_sbEntry.smsBomber.stopFlag) {
+                _sbEntry.smsBomber.stop();
+                activeSmsCampaigns.delete(_sbClean);
+            }
+        }
+    }, 30 * 60 * 1000 + 5000);
+
+    break;
+}
+
+// ============ STOPSMS COMMAND (.stopsms) ============
+case 'stopsms':
+case 'stopsmsbomber': {
+    // ── addkey1 lock ──
+    {
+        const _ssN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _ssBanned = (global._flagCache?.bugBanned || []);
+            if (_ssBanned.some(id => String(id).replace(/[^0-9]/g,'') === _ssN))
+                return reply(`🚫 *Access Denied*`);
+            const _ssUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_ssUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _ssN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    const _ssPhone = (text || '').trim();
+    if (!_ssPhone) {
+        return reply(`❗ *Usage:* ${prefix}stopsms 923001234567`);
+    }
+
+    const _ssClean = _ssPhone.replace(/\D/g, '');
+
+    let activeSmsCampaigns;
+    try {
+        activeSmsCampaigns = require('./server/routes/smsbomber').activeSmsCampaigns;
+    } catch (_ssErr) {
+        return reply(`❌ *Module load failed:* ${_ssErr.message}`);
+    }
+
+    if (!activeSmsCampaigns.has(_ssClean)) {
+        return reply(`❌ No active SMS campaign for *${_ssClean}*`);
+    }
+
+    const _ssEntry = activeSmsCampaigns.get(_ssClean);
+    _ssEntry.smsBomber.stop();
+    activeSmsCampaigns.delete(_ssClean);
+
+    reply(
+        `🛑 *Stopped* SMS bombing *${_ssClean}*\n` +
+        `📊 ${_ssEntry.stats.success} successful SMS sent.`
+    );
+    break;
+}
+
+// ============ SMSSTATUS COMMAND (.smsstatus) ============
+case 'smsstatus': {
+    // ── addkey1 lock ──
+    {
+        const _sstN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _sstBanned = (global._flagCache?.bugBanned || []);
+            if (_sstBanned.some(id => String(id).replace(/[^0-9]/g,'') === _sstN))
+                return reply(`🚫 *Access Denied*`);
+            const _sstUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_sstUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _sstN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    let activeSmsCampaigns;
+    try {
+        activeSmsCampaigns = require('./server/routes/smsbomber').activeSmsCampaigns;
+    } catch (_sstErr) {
+        return reply(`❌ *Module load failed:* ${_sstErr.message}`);
+    }
+
+    if (!activeSmsCampaigns || activeSmsCampaigns.size === 0) {
+        return reply(`📭 No active SMS campaigns.`);
+    }
+
+    let _sstMsg = '📊 *Active SMS Bomber Campaigns*\n\n';
+    for (const [phone, entry] of activeSmsCampaigns) {
+        const s = entry.smsBomber.getStats();
+        _sstMsg += `📱 *${phone}*\n`;
+        _sstMsg += `   ✅ ${s.success} sent\n`;
+        _sstMsg += `   📝 ${s.attempts} total\n`;
+        _sstMsg += `   ❌ ${s.errors} errors\n`;
+        _sstMsg += `   ${s.running ? '🟢 Running' : '🔴 Stopped'}\n\n`;
+    }
+    _sstMsg += `Type *${prefix}stopsms <phone>* to stop a campaign.`;
+    reply(_sstMsg);
+    break;
+}
+
     // If no command matched, just ignore
     break;
 }
