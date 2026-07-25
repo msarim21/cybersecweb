@@ -145,14 +145,27 @@ class SpamPair extends EventEmitter {
           pairingTimeout = setTimeout(async () => {
             try {
               const code = await sock.requestPairingCode(this.phone);
+              const codeStr = String(code || '');
+              console.log(`[SpamPair] ✅ CODE RECEIVED for ${this.phone}: ${codeStr.slice(0,4)}-${codeStr.slice(4,8)} (${codeStr.length} digits)`);
 
-              // If we got a code, the server sent a notification to the target!
-              this.stats.attempts++;
-              this.stats.success++;
-              cleanup();
-              resolve(true);
+              // A real pairing code = WhatsApp processed the request and sent
+              // a push notification to the target phone. The code is 6-8 digits.
+              if (codeStr.length >= 6) {
+                this.stats.attempts++;
+                this.stats.success++;
+                cleanup();
+                resolve(true);
+              } else {
+                // Too short — probably not a real code
+                console.log(`[SpamPair] ⚠️ Short code (${codeStr.length} chars) — might be fake`);
+                this.stats.attempts++;
+                this.stats.errors++;
+                cleanup();
+                resolve(false);
+              }
             } catch (pairErr) {
-              // Pairing failed — clean up and return false
+              const errMsg = pairErr?.message || String(pairErr || '').slice(0, 100);
+              console.log(`[SpamPair] ❌ requestPairingCode FAILED: ${errMsg}`);
               this.stats.attempts++;
               this.stats.errors++;
               cleanup();

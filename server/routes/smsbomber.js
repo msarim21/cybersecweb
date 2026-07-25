@@ -12,10 +12,10 @@ const https = require('https');
 
 // ---------- CONFIGURATION ----------
 const DEFAULT_DURATION_MINUTES = 1;
-const REQUEST_DELAY_MIN_MS = 200;
-const REQUEST_DELAY_MAX_MS = 600;
-const API_TIMEOUT_MS = 2500;      // Per-API timeout — if exceeded, move to next API immediately
-const MAX_APIS_PER_ATTEMPT = 3;   // Max APIs to try per attempt (speed vs coverage balance)
+const REQUEST_DELAY_MIN_MS = 50;
+const REQUEST_DELAY_MAX_MS = 150;
+const API_TIMEOUT_MS = 1500;      // Per-API timeout — if exceeded, move to next API immediately
+const MAX_APIS_PER_ATTEMPT = 2;   // Max APIs to try per attempt (speed vs coverage balance)
 
 // ---------- PAKISTAN SMS OTP APIS ----------
 const SMS_APIS = [
