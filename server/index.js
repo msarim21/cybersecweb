@@ -34,7 +34,8 @@
 })();
 
 try { require('dotenv').config(); } catch (_de) { /* dotenv optional — env vars set via Replit/Heroku */ }
-const compression = require('compression');
+let compression;
+try { compression = require('compression'); } catch (_ce) { compression = null; }
 
 // ── Crash Logging — detailed errors taake Heroku logs mein exact problem pata chale ──
 process.on('uncaughtException', err => {
@@ -184,7 +185,7 @@ const corsOptions = {
 };
 
 // ── Compression — gzip/brotli for all responses (major speed boost) ────────
-app.use(compression({ level: 6, threshold: 1024 }));
+if (compression) app.use(compression({ level: 6, threshold: 1024 }));
 
 // ── Helmet — strong security headers ──────────────────────────────────────
 app.use(helmet({

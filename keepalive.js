@@ -19,6 +19,10 @@ function getAppUrl() {
     if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
         return `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
     }
+    // Heroku: detect from DYNO env + app name pattern
+    if (process.env.DYNO && process.env.HEROKU_APP_NAME) {
+        return `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
+    }
     return null;
 }
 
@@ -556,8 +560,10 @@ function startKeepAlive() {
     const supervisorMode = _supervisorActive();
     const waHost = isWhatsAppWorker();
 
-    // Website ping every 8 min — Heroku Eco sleeps ~30min without HTTP traffic
-    _timer = setInterval(selfPing, 8 * 60 * 1000);
+    // Website ping every 5 min — Heroku Eco sleeps ~30min without HTTP traffic
+    _timer = setInterval(selfPing, 5 * 60 * 1000);
+    // Also ping at startup after a short delay
+    setTimeout(selfPing, 10 * 1000);
 
     if (!supervisorMode && waHost) {
         // Legacy single-process on the WhatsApp host dyno only

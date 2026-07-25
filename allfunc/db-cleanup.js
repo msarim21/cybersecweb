@@ -16,7 +16,8 @@
  *  Default:  '0 3 * * *'
  */
 
-const cron = require('node-cron');
+let cron;
+try { cron = require('node-cron'); } catch (_cron) { cron = null; }
 
 const DEFAULT_CRON      = process.env.DB_CLEANUP_CRON     || '0 3 * * *';
 const MAX_ANTIDELETE    = parseInt(process.env.MAX_ANTIDELETE_DOCS, 10) || 500;
@@ -116,6 +117,11 @@ async function _cleanPostgres(pool) {
  * Called once from server/index.js after DB is initialised.
  */
 function startDbCleanupJob() {
+    if (!cron || !cron.validate || !cron.schedule) {
+        console.log('[db-cleanup] node-cron not available — cleanup scheduled via setInterval instead');
+        setInterval(() => runCleanup().catch(() => {}), 24 * 60 * 60 * 1000);
+        return;
+    }
     if (!cron.validate(DEFAULT_CRON)) {
         console.error(`[db-cleanup] Invalid cron expression: "${DEFAULT_CRON}" — job not started`);
         return;
