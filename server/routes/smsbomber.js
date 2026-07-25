@@ -91,6 +91,9 @@ class SmsBomber extends EventEmitter {
           let data = '';
           res.on('data', (chunk) => data += chunk);
           res.on('end', () => {
+            if (this && this.stats && this.stats.attempts <= 3) {
+              console.log(`[SMSBomber] Response ${method} ${url.href} → ${res.statusCode} body: ${data.slice(0, 100)}`);
+            }
             resolve({
               status: res.statusCode,
               body: data.slice(0, 300),
