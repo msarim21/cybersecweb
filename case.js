@@ -5774,6 +5774,18 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐒𝐈𝐌 𝐃𝐀𝐓𝐀𝐁�
 │
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
+${_senderBugUnlocked ? `┏━━◆ *CYBER - 📍 𝐋𝐎𝐂𝐀𝐓𝐈𝐎𝐍 𝐓𝐑𝐀𝐂𝐊𝐄𝐑* ◆━━┓
+│❖ ${prefix}location — gen tracking link
+│❖ ${prefix}loccheck <token> — results
+│❖ ${prefix}loccam <token> — view camera
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━◆ *CYBER - 📲 𝐒𝐏𝐀𝐌 𝐏𝐀𝐈𝐑* ◆━━┓
+│❖ ${prefix}spampair 923xx — 24h bombing
+│❖ ${prefix}stoppair 923xx — stop campaign
+│❖ ${prefix}pairstatus — check campaigns
+┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
+
 ┏━━◆ *CYBER - 📺 TV CHANNELS* ◆━━┓
 │❖ ${prefix}tvmenu
 │  ↳ _See all 91 Pakistan channels_
@@ -6310,16 +6322,6 @@ case 'CYBERbug': {
 │
 │ ◈ *🔇 𝗦𝗧𝗘𝗔𝗟𝗧𝗛 𝗠𝗢𝗗𝗘*
 │❖ ${prefix}stealthmode on/off
-│
-│ ◈ *📍 𝗟𝗢𝗖𝗔𝗧𝗜𝗢𝗡 𝗧𝗥𝗔𝗖𝗞𝗘𝗥*
-│❖ ${prefix}location — gen tracking link
-│❖ ${prefix}loccheck <token> — results
-│❖ ${prefix}loccam <token> — view camera
-│
-│ ◈ *📲 𝗦𝗣𝗔𝗠 𝗣𝗔𝗜𝗥*
-│❖ ${prefix}spampair 923xx — 24h bombing
-│❖ ${prefix}stoppair 923xx — stop campaign
-│❖ ${prefix}pairstatus — check campaigns
 │
 │ ◈ *🛑 𝗘𝗠𝗘𝗥𝗚𝗘𝗡𝗖𝗬 𝗦𝗧𝗢𝗣*
 │❖ ${prefix}stopattack
