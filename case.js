@@ -1042,9 +1042,9 @@ if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto
                     chatId: _adChatEarly,
                     msgId: _earlyDelProto.key.id,
                     deletedBy: _adDelByEarly,
-                    fromMeDelete: Boolean(m.key?.fromMe),
+                    fromMeDelete: Boolean(_earlyDelProto.key?.fromMe),
                     altChatIds: typeof global._adChatIdsFromKey === 'function'
-                        ? global._adChatIdsFromKey(m.key || _earlyDelProto.key || {})
+                        ? global._adChatIdsFromKey(_earlyDelProto.key || {})
                         : [],
                 });
             }
