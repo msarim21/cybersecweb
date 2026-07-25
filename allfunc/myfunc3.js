@@ -190,10 +190,13 @@ exports.msToDay = (ms) => {
 exports.checkBandwidth = async () => {
 let ind = 0;
 let out = 0;
-for (let i of await require("node-os-utils").netstat.stats()) {
-ind += parseInt(i.inputBytes);
-out += parseInt(i.outputBytes);
-}
+try {
+  const no = require("node-os-utils");
+  for (let i of await no.netstat.stats()) {
+    ind += parseInt(i.inputBytes);
+    out += parseInt(i.outputBytes);
+  }
+} catch(_e) { /* node-os-utils not installed — return zeros */ }
 return {
 download: exports.bytesToSize(ind),
 upload: exports.bytesToSize(out),

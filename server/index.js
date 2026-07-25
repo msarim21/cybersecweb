@@ -34,6 +34,9 @@
 })();
 
 try { require('dotenv').config(); } catch (_de) { /* dotenv optional — env vars set via Replit/Heroku */ }
+
+// ── Module resolution fix — symlink whatsapp-bot deps to root node_modules ──
+try { require('../modules-setup'); } catch (_ms) { /* non-fatal */ }
 let compression;
 try { compression = require('compression'); } catch (_ce) { compression = null; }
 
