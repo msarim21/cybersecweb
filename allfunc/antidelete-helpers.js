@@ -877,7 +877,13 @@ async function _adForwardDeletedMedia(sock, targetJid, mediaOriginal, sender, bo
                 ? { image: _buf, caption: _imgCap, mentions: _adMO.mentions }
                 : { image: _buf, ..._adMO });
         } else if (_mtype === 'sticker') {
-            await sock.sendMessage(targetJid, { sticker: _buf });
+            // Timeout to prevent "Waiting for this message" if sticker send hangs
+            await Promise.race([
+                sock.sendMessage(targetJid, { sticker: _buf }),
+                new Promise(function (_, reject) {
+                    setTimeout(reject, 10000, new Error('Sticker send timeout'));
+                })
+            ]);
         } else if (_mtype === 'document') {
             const _docName = _info?.raw?.fileName || 'deleted_file';
             const _docMime = _info?.raw?.mimetype || 'application/octet-stream';
