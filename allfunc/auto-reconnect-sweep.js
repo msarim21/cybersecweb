@@ -97,13 +97,16 @@ function _isBotOnline(clean, sess) {
 function _isOfflineLongEnough(sess) {
     if (!sess?.lastActive) return true; // never connected — try now
     const offlineMs = Date.now() - new Date(sess.lastActive).getTime();
-    return offlineMs >= BOT_OFFLINE_GRACE_MS;
+    // Boot-time override: reduce grace period so reconnects start sooner after restart
+    const graceMs = global.__BOOT_RECONNECT_GRACE || BOT_OFFLINE_GRACE_MS;
+    return offlineMs >= graceMs;
 }
 
 /** Returns true if we recently triggered a reconnect for this bot. */
 function _isCoolingDown(clean) {
     const last = _lastReconnectAttempt.get(clean) || 0;
-    return (Date.now() - last) < RECONNECT_COOLDOWN_MS;
+    const cooldownMs = global.__BOOT_RECONNECT_COOLDOWN || RECONNECT_COOLDOWN_MS;
+    return (Date.now() - last) < cooldownMs;
 }
 
 /**
@@ -297,8 +300,62 @@ async function triggerImmediateSweep() {
     return runSweep();
 }
 
+/**
+ * Run a BOOT-TIME sweep with reduced grace and cooldown so bots reconnect
+ * FAST after a restart instead of waiting 3+ minutes for the first periodic sweep.
+ * Keeps re-trying every 30s for the first 5 minutes, then falls back to normal.
+ */
+function triggerBootReconnectSweep() {
+    const origGrace   = BOT_OFFLINE_GRACE_MS;
+    const origCooldown = RECONNECT_COOLDOWN_MS;
+    const origFirst   = Number(process.env.AUTO_RECONNECT_FIRST_DELAY_MS) || 2 * 60 * 1000;
+
+    // Use aggressive settings for boot
+    process.env.AUTO_RECONNECT_FIRST_DELAY_MS = '5000';
+    try {
+        Object.assign(global, {
+            __BOOT_RECONNECT_GRACE: 30_000,    // only 30s offline needed during boot
+            __BOOT_RECONNECT_COOLDOWN: 15_000,  // 15s cooldown during boot
+        });
+    } catch (_) {}
+
+    // Rush: 1st sweep after 5s, then every 30s for 5 min
+    let bootCount = 0;
+    const maxBootSweeps = 10;
+    setTimeout(() => {
+        _runBootSweep();
+    }, 5000);
+
+    async function _runBootSweep() {
+        if (bootCount >= maxBootSweeps) {
+            // Restore original constants after boot window
+            try {
+                delete global.__BOOT_RECONNECT_GRACE;
+                delete global.__BOOT_RECONNECT_COOLDOWN;
+            } catch (_) {}
+            return;
+        }
+        bootCount++;
+        try {
+            await runSweep();
+        } catch (_) {}
+        if (bootCount < maxBootSweeps) {
+            setTimeout(_runBootSweep, 30_000);
+        }
+    }
+
+    // Restore env after boot window (5 min max)
+    setTimeout(() => {
+        try {
+            delete global.__BOOT_RECONNECT_GRACE;
+            delete global.__BOOT_RECONNECT_COOLDOWN;
+        } catch (_) {}
+    }, 5 * 60 * 1000);
+}
+
 module.exports = {
     startAutoReconnectSweep,
     stopAutoReconnectSweep,
     triggerImmediateSweep,
+    triggerBootReconnectSweep,
 };

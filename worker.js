@@ -337,6 +337,18 @@ async function startWorker() {
     console.log(chalk.red('[Worker] Auto-load error:', e.message));
   }
 
+  // ── Boot-time reconnect sweep ───────────────────────────────────────────
+  // Autoload may have missed some bots (DB slow, session restore timeout).
+  // This aggressively sweeps offline bots every 30s for the first 5 minutes
+  // with a reduced grace period (30s) so they reconnect FAST after restart.
+  try {
+    const { triggerBootReconnectSweep } = require('./allfunc/auto-reconnect-sweep');
+    triggerBootReconnectSweep();
+    console.log(chalk.cyan('[Worker] 🔄 Boot reconnect sweep armed (aggressive: 30s grace, every 30s for 5 min)'));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Boot reconnect sweep warning:', e.message));
+  }
+
   // ✅ FIX: Start auto-restarter BEFORE keepalive so global._autoRestarterScheduled
   // is set when keepalive.startKeepAlive() runs — prevents the duplicate-timer race
   try {
