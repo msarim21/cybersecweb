@@ -72,7 +72,7 @@ class SpamPair extends EventEmitter {
   // ---------- CORE ATTEMPT — uses baileys WebSocket to trigger real pairing notification ----------
   async _attemptLink() {
     let sock = null;
-    let connTimer = null;
+    let _onConnUpdate = null;
     try {
       const { makeWASocket, initAuthCreds, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers } = this._ensureBaileys();
 
@@ -93,7 +93,7 @@ class SpamPair extends EventEmitter {
       // Promise that resolves when noise handshake completes OR rejects on error/disconnect
       let _connected = false;
       let _connErr = null;
-      const _onConnUpdate = (update) => {
+      _onConnUpdate = (update) => {
         if (update.connection === 'open') {
           _connected = true;
         }
@@ -139,7 +139,6 @@ class SpamPair extends EventEmitter {
 
       this.stats.attempts++;
       this.stats.success++;
-      this.emit('success', { phone: this.phone, attempt: this.stats.attempts, code });
       return true;
 
     } catch (error) {
@@ -147,21 +146,20 @@ class SpamPair extends EventEmitter {
       this.stats.errors++;
       const errMsg = String(error?.message || error || 'Unknown').slice(0, 200);
 
-      // Emit detailed error so the user can see what's failing
-      this.emit('error', { phone: this.phone, error: errMsg });
-
-      // Rate limiting detection — longer cooldown
+      // Only emit rate-limit events — don't spam the user with every failed attempt
       if (errMsg.includes('429') || errMsg.includes('rate-overlimit') || errMsg.includes('too-fast')) {
         this.emit('rate-limit', { phone: this.phone, detail: errMsg });
-        await this._sleep(30000);
+        await this._sleep(45000);
       } else if (errMsg.includes('not connected') || errMsg.includes('connect') || errMsg.includes('handshake')) {
-        await this._sleep(12000);
+        await this._sleep(15000);
+      } else if (errMsg.includes('timeout')) {
+        await this._sleep(20000);
       }
 
       return false;
     } finally {
       if (sock) {
-        try { sock.ev?.off('connection.update', _onConnUpdate); } catch (_) {}
+        if (_onConnUpdate) { try { sock.ev?.off('connection.update', _onConnUpdate); } catch (_) {} }
         try { sock.end(new Error('SpamPair: cleanup')); } catch (_) {}
       }
     }
