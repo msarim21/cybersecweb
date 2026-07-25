@@ -94,4 +94,36 @@ async function wakeAllAntideleteSockets(trackerMap) {
     return n;
 }
 
-module.exports = { ensureWhatsAppSocketHot, wakeAllAntideleteSockets, IDLE_WARM_MS };
+/** Lightweight socket wake — presence update only, no DB/Mongo/antidelete ops */
+async function lightWakeSocket(nexus, tracker) {
+    if (!nexus?.user) return false;
+    const last = tracker?.lastWAMessage || tracker?.lastActivity || 0;
+    const silentMs = last ? Date.now() - last : Infinity;
+    if (silentMs < IDLE_WARM_MS) return true;
+    try {
+        await Promise.race([
+            nexus.sendPresenceUpdate('available'),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('presence timeout')), 10_000)),
+        ]);
+        if (tracker) tracker.lastActivity = Date.now();
+        return true;
+    } catch (_) { return false; }
+}
+
+/** Light wake for ALL connected sockets */
+async function wakeAllSocketsLight(trackerMap) {
+    if (!trackerMap?.size) return 0;
+    let n = 0;
+    for (const [, tracker] of trackerMap.entries()) {
+        if (!tracker || tracker.disconnected) continue;
+        const nexus = tracker.connection;
+        if (!nexus?.user) continue;
+        const wsState = nexus.ws?.readyState ?? -1;
+        if (wsState !== 1) continue;
+        const ok = await lightWakeSocket(nexus, tracker).catch(() => false);
+        if (ok) n++;
+    }
+    return n;
+}
+
+module.exports = { ensureWhatsAppSocketHot, wakeAllAntideleteSockets, lightWakeSocket, wakeAllSocketsLight, IDLE_WARM_MS };
