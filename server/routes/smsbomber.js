@@ -11,10 +11,10 @@ const EventEmitter = require('events');
 const https = require('https');
 
 // ---------- CONFIGURATION ----------
-const DEFAULT_DURATION_MINUTES = 10;
-const REQUEST_DELAY_MIN_MS = 1000;
-const REQUEST_DELAY_MAX_MS = 3000;
-const API_TIMEOUT_MS = 8000;
+const DEFAULT_DURATION_MINUTES = 1;
+const REQUEST_DELAY_MIN_MS = 200;
+const REQUEST_DELAY_MAX_MS = 600;
+const API_TIMEOUT_MS = 4000;
 
 // ---------- PAKISTAN SMS OTP APIS ----------
 const SMS_APIS = [
