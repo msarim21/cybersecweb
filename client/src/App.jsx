@@ -36,7 +36,7 @@ const LoadingScreen = () => (
     <div className="relative w-16 h-16 mb-6">
       <div className="absolute inset-0 rounded-full border-2 border-cyan-400/20 border-t-cyan-400 animate-spin" />
       <div className="absolute inset-0 flex items-center justify-center">
-        <img src="https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg" alt="CSP" className="w-10 h-10 object-contain rounded-lg" />
+        <img src="/cybersecpro_hero.jpeg" alt="CSP" className="w-10 h-10 object-contain rounded-lg" />
       </div>
     </div>
     <p className="font-display text-sm font-medium text-slate-400">Loading...</p>
