@@ -1705,6 +1705,44 @@ async function getBotPairingStatus(clean) {
   return { connected: false };
 }
 
+/**
+ * Reset stale bot_session connection statuses on startup.
+ * After a restart, previously CONNECTED sessions are stale — the bot process
+ * is gone. We reset them to RECONNECTING so the dashboard shows an accurate
+ * status until the supervisor reconnects them.
+ */
+async function resetStaleConnectionStatuses() {
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      await BotSession.updateMany(
+        { connectionStatus: 'CONNECTED' },
+        {
+          $set: {
+            connectionStatus: 'RECONNECTING',
+            commandReady: false,
+            wsState: 0,
+          },
+        }
+      );
+    } catch (e) {
+      console.error('[db] resetStaleConnectionStatuses mongo error:', e.message);
+    }
+    return;
+  }
+  try {
+    await pg().query(
+      `UPDATE bot_sessions
+       SET connection_status = 'RECONNECTING',
+           command_ready = FALSE,
+           ws_state = 0
+       WHERE connection_status = 'CONNECTED'`
+    );
+  } catch (err) {
+    console.error('[db-service] resetStaleConnectionStatuses:', err.message);
+  }
+}
+
 module.exports = {
   findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
@@ -1726,6 +1764,7 @@ module.exports = {
   getExpiredUsers, disconnectAllUserDevices, getOwnerSubscriptionByNumber,
   deleteSessionCreds,
   hasFirstConnected, markFirstConnected,
+  resetStaleConnectionStatuses,
   isPlanExpired,
   setLicenseKey,
   sendChatMessage, getChatMessages, markChatMessagesRead,

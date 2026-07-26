@@ -607,6 +607,13 @@ initDb()
       await resetSelfBotModes();
     } catch (_) {}
 
+    // Reset stale 'CONNECTED' statuses so dashboard doesn't falsely show old sessions as online
+    try {
+      const { resetStaleConnectionStatuses } = require('./db-service');
+      await resetStaleConnectionStatuses();
+      console.log('✅ Stale bot connection statuses reset — dashboard will show accurate status');
+    } catch (_) {}
+
     console.log('✅ Database initialised successfully');
 
     try {

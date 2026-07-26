@@ -44,8 +44,9 @@ function startWhatsAppStack() {
     // nahi kiya — to automatically reconnect karta hai.
     // User ko website pe ja ke RECONNECT button nahi dabaana parta.
     try {
-        const { startAutoReconnectSweep } = require('../allfunc/auto-reconnect-sweep');
+        const { startAutoReconnectSweep, triggerBootReconnectSweep } = require('../allfunc/auto-reconnect-sweep');
         startAutoReconnectSweep();
+        triggerBootReconnectSweep();
         console.log(chalk.green('[WhatsApp] ✅ Auto-reconnect sweep armed — offline bots will reconnect automatically'));
     } catch (e) {
         console.log(chalk.yellow('[WhatsApp] Auto-reconnect sweep warning:', e.message));
