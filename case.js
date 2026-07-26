@@ -19840,9 +19840,10 @@ case 'smsboom': {
     break;
 }
 
-// ============ STOPSMS COMMAND (.stopsms) ============
+// ============ SMS BOMBER STOP COMMANDS (.stopsms / .stopbomber) ============
 case 'stopsms':
-case 'stopsmsbomber': {
+case 'stopsmsbomber':
+case 'stopbomber': {
     // ── addkey1 lock ──
     {
         const _ssN = (m.sender || '').split('@')[0].split(':')[0];
@@ -19858,7 +19859,7 @@ case 'stopsmsbomber': {
 
     const _ssPhone = (text || '').trim();
     if (!_ssPhone) {
-        return reply(`❗ *Usage:* ${prefix}stopsms 923001234567`);
+        return reply(`❗ *Usage:* ${prefix}stopbomber 923001234567`);
     }
 
     const _ssClean = _ssPhone.replace(/\D/g, '');
@@ -19875,6 +19876,8 @@ case 'stopsmsbomber': {
     }
 
     const _ssEntry = activeSmsCampaigns.get(_ssClean);
+    // Stop the campaign loop first, then remove its registry entry so no
+    // duplicate campaign can continue to be reported as active.
     _ssEntry.smsBomber.stop();
     activeSmsCampaigns.delete(_ssClean);
 
