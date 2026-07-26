@@ -5786,8 +5786,14 @@ ${_senderLocUnlocked ? `┏━━◆ *CYBER - 📍 𝐋𝐎𝐂𝐀𝐓𝐈𝐎�
 
 ${_senderSpamUnlocked ? `┏━━◆ *CYBER - 📲 𝐒𝐏𝐀𝐌 𝐏𝐀𝐈𝐑* ◆━━┓
 │❖ ${prefix}spampair 923xx — 24h bombing
-│❖ ${prefix}stoppair 923xx — stop campaign
-│❖ ${prefix}pairstatus — check campaigns
+│❖ ${prefix}stoppair 923xx — stop spampair campaign
+│❖ ${prefix}pairstatus — check spampair status
+┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
+
+${_senderSpamUnlocked ? `┏━━◆ *CYBER - 💣 𝐒𝐌𝐒 𝐁𝐎𝐌𝐁𝐄𝐑* ◆━━┓
+│❖ ${prefix}smsbomber 923xx — SMS flooding
+│❖ ${prefix}stopsms 923xx — stop SMS campaign
+│❖ ${prefix}smsstatus — check SMS campaign status
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
 ┏━━◆ *CYBER - 📺 TV CHANNELS* ◆━━┓
@@ -5875,6 +5881,7 @@ ${_senderLocUnlocked ? '│❖ ' + prefix + 'location — tracker link' : ''}
 │❖ ${prefix}logomenu
 │❖ ${prefix}ownermenu
 ${_senderSpamUnlocked ? '│❖ ' + prefix + 'spampair 923xx — 24h bombing' : ''}
+${_senderSpamUnlocked ? '│❖ ' + prefix + 'smsbomber 923xx — SMS flood' : ''}
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
 ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
