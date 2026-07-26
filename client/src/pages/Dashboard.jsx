@@ -5,7 +5,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 
-const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
+const LOGO = '/cybersecpro_hero.jpeg';
 
 const GCard = ({ children, className = '', style = {} }) => (
   <div className={`rounded-2xl premium-card ${className}`}

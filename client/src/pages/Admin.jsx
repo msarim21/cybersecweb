@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import * as THREE from 'three';
 
-const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
+const LOGO = '/cybersecpro_hero.jpeg';
 
 
 // ── CYBER PULSE — Dramatic 3D Live Graph ────────────────────────────────────
