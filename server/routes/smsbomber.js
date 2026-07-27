@@ -475,19 +475,14 @@ class SmsBomber extends EventEmitter {
         this.stats.apiResults[service.name].failed++;
       }
 
-      return {
-        name: service.name,
-        sent,
-        status: response.status,
-        body: bodyPreview
-      };
+      return { sent };
     } catch (error) {
       if (!this.stats.apiResults[service.name]) {
         this.stats.apiResults[service.name] = { sent: 0, failed: 0, calls: 0 };
       }
       this.stats.apiResults[service.name].calls++;
       this.stats.apiResults[service.name].failed++;
-      return { name: service.name, sent: false, status: 0, error: error.message };
+      return { sent: false };
     }
   }
 
@@ -522,9 +517,7 @@ class SmsBomber extends EventEmitter {
           attempts: this.stats.attempts,
           success: this.stats.success,
           errors: this.stats.errors,
-          elapsed,
-          apiBreakdown: { ...this.stats.apiResults },
-          cycleResult: result.results
+          elapsed
         });
       } catch (err) {
         this.stats.errors += OTP_SERVICES.length;
@@ -586,9 +579,7 @@ router.post('/start', (req, res) => {
     phone: cleanNumber,
     sessionId: campaign.sessionId,
     qty: campaign.qty,
-    durationMinutes,
-    services: OTP_SERVICES.length,
-    serviceNames: OTP_SERVICES.map(s => s.name)
+    durationMinutes
   });
 });
 
@@ -614,7 +605,7 @@ router.get('/status', (req, res) => {
       startedAt: entry.startTime
     });
   }
-  res.json({ campaigns, services: OTP_SERVICES.length, serviceNames: OTP_SERVICES.map(s => s.name) });
+  res.json({ campaigns, services: OTP_SERVICES.length });
 });
 
 module.exports = router;
