@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const HERO_IMG = '/cybersecpro_hero.jpeg';
 const CONTACT = '+8615507967005';
@@ -19,7 +19,10 @@ const MatrixRain = () => {
     const cols = Math.floor(canvas.width / fontSize);
     const drops = Array(cols).fill(1);
     const colors = ['rgba(99,102,241,0.08)', 'rgba(139,92,246,0.06)', 'rgba(16,185,129,0.06)'];
+    let frameCount = 0;
     const draw = () => {
+      frameCount++;
+      if (frameCount % 2 !== 0) return; // skip every other frame for performance
       ctx.fillStyle = 'rgba(9,9,11,0.04)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drops.forEach((y, i) => {
@@ -31,12 +34,12 @@ const MatrixRain = () => {
         drops[i]++;
       });
     };
-    const interval = setInterval(draw, 50);
+    const interval = setInterval(draw, 80);
     const onResize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
     window.addEventListener('resize', onResize);
     return () => { clearInterval(interval); window.removeEventListener('resize', onResize); };
   }, []);
-  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-0 opacity-25" />;
+  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-0 opacity-25" style={{ willChange: 'opacity' }} />;
 };
 
 const GlitchText = ({ children, className, style }) => {
@@ -96,18 +99,30 @@ const ScanLine = () => (
 
 const CounterCard = ({ value, label, prefix = '', suffix = '', color = '#00f5ff' }) => {
   const [count, setCount] = useState(0);
+  const [visible, setVisible] = useState(false);
+  const cardRef = useRef(null);
   useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); obs.disconnect(); }
+    }, { threshold: 0.3 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!visible) return;
     const end = parseInt(value.replace(/\D/g, ''));
     let start = 0;
-    const step = end / 60;
+    const step = end / 40;
     const t = setInterval(() => {
       start += step;
       if (start >= end) { setCount(end); clearInterval(t); } else setCount(Math.floor(start));
-    }, 25);
+    }, 40);
     return () => clearInterval(t);
-  }, [value]);
+  }, [value, visible]);
   return (
-    <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
+    <motion.div ref={cardRef} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
       whileHover={{ scale: 1.05, y: -5 }}
       className="rounded-2xl text-center p-6 premium-card card-hover"
       style={{
@@ -186,22 +201,22 @@ const TESTIMONIALS = [
 ];
 
 const ParticleField = () => {
-  const particles = Array.from({ length: 30 }, (_, i) => ({
+  const particles = Array.from({ length: 12 }, (_, i) => ({
     id: i,
     x: Math.random() * 100,
     y: Math.random() * 100,
     size: Math.random() * 3 + 1,
-    color: ['#6366f1', '#8b5cf6', '#a855f7', '#10b981'][Math.floor(Math.random() * 4)],
-    duration: Math.random() * 8 + 4,
-    delay: Math.random() * 4
+    color: ['#6366f1', '#8b5cf6', '#a855f7'][Math.floor(Math.random() * 3)],
+    duration: Math.random() * 10 + 6,
+    delay: Math.random() * 5
   }));
   return (
     <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
       {particles.map(p => (
         <motion.div key={p.id}
           className="absolute rounded-full"
-          style={{ left: `${p.x}%`, top: `${p.y}%`, width: p.size, height: p.size, background: p.color, boxShadow: `0 0 6px ${p.color}` }}
-          animate={{ y: [0, -60, 0], opacity: [0, 1, 0], x: [0, Math.random() * 20 - 10, 0] }}
+          style={{ left: `${p.x}%`, top: `${p.y}%`, width: p.size, height: p.size, background: p.color, boxShadow: `0 0 6px ${p.color}`, willChange: 'transform, opacity' }}
+          animate={{ y: [0, -60, 0], opacity: [0, 0.8, 0], x: [0, Math.random() * 20 - 10, 0] }}
           transition={{ duration: p.duration, repeat: Infinity, delay: p.delay, ease: 'easeInOut' }}
         />
       ))}
@@ -212,8 +227,22 @@ const ParticleField = () => {
 export default function Landing() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeFeature, setActiveFeature] = useState(null);
-  const { scrollYProgress } = useScroll();
-  const headerOpacity = useTransform(scrollYProgress, [0, 0.1], [1, 0.95]);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const scrollThrottled = useRef(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (scrollThrottled.current) return;
+      scrollThrottled.current = true;
+      requestAnimationFrame(() => {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        setScrollProgress(max > 0 ? Math.min(window.scrollY / max, 1) : 0);
+        scrollThrottled.current = false;
+      });
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-[#0f1629]">
@@ -221,20 +250,19 @@ export default function Landing() {
       <div className="hidden md:block"><ParticleField /></div>
 
       <div className="hidden md:block">
-        <FloatingOrb size={600} x="0%" y="-5%" color="#22d3ee" delay={0} />
-        <FloatingOrb size={500} x="60%" y="0%" color="#8b5cf6" delay={2} />
-        <FloatingOrb size={400} x="75%" y="50%" color="#a78bfa" delay={4} />
+        <FloatingOrb size={500} x="0%" y="-5%" color="#22d3ee" delay={0} />
+        <FloatingOrb size={350} x="65%" y="10%" color="#8b5cf6" delay={3} />
       </div>
 
       <div className="fixed inset-0 pointer-events-none z-0 cyber-grid opacity-30" />
 
-      <motion.div className="fixed top-0 left-0 h-0.5 z-50 origin-left bg-gradient-to-r from-cyan-400 to-violet-400"
-        style={{ scaleX: scrollYProgress }} />
+      <div className="fixed top-0 left-0 h-[3px] z-50 origin-left bg-gradient-to-r from-cyan-400 via-violet-400 to-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.4)]"
+        style={{ width: `${scrollProgress * 100}%`, transition: 'width 0.05s linear' }} />
 
       {/* Navbar — mobile-friendly like reference */}
       <motion.nav
         className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3.5 bg-[#0f1629]/92 backdrop-blur-xl border-b border-white/8"
-        style={{ opacity: headerOpacity, paddingTop: 'max(0.875rem, env(safe-area-inset-top))' }}>
+        style={{ paddingTop: 'max(0.875rem, env(safe-area-inset-top))' }}>
         <div className="flex flex-col gap-0.5">
           <div className="font-display font-bold text-[15px] text-white tracking-tight leading-none">CYBERSECPRO</div>
           <div className="flex items-center gap-1.5 md:hidden">
