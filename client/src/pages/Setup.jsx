@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
-const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
+const LOGO = '/cybersecpro_hero.jpeg';
 
 const AmbientBg = () => (
   <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
