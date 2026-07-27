@@ -32,13 +32,14 @@ router.post('/start', (req, res) => {
 
     // ── Auto-detect public URL — zero config needed ─────────────────────────
     // Priority:
-    //  1. global._detectedPublicHost  — auto-saved from first external HTTP request
-    //  2. HEROKU_APP_NAME env          — just set the APP NAME (not full URL); Heroku auto-sets this
-    //                                    if Dyno Metadata labs feature is enabled (free)
-    //  3. APP_URL env                  — manual fallback (full URL)
-    //  4. REPLIT_DEV_DOMAIN            — Replit environment
-    //  5. localhost                    — local dev only
-    const host = (global._detectedPublicHost || '')
+    //  0. req.body.publicUrl            — bot sends correct domain
+    //  1. global._detectedPublicHost    — auto-saved from first external HTTP request
+    //  2. HEROKU_APP_NAME env           — set APP NAME (not full URL); Heroku auto-sets if Dyno Metadata enabled
+    //  3. APP_URL env                   — manual fallback (full URL)
+    //  4. REPLIT_DEV_DOMAIN             — Replit environment
+    //  5. localhost                     — local dev only
+    const host = (req.body.publicUrl || '')
+        || (global._detectedPublicHost || '')
         || (process.env.HEROKU_APP_NAME  ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com` : '')
         || (process.env.APP_URL          ? process.env.APP_URL.replace(/\/$/, '') : '')
         || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
