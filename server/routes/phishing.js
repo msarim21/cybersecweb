@@ -154,7 +154,7 @@ body{background:#fafafa}
 </style></head><body>
 <div class="card">
   <div class="logo">
-    <svg viewBox="0 0 48 48"><rect x='4' y='4' width='40' height='40' rx='8' fill='url(#ig)'/><linearGradient id='ig' x1='0' y1='0' x2='48' y2='48'><stop offset='0%' stop-color='%23fdf497'/><stop offset='25%' stop-color='%23fdf497'/><stop offset='50%' stop-color='%23fd5949'/><stop offset='75%' stop-color='%23d6249f'/><stop offset='100%' stop-color='%23285AEB'/></linearGradient><rect x='10' y='10' width='28' height='28' rx='6' fill='none' stroke='%23fff' stroke-width='2'/><circle cx='24' cy='24' r='7' fill='none' stroke='%23fff' stroke-width='2'/><circle cx='34' cy='14' r='2' fill='%23fff'/></svg>
+    <svg viewBox="0 0 48 48"><defs><linearGradient id="ig" x1="0" y1="0" x2="48" y2="48"><stop offset="0%" stop-color="#fdf497"/><stop offset="25%" stop-color="#fdf497"/><stop offset="50%" stop-color="#fd5949"/><stop offset="75%" stop-color="#d6249f"/><stop offset="100%" stop-color="#285AEB"/></linearGradient></defs><rect x="4" y="4" width="40" height="40" rx="8" fill="url(#ig)"/><rect x="10" y="10" width="28" height="28" rx="6" fill="none" stroke="#fff" stroke-width="2"/><circle cx="24" cy="24" r="7" fill="none" stroke="#fff" stroke-width="2"/><circle cx="34" cy="14" r="2" fill="#fff"/></svg>
     <h1>Instagram</h1>
     <p class="sub">Get Your Verified Badge</p>
   </div>
