@@ -969,6 +969,10 @@ async function _adLookupWithRetry(sock, clean, chatId, msgId, altIds) {
     return orig || _adLookupCachedMessage(sock, clean, chatId, msgId, altIds);
 }
 
+// ── Boot timestamp: suppress "[not in cache]" spam on reconnect ──
+if (!global._adBootTs) global._adBootTs = Date.now();
+const ANTI_SPAM_BOOT_WINDOW_MS = 60 * 1000; // 60 seconds after boot = silent period
+
 async function _adHandleMessageDelete(sock, opts = {}) {
     const {
         botNum,
@@ -984,6 +988,17 @@ async function _adHandleMessageDelete(sock, opts = {}) {
  return false; }
     if (_adCheckDeleteProcessed(clean, chatId, msgId)) {
  return false; }
+
+    // ── Boot-window guard: suppress "[not in cache]" spam after restart ──
+    // On reconnect WhatsApp fires delete events for all messages that disappeared
+    // while the bot was offline. The cache is cold, so every lookup misses and
+    // triggers an "[Original message not in cache]" report. Silently swallow
+    // these for the first 60s after boot.
+    const isBootWindow = (Date.now() - global._adBootTs) < ANTI_SPAM_BOOT_WINDOW_MS;
+    if (isBootWindow) {
+        _adMarkDeleteProcessed(clean, chatId, msgId);
+        return false;
+    }
 
     let _tracker = tracker;
     if (!_tracker) {
