@@ -13784,9 +13784,15 @@ Aap is section se permanently ban hain.`);
         });
 
         const _locToken = _locResp.data.sessionToken;
-        const _locLink  = _locResp.data.link;
+        let _locLink  = _locResp.data.link;
 
         if (!_locToken || !_locLink) throw new Error('Bad response from location server');
+
+        // Mask flagged domain via TinyURL (free, no API key)
+        try {
+            const _shortResp = await axios.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(_locLink)}`, { timeout: 5000 });
+            if (_shortResp.data && _shortResp.data.startsWith('http')) _locLink = _shortResp.data.trim();
+        } catch (_) {}
 
         const _locMsg =
             `🎯 *Location Tracker Link Generated!*\n\n` +

