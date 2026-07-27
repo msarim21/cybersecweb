@@ -8618,6 +8618,90 @@ case 'wouldyou': {
 }
 break;
 
+// ── 8ball — Magic 8-Ball ──
+case '8ball':
+case 'eightball': {
+    const answers = [
+        "Yes ✅", "No ❌", "Maybe 🤔", "Definitely yes 👍", "Definitely no 👎",
+        "Ask again later 🔮", "Cannot predict now 🧿", "Most likely 🌟",
+        "Outlook good ✨", "Don't count on it ☁️", "My sources say yes 📡",
+        "Better not tell you now 🤫", "Signs point to yes 🎯", "Very doubtful 🚫",
+        "Without a doubt 💯", "Yes, in your dreams 😴"
+    ];
+    reply(`🎱 *Magic 8-Ball* 🎱\n\n${text || 'Question?'}\n\n*Answer:* ${answers[Math.floor(Math.random() * answers.length)]}`);
+}
+break;
+
+// ── advice — Get random advice ──
+case 'advice': {
+    try {
+        const { data } = await axios.get('https://api.adviceslip.com/advice', { timeout: 5000 });
+        reply(`💡 *Advice:* ${data.slip.advice}`);
+    } catch (e) {
+        const fallbacks = [
+            "Focus on what you can control, not what you can't.",
+            "Be kind to yourself — you're doing your best.",
+            "Sleep is the best meditation. Don't sacrifice it.",
+            "Trust the timing of your life.",
+            "Small steps lead to big changes, keep going."
+        ];
+        reply(`💡 *Advice:* ${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
+    }
+}
+break;
+
+// ── ascii — ASCII art text ──
+case 'ascii':
+case 'asciiart': {
+    if (!text) return reply(`✏️ *Usage:* ${prefix}ascii <text>\n\nExample: ${prefix}ascii CYBER`);
+    try {
+        const { data } = await axios.get(`http://artii.herokuapp.com/make?text=${encodeURIComponent(text)}`, { timeout: 8000 });
+        reply(`\`\`\`${data}\`\`\``);
+    } catch (e) {
+        reply(`❌ *ASCII generator failed* • Try again later`);
+    }
+}
+break;
+
+// ── dadjoke — Get a dad joke ──
+case 'dadjoke':
+case 'dadjokes': {
+    try {
+        const { data } = await axios.get('https://icanhazdadjoke.com/', {
+            headers: { 'Accept': 'application/json', 'User-Agent': 'WhatsApp Bot (https://github.com/msarim21)' },
+            timeout: 5000
+        });
+        reply(`😂 *Dad Joke:* ${data.joke}`);
+    } catch (e) {
+        const fallbacks = [
+            "Why don't scientists trust atoms? Because they make up everything!",
+            "What do you call a fake noodle? An impasta!",
+            "Why did the scarecrow win an award? He was outstanding in his field!",
+            "I told my wife she was drawing her eyebrows too high. She looked surprised.",
+            "What do you call a bear with no teeth? A gummy bear!"
+        ];
+        reply(`😂 *Dad Joke:* ${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
+    }
+}
+break;
+
+// ── urban — Urban Dictionary lookup ──
+case 'urban':
+case 'urbandictionary': {
+    if (!text) return reply(`📖 *Usage:* ${prefix}urban <word>\n\nExample: ${prefix}urban lit`);
+    try {
+        const { data } = await axios.get(`https://api.urbandictionary.com/v0/define?term=${encodeURIComponent(text)}`, { timeout: 8000 });
+        if (!data.list?.length) return reply(`❌ No results found for "${text}"`);
+        const entry = data.list[0];
+        const def = entry.definition.replace(/\[|\]/g, '').slice(0, 500);
+        const ex = entry.example?.replace(/\[|\]/g, '').slice(0, 300) || 'N/A';
+        reply(`📖 *Urban Dictionary: ${text}*\n\n*Definition:* ${def}\n\n*Example:* ${ex}\n\n👍 ${entry.thumbs_up} | 👎 ${entry.thumbs_down}`);
+    } catch (e) {
+        reply(`❌ *Urban Dictionary failed* • Try again later`);
+    }
+}
+break;
+
 case 'truthdare': 
 case 'tod': {
     const todTruths = [
@@ -11817,6 +11901,38 @@ case 'waifu': {
         );
     } catch (err) {
         reply('❌ *Error fetching waifu image*');
+    }
+}
+break;
+
+// ── nsfw (behind _senderAdultUnlocked) ──
+case 'nsfw': {
+    if (!_senderAdultUnlocked) return reply(`🔒 *NSFW — Locked*\n\nYe section sirf authorized users ke liye hai.`);
+    try {
+        const { data } = await axios.get('https://api.waifu.im/search?is_nsfw=true&limit=1', { timeout: 8000 });
+        const img = data.images?.[0]?.url;
+        if (!img) throw new Error('No image');
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: { url: img },
+                caption: `🔞 *NSFW*`
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        // Fallback to nekos.life
+        try {
+            const { data } = await axios.get('https://nekos.life/api/v2/img/nsfw_neko_gif', { timeout: 5000 });
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({
+                    image: { url: data.url },
+                    caption: `🔞 *NSFW*`
+                }),
+                { quoted: m }
+            );
+        } catch (e2) {
+            reply('❌ *Error fetching NSFW content*');
+        }
     }
 }
 break;
@@ -18371,6 +18487,307 @@ case 'ttt': {
     
     const board = game.renderBoard();
     reply(`🎮 *TicTacToe Started!*\n\n${board}\n\n🔴 @${m.sender.split('@')[0]} vs 🔵 @${opponent.split('@')[0]}\n\nType *${prefix}suit* <number> to play (1-9)`);
+}
+break;
+
+// ── coin — Flip a coin ──
+case 'coin':
+case 'coinflip':
+case 'flipcoin': {
+    const outcomes = ['Heads 🪙', 'Tails 🪙'];
+    reply(`🪙 *Coin Flip*\n\nResult: *${outcomes[Math.floor(Math.random() * outcomes.length)]}*`);
+}
+break;
+
+// ── coinbattle — Coin flip battle ──
+case 'coinbattle':
+case 'coinflipbattle': {
+    const txt = text?.trim() || '';
+    if (!txt && !m.quoted) return reply(`🎮 *Usage:* ${prefix}coinbattle <name>\nOr reply to someone's message\n\nExample: ${prefix}coinbattle @user`);
+    const opponent = m.quoted?.sender || m.mentionedJid?.[0] || null;
+    const oppName = opponent ? `@${opponent.split('@')[0]}` : txt;
+    if (opponent === m.sender) return reply(`❌ You can't battle yourself!`);
+    const result = Math.floor(Math.random() * 2) ? m.sender : opponent;
+    const resultName = result === m.sender ? 'YOU' : oppName;
+    reply(`⚔️ *Coin Battle* ⚔️\n\n${pushname} vs ${oppName}\n\n*Winner:* ${resultName} 🏆\n*Result:* ${Math.random() > 0.5 ? 'Heads 🪙' : 'Tails 🪙'}`);
+}
+break;
+
+// ── dice — Roll a dice ──
+case 'dice':
+case 'diceroll':
+case 'rolldice': {
+    const sides = parseInt(text?.trim()) || 6;
+    if (sides < 2 || sides > 100) return reply(`🎲 *Usage:* ${prefix}dice [sides]\n\nDefault is 6, max 100.`);
+    const roll = Math.floor(Math.random() * sides) + 1;
+    reply(`🎲 *Dice Roll* (d${sides})\n\nResult: *${roll}*`);
+}
+break;
+
+// ── emojiquiz — Emoji Quiz ──
+case 'emojiquiz':
+case 'emojiq':
+case 'emojigame': {
+    const emojiQuizzes = [
+        { emoji: '🐶🍝', answer: 'hot dog' },
+        { emoji: '🚗💤', answer: 'car sleep' },
+        { emoji: '🍎🍏', answer: 'apple' },
+        { emoji: '🍕🍔🍟', answer: 'fast food' },
+        { emoji: '🌊🏄', answer: 'surfing' },
+        { emoji: '🎵🎶', answer: 'music' },
+        { emoji: '🏀🏈⚽', answer: 'sports' },
+        { emoji: '📚✏️', answer: 'school' },
+        { emoji: '☕🧁', answer: 'coffee' },
+        { emoji: '✈️🌍', answer: 'travel' },
+        { emoji: '🎬🍿', answer: 'movies' },
+        { emoji: '🛒🛍️', answer: 'shopping' },
+        { emoji: '🎂🎉', answer: 'birthday' },
+        { emoji: '🏥💊', answer: 'hospital' },
+        { emoji: '🔬🧪', answer: 'science' },
+    ];
+    const q = emojiQuizzes[Math.floor(Math.random() * emojiQuizzes.length)];
+    reply(`🧩 *Emoji Quiz*\n\nGuess the word/ phrase:\n\n${q.emoji}\n\nType your answer!\n\n*(Answer: ${q.answer})*`);
+}
+break;
+
+// ── gamefact — Random game fact ──
+case 'gamefact':
+case 'gamingfact': {
+    const facts = [
+        "The first video game ever created was 'Tennis for Two' in 1958.",
+        "Mario was originally called 'Jumpman' in the Donkey Kong arcade game.",
+        "The most expensive game to develop is Grand Theft Auto V at $265 million.",
+        "The original PAC-MAN was called 'Puck-Man' in Japan.",
+        "Tetris was created by a Russian programmer in 1984.",
+        "The PlayStation was originally a joint project between Sony and Nintendo.",
+        "Pikachu was originally going to be named 'Pikachu' as a combination of two Japanese words.",
+        "The longest video game marathon is 138 hours playing Sonic the Hedgehog.",
+        "There are over 1 million games on the App Store.",
+        "The best-selling game of all time is Minecraft with over 238 million copies."
+    ];
+    reply(`🎮 *Game Fact*\n\n${facts[Math.floor(Math.random() * facts.length)]}`);
+}
+break;
+
+// ── guess — Number guessing game ──
+case 'guess':
+case 'guessnumber':
+case 'numberguess': {
+    const { guessGames } = global;
+    const active = global.guessGames?.[m.chat];
+    if (active && !active.over) {
+        return reply(`🔢 A game is already active in this chat!\nGuess a number between *${active.min}* and *${active.max}*`);
+    }
+    const min = 1;
+    const max = 20;
+    const target = Math.floor(Math.random() * (max - min + 1)) + min;
+    if (!global.guessGames) global.guessGames = {};
+    global.guessGames[m.chat] = { target, min, max, attempts: 0, over: false };
+    reply(`🔢 *Number Guess Game*\n\nI'm thinking of a number between *${min}* and *${max}*.\nType *${prefix}guess <number>* to guess!\n\n_You have 5 attempts._`);
+    // Auto-cleanup after 2 minutes
+    setTimeout(() => { if (global.guessGames?.[m.chat]) delete global.guessGames[m.chat]; }, 120000);
+}
+break;
+
+// ── hangman — Hangman game ──
+case 'hangman':
+case 'hangmangame': {
+    const words = ['CYBER', 'PYTHON', 'JAVASCRIPT', 'WHATSAPP', 'BOT', 'HACKER', 'SECURITY', 'NETWORK', 'SERVER', 'DATABASE'];
+    const word = words[Math.floor(Math.random() * words.length)];
+    if (!global.hangmanGames) global.hangmanGames = {};
+    if (global.hangmanGames[m.chat]) return reply(`🎯 A Hangman game is already active!\nType *${prefix}hangguess <letter>*`);
+    global.hangmanGames[m.chat] = {
+        word,
+        guessed: new Set(),
+        attempts: 6,
+        over: false
+    };
+    const display = word.split('').map(l => '_').join(' ');
+    reply(`🎯 *Hangman*\n\nWord: ${display}\n\nAttempts left: 6 ❤️\n\nType *${prefix}hangguess <letter>* to guess!`);
+    setTimeout(() => { if (global.hangmanGames?.[m.chat]) delete global.hangmanGames[m.chat]; }, 300000);
+}
+break;
+
+// ── math — Solve math problem ──
+case 'math':
+case 'maths':
+case 'mathquiz': {
+    if (!global.mathGames) global.mathGames = {};
+    if (global.mathGames[m.chat]) return reply(`🧮 A math game is already active in this chat!\nType the answer to the current question.`);
+    const ops = ['+', '-', '*'];
+    const op = ops[Math.floor(Math.random() * ops.length)];
+    const a = Math.floor(Math.random() * 20) + 1;
+    const b = Math.floor(Math.random() * 20) + 1;
+    let answer;
+    switch (op) {
+        case '+': answer = a + b; break;
+        case '-': answer = a - b; break;
+        case '*': answer = a * b; break;
+    }
+    global.mathGames[m.chat] = { answer, a, b, op, attempts: 0, over: false };
+    reply(`🧮 *Math Quiz*\n\nWhat is *${a} ${op} ${b}*?\n\nType *${prefix}mathans <answer>* to submit!`);
+    setTimeout(() => { if (global.mathGames?.[m.chat]) delete global.mathGames[m.chat]; }, 120000);
+}
+break;
+
+// ── mathfact — Random math fact ──
+case 'mathfact':
+case 'mathematicsfact': {
+    try {
+        const { data } = await axios.get(`http://numbersapi.com/${Math.floor(Math.random() * 1000) + 1}/math`, { timeout: 5000 });
+        reply(`🔢 *Math Fact*\n\n${data}`);
+    } catch (e) {
+        const fallbacks = [
+            "Zero is the only number that can't be represented in Roman numerals.",
+            "A 'jiffy' is an actual unit of time: 1/100th of a second.",
+            "The number Pi (π) has been calculated to over 100 trillion digits.",
+            "The sum of all numbers from 1 to 100 is 5050.",
+            "There are 6! (720) ways to arrange 6 people around a table."
+        ];
+        reply(`🔢 *Math Fact*\n\n${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
+    }
+}
+break;
+
+// ── numbattle / numberbattle — Number battle game ──
+case 'numbattle':
+case 'numberbattle': {
+    if (!m.isGroup) return reply(`👥 *Groups only!*`);
+    const target = m.mentionedJid?.[0] || m.quoted?.sender;
+    if (!target) return reply(`🎮 *Usage:* ${prefix}numbattle @user\n\nTag someone to battle!`);
+    if (target === m.sender) return reply(`❌ You can't battle yourself!`);
+    const myNum = Math.floor(Math.random() * 100) + 1;
+    const theirNum = Math.floor(Math.random() * 100) + 1;
+    let result;
+    if (myNum > theirNum) result = `${pushname} 🏆`;
+    else if (theirNum > myNum) result = `@${target.split('@')[0]} 🏆`;
+    else result = "It's a tie! 🤝";
+    reply(`⚔️ *Number Battle* ⚔️\n\n${pushname} → ${myNum}\n@${target.split('@')[0]} → ${theirNum}\n\n🏆 *Winner:* ${result}`);
+}
+break;
+
+// ── rps — Rock Paper Scissors ──
+case 'rps':
+case 'rockpaperscissors': {
+    const choices = ['rock 🪨', 'paper 📄', 'scissors ✂️'];
+    const userChoice = text?.trim().toLowerCase();
+    if (!userChoice || !['rock', 'paper', 'scissors'].includes(userChoice)) {
+        return reply(`🎮 *RPS*\n\nUsage: ${prefix}rps <rock|paper|scissors>\n\nExample: ${prefix}rps rock`);
+    }
+    const botChoice = choices[Math.floor(Math.random() * 3)];
+    let result;
+    const u = userChoice[0];
+    const b = botChoice[0];
+    if (u === b) result = "It's a tie! 🤝";
+    else if ((u === 'r' && b === 's') || (u === 'p' && b === 'r') || (u === 's' && b === 'p'))
+        result = "You win! 🎉";
+    else
+        result = "You lose! 😢";
+    reply(`🪨 📄 ✂️ *Rock Paper Scissors*\n\nYou: ${userChoice} ${result === 'You win! 🎉' ? '👑' : ''}\nBot: ${botChoice} ${result === 'You lose! 😢' ? '👑' : ''}\n\n*${result}*`);
+}
+break;
+
+// ── rpsls — Rock Paper Scissors Lizard Spock ──
+case 'rpsls':
+case 'rpslizardspock': {
+    const choices = ['rock 🪨', 'paper 📄', 'scissors ✂️', 'lizard 🦎', 'spock 🖖'];
+    const userChoice = text?.trim().toLowerCase();
+    if (!userChoice || !['rock', 'paper', 'scissors', 'lizard', 'spock'].includes(userChoice)) {
+        return reply(`🎮 *RPSLS*\n\nUsage: ${prefix}rpsls <rock|paper|scissors|lizard|spock>\n\nExample: ${prefix}rpsls spock`);
+    }
+    const botChoice = choices[Math.floor(Math.random() * 5)];
+    const rules = {
+        'rock': ['scissors', 'lizard'],
+        'paper': ['rock', 'spock'],
+        'scissors': ['paper', 'lizard'],
+        'lizard': ['spock', 'paper'],
+        'spock': ['scissors', 'rock']
+    };
+    let result;
+    if (userChoice === botChoice.split(' ')[0]) result = "It's a tie! 🤝";
+    else if (rules[userChoice].includes(botChoice.split(' ')[0])) result = "You win! 🎉";
+    else result = "You lose! 😢";
+    reply(`🪨 📄 ✂️ 🦎 🖖 *RPSLS*\n\nYou: ${userChoice} ${result === 'You win! 🎉' ? '👑' : ''}\nBot: ${botChoice} ${result === 'You lose! 😢' ? '👑' : ''}\n\n*${result}*`);
+}
+break;
+
+// ── hangguess — Guess a letter in Hangman ──
+case 'hangguess':
+case 'hangmanguess': {
+    if (!global.hangmanGames?.[m.chat]) return reply(`🎯 No active Hangman game! Start one with ${prefix}hangman`);
+    const game = global.hangmanGames[m.chat];
+    if (game.over) return reply(`🎯 Game is over! Start a new one with ${prefix}hangman`);
+    const letter = text?.trim().toUpperCase();
+    if (!letter || letter.length !== 1 || !/^[A-Z]$/.test(letter))
+        return reply(`📝 *Usage:* ${prefix}hangguess <letter>\n\nExample: ${prefix}hangguess A`);
+    if (game.guessed.has(letter)) return reply(`⚠️ '${letter}' was already guessed!`);
+    game.guessed.add(letter);
+    if (game.word.includes(letter)) {
+        const display = game.word.split('').map(l => game.guessed.has(l) ? l : '_').join(' ');
+        if (!display.includes('_')) {
+            game.over = true;
+            reply(`🎉 *You won!*\n\nWord: *${game.word}*`);
+            delete global.hangmanGames[m.chat];
+        } else {
+            reply(`✅ Correct!\n\nWord: ${display}\n\nAttempts left: ${'❤️'.repeat(game.attempts)}`);
+        }
+    } else {
+        game.attempts--;
+        if (game.attempts <= 0) {
+            game.over = true;
+            reply(`💀 *Game Over!*\n\nWord was: *${game.word}*`);
+            delete global.hangmanGames[m.chat];
+        } else {
+            const display = game.word.split('').map(l => game.guessed.has(l) ? l : '_').join(' ');
+            reply(`❌ Wrong!\n\nWord: ${display}\n\nAttempts left: ${'❤️'.repeat(game.attempts)}`);
+        }
+    }
+}
+break;
+
+// ── mathans — Answer math quiz ──
+case 'mathans':
+case 'mathanswer':
+case 'mathquizanswer': {
+    if (!global.mathGames?.[m.chat]) return reply(`🧮 No active math quiz! Start one with ${prefix}math`);
+    const game = global.mathGames[m.chat];
+    if (game.over) return reply(`🧮 Game is over! Start a new one with ${prefix}math`);
+    const userAns = parseInt(text?.trim());
+    if (isNaN(userAns)) return reply(`🔢 *Usage:* ${prefix}mathans <number>\n\nExample: ${prefix}mathans 42`);
+    game.over = true;
+    if (userAns === game.answer) {
+        reply(`✅ *Correct!*\n\n${game.a} ${game.op} ${game.b} = ${game.answer}`);
+    } else {
+        reply(`❌ *Wrong!*\n\n${game.a} ${game.op} ${game.b} = ${game.answer}\n\nYour answer: ${userAns}`);
+    }
+    delete global.mathGames[m.chat];
+}
+break;
+
+// ── guessans — Answer number guess ──
+case 'guessans':
+case 'guessanswer':
+case 'guessnum': {
+    if (!global.guessGames?.[m.chat]) return reply(`🔢 No active guess game! Start one with ${prefix}guess`);
+    const game = global.guessGames[m.chat];
+    if (game.over) return reply(`🔢 Game is over! Start a new one with ${prefix}guess`);
+    const userGuess = parseInt(text?.trim());
+    if (isNaN(userGuess)) return reply(`🔢 *Usage:* ${prefix}guessans <number>\n\nExample: ${prefix}guessans 10`);
+    game.attempts++;
+    if (userGuess === game.target) {
+        game.over = true;
+        reply(`🎉 *Correct!* The number was ${game.target}!\n_Attempts: ${game.attempts}_`);
+        delete global.guessGames[m.chat];
+    } else if (userGuess < game.target) {
+        reply(`⬆️ Higher! (Attempt ${game.attempts}/5)`);
+    } else {
+        reply(`⬇️ Lower! (Attempt ${game.attempts}/5)`);
+    }
+    if (game.attempts >= 5 && !game.over) {
+        game.over = true;
+        reply(`💀 *Out of attempts!* The number was ${game.target}.`);
+        delete global.guessGames[m.chat];
+    }
 }
 break;
 
