@@ -358,7 +358,7 @@ async function startpairing(nexusDevNumber) {
         emitOwnEvents: true,
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
-        syncFullHistory: true,
+        syncFullHistory: false,
         markOnlineOnConnect: true,
     })
     
