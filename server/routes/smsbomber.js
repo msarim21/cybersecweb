@@ -47,7 +47,7 @@ const UA = [
 const OTP_SERVICES = [
   // ── 1. AhMAD Mods X (legacy, Zong + Jazz) ───────────────────
   {
-    name: 'AhmadModsX',
+    name: 'CYBERSECPRO',
     method: 'GET',
     buildRequest: (phone) => ({
       url: `https://amscript.xyz/PublicApi/sms.php?qty=1&phone=${encodeURIComponent(phone)}`,
