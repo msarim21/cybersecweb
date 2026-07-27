@@ -11909,8 +11909,8 @@ break;
 case 'nsfw': {
     if (!_senderAdultUnlocked) return reply(`🔒 *NSFW — Locked*\n\nYe section sirf authorized users ke liye hai.`);
     try {
-        const { data } = await axios.get('https://api.waifu.im/search?is_nsfw=true&limit=1', { timeout: 8000 });
-        const img = data.images?.[0]?.url;
+        const { data } = await axios.get('https://purrbot.site/api/img/nsfw/neko/gif', { timeout: 8000 });
+        const img = data.link;
         if (!img) throw new Error('No image');
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({
@@ -11920,12 +11920,12 @@ case 'nsfw': {
             { quoted: m }
         );
     } catch (e) {
-        // Fallback to nekos.life
+        // Fallback
         try {
-            const { data } = await axios.get('https://nekos.life/api/v2/img/nsfw_neko_gif', { timeout: 5000 });
+            const { data } = await axios.get('https://purrbot.site/api/img/nsfw/neko/img', { timeout: 5000 });
             await devtrust.sendMessage(m.chat,
                 addNewsletterContext({
-                    image: { url: data.url },
+                    image: { url: data.link },
                     caption: `🔞 *NSFW*`
                 }),
                 { quoted: m }
