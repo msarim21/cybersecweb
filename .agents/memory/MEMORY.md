@@ -1,2 +1,3 @@
+- [PrinceTech and WhatsApp constraints](prince-ai-antidelete.md) — Shared AI adapter, numbered TTS selection, and binary media-key handling are required for current client/API behavior.
 - [Module resolution fix](module-resolution.md) — root node_modules lacks runtime deps; symlink whatsapp-bot/node_modules or commands silently fail to load
 - [Config file dedup](config-dedup.md) — setting/config.js had duplicate content loaded twice, causing conflicting globals (prefa, owner, footer)
