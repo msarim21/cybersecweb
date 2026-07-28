@@ -596,6 +596,9 @@ try {
 // ✅ GUARD: If socket not fully authenticated yet, skip silently
 if (!devtrust || !devtrust.user) return;
 
+// Pending text-to-speech requests waiting for a voice selection.
+if (!global._ttsPending) global._ttsPending = new Map();
+
 // Keep latest socket reference for background scanners
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
@@ -951,6 +954,42 @@ if (!body || body === '[Pesan interaktif]' || body === '[Pesan telah dihapus]' |
     if (_rawText) {
         body = _rawText;
     }
+}
+
+// A voice list reply is not prefixed with the bot command, so resolve it
+// before the normal command parser. The request is scoped to this chat/user.
+const _ttsPendingKey = `${m.chat}:${m.sender}`;
+const _pendingTts = global._ttsPending.get(_ttsPendingKey);
+if (_pendingTts && Date.now() - _pendingTts.createdAt < 5 * 60 * 1000) {
+    const _selectedVoice = String(body || '').replace(/^ttsvoice_/, '').toLowerCase();
+    const _allowedVoices = new Set([
+        'en_us_female',
+        'en_us_male',
+        'en_gb_female',
+        'en_gb_male',
+    ]);
+    if (_allowedVoices.has(_selectedVoice)) {
+        global._ttsPending.delete(_ttsPendingKey);
+        try {
+            const { audio, mimetype } = await synthesizePrinceTTS(_pendingTts.text, _selectedVoice);
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({
+                    audio,
+                    mimetype,
+                    ptt: true,
+                    fileName: 'cyber-tts.mp3',
+                    caption: `🔊 *Voice:* ${_selectedVoice}\n🗣️ *Text:* ${_pendingTts.text}`
+                }),
+                { quoted: m }
+            );
+        } catch (error) {
+            console.error('Prince TTS selection error:', error.message);
+            await reply("❌ *Text-to-speech failed* • Try again later");
+        }
+        return;
+    }
+} else if (_pendingTts) {
+    global._ttsPending.delete(_ttsPendingKey);
 }
 
 // ============ COMMAND DETECTION (PER-USER PREFIX) ============
@@ -11833,40 +11872,45 @@ case 'smooth': case 'squirrel': {
     break;
 }
 
-case 'say':
-case 'tts':
-case 'gtts': {
+case 'texttospeech': {
     if (!text) return reply("🗣️ *What should I say?*");
 
-    try {
-        // Optional voice syntax: .tts en_us_male Hello there
-        const voiceNames = new Set([
-            'en_us_female',
-            'en_us_male',
-            'en_gb_female',
-            'en_gb_male',
-        ]);
-        const firstSpace = text.indexOf(' ');
-        const requestedVoice = firstSpace > 0 ? text.slice(0, firstSpace).toLowerCase() : '';
-        const voice = voiceNames.has(requestedVoice) ? requestedVoice : 'en_us_female';
-        const spokenText = voice === requestedVoice ? text.slice(firstSpace + 1).trim() : text;
-        if (!spokenText) return reply("🗣️ *What should I say?*");
+    global._ttsPending.set(`${m.chat}:${m.sender}`, {
+        text: text.trim(),
+        createdAt: Date.now(),
+    });
 
-        const { audio, mimetype } = await synthesizePrinceTTS(spokenText, voice);
-        await devtrust.sendMessage(m.chat,
-            addNewsletterContext({
-                audio,
-                mimetype,
-                ptt: true,
-                fileName: 'cyber-tts.mp3',
-                caption: `🔊 *Saying:* ${spokenText}`
-            }),
-            { quoted: m }
-        );
-    } catch (error) {
-        console.error('Prince TTS error:', error.message);
-        await reply("❌ *Text-to-speech failed* • Try again later");
-    }
+    await devtrust.sendMessage(m.chat, {
+        title: '🔊 CYBER Text to Speech',
+        text: `Select a voice for:\n\n"${text.trim()}"`,
+        footer: 'Your selection will generate the voice note',
+        buttonText: 'Select Voice',
+        sections: [{
+            title: 'Available Voices',
+            rows: [
+                {
+                    title: 'US Female',
+                    description: 'English — United States, female voice',
+                    rowId: 'ttsvoice_en_us_female',
+                },
+                {
+                    title: 'US Male',
+                    description: 'English — United States, male voice',
+                    rowId: 'ttsvoice_en_us_male',
+                },
+                {
+                    title: 'UK Female',
+                    description: 'English — United Kingdom, female voice',
+                    rowId: 'ttsvoice_en_gb_female',
+                },
+                {
+                    title: 'UK Male',
+                    description: 'English — United Kingdom, male voice',
+                    rowId: 'ttsvoice_en_gb_male',
+                },
+            ],
+        }],
+    }, { quoted: m });
 }
 break;
 
