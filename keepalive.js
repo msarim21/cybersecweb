@@ -387,9 +387,9 @@ async function refreshBotSessions() {
 // ── Prince AI API warmup — prevent first-command cold-start delay ─────────────
 async function warmupPrinceAPIs() {
     const endpoints = [
-        'https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=hi',
-        'https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=hi',
-        'https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/openai?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/geminiai?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/deepseek-v3?apikey=prince&q=hi',
     ];
     for (const url of endpoints) {
         try {

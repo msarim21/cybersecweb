@@ -33,6 +33,7 @@ const util = require('util')
 const chalk = require('chalk')
 const os = require('os')
 const axios = require('axios')
+const { askPrinceAI } = require('./allfunc/prince-ai')
 const fsx = require('fs-extra')
 const crypto = require('crypto')
 const googleTTS = require('google-tts-api')
@@ -8478,10 +8479,10 @@ break;
 case 'roast': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nRoast this person in a super funny and savage way in 2-3 lines only. Be creative and witty. Target: ${target}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`🔥 *Roast for ${target}:*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Roast this person in a funny and witty way in 2-3 lines only. Target: ${target}`);
+        reply(`🔥 *Roast for ${target}:*\n\n${answer}`);
     } catch (e) {
+        console.error('Roast AI error:', e.message);
         reply("⚠️ *Roast failed* • The burn machine needs repairs");
     }
 }
@@ -8490,10 +8491,10 @@ break;
 case 'compliment': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGive a sweet, warm and genuine compliment to this person in 2 lines only: ${target}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`💫 *Compliment for ${target}:*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Give a sweet, warm and genuine compliment to this person in 2 lines only: ${target}`);
+        reply(`💫 *Compliment for ${target}:*\n\n${answer}`);
     } catch (e) {
+        console.error('Compliment AI error:', e.message);
         reply("⚠️ *Compliment failed* • The kindness machine is broken");
     }
 }
@@ -8547,10 +8548,10 @@ break;
 case 'rewrite': {
     if (!text) return reply(`✍️ *Usage:* ${command} your text here`);
     try {
-        const prompt = `CRITICAL: Rewrite the text in the EXACT same language and script it was written in. If the text is in Roman Urdu, keep it in Roman Urdu using English letters. NEVER convert to Hindi Devanagari script. NEVER convert to formal Urdu Nastaliq script.\n\nRewrite the following text to be clear, grammatically correct and well-structured. Only return the rewritten text, nothing else:\n"${text}"`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`✍️ *CYBER Rewrite*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Rewrite the following text to be clear, grammatically correct and well-structured. Only return the rewritten text, nothing else:\n"${text}"`);
+        reply(`✍️ *CYBER Rewrite*\n\n${answer}`);
     } catch (e) {
+        console.error('Rewrite AI error:', e.message);
         reply("⚠️ *Rewrite failed* • Editor is on break");
     }
 }
@@ -8579,11 +8580,10 @@ case 'story': {
     if (!text) return reply(`📖 *Usage:* ${command} a brave warrior`);
     
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a short creative story (150 words max) about: ${text}. Make it engaging with a clear beginning, middle and end.`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Write a short creative story (150 words maximum) about: ${text}. Make it engaging with a clear beginning, middle and end.`);
+        reply(`📖 *CYBER Story*\n\n${answer}`);
     } catch (e) {
-        console.error(e);
+        console.error('Story AI error:', e.message);
         reply("⚠️ *Storyteller is sleeping* • Try again later");
     }
 }
@@ -8798,10 +8798,10 @@ break;
 case 'poem': {
     if (!text) return reply(`📝 *Usage:* ${command} love under stars`);
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a beautiful, original, short poem (8-12 lines) about: ${text}. Use vivid imagery and emotion.`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📝 *CYBER Poem*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Write a beautiful, original short poem of 8-12 lines about: ${text}. Use vivid imagery and emotion.`);
+        reply(`📝 *CYBER Poem*\n\n${answer}`);
     } catch (e) {
+        console.error('Poem AI error:', e.message);
         reply("⚠️ *Poet is on strike* • Try again later");
     }
 }
@@ -8811,11 +8811,11 @@ case 'metabcn-ai':
 case 'metaai': {
     if (!text) return reply(`🤖 *Usage:* ${command} your question`);
     try {
-        const langPromptMeta = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptMeta)}`, { timeout: 25000 });
-        reply(`🤖 *CYBER AI*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', text);
+        reply(`🤖 *CYBER AI*\n\n${answer}`);
     } catch (e) {
-        reply("⚠️ *AI is thinking too hard* • Try again later");
+        console.error('Meta AI error:', e.message);
+        reply("⚠️ *AI unavailable* • Try again later");
     }
 }
 break;
@@ -8823,11 +8823,11 @@ break;
 case 'codeai': {
     if (!text) return reply(`👨‍💻 *Usage:* ${command} write a Python function`);
     try {
-        const prompt = `CRITICAL: Provide code first, then explanation ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu for explanation, respond in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nYou are a coding assistant. Provide clean, working code with brief explanation:\n\n${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`👨‍💻 *CYBER Code*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `You are a coding assistant. Provide clean, working code with a brief explanation.\n\n${text}`);
+        reply(`👨‍💻 *CYBER Code*\n\n${answer}`);
     } catch (e) {
-        reply("⚠️ *Code generator crashed* • Try again later");
+        console.error('Code AI error:', e.message);
+        reply("⚠️ *Code generator unavailable* • Try again later");
     }
 }
 break;
@@ -8835,10 +8835,10 @@ break;
 case 'triviaai':
 case 'quiz': {
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGenerate a random interesting trivia question with 4 multiple choice options labeled A) B) C) D). At the end reveal the correct answer. Format exactly like:\n\n❓ Question\n\nA) option\nB) option\nC) option\nD) option\n\n✅ Answer: X) correct`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`🎲 *CYBER Quiz*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', 'Generate a random interesting trivia question with 4 multiple choice options labeled A), B), C), and D). At the end reveal the correct answer.');
+        reply(`🎲 *CYBER Quiz*\n\n${answer}`);
     } catch (e) {
+        console.error('Trivia AI error:', e.message);
         reply("⚠️ *Quiz machine broke* • Try again later");
     }
 }
@@ -8847,10 +8847,10 @@ break;
 case 'storyai': {
     if (!text) return reply(`📖 *Usage:* ${command} a brave dog in space`);
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a creative short story (150 words max) about: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story AI*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Write a creative short story (150 words maximum) about: ${text}`);
+        reply(`📖 *CYBER Story AI*\n\n${answer}`);
     } catch (e) {
+        console.error('Story AI error:', e.message);
         reply("❌ *Story generator failed* • Try again later");
     }
 }
@@ -11489,21 +11489,12 @@ break;
 
 case 'ai': {
     if (!text) return reply('🤖 *Example:* ai Who is Mark Zuckerberg?');
-
-
     try {
-        const { data } = await axios.post("https://text.pollinations.ai/", {
-            model: { id: "gpt-4", name: "GPT-4", maxLength: 32000 },
-            messages: [
-                { role: "system", content: "CRITICAL LANGUAGE RULE: You MUST respond in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'karo', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script (अ, आ, इ). NEVER use formal Urdu Nastaliq script (ا، ب، پ). ALWAYS match the user's exact script style." },
-                { pluginId: null, content: text, role: "user" }
-            ],
-            temperature: 0.5
-        });
-
-        reply(`🤖 *AI*\n\n${data}`);
+        const answer = await askPrinceAI('openai', text);
+        reply(`🤖 *AI*\n\n${answer}`);
 
     } catch (e) {
+        console.error('AI error:', e.message);
         reply(`❌ *AI error* • ${e.message}`);
     }
 }
@@ -11692,17 +11683,7 @@ case 'vxnxji': {
     if (!text) return reply(`🤖 *Example:* ${command} how are you?`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptGPT = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resGPT = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptGPT },
-                { role: 'user', content: text }
-            ],
-            model: 'openai',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerGPT = typeof resGPT.data === 'string' ? resGPT.data : JSON.stringify(resGPT.data);
-        if (!answerGPT || answerGPT.startsWith('<')) return reply("⚠️ *GPT did not respond* — try again");
+        const answerGPT = await askPrinceAI('openai', text);
         const chunksGPT = answerGPT.match(/[\s\S]{1,3000}/g) || [answerGPT];
         for (let i = 0; i < chunksGPT.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
@@ -15773,17 +15754,7 @@ case "gemivbnni": {
     if (!query) return reply("🤖 *Usage:* .gemini your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPrompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu. NEVER use Hindi Devanagari or formal Urdu Nastaliq script.`;
-        const res = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPrompt },
-                { role: 'user', content: query }
-            ],
-            model: 'openai-large',
-            seed: -1
-        }, { timeout: 40000 });
-        const answer = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-        if (!answer || answer.startsWith('<')) return reply("⚠️ *Gemini did not respond* — try again");
+        const answer = await askPrinceAI('gemini', query);
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] }, i === 0 ? { quoted: m } : {});
@@ -15960,17 +15931,7 @@ case 'deepsjfkeek': {
     if (!text) return reply("🤖 *Usage:* .deepseek your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptDS = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resDS = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptDS },
-                { role: 'user', content: text }
-            ],
-            model: 'deepseek',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerDS = typeof resDS.data === 'string' ? resDS.data : JSON.stringify(resDS.data);
-        if (!answerDS || answerDS.startsWith('<')) return reply("⚠️ *DeepSeek did not respond* — try again");
+        const answerDS = await askPrinceAI('deepseek', text);
         const chunksDS = answerDS.match(/[\s\S]{1,3000}/g) || [answerDS];
         for (let i = 0; i < chunksDS.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunksDS[i] }, i === 0 ? { quoted: m } : {});
@@ -15989,17 +15950,7 @@ case "grovnnk-ai": {
     if (!query) return reply("🤖 *Usage:* .grok your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptGrok = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resGrok = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptGrok },
-                { role: 'user', content: query }
-            ],
-            model: 'llama',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerGrok = typeof resGrok.data === 'string' ? resGrok.data : JSON.stringify(resGrok.data);
-        if (!answerGrok || answerGrok.startsWith('<')) return reply("⚠️ *Grok did not respond* — try again");
+        const answerGrok = await askPrinceAI('openai', query);
         const chunksGrok = answerGrok.match(/[\s\S]{1,3000}/g) || [answerGrok];
         for (let i = 0; i < chunksGrok.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Grok*\n\n" : "") + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
@@ -16074,13 +16025,7 @@ case "metabcn-ai": {
 
         if (!query) return reply("🤖 *Usage:* meta your question");
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const json = await res.json();
-        const answer = json?.data || "";
-
-        if (!answer) return reply("⚠️ *No response from Meta AI*");
+        const answer = await askPrinceAI('openai', query);
 
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         
@@ -16109,13 +16054,7 @@ case "qwenxj": {
 
         if (!query) return reply("🤖 *Usage:* qwen your question");
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const json = await res.json();
-        const answer = json?.data || "";
-
-        if (!answer) return reply("⚠️ *No response from Qwen*");
+        const answer = await askPrinceAI('openai', query);
 
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         
