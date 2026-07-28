@@ -979,20 +979,23 @@ if (_pendingTts && Date.now() - _pendingTts.createdAt < 5 * 60 * 1000) {
     if (_allowedVoices.has(_selectedVoice)) {
         global._ttsPending.delete(_ttsPendingKey);
         try {
-            const { audio, mimetype } = await synthesizePrinceTTS(_pendingTts.text, _selectedVoice);
+            const { audio, mimetype, fileName } = await synthesizePrinceTTS(_pendingTts.text, _selectedVoice);
             await devtrust.sendMessage(m.chat,
                 addNewsletterContext({
                     audio,
                     mimetype,
                     ptt: true,
-                    fileName: 'cyber-tts.mp3',
-                    caption: `🔊 *Voice:* ${_selectedVoice}\n🗣️ *Text:* ${_pendingTts.text}`
+                    fileName: fileName || 'cyber-tts.ogg',
                 }),
                 { quoted: m }
             );
         } catch (error) {
             console.error('Prince TTS selection error:', error.message);
-            await reply("❌ *Text-to-speech failed* • Try again later");
+            try {
+                await reply("❌ *Text-to-speech failed* • Try again later");
+            } catch (replyError) {
+                console.error('Prince TTS error reply failed:', replyError.message);
+            }
         }
         return;
     }

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { spawn } = require('child_process');
 
 const PRINCE_AI_BASE = 'https://api.princetechn.com/api/ai';
 const PRINCE_AI_KEY = 'prince';
@@ -80,7 +81,52 @@ async function synthesizePrinceTTS(text, voice = 'en_us_female', options = {}) {
     if (!audio.length || (!contentType.startsWith('audio/') && !contentType.includes('octet-stream'))) {
         throw new Error('PrinceTech TTS API did not return audio');
     }
-    return { audio, mimetype: contentType.startsWith('audio/') ? contentType : 'audio/mpeg' };
+    // WhatsApp voice notes are most reliable as mono OGG/Opus. Sending the
+    // provider's MP3 directly with `ptt: true` can show "audio unavailable"
+    // on Android/linked clients even when the MP3 itself is valid.
+    const opusAudio = await convertToWhatsAppVoiceNote(audio, options);
+    return {
+        audio: opusAudio,
+        mimetype: 'audio/ogg; codecs=opus',
+        fileName: 'cyber-tts.ogg',
+    };
+}
+
+function convertToWhatsAppVoiceNote(input, options = {}) {
+    return new Promise((resolve, reject) => {
+        const ffmpeg = spawn(options.ffmpegPath || 'ffmpeg', [
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-i', 'pipe:0',
+            '-vn',
+            '-ac', '1',
+            '-ar', '48000',
+            '-c:a', 'libopus',
+            '-b:a', '32k',
+            '-application', 'voip',
+            '-f', 'ogg',
+            'pipe:1',
+        ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+        const chunks = [];
+        const errors = [];
+        ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
+        ffmpeg.stderr.on('data', chunk => errors.push(chunk));
+        ffmpeg.once('error', error => reject(error));
+        ffmpeg.once('close', code => {
+            if (code !== 0) {
+                reject(new Error(`TTS audio conversion failed: ${Buffer.concat(errors).toString().trim()}`));
+                return;
+            }
+            const output = Buffer.concat(chunks);
+            if (!output.length) {
+                reject(new Error('TTS audio conversion returned an empty file'));
+                return;
+            }
+            resolve(output);
+        });
+        ffmpeg.stdin.end(input);
+    });
 }
 
 module.exports = {
