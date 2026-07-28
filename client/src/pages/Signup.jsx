@@ -72,7 +72,18 @@ export default function Signup() {
       toast.success('SIGNUP SUCCESSFUL');
       navigate('/dashboard');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Registration failed');
+      if (err.response?.status === 429) {
+        const retryAfter = Number(err.response.headers?.['retry-after']);
+        const waitMinutes = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.max(1, Math.ceil(retryAfter / 60))
+          : null;
+        toast.error(
+          err.response?.data?.error
+          || `Too many signup attempts. Please try again${waitMinutes ? ` in ${waitMinutes} minutes` : ' later'}.`
+        );
+      } else {
+        toast.error(err.response?.data?.error || 'Registration failed');
+      }
     } finally {
       setLoading(false);
     }

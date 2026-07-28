@@ -258,6 +258,10 @@ const globalLimiter = rateLimit({
   skip: (req) => {
     const p = req.originalUrl || req.url || '';
     if (p.startsWith('/api/health')) return true;
+    // Signup has its own dedicated limiter below. Do not consume the shared
+    // API budget, otherwise a busy/shared network can block new accounts with
+    // the generic global 429 response.
+    if (req.method === 'POST' && /^\/api\/auth\/signup(?:\?|$)/.test(p)) return true;
     // Status/code polling during pairing — must not count toward global cap
     if (req.method === 'GET' && /\/api\/pairing\/(status|code)\//.test(p)) return true;
     return false;
@@ -268,15 +272,31 @@ const globalLimiter = rateLimit({
   },
 });
 
-// ── Auth rate limiter — tighter (10 per 15 min) ───────────────────────────
+// ── Auth rate limiter — login only (10 per 15 min) ─────────────────────────
+// Signup uses a separate limiter so shared/mobile IPs do not exhaust the
+// login protection budget for legitimate new users.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'POST' && req.path === '/signup',
   handler: (req, res) => {
     logThreat({ type: 'BRUTE_FORCE', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Auth rate limit exceeded — possible brute force' });
     res.status(429).json({ error: 'Too many login attempts. Please wait 15 minutes.' });
+  },
+});
+
+// Signup remains protected from automated account creation, but has a
+// separate and more generous budget than login attempts.
+const signupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logThreat({ type: 'SIGNUP_RATE_LIMIT_EXCEEDED', severity: 'MEDIUM', ip: req.ip, path: req.path, detail: 'Signup rate limit exceeded' });
+    res.status(429).json({ error: 'Too many signup attempts from this network. Please wait a few minutes and try again.' });
   },
 });
 
@@ -290,6 +310,7 @@ const adminLimiter = rateLimit({
 });
 
 app.use('/api/',       globalLimiter);
+app.use('/api/auth/signup', signupLimiter);
 app.use('/api/auth/',  authLimiter);
 app.use('/api/admin/', adminLimiter);
 
