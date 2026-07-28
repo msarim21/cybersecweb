@@ -12,6 +12,11 @@ const ANTIDELETE_DELETE_DEDUP_MS = 90 * 1000;
 function _adToBuffer(v) {
     if (!v) return null;
     if (Buffer.isBuffer(v)) return v;
+    if (v instanceof Uint8Array) return Buffer.from(v);
+    if (v instanceof ArrayBuffer) return Buffer.from(v);
+    if (Array.isArray(v)) {
+        try { return Buffer.from(v); } catch (_) { return null; }
+    }
     if (typeof v === 'string') {
         try { return Buffer.from(v, 'base64'); } catch (_) { return null; }
     }
@@ -797,6 +802,7 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
     if (!raw?.mediaKey && !protoMsg && !raw?.url && !raw?.directPath) return null;
     try {
         const { downloadContentFromMessage: _dlcR } = require('@whiskeysockets/baileys');
+        const downloadType = mtype === 'ptv' ? 'video' : mtype;
         const _rc = protoMsg || {
             url: raw.url,
             directPath: raw.directPath,
@@ -805,7 +811,7 @@ async function _adRedownloadMedia(raw, mtype, protoMsg) {
             fileSha256: _adToBuffer(raw.fileSha256),
             mimetype: raw.mimetype,
         };
-        const _st = await _dlcR(_rc, mtype);
+        const _st = await _dlcR(_rc, downloadType);
         const _chs = [];
         for await (const _ch of _st) _chs.push(_ch);
         const _b = Buffer.concat(_chs);

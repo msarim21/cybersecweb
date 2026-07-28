@@ -5,13 +5,18 @@ const PRINCE_AI_KEY = 'prince';
 
 const ENDPOINTS = {
     openai: 'openai',
-    gemini: 'geminiai',
-    deepseek: 'deepseek-v3',
+    // PrinceTech's currently working text endpoint is OpenAI. Keep the
+    // provider names as public aliases so every AI command has one stable
+    // implementation and does not break when the optional model routes
+    // return 404/500.
+    gemini: 'openai',
+    deepseek: 'openai',
 };
 
 function normalizeResult(data) {
     if (typeof data === 'string') return data.trim();
     if (!data || typeof data !== 'object') return '';
+    if (data.error && typeof data.error === 'string') return '';
 
     const candidates = [
         data.result,
@@ -25,6 +30,7 @@ function normalizeResult(data) {
     for (const value of candidates) {
         if (typeof value === 'string' && value.trim()) return value.trim();
         if (value && typeof value === 'object') {
+            if (typeof value.error === 'string') continue;
             const nested = normalizeResult(value);
             if (nested) return nested;
         }

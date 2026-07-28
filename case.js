@@ -961,7 +961,15 @@ if (!body || body === '[Pesan interaktif]' || body === '[Pesan telah dihapus]' |
 const _ttsPendingKey = `${m.chat}:${m.sender}`;
 const _pendingTts = global._ttsPending.get(_ttsPendingKey);
 if (_pendingTts && Date.now() - _pendingTts.createdAt < 5 * 60 * 1000) {
-    const _selectedVoice = String(body || '').replace(/^ttsvoice_/, '').toLowerCase();
+    const _voiceInput = String(body || '').trim().toLowerCase();
+    const _numericVoiceMap = {
+        '1': 'en_us_female',
+        '2': 'en_us_male',
+        '3': 'en_gb_female',
+        '4': 'en_gb_male',
+    };
+    const _selectedVoice = _numericVoiceMap[_voiceInput]
+        || _voiceInput.replace(/^ttsvoice_/, '');
     const _allowedVoices = new Set([
         'en_us_female',
         'en_us_male',
@@ -5746,15 +5754,13 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}earrape
 │❖ ${prefix}fast
 │❖ ${prefix}fat
-│❖ ${prefix}gtts
+│❖ ${prefix}texttospeech
 │❖ ${prefix}nightcore
 │❖ ${prefix}reverse
 │❖ ${prefix}robot
-│❖ ${prefix}say
 │❖ ${prefix}slow
 │❖ ${prefix}smooth
 │❖ ${prefix}squirrel
-│❖ ${prefix}tts
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐎𝐓𝐇𝐄𝐑* ◆━━┓
@@ -11880,37 +11886,18 @@ case 'texttospeech': {
         createdAt: Date.now(),
     });
 
-    await devtrust.sendMessage(m.chat, {
-        title: '🔊 CYBER Text to Speech',
-        text: `Select a voice for:\n\n"${text.trim()}"`,
-        footer: 'Your selection will generate the voice note',
-        buttonText: 'Select Voice',
-        sections: [{
-            title: 'Available Voices',
-            rows: [
-                {
-                    title: 'US Female',
-                    description: 'English — United States, female voice',
-                    rowId: 'ttsvoice_en_us_female',
-                },
-                {
-                    title: 'US Male',
-                    description: 'English — United States, male voice',
-                    rowId: 'ttsvoice_en_us_male',
-                },
-                {
-                    title: 'UK Female',
-                    description: 'English — United Kingdom, female voice',
-                    rowId: 'ttsvoice_en_gb_female',
-                },
-                {
-                    title: 'UK Male',
-                    description: 'English — United Kingdom, male voice',
-                    rowId: 'ttsvoice_en_gb_male',
-                },
-            ],
-        }],
-    }, { quoted: m });
+    // Use the same reliable numbered-reply flow as the media search commands.
+    // Native WhatsApp list payloads are rendered as a blank/plain message by
+    // some linked/self-chat clients, so a numbered prompt is more dependable.
+    await reply(
+        `🔊 *Select a voice:*\n\n` +
+        `1. US Female — English (United States)\n` +
+        `2. US Male — English (United States)\n` +
+        `3. UK Female — English (United Kingdom)\n` +
+        `4. UK Male — English (United Kingdom)\n\n` +
+        `📝 Text: "${text.trim()}"\n\n` +
+        `_Reply with 1, 2, 3, or 4_`
+    );
 }
 break;
 
@@ -14260,46 +14247,6 @@ case 'reactbcnch': {
 }
 break;
 
-case "gpt4": {
-    const chatId = m.key.remoteJid;
-    let query = args.join(" ").trim();
-    
-    try {
-        if (!query && m.message && m.message.extendedTextMessage && 
-            m.message.extendedTextMessage.contextInfo && 
-            m.message.extendedTextMessage.contextInfo.quotedMessage) {
-            
-            const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
-            if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage && quoted.extendedTextMessage.text) 
-                query = quoted.extendedTextMessage.text;
-        }
-
-        if (!query) {
-            return reply("🤖 *Usage:* gpt4 your question");
-        }
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error* • ${res.status}`);
-
-        const json = await res.json();
-        const answer = json?.data || "";
-
-        if (!answer) return reply("⚠️ *No response from GPT-4*");
-
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
-        for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT-4*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
-        }
-    } catch (err) {
-        console.error("gpt4 command error:", err);
-        reply("⚠️ *GPT-4 unavailable* • Try later");
-    }
-}
-break;
-
 case 'mode': {
     reply(`🔹 *Mode:* ${devtrust.public ? 'Public' : 'Private'}`);
 }
@@ -15302,40 +15249,6 @@ case 'delpair': {
         reply(`✅ *Pairing deleted for ${cleanNumber}*\n\n${message}`);
     } else {
         reply(`❌ *No pairing found for ${cleanNumber}*`);
-    }
-}
-break;
-
-case "gpt5": {
-    const chatId = m.key.remoteJid;
-    let query = args.join(" ").trim();
-
-    try {
-        if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
-            const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
-            if (quoted.conversation) query = quoted.conversation;
-            else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
-        }
-
-        if (!query) return reply("🤖 *Usage:* gpt5 your question");
-
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const json = await res.json();
-        const answer = json?.result || "";
-
-        if (!answer) return reply("⚠️ *No response from GPT-5*");
-
-        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
-        
-        for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? "🤖 *GPT-5*\n\n" : "";
-            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
-        }
-    } catch (err) {
-        console.error(err);
-        reply("⚠️ *GPT-5 unavailable*");
     }
 }
 break;
