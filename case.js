@@ -33,10 +33,9 @@ const util = require('util')
 const chalk = require('chalk')
 const os = require('os')
 const axios = require('axios')
-const { askPrinceAI } = require('./allfunc/prince-ai')
+const { askPrinceAI, synthesizePrinceTTS } = require('./allfunc/prince-ai')
 const fsx = require('fs-extra')
 const crypto = require('crypto')
-const googleTTS = require('google-tts-api')
 const ffmpeg = require('fluent-ffmpeg')
 const speed = require('performance-now')
 const { spawn: spawn, exec } = require('child_process')
@@ -11839,22 +11838,35 @@ case 'tts':
 case 'gtts': {
     if (!text) return reply("🗣️ *What should I say?*");
 
-    const ttsUrl = googleTTS.getAudioUrl(text, {
-        lang: "en",
-        slow: false,
-        host: "https://translate.google.com",
-    });
+    try {
+        // Optional voice syntax: .tts en_us_male Hello there
+        const voiceNames = new Set([
+            'en_us_female',
+            'en_us_male',
+            'en_gb_female',
+            'en_gb_male',
+        ]);
+        const firstSpace = text.indexOf(' ');
+        const requestedVoice = firstSpace > 0 ? text.slice(0, firstSpace).toLowerCase() : '';
+        const voice = voiceNames.has(requestedVoice) ? requestedVoice : 'en_us_female';
+        const spokenText = voice === requestedVoice ? text.slice(firstSpace + 1).trim() : text;
+        if (!spokenText) return reply("🗣️ *What should I say?*");
 
-    await devtrust.sendMessage(m.chat,
-        addNewsletterContext({
-            audio: { url: ttsUrl },
-            mimetype: "audio/mp4",
-            ptt: true,
-            fileName: `${text}.mp3`,
-            caption: `🔊 *Saying:* ${text}`
-        }),
-        { quoted: m }
-    );
+        const { audio, mimetype } = await synthesizePrinceTTS(spokenText, voice);
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                audio,
+                mimetype,
+                ptt: true,
+                fileName: 'cyber-tts.mp3',
+                caption: `🔊 *Saying:* ${spokenText}`
+            }),
+            { quoted: m }
+        );
+    } catch (error) {
+        console.error('Prince TTS error:', error.message);
+        await reply("❌ *Text-to-speech failed* • Try again later");
+    }
 }
 break;
 

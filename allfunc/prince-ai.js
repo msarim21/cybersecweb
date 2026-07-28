@@ -54,8 +54,32 @@ async function askPrinceAI(provider, prompt, options = {}) {
     return answer;
 }
 
+async function synthesizePrinceTTS(text, voice = 'en_us_female', options = {}) {
+    const query = String(text || '').trim();
+    if (!query) throw new Error('TTS text is empty');
+
+    const response = await axios.get(`${PRINCE_AI_BASE}/tts`, {
+        params: {
+            apikey: PRINCE_AI_KEY,
+            text: query,
+            voice: voice || 'en_us_female',
+        },
+        responseType: 'arraybuffer',
+        timeout: options.timeout || 60000,
+        validateStatus: status => status >= 200 && status < 300,
+    });
+
+    const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+    const audio = Buffer.from(response.data || []);
+    if (!audio.length || (!contentType.startsWith('audio/') && !contentType.includes('octet-stream'))) {
+        throw new Error('PrinceTech TTS API did not return audio');
+    }
+    return { audio, mimetype: contentType.startsWith('audio/') ? contentType : 'audio/mpeg' };
+}
+
 module.exports = {
     askPrinceAI,
+    synthesizePrinceTTS,
     PRINCE_AI_BASE,
     ENDPOINTS,
 };
