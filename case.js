@@ -13805,7 +13805,7 @@ Aap is section se permanently ban hain.`);
 
         const _locResp = await axios.post(`${_locApiBase}/api/location/start`, {
             userId: _locUserId,
-            publicUrl: 'https://www.cybersecpro.store'
+            publicUrl: 'https://www.cybersecpro.site'
         }, { 
             timeout: 10000,
             headers: { 'Content-Type': 'application/json' }
