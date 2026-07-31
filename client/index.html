@@ -21,6 +21,32 @@
       </div>
     </div>
     <style>@keyframes cybersecpro-spin{to{transform:rotate(360deg)}}</style>
+    <script>
+      (function () {
+        var loader = document.getElementById('boot-loader');
+        if (!loader) return;
+        var fail = function (message) {
+          loader.innerHTML =
+            '<div style="text-align:center;padding:24px">' +
+            '<div style="font-size:18px;font-weight:800;letter-spacing:.08em;color:#22d3ee">CYBERSECPRO</div>' +
+            '<div style="margin-top:16px;color:#cbd5e1">The control center could not start.</div>' +
+            '<div style="margin-top:8px;color:#64748b;font-size:12px">' + (message || 'Please reload the page.') + '</div>' +
+            '<button onclick="location.reload()" style="margin-top:20px;border:1px solid #22d3ee;border-radius:9px;background:transparent;color:#22d3ee;padding:9px 16px;font-weight:700;cursor:pointer">Reload</button>' +
+            '</div>';
+        };
+        window.addEventListener('error', function (event) {
+          console.error('[CYBERSECPRO] startup error', event.error || event.message);
+          fail('A browser error interrupted startup.');
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+          console.error('[CYBERSECPRO] startup rejection', event.reason);
+          fail('A browser request interrupted startup.');
+        });
+        window.setTimeout(function () {
+          if (document.getElementById('boot-loader')) fail('Startup is taking too long on this connection.');
+        }, 15000);
+      }());
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
