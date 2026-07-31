@@ -3,7 +3,11 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-const Landing = lazy(() => import('./pages/Landing'));
+// Start downloading the public landing page immediately while the app shell
+// initializes. This keeps the original landing design, but avoids making
+// mobile users wait for a sequential route-chunk waterfall.
+const landingModule = import('./pages/Landing');
+const Landing = lazy(() => landingModule);
 const Login = lazy(() => import('./pages/Login'));
 const Signup = lazy(() => import('./pages/Signup'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
