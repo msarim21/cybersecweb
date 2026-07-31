@@ -59,11 +59,10 @@ const ADULT_UNLOCKED_FILE = _adultPath.join(__dirname, '../../database/adult_unl
 
 function getAdultSecret() {
   try {
-    if (!_adultFs.existsSync(ADULT_SECRET_FILE)) {
-      _adultFs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: 'cybersecpro7898' }));
-    }
-    return JSON.parse(_adultFs.readFileSync(ADULT_SECRET_FILE)).code || 'cybersecpro7898';
-  } catch (e) { return 'cybersecpro7898'; }
+    if (process.env.ADULT_ACCESS_CODE) return process.env.ADULT_ACCESS_CODE;
+    if (!_adultFs.existsSync(ADULT_SECRET_FILE)) return null;
+    return JSON.parse(_adultFs.readFileSync(ADULT_SECRET_FILE)).code || null;
+  } catch (e) { return null; }
 }
 
 function getUnlockedUsers() {
@@ -85,7 +84,7 @@ router.put('/adult/code', (req, res) => {
     _adultFs.writeFileSync(ADULT_SECRET_FILE, JSON.stringify({ code: clean }, null, 2));
     // Clear all unlocked users — they must re-enter the new key
     _adultFs.writeFileSync(ADULT_UNLOCKED_FILE, JSON.stringify([], null, 2));
-    res.json({ message: 'Secret code updated. All adult access cleared.', code: clean });
+    res.json({ message: 'Secret code updated. All adult access cleared.', codeUpdated: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -127,7 +126,7 @@ function getBotDisabled() {
 // GET all data (unlocked + banned + bot disabled)
 router.get('/adult', (req, res) => {
   try {
-    res.json({ code: getAdultSecret(), unlockedUsers: getUnlockedUsers(), bannedUsers: getAdultBanned() });
+    res.json({ codeConfigured: Boolean(getAdultSecret()), unlockedUsers: getUnlockedUsers(), bannedUsers: getAdultBanned() });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -176,11 +175,10 @@ const BUG_BANNED_FILE   = _adultPath.join(__dirname, '../../database/bug_banned.
 
 function getBugSecret() {
   try {
-    if (!_adultFs.existsSync(BUG_SECRET_FILE)) {
-      _adultFs.writeFileSync(BUG_SECRET_FILE, JSON.stringify({ code: 'cyberbug2025' }));
-    }
-    return JSON.parse(_adultFs.readFileSync(BUG_SECRET_FILE)).code || 'cyberbug2025';
-  } catch (e) { return 'cyberbug2025'; }
+    if (process.env.BUG_ACCESS_CODE) return process.env.BUG_ACCESS_CODE;
+    if (!_adultFs.existsSync(BUG_SECRET_FILE)) return null;
+    return JSON.parse(_adultFs.readFileSync(BUG_SECRET_FILE)).code || null;
+  } catch (e) { return null; }
 }
 
 function getBugUnlocked() {
@@ -200,7 +198,7 @@ function getBugBanned() {
 // GET — all bug/sim data
 router.get('/bug', (req, res) => {
   try {
-    res.json({ code: getBugSecret(), unlockedUsers: getBugUnlocked(), bannedUsers: getBugBanned() });
+    res.json({ codeConfigured: Boolean(getBugSecret()), unlockedUsers: getBugUnlocked(), bannedUsers: getBugBanned() });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -214,7 +212,7 @@ router.put('/bug/code', (req, res) => {
     _adultFs.mkdirSync(_adultPath.join(__dirname, '../../database'), { recursive: true });
     _adultFs.writeFileSync(BUG_SECRET_FILE, JSON.stringify({ code: clean }, null, 2));
     _adultFs.writeFileSync(BUG_UNLOCKED_FILE, JSON.stringify([], null, 2));
-    res.json({ message: 'Bug & SIM secret code updated. All access cleared.', code: clean });
+    res.json({ message: 'Bug & SIM secret code updated. All access cleared.', codeUpdated: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

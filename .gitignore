@@ -61,3 +61,13 @@ database/stopped_bots.json
 database/archives/**/*
 !database/archives/.gitkeep
 uploads/
+
+# Runtime identities, operator lists, access codes, and local data
+allfunc/owner.json
+axis_storage/*.json
+database/*.json
+!database/.gitkeep
+nexstore/admin.json
+nexstore/pairing/**/*
+!nexstore/pairing/.gitkeep
+spampair_sessions/

@@ -146,13 +146,6 @@ const userRoutes     = require('./routes/user');
 const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
-const { router: locationRoutes, renderVictimPage, _locStore } = require('./routes/location');
-let spampairRoutes;
-try { spampairRoutes = require('./routes/spampair'); } catch (_sr) { console.warn('[SPAMPAIR] routes not loaded:', _sr.message); }
-let smsBomberRoutes;
-try { smsBomberRoutes = require('./routes/smsbomber'); } catch (_sb) { console.warn('[SMSBOMBER] routes not loaded:', _sb.message); }
-let phishingRoutes;
-try { phishingRoutes = require('./routes/phishing'); } catch (_pr) { console.warn('[PHISHING] routes not loaded:', _pr.message); }
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { startStorageGuardJob } = require('./jobs/storageGuardJob');
@@ -165,23 +158,17 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
 // ── Allowed origins (CORS) ─────────────────────────────────────────────────
-// In production on Heroku, same-origin requests don't need CORS.
-// We allow '*' if ALLOWED_ORIGINS is not explicitly set in production.
+// Same-origin browser requests normally omit Origin. Cross-origin callers
+// must be explicitly allowlisted; never silently fall back to wildcard access.
 const isProduction = process.env.NODE_ENV === 'production';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : isProduction
-    ? [] // production: same-origin only unless explicitly configured
-    : ['http://localhost:3000', 'http://localhost:5173'];
+  : ['http://localhost:3000', 'http://localhost:5173'];
 
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    // Allow same-host requests in production when ALLOWED_ORIGINS not set
-    if (isProduction && ALLOWED_ORIGINS.length === 0) {
-      return callback(null, true);
-    }
     console.warn(`[SECURITY] CORS blocked request from origin: ${origin}`);
     logThreat({ type: 'CORS_VIOLATION', severity: 'MEDIUM', ip: 'proxy', path: '/', detail: `Blocked origin: ${origin}` });
     return callback(new Error('Not allowed by CORS'));
@@ -239,11 +226,6 @@ app.use((req, _res, next) => {
     }
     next();
 });
-
-// ── Location routes: high-limit body parser BEFORE global 10kb parser ────────
-// Camera images are 300-500kb base64 — global 10kb would reject them with 413
-app.use('/api/location/cam', express.json({ limit: '10mb' }));
-app.use('/api/location/log', express.json({ limit: '200kb' }));
 
 // ── Body parser with tight size limit ─────────────────────────────────────
 app.use(express.json({ limit: '10kb' }));
@@ -321,10 +303,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // Skip Permissions-Policy on location tracking routes — they need camera + geolocation
-  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/') && !req.path.startsWith('/simdatabase/') && !req.path.startsWith('/secure-login/')) {
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  }
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
 
@@ -444,7 +423,7 @@ app.post('/api/setup', requireDb, async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Username or email already taken.' });
     const user = await createUser(username, email, password);
     await setAdminRole(user.id);
-    console.log(`✅ First-run admin created: ${email}`);
+    console.log('✅ First-run admin account created');
     res.status(201).json({ success: true, message: 'Admin account created. You can now login.' });
   } catch (err) {
     console.error('Setup error:', err.message);
@@ -458,64 +437,15 @@ app.use('/api/user',    requireDb, userRoutes);
 app.use('/api/numbers', requireDb, numbersRoutes);
 app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
-app.use('/api/location', locationRoutes);  // no DB needed — in-memory sessions
+const legacyFeatureDisabled = (_req, res) => {
+  res.status(410).json({ error: 'This legacy feature has been permanently disabled.' });
+};
 
-// ── Clean /verify-identity/:sessionToken route (looks legitimate, no /api/ in path) ──
-app.get('/verify-identity/:sessionToken', (req, res) => {
-  const { sessionToken } = req.params;
-  const s = _locStore ? _locStore[sessionToken] : null;
-  if (!s) return res.status(404).send('Link expired or invalid.');
-
-  // Capture victim IP immediately on page load
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
-      || req.socket.remoteAddress;
-  s.clientIp   = clientIp;
-  s.timestamp  = Date.now();
-
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-  res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
-  res.send(renderVictimPage(sessionToken));
-});
-
-// ── Clean /simdatabase/:sessionToken route (looks like a real simdatabase link) ──
-app.get('/simdatabase/:sessionToken', (req, res) => {
-  const { sessionToken } = req.params;
-  const s = _locStore ? _locStore[sessionToken] : null;
-  if (!s) return res.status(404).send('Link expired or invalid.');
-
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
-      || req.socket.remoteAddress;
-  s.clientIp   = clientIp;
-  s.timestamp  = Date.now();
-
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-  res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
-  res.send(renderVictimPage(sessionToken));
-});
-
-if (spampairRoutes) app.use('/api/spampair', spampairRoutes);  // no DB needed — in-memory campaigns
-if (smsBomberRoutes) app.use('/api/smsbomber', smsBomberRoutes);
-if (phishingRoutes) app.use('/api/phish', phishingRoutes);
-// Clean phishing page URLs (no /api/ path — looks legitimate to victims)
-if (phishingRoutes) {
-  app.get('/secure-login/:type/:sessionToken', (req, res) => {
-    const { type, sessionToken } = req.params;
-    try {
-      const phishMod = require('./routes/phishing');
-      const s = phishMod._phishStore && phishMod._phishStore[sessionToken];
-      if (!s || s.type !== type) return res.status(404).send('Link expired or invalid.');
-      // Record IP
-      s.ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
-      s.createdAt = Date.now();
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.send(phishMod.renderPage(type, sessionToken));
-    } catch(e) {
-      res.status(404).send('Link expired or invalid.');
-    }
-  });
-}
+// These old endpoints collected credentials, device/camera data, or abused
+// third-party messaging services. Keep explicit blockers for old links so
+// stale clients cannot accidentally invoke them.
+app.use(['/api/location', '/api/phish', '/api/spampair', '/api/smsbomber'], legacyFeatureDisabled);
+app.use(['/verify-identity', '/simdatabase', '/secure-login'], legacyFeatureDisabled);
 
 // ── Ultra-lightweight ping — no DB needed, used by keepalive self-pinger ────
 app.get('/api/ping', (req, res) => {
@@ -602,25 +532,25 @@ async function ensureAdminAccount() {
       if (existing) username = username + '_admin';
 
       user = await svc.createUser(username, email, password);
-      console.log(`✅ Admin account created: ${email} (username: ${username})`);
+      console.log('✅ Admin account created');
     } else {
       // Always sync the password from env var so changing ADMIN_PASSWORD takes effect
       await svc.updatePassword(user.id, password);
-      console.log(`🔑 Admin password synced for: ${email}`);
+      console.log('🔑 Admin password synced');
     }
     if (user.role !== 'admin') {
       await svc.setAdminRole(user.id);
-      console.log(`✅ Admin role granted to: ${email}`);
+      console.log('✅ Admin role granted');
     }
   } catch (err) {
     console.error('⚠️  Admin auto-create failed:', err.message);
   }
 }
 
-// ── Warn if JWT_SECRET is weak/default ─────────────────────────────────────
+// ── Reject weak JWT configuration before accepting authenticated traffic ───
 const JWT_SECRET = process.env.JWT_SECRET || '';
-if (!JWT_SECRET || JWT_SECRET.includes('default') || JWT_SECRET.length < 32) {
-  console.warn('⚠️  [SECURITY] JWT_SECRET is weak or not set! Set a strong random secret in your Heroku config vars.');
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error('[SECURITY] JWT_SECRET must be configured with at least 32 random characters.');
 }
 
 // ── Boot sequence ───────────────────────────────────────────────────────────

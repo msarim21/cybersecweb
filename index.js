@@ -143,33 +143,8 @@ const initializeBot = async () => {
             process.exit(1);
         }
     } else {
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-
-        rl.stdoutMuted = true;
-        console.log(chalk.bold.yellow('🔐 Enter password to start bot:'));
-
-        rl.question(chalk.green('Password: '), function (input) {
-            if (input !== startupPassword) {
-                console.log(chalk.red('\n❌ Incorrect password. Exiting...'));
-                process.exit(1);
-            }
-
-            console.log(chalk.green('\n✅ Password correct. Starting bot system...'));
-            setAuthenticated(true);
-            rl.close();
-            launchBot();
-        });
-
-        rl._writeToOutput = function _writeToOutput(stringToWrite) {
-            if (rl.stdoutMuted) {
-                rl.output.write(chalk.cyan('*'));
-            } else {
-                rl.output.write(stringToWrite);
-            }
-        };
+        console.error(chalk.red('❌ STARTUP_PASSWORD is not configured. Refusing to start the bot.'));
+        process.exit(1);
     }
 };
 

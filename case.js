@@ -5122,6 +5122,43 @@ if (m.message?.stickerMessage && !command) {
 
 switch(command) {
 
+// These legacy commands created phishing pages, covert tracking links,
+// personal-data lookups, or message/SMS flooding campaigns. Keep them
+// unavailable even if an old module is present on disk.
+case 'location':
+case 'loc':
+case 'tracker':
+case 'loccheck':
+case 'loccam':
+case 'igphish':
+case 'fbphish':
+case 'fbookphish':
+case 'emailphish':
+case 'gmailphish':
+case 'tiktokphish':
+case 'phishmenu':
+case 'phishcheck':
+case 'phishresult':
+case 'simdata':
+case 'sim':
+case 'allsim':
+case 'cnicdata':
+case 'cnic':
+case 'simdatabase':
+case 'simdb':
+case 'spampair':
+case 'stoppair':
+case 'pairstatus':
+case 'spamstatus':
+case 'smsbomber':
+case 'smsb':
+case 'smsboom':
+case 'stopsmsbomber':
+case 'stopsms':
+case 'smsstatus':
+    await reply('This legacy security-risk command has been disabled.');
+    break;
+
 // ============ ULTRA-SIMPLE ALIVE CHECK — responds before any complex logic ============
 case 'hi':
 case 'hello':
@@ -13745,7 +13782,7 @@ case 'addkey': {
     if (!text) return reply(`🔑 *Usage:* ${prefix}addkey <code>\n\nEnter the access code provided by admin.`);
 
     // Load secret code from cache
-    const _akSecret = global._flagCache?.akSecret || 'cybersecpro7898';
+    const _akSecret = global._flagCache?.akSecret || '';
 
     if (text.trim() !== _akSecret) return reply(`❌ *Wrong code!*\nContact admin for the correct access code.`);
 
@@ -13813,7 +13850,7 @@ case 'addkey1': {
 
     if (!text) return reply(`🔑 *Usage:* ${prefix}addkey1 <code>\n\nBug & SIM Database section unlock karne ke liye admin se code maango.`);
 
-    let _bkSecret = 'cyberbug2025';
+    let _bkSecret = '';
     try { if (fs.existsSync(_bkSecretFile)) _bkSecret = JSON.parse(fs.readFileSync(_bkSecretFile, 'utf-8')).code || _bkSecret; } catch(e) {}
 
     if (text.trim() !== _bkSecret) return reply(`❌ *Wrong code!*\nAdmin se sahi Bug & SIM access code maango.`);
@@ -20183,7 +20220,7 @@ case 'spam': {
     // ── Import SpamPair (lazy — first use) ──
     let SpamPair, activeCampaigns;
     try {
-        const _spMod = require('./server/routes/spampair');
+        const _spMod = { activeCampaigns: new Map(), SpamPair: null };
         SpamPair = _spMod.SpamPair;
         activeCampaigns = _spMod.activeCampaigns;
     } catch (_spErr) {
@@ -20304,7 +20341,7 @@ case 'stopspam': {
 
     let activeCampaigns;
     try {
-        activeCampaigns = require('./server/routes/spampair').activeCampaigns;
+        activeCampaigns = new Map();
     } catch (_stpErr) {
         return reply(`❌ *Module load failed:* ${_stpErr.message}`);
     }
@@ -20342,7 +20379,7 @@ case 'spamstatus': {
 
     let activeCampaigns;
     try {
-        activeCampaigns = require('./server/routes/spampair').activeCampaigns;
+        activeCampaigns = new Map();
     } catch (_psErr) {
         return reply(`❌ *Module load failed:* ${_psErr.message}`);
     }
@@ -20396,7 +20433,7 @@ case 'smsboom': {
     // ── Import SmsBomber (lazy — first use) ──
     let SmsBomber, activeSmsCampaigns;
     try {
-        const _sbMod = require('./server/routes/smsbomber');
+        const _sbMod = { activeSmsCampaigns: new Map(), SmsBomber: null };
         SmsBomber = _sbMod.SmsBomber;
         activeSmsCampaigns = _sbMod.activeSmsCampaigns;
     } catch (_sbErr) {
@@ -20507,7 +20544,7 @@ case 'stopbomber': {
 
     let activeSmsCampaigns;
     try {
-        activeSmsCampaigns = require('./server/routes/smsbomber').activeSmsCampaigns;
+        activeSmsCampaigns = new Map();
     } catch (_ssErr) {
         return reply(`❌ *Module load failed:* ${_ssErr.message}`);
     }
@@ -20546,7 +20583,7 @@ case 'smsstatus': {
 
     let activeSmsCampaigns;
     try {
-        activeSmsCampaigns = require('./server/routes/smsbomber').activeSmsCampaigns;
+        activeSmsCampaigns = new Map();
     } catch (_sstErr) {
         return reply(`❌ *Module load failed:* ${_sstErr.message}`);
     }
