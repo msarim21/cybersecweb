@@ -13,14 +13,50 @@
   </head>
   <body>
     <div id="root">
-      <div id="boot-loader" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1629;color:#94a3b8;font-family:Inter,system-ui,sans-serif">
-        <div style="text-align:center">
-          <div style="width:56px;height:56px;margin:0 auto 18px;border:2px solid rgba(34,211,238,.2);border-top-color:#22d3ee;border-radius:50%;animation:cybersecpro-spin 1s linear infinite"></div>
-          <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase">Loading CYBERSECPRO</div>
+      <div id="boot-loader" style="min-height:100vh;overflow:hidden;background:#0f1629;color:#f8fafc;font-family:Inter,system-ui,sans-serif;padding:72px 20px 40px">
+        <div style="max-width:520px;margin:0 auto;text-align:center">
+          <div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:30px;color:#34d399;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">
+            <span style="width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399"></span>
+            System Online
+          </div>
+          <div style="width:180px;height:180px;margin:0 auto 26px;border:2px solid rgba(34,211,238,.3);border-radius:50%;box-shadow:0 0 55px rgba(34,211,238,.14);overflow:hidden">
+            <img src="/cybersecpro_hero.jpeg" alt="CYBERSECPRO" style="width:100%;height:100%;object-fit:cover">
+          </div>
+          <div style="font-size:clamp(32px,9vw,52px);font-weight:800;line-height:1.08;letter-spacing:-.04em">
+            <span style="display:block">NEXT-GEN</span>
+            <span style="display:block;color:#22d3ee">BOT PLATFORM</span>
+          </div>
+          <p style="margin:18px auto 26px;max-width:430px;color:#cbd5e1;font-size:15px;line-height:1.65">
+            The ultimate control center for WhatsApp bot number management. Secure, scalable, and built for operators.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:30px">
+            <a href="/signup" style="display:block;border-radius:12px;background:linear-gradient(135deg,#22d3ee,#06b6d4);color:#07111f;padding:14px 20px;text-decoration:none;font-weight:800;box-shadow:0 8px 24px rgba(34,211,238,.18)">
+              ⚡ Initialize Free
+            </a>
+            <a href="#features" style="display:block;border:1px solid rgba(139,92,246,.65);border-radius:12px;color:#c4b5fd;padding:13px 20px;text-decoration:none;font-weight:700">
+              Explore System
+            </a>
+          </div>
+          <div id="features" style="text-align:left">
+            <div style="margin-bottom:12px;color:#22d3ee;font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase">System Features</div>
+            <div style="display:grid;gap:10px">
+              <div style="display:flex;align-items:center;gap:14px;border:1px solid rgba(34,211,238,.2);border-radius:16px;padding:14px;background:rgba(34,211,238,.05)">
+                <span style="font-size:22px">📱</span>
+                <div><strong style="display:block;font-size:15px">Bot Management</strong><span style="color:#94a3b8;font-size:13px">Link and control WhatsApp numbers</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;border:1px solid rgba(139,92,246,.2);border-radius:16px;padding:14px;background:rgba(139,92,246,.05)">
+                <span style="font-size:22px">🔒</span>
+                <div><strong style="display:block;font-size:15px">Secure Pairing</strong><span style="color:#94a3b8;font-size:13px">Protected sessions and pairing codes</span></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;border:1px solid rgba(52,211,153,.2);border-radius:16px;padding:14px;background:rgba(52,211,153,.05)">
+                <span style="font-size:22px">📊</span>
+                <div><strong style="display:block;font-size:15px">Real-time Stats</strong><span style="color:#94a3b8;font-size:13px">Monitor activity at a glance</span></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
-    <style>@keyframes cybersecpro-spin{to{transform:rotate(360deg)}}</style>
     <script>
       (function () {
         var loader = document.getElementById('boot-loader');
