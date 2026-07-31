@@ -12,7 +12,26 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-fallback" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1629;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;text-align:center;padding:24px">
+        <div>
+          <div style="font-size:22px;font-weight:800;letter-spacing:.08em;color:#22d3ee">CYBERSECPRO</div>
+          <div style="margin-top:12px;color:#94a3b8;font-size:14px">Loading secure control center…</div>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.addEventListener('error', function () {
+        var fallback = document.getElementById('boot-fallback');
+        if (!fallback) return;
+        fallback.innerHTML =
+          '<div>' +
+          '<div style="font-size:22px;font-weight:800;letter-spacing:.08em;color:#22d3ee">CYBERSECPRO</div>' +
+          '<div style="margin-top:12px;color:#cbd5e1;font-size:15px">The control center could not load.</div>' +
+          '<button onclick="location.reload()" style="margin-top:20px;border:1px solid #22d3ee;border-radius:10px;background:transparent;color:#22d3ee;padding:10px 18px;font-weight:700;cursor:pointer">Reload</button>' +
+          '</div>';
+      });
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
