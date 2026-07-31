@@ -12,7 +12,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-loader" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1629;color:#94a3b8;font-family:Inter,system-ui,sans-serif">
+        <div style="text-align:center">
+          <div style="width:56px;height:56px;margin:0 auto 18px;border:2px solid rgba(34,211,238,.2);border-top-color:#22d3ee;border-radius:50%;animation:cybersecpro-spin 1s linear infinite"></div>
+          <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase">Loading CYBERSECPRO</div>
+        </div>
+      </div>
+    </div>
+    <style>@keyframes cybersecpro-spin{to{transform:rotate(360deg)}}</style>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
