@@ -264,7 +264,7 @@ The CYBERSECPRO web panel gives you full control over all your bots from a singl
 Set these Config Vars in your Heroku dashboard:
 ```
 MONGODB_URI=your_mongodb_atlas_uri
-JWT_SECRET=your_jwt_secret
+JWT_SECRET=generate-a-random-secret-at-least-32-characters
 DATABASE_URL=your_postgresql_url
 SESSION_SECRET=your_session_secret
 ```
@@ -332,14 +332,14 @@ Create `.env` in the root and `server/.env` with the following:
 **Root `.env`**
 ```env
 MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/cybersecpro
-SESSION_SECRET=your_super_secret_here
+SESSION_SECRET=use-a-separate-random-session-secret
 ```
 
 **`server/.env`**
 ```env
 MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/cybersecpro
-JWT_SECRET=your_jwt_secret_key
-DATABASE_URL=postgresql://user:password@host:5432/cybersecpro
+JWT_SECRET=generate-a-random-secret-at-least-32-characters
+DATABASE_URL=your-managed-postgresql-connection-string
 PORT=5000
 NODE_ENV=production
 ```

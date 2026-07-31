@@ -40,8 +40,8 @@ A full-stack futuristic cyberpunk SaaS web application. Features holographic UI,
 
 ## Environment Variables
 ```
-DATABASE_URL=...   # Auto-provided by Replit PostgreSQL
-JWT_SECRET=...     # JWT signing secret (optional, has default)
+DATABASE_URL=...   # Required database secret, auto-provided by Replit PostgreSQL
+JWT_SECRET=...     # Required random JWT signing secret (minimum 32 characters)
 PORT=3001          # Backend port (default)
 ```
 

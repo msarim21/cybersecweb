@@ -753,8 +753,8 @@ export default function Admin() {
         axios.get('/api/admin/adult'),
         axios.get('/api/admin/bot-disabled'),
       ]);
-      setAdultCode(adultRes.data.code || '');
-      setAdultCodeInput(adultRes.data.code || '');
+      setAdultCode(adultRes.data.codeConfigured ? '[hidden]' : '');
+      setAdultCodeInput('');
       setAdultUnlockedUsers(adultRes.data.unlockedUsers || []);
       setAdultBannedUsers(adultRes.data.bannedUsers || []);
       setBotDisabledNumbers(botRes.data.disabledNumbers || []);
@@ -764,8 +764,8 @@ export default function Admin() {
   const fetchBug = async () => {
     try {
       const res = await axios.get('/api/admin/bug');
-      setBugCode(res.data.code || '');
-      setBugCodeInput(res.data.code || '');
+      setBugCode(res.data.codeConfigured ? '[hidden]' : '');
+      setBugCodeInput('');
       setBugUnlockedUsers(res.data.unlockedUsers || []);
       setBugBannedUsers(res.data.bannedUsers || []);
     } catch {}
@@ -777,7 +777,8 @@ export default function Admin() {
     setBugLoading(true);
     try {
       const res = await axios.put('/api/admin/bug/code', { code: bugCodeInput.trim() });
-      setBugCode(res.data.code);
+      setBugCode('[hidden]');
+      setBugCodeInput('');
       setBugUnlockedUsers([]);
       toast.success('Bug & SIM secret code update ho gaya!');
       await addLog('🐛 BUG/SIM CODE UPDATED', 'ALL USERS', 'All access cleared with new code');
@@ -885,7 +886,8 @@ export default function Admin() {
     setAdultLoading(true);
     try {
       const res = await axios.put('/api/admin/adult/code', { code: adultCodeInput.trim() });
-      setAdultCode(res.data.code);
+      setAdultCode('[hidden]');
+      setAdultCodeInput('');
       toast.success('Secret code updated!');
     } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
     finally { setAdultLoading(false); }
@@ -2268,7 +2270,7 @@ Ye action immediately apply hoga.`)) return;
                       <div>
                         <div className="font-mono text-[10px] text-gray-500 mb-1">Active Code</div>
                         <div className="font-display text-lg font-bold tracking-widest" style={{ color: '#ff00ff', textShadow: '0 0 12px rgba(255,0,255,0.5)' }}>
-                          {adultCode || '—'}
+                          {adultCode ? 'Configured (hidden)' : 'Not configured'}
                         </div>
                       </div>
                       <div className="text-3xl">🔐</div>
@@ -2276,7 +2278,7 @@ Ye action immediately apply hoga.`)) return;
                     <div className="rounded-xl p-3" style={{ background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.15)' }}>
                       <div className="font-mono text-[10px] text-[#00f5ff] mb-1">HOW TO SHARE</div>
                       <div className="font-mono text-[10px] text-gray-400">
-                        User WhatsApp bot mein type kare: <span style={{ color: '#ff00ff' }}>.addkey {adultCode}</span>
+                        Access code is stored server-side and is never shown in the dashboard.
                       </div>
                     </div>
                   </GCard>
@@ -2472,7 +2474,7 @@ Ye action immediately apply hoga.`)) return;
                       <div>
                         <div className="font-mono text-[10px] text-gray-500 mb-1">Active Code</div>
                         <div className="font-display text-lg font-bold tracking-widest" style={{ color: '#00ff88', textShadow: '0 0 12px rgba(0,255,136,0.5)' }}>
-                          {bugCode || '—'}
+                          {bugCode ? 'Configured (hidden)' : 'Not configured'}
                         </div>
                       </div>
                       <div className="text-3xl">🔐</div>
@@ -2480,7 +2482,7 @@ Ye action immediately apply hoga.`)) return;
                     <div className="rounded-xl p-3" style={{ background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.15)' }}>
                       <div className="font-mono text-[10px] text-[#00f5ff] mb-1">HOW TO SHARE</div>
                       <div className="font-mono text-[10px] text-gray-400">
-                        User WhatsApp bot mein type kare: <span style={{ color: '#00ff88' }}>.addkey1 {bugCode}</span>
+                        Access code is stored server-side and is never shown in the dashboard.
                       </div>
                     </div>
                   </GCard>

@@ -88,7 +88,7 @@ async function runPlanExpiryCheck() {
           } catch (_) {}
         }
 
-        console.log(`[PlanExpiry] ✅ Trial expired — User ${user.username || user.email}: disconnected ${result.disconnected} device(s), wiped ${numberStrings.length} session(s). Status set to 'expired'.`);
+        console.log(`[PlanExpiry] ✅ Trial expired — disconnected ${result.disconnected} device(s), wiped ${numberStrings.length} session(s). Status set to 'expired'.`);
       } catch (err) {
         console.error(`[PlanExpiry] Error processing user ${user.id}:`, err.message);
       }
