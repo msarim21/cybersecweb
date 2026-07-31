@@ -5747,6 +5747,7 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}weatherinfo
 │❖ ${prefix}whois
 │❖ ${prefix}wiki
+│❖ ${prefix}webtoapk
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -7360,6 +7361,7 @@ case 'CYBERtool': {
 │❖ ${prefix}weatherinfo
 │❖ ${prefix}whois
 │❖ ${prefix}wiki
+│❖ ${prefix}webtoapk
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -9860,19 +9862,42 @@ case 'apkdl': {
 
                 await devtrust.sendMessage(m.chat, { text: `⬇️ *${chosen.name}*\nDownload preparing...` }, { quoted: msg });
 
-                // Get APK download URL from F-Droid API
-                const fdRes = await axios.get(`https://f-droid.org/api/v1/packages/${pkgId}/suggested`, { timeout: 15000 });
-                const fdData = fdRes.data;
+                let apkBuf;
+                let downloadSource = 'F-Droid';
 
-                if (!fdData || !fdData.apkName) throw new Error('APK download link nahi mila');
+                // Primary: Try PrinceTech APK Download API
+                try {
+                    const ptRes = await axios.get(`https://api.princetechn.com/api/download/apkdl?apikey=prince&appName=${encodeURIComponent(chosen.name)}`, { timeout: 25000 });
+                    if (ptRes.data?.success && ptRes.data?.result?.download_url) {
+                        const dlUrl = ptRes.data.result.download_url;
+                        apkBuf = Buffer.from((await axios.get(dlUrl, {
+                            responseType: 'arraybuffer',
+                            headers: { 'User-Agent': 'Mozilla/5.0' },
+                            timeout: 180000,
+                            maxContentLength: 200 * 1024 * 1024
+                        })).data);
+                        downloadSource = 'PrinceTech';
+                    }
+                } catch (_ptErr) {
+                    console.warn('[APK] PrinceTech API failed, trying F-Droid:', _ptErr.message);
+                }
 
-                const apkUrl = `https://f-droid.org/repo/${fdData.apkName}`;
-                const apkBuf = Buffer.from((await axios.get(apkUrl, {
-                    responseType: 'arraybuffer',
-                    headers: { 'User-Agent': 'Mozilla/5.0' },
-                    timeout: 180000,
-                    maxContentLength: 200 * 1024 * 1024
-                })).data);
+                // Fallback: Try F-Droid API
+                if (!apkBuf?.length && pkgId) {
+                    const fdRes = await axios.get(`https://f-droid.org/api/v1/packages/${pkgId}/suggested`, { timeout: 15000 });
+                    const fdData = fdRes.data;
+                    if (!fdData || !fdData.apkName) throw new Error('APK download link nahi mila');
+                    const apkUrl = `https://f-droid.org/repo/${fdData.apkName}`;
+                    apkBuf = Buffer.from((await axios.get(apkUrl, {
+                        responseType: 'arraybuffer',
+                        headers: { 'User-Agent': 'Mozilla/5.0' },
+                        timeout: 180000,
+                        maxContentLength: 200 * 1024 * 1024
+                    })).data);
+                    downloadSource = 'F-Droid';
+                }
+
+                if (!apkBuf?.length) throw new Error('APK download link nahi mila');
 
                 if (chosen.icon) {
                     await devtrust.sendMessage(m.chat, addNewsletterContext({
@@ -9885,7 +9910,7 @@ case 'apkdl': {
                     document: apkBuf,
                     fileName: `${chosen.name.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.apk`,
                     mimetype: 'application/vnd.android.package-archive',
-                    caption: `✅ *${chosen.name}*`
+                    caption: `✅ *${chosen.name}* (via ${downloadSource})`
                 }, { quoted: msg });
 
                 await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } });
@@ -9904,6 +9929,83 @@ case 'apkdl': {
         console.error('apk search error:', e.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         reply(`❌ *APK Search failed:* ${e.message}`);
+    }
+}
+break;
+
+case 'webtoapk': {
+    if (!text) return reply(
+        `🌐 *Web to APK Converter*
+
+` +
+        `Usage: ${prefix + command} [website URL]
+` +
+        `Example: ${prefix + command} https://google.com
+
+` +
+        `📌 Website URL provide karo, main us site ka APK link banaunga.`
+    );
+
+    const siteUrl = text.trim().startsWith('http') ? text.trim() : 'https://' + text.trim();
+
+    await devtrust.sendMessage(m.chat, { react: { text: '🔄', key: m.key } });
+
+    try {
+        // Validate URL format
+        new URL(siteUrl);
+
+        // Send the web-to-APK service link
+        const converterUrl = `https://bj-web-2-apk.vercel.app/`;
+        const domain = new URL(siteUrl).hostname.replace('www.', '');
+        const appName = domain.charAt(0).toUpperCase() + domain.slice(1).split('.')[0];
+
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                text:
+                    `🌐 *Web to APK Converter*
+
+` +
+                    `🔗 *Website:* ${siteUrl}
+` +
+                    `📱 *App Name:* ${appName}
+
+` +
+                    `⚙️ *Steps:*
+` +
+                    `1️⃣ Neeche diya link open karo:
+` +
+                    `👉 ${converterUrl}
+
+` +
+                    `2️⃣ Website URL paste karo:
+` +
+                    `🌐 ${siteUrl}
+
+` +
+                    `3️⃣ App name dalo: *${appName}*
+
+` +
+                    `4️⃣ "Convert" click karo — APK download ho jayega!
+
+` +
+                    `💡 *Alternative - Direct Download:*
+` +
+                    `Agar APK chahiye to .apk command use karo:
+` +
+                    `📱 ${prefix}apk ${appName}`
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        if (e.message.includes('Invalid URL') || e instanceof TypeError) {
+            reply(`❌ *Invalid URL* — Sahi URL do
+
+Example: ${prefix + command} https://google.com`);
+        } else {
+            reply(`❌ *Error:* ${e.message}`);
+        }
     }
 }
 break;

@@ -81,15 +81,23 @@ async function synthesizePrinceTTS(text, voice = 'en_us_female', options = {}) {
     if (!audio.length || (!contentType.startsWith('audio/') && !contentType.includes('octet-stream'))) {
         throw new Error('PrinceTech TTS API did not return audio');
     }
-    // WhatsApp voice notes are most reliable as mono OGG/Opus. Sending the
-    // provider's MP3 directly with `ptt: true` can show "audio unavailable"
-    // on Android/linked clients even when the MP3 itself is valid.
-    const opusAudio = await convertToWhatsAppVoiceNote(audio, options);
-    return {
-        audio: opusAudio,
-        mimetype: 'audio/ogg; codecs=opus',
-        fileName: 'cyber-tts.ogg',
-    };
+    // Try OGG/Opus conversion for best WhatsApp voice note compatibility.
+    // If ffmpeg is unavailable on the hosting server, fall back to raw MP3.
+    try {
+        const opusAudio = await convertToWhatsAppVoiceNote(audio, options);
+        return {
+            audio: opusAudio,
+            mimetype: 'audio/ogg; codecs=opus',
+            fileName: 'cyber-tts.ogg',
+        };
+    } catch (ffmpegErr) {
+        console.warn('[TTS] ffmpeg conversion failed, falling back to MP3:', ffmpegErr.message);
+        return {
+            audio,
+            mimetype: 'audio/mpeg',
+            fileName: 'cyber-tts.mp3',
+        };
+    }
 }
 
 function convertToWhatsAppVoiceNote(input, options = {}) {
