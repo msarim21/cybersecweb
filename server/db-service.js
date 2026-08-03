@@ -168,12 +168,92 @@ async function banUser(id, banned) {
 }
 
 async function deleteUser(id) {
+  // User deletion is a destructive operation, so remove every runtime/session
+  // artifact before deleting the owner record. Otherwise an autoload sweep can
+  // resurrect a deleted WhatsApp number from a stale BotSession or disk creds.
+  const cleanNumbers = [];
+  const clean = (value) => String(value || '').replace(/[^0-9]/g, '');
+  const wipeLocalNumber = (number) => {
+    const n = clean(number);
+    if (!n) return;
+    const fs = require('fs');
+    const path = require('path');
+    const base = path.join(process.cwd(), 'nexstore', 'pairing');
+    for (const dir of [path.join(base, n), path.join(base, `${n}@s.whatsapp.net`)]) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+    }
+    try { fs.rmSync(path.join(base, `pairing_${n}.json`), { force: true }); } catch (_) {}
+    try { fs.rmSync(path.join(base, 'pairing.json'), { force: true }); } catch (_) {}
+    try {
+      const { removeConnectedFlag } = require('../allfunc/connected-flag');
+      removeConnectedFlag(n);
+    } catch (_) {}
+    try {
+      // Keep deleted numbers blocked from automatic reconnect. A future
+      // pairing request explicitly removes this marker after it has wiped the
+      // old session.
+      const { addToStoppedBots } = require('../allfunc/stopped-bots');
+      addToStoppedBots(n);
+    } catch (_) {}
+  };
+
+  const stopRuntimeNumber = (number) => {
+    const n = clean(number);
+    if (!n) return;
+    // The supervisor wraps pair.stopBot() and intentionally ignores normal
+    // stops while a pairing child is in flight. Admin deletion must override
+    // that guard, otherwise the deleted account can finish pairing later.
+    try {
+      const { stopBotExternal } = require('../worker/supervisor');
+      if (typeof stopBotExternal === 'function') stopBotExternal(n);
+    } catch (_) {}
+    try {
+      const { stopBot } = require('../pair');
+      if (typeof stopBot === 'function') stopBot(n);
+    } catch (_) {}
+    wipeLocalNumber(n);
+    cleanNumbers.push(n);
+  };
+
   if (isMongoMode()) {
-    const { User, LinkedNumber } = M();
+    const { User, LinkedNumber, BotSession, PairingRequest } = M();
+    const owned = await LinkedNumber.find({ ownerId: id }).select('number').lean().catch(() => []);
+    const pendingOwned = await BotSession.find({ pairingOwnerId: String(id) })
+      .select('number').lean().catch(() => []);
+    owned.push(...pendingOwned);
+    for (const row of owned) stopRuntimeNumber(row.number);
+    const numbers = [...new Set(cleanNumbers)];
+    if (numbers.length) {
+      await BotSession.deleteMany({ number: { $in: numbers } }).catch(() => {});
+      await PairingRequest.deleteMany({ number: { $in: numbers } }).catch(() => {});
+    }
+    await BotSession.deleteMany({ pairingOwnerId: String(id) }).catch(() => {});
     await LinkedNumber.deleteMany({ ownerId: id });
     await User.findByIdAndDelete(id);
     return;
   }
+  const { rows: owned } = await pg().query(
+    `SELECT number FROM linked_numbers WHERE owner_id = $1`,
+    [id]
+  );
+  const { rows: pendingOwned } = await pg().query(
+    `SELECT number FROM bot_sessions WHERE pairing_owner_id = $1`,
+    [String(id)]
+  );
+  owned.push(...pendingOwned);
+  for (const row of owned) stopRuntimeNumber(row.number);
+  const numbers = [...new Set(cleanNumbers)];
+  if (numbers.length) {
+    await pg().query(
+      `DELETE FROM bot_sessions
+       WHERE REGEXP_REPLACE(number, '[^0-9]', '', 'g') = ANY($1::text[])`,
+      [numbers]
+    );
+  }
+  await pg().query(
+    `DELETE FROM bot_sessions WHERE pairing_owner_id = $1`,
+    [String(id)]
+  );
   await pg().query('DELETE FROM users WHERE id = $1', [id]);
 }
 
@@ -1344,7 +1424,15 @@ async function clearPairingRequest(clean) {
     try {
       await BotSession.findOneAndUpdate(
         { number },
-        { $unset: { pairingCode: 1, pairingStatus: 1 }, $set: { lastActive: new Date() } },
+        {
+          $unset: {
+            pairingCode: 1,
+            pairingStatus: 1,
+            pairingOwnerId: 1,
+            pairingBotName: 1,
+          },
+          $set: { lastActive: new Date() }
+        },
         { upsert: false }
       );
     } catch (_) {}
@@ -1355,6 +1443,8 @@ async function clearPairingRequest(clean) {
       `UPDATE bot_sessions
        SET pairing_code = NULL,
            pairing_status = NULL,
+           pairing_owner_id = NULL,
+           pairing_bot_name = NULL,
            last_active = NOW()
        WHERE number = $1`,
       [number]

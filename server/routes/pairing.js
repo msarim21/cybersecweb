@@ -23,6 +23,20 @@ function deleteFolderRecursive(p) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+function stopPairingRuntime(clean) {
+  // The supervisor deliberately ignores pair.stopBot() while a pairing is
+  // in flight. A timed-out HTTP request must override that guard, otherwise
+  // the child/socket can keep running after the UI reports failure.
+  try {
+    const { stopBotExternal } = require('../../worker/supervisor');
+    if (typeof stopBotExternal === 'function') stopBotExternal(clean);
+  } catch (_) {}
+  try {
+    const pairMod = require(PAIR_MODULE);
+    if (typeof pairMod.stopBot === 'function') pairMod.stopBot(clean);
+  } catch (_) {}
+}
+
 // ── POST /api/pairing/request ─────────────────────────────────────────────────
 router.post('/request', protect, async (req, res) => {
   const { phoneNumber } = req.body;
@@ -32,19 +46,27 @@ router.post('/request', protect, async (req, res) => {
   if (clean.length < 7 || clean.length > 15)
     return res.status(400).json({ error: 'Invalid phone number format.' });
 
-  const sessionPath = path.join(PAIRING_BASE, clean);
+  // pair.js receives a WhatsApp JID and Baileys therefore uses the JID
+  // directory. Older code only inspected the digits directory, allowing a
+  // stale JID session to make pair.js skip requestPairingCode().
+  const sessionPaths = [
+    path.join(PAIRING_BASE, clean),
+    path.join(PAIRING_BASE, `${clean}@s.whatsapp.net`),
+  ];
 
   // ✅ CHECK 1: Local filesystem (connected.flag + valid creds.json)
   // On Heroku the disk is ephemeral — this check only catches bots running on the SAME dyno restart cycle.
   // IMPORTANT: Also cross-check DB — if NOT in linked_numbers, local files are stale and should be cleared.
-  const connectedFlagPath = path.join(sessionPath, 'connected.flag');
-  const existingCredsPath = path.join(sessionPath, 'creds.json');
-  const isAlreadyPairedLocal = fsSync.existsSync(connectedFlagPath) || (fsSync.existsSync(existingCredsPath) && (() => {
+  const isValidCredsFile = (credsPath) => fsSync.existsSync(credsPath) && (() => {
     try {
-      const c = JSON.parse(fsSync.readFileSync(existingCredsPath, 'utf-8'));
-      return !!(c.noiseKey?.private || c.me);
+      const c = JSON.parse(fsSync.readFileSync(credsPath, 'utf-8'));
+      return !!(c.noiseKey?.private || c.me || c.registered === true);
     } catch(_) { return false; }
-  })());
+  })();
+  const isAlreadyPairedLocal = sessionPaths.some((sessionPath) =>
+    fsSync.existsSync(path.join(sessionPath, 'connected.flag')) ||
+    isValidCredsFile(path.join(sessionPath, 'creds.json'))
+  );
 
   if (isAlreadyPairedLocal) {
     // Cross-check DB: local files exist, but is the number actually in linked_numbers?
@@ -66,7 +88,9 @@ router.post('/request', protect, async (req, res) => {
       // Stale local files — number was logged out/removed from DB but local disk wasn't cleaned.
       // Clear the stale files so fresh pairing proceeds cleanly.
       console.log(`[Pairing] ${clean}: Local files found but NOT in DB (stale state) — clearing local files for fresh pairing`);
-      try { deleteFolderRecursive(sessionPath); } catch (_) {}
+      for (const sessionPath of sessionPaths) {
+        try { deleteFolderRecursive(sessionPath); } catch (_) {}
+      }
     }
   }
 
@@ -155,9 +179,14 @@ router.post('/request', protect, async (req, res) => {
   console.log(`[Pairing] ${clean}: Generating fresh pairing code`);
 
   // Wipe any stale/partial session so pair.js always issues a fresh code
-  if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
+  for (const sessionPath of sessionPaths) {
+    if (fsSync.existsSync(sessionPath)) deleteFolderRecursive(sessionPath);
+  }
+  try {
+    const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
+    removeFromStoppedBots(clean);
+  } catch (_) {}
   ensureDir(PAIRING_BASE);
-  ensureDir(sessionPath);
 
   // Remove old per-bot pairing file so we don't return a stale code
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
@@ -187,7 +216,7 @@ router.post('/request', protect, async (req, res) => {
       console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
     });
 
-    // Wait for pair.js to write pairing.json (max 40 seconds)
+    // Wait for pair.js to write pairing_<number>.json (max 40 seconds)
     let code = null;
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
@@ -204,6 +233,19 @@ router.post('/request', protect, async (req, res) => {
     }
 
     if (!code) {
+      // Do not leave a live socket or owner/request state behind when code
+      // generation fails. Otherwise the next attempt sees CONNECTING forever
+      // or is rejected as already linked.
+      stopPairingRuntime(clean);
+      for (const sessionPath of sessionPaths) {
+        try { deleteFolderRecursive(sessionPath); } catch (_) {}
+      }
+      try { await fs.unlink(PAIRING_JSON); } catch (_) {}
+      try {
+        const { clearPairingRequest, deleteSessionCreds } = require('../db-service');
+        await clearPairingRequest(clean);
+        await deleteSessionCreds(clean);
+      } catch (_) {}
       return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
     }
 
@@ -212,6 +254,11 @@ router.post('/request', protect, async (req, res) => {
 
   } catch (err) {
     console.error('[Pairing]', err.message);
+    stopPairingRuntime(clean);
+    try {
+      const { clearPairingRequest } = require('../db-service');
+      await clearPairingRequest(clean);
+    } catch (_) {}
     return res.status(500).json({ error: err.message || 'Could not generate pairing code. Please try again.' });
   }
 });

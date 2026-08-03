@@ -150,12 +150,23 @@ async function validateSession(nexusDevNumber) {
 
 // Force cleanup function
 function forceCleanupSession(nexusDevNumber) {
-    const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
+    const cleanNumber = String(nexusDevNumber).replace(/[^0-9]/g, '');
+    const sessionPaths = [
+        `./nexstore/pairing/${nexusDevNumber}`,
+        `./nexstore/pairing/${cleanNumber}`,
+        `./nexstore/pairing/${cleanNumber}@s.whatsapp.net`,
+    ];
     
     try {
-        if (fs.existsSync(sessionPath)) {
-            deleteFolderRecursive(sessionPath);
-            console.log(chalk.red(`🗑️ Force cleaned: ${nexusDevNumber}`));
+        let cleaned = false;
+        for (const sessionPath of [...new Set(sessionPaths)]) {
+            if (fs.existsSync(sessionPath)) {
+                deleteFolderRecursive(sessionPath);
+                cleaned = true;
+            }
+        }
+        if (cleaned) {
+            console.log(chalk.red(`🗑️ Force cleaned: ${cleanNumber || nexusDevNumber}`));
         }
         
         // Remove from tracker
@@ -174,6 +185,7 @@ function forceCleanupSession(nexusDevNumber) {
         
         // Clear joined groups tracking
         joinedGroups.delete(nexusDevNumber);
+        joinedGroups.delete(cleanNumber);
         
         return true;
     } catch (e) {
@@ -408,10 +420,24 @@ async function startpairing(nexusDevNumber) {
                     }, null, 2),
                     'utf8'
                 );
+
+                // Keep the DB pairing state in sync with the file consumed by
+                // the web route. This also makes polling/status reliable when
+                // the request was started directly on the web dyno.
+                try {
+                    const { setPairingCode } = require('./server/db-service');
+                    await setPairingCode(cleanPairNum, code);
+                } catch (dbErr) {
+                    console.log(chalk.yellow(`⚠️ Pairing code DB update failed: ${dbErr.message}`));
+                }
                 
                 console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
             } catch (err) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
+                try {
+                    const { markPairingFailed } = require('./server/db-service');
+                    await markPairingFailed(phoneNumber);
+                } catch (_) {}
             }
         }, 3000);
     }
