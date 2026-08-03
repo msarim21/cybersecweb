@@ -68,11 +68,53 @@ function getMinRotationUptimeMs() {
     return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', fallback));
 }
 
+function getPrimaryBotNumber() {
+    return cleanBotNum(
+        process.env.PRIMARY_BOT_NUMBER
+        || process.env.BOT_PRIMARY_NUMBER
+        || ''
+    );
+}
+
 /** Only time-share bots when there are more linked numbers than RAM allows live at once. */
 function _shouldUseRotation(myBots, runningNow) {
+    if (process.env.BOT_ROTATION_ENABLED === '0') return false;
     const maxConcurrent = getMaxConcurrentBots();
     if (!myBots || myBots.size <= maxConcurrent) return false;
     return runningNow >= maxConcurrent;
+}
+
+/**
+ * On a single Eco dyno, one stable command bot is more useful than rotating
+ * several linked accounts. If an older/non-primary thread survived a restart,
+ * reclaim its slot before the normal sleeping-bot queue is evaluated.
+ */
+async function _ensurePrimaryBotActive(myBots) {
+    const primary = getPrimaryBotNumber();
+    if (!primary || !myBots?.has(primary)) return false;
+    if (threads.has(primary) || global._pairingInFlight?.has(primary)) return true;
+
+    const current = [...threads.entries()].find(([clean, entry]) =>
+        myBots.has(clean) && !entry?.pairing && !global._pairingInFlight?.has(clean)
+    );
+    if (current) {
+        console.log(chalk.cyan(
+            `[Supervisor] ⭐ Promoting primary +${primary} — replacing active +${current[0]}`
+        ));
+        killBot(current[0], 'SIGTERM');
+        await new Promise((resolve) => setTimeout(resolve, getRotationSwapMs()));
+    }
+
+    if (_isBotPaused(primary)) {
+        console.log(chalk.yellow(
+            `[Supervisor] ⚠️ Primary +${primary} is paused — keeping current queue unchanged`
+        ));
+        return false;
+    }
+
+    const ready = await _ensureBotSessionReady(primary);
+    if (!ready) return false;
+    return Boolean(spawnBot(primary));
 }
 
 const THREAD_RESTART_DELAY  = 5_000;
@@ -575,6 +617,13 @@ async function syncBots() {
         }
     }
 
+    // Keep the configured command/self-chat account in the sole live slot.
+    // This is intentionally before the regular queue so a restart cannot
+    // leave a different linked number active indefinitely.
+    if (process.env.BOT_ROTATION_ENABLED === '0') {
+        await _ensurePrimaryBotActive(myBots);
+    }
+
     // 4. Update lastActivity from heartbeat files
     try {
         const { readBotHeartbeat } = require('../allfunc/bot-heartbeat');
@@ -604,7 +653,14 @@ async function syncBots() {
             }
             return true;
         })
-        .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
+        .sort((a, b) => {
+            const primary = getPrimaryBotNumber();
+            if (primary) {
+                if (a === primary && b !== primary) return -1;
+                if (b === primary && a !== primary) return 1;
+            }
+            return (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0);
+        });
 
     let runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
     const maxConcurrent = getMaxConcurrentBots();

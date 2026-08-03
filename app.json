@@ -66,6 +66,16 @@
       "value": "1",
       "required": false
     },
+    "PRIMARY_BOT_NUMBER": {
+      "description": "Phone number that stays active for commands and self-chat on the single Eco web dyno.",
+      "value": "923137140784",
+      "required": false
+    },
+    "BOT_ROTATION_ENABLED": {
+      "description": "Disable account rotation so the command bot keeps a stable WhatsApp socket.",
+      "value": "0",
+      "required": false
+    },
     "TOTAL_WEB_DYNOS": {
       "description": "Number of web dynos used for WhatsApp bot sharding. Eco plans support one web dyno; increase this after upgrading the plan.",
       "value": "1",
