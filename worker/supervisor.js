@@ -521,7 +521,7 @@ async function syncBots() {
         if (ready) spawnBot(clean);
     }
 
-    // 3. Scheduled memory restart — staggered + 4h-guarded so bots spawned
+    // 3. Scheduled memory restart — staggered + configurable-interval guarded so bots spawned
     // around the same time (e.g. dyno boot) never all cross maxAgeMs and get
     // killed in the same sync tick. Each bot gets a random 0-30min jitter added
     // to its threshold, and only 1 bot per sync tick actually gets restarted.
@@ -545,8 +545,8 @@ async function syncBots() {
             const jitter = _restartJitterMs.get(clean);
             if (Date.now() - entry.spawnedAt < maxAgeMs + jitter) continue;
 
-            // Hard floor — never fully restart the same bot more than once
-            // every 4h, no matter what BOT_RESTART_HOURS is configured to.
+            // Respect the configured full-restart interval so a bot is not
+            // restarted more often than BOT_RESTART_HOURS allows.
             if (!canFullyRestart3(clean)) continue;
 
             if (memRestarts >= 1) break; // max 1 scheduled memory restart per sync tick

@@ -81,6 +81,11 @@
       "value": "80",
       "required": false
     },
+    "BOT_RESTART_HOURS": {
+      "description": "Graceful WhatsApp bot/dyno restart interval in hours. Decimal values are supported, such as 2.5 for 2 hours 30 minutes.",
+      "value": "2.5",
+      "required": false
+    },
     "MAX_BOTS_PER_DYNO": {
       "description": "Hard cap on bots per dyno. Leave empty for no limit.",
       "required": false

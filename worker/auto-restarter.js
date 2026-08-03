@@ -98,8 +98,10 @@ function startAutoRestarter(opts = {}) {
   // Signal keepalive.js so it skips its own duplicate scheduleAutoRestart timer
   global._autoRestarterScheduled = true;
 
-  const hours = opts.hours
-    || parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+  const configuredHours = Number(process.env.BOT_RESTART_HOURS);
+  const hours = Number.isFinite(opts.hours) && opts.hours > 0
+    ? opts.hours
+    : (Number.isFinite(configuredHours) && configuredHours > 0 ? configuredHours : 4);
   const ms = hours * 60 * 60 * 1000;
 
   console.log(chalk.gray(`[AutoRestarter] ⏰ Scheduled restart every ${hours} hours`));

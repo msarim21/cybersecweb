@@ -32,8 +32,9 @@ function startWhatsAppStack() {
     try {
         const { startAutoRestarter } = require('./auto-restarter');
         startAutoRestarter();
-        const hours = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
-        console.log(chalk.gray(`[WhatsApp] ⏰ Auto-restarter armed — restarts every ${hours} hours`));
+        const hours = Number(process.env.BOT_RESTART_HOURS);
+        const restartHours = Number.isFinite(hours) && hours > 0 ? hours : 4;
+        console.log(chalk.gray(`[WhatsApp] ⏰ Auto-restarter armed — restarts every ${restartHours} hours`));
     } catch (e) {
         console.log(chalk.yellow('[WhatsApp] Auto-restarter warning:', e.message));
     }

@@ -11,10 +11,16 @@ const CONNECTION_STATUS = Object.freeze({
 
 const MAX_RECONNECT_ATTEMPTS = 25;
 
-// ── 4-hour bot restart guard ──────────────────────────────────────────────────
+// ── Configurable bot restart guard ────────────────────────────────────────────
 // Tracks when each bot was last FULLY restarted (not just reconnected).
 // Auto-reconnect for dropped connections is separate and not affected by this.
-const BOT_RESTART_INTERVAL_MS = Number(process.env.BOT_RESTART_INTERVAL_MS) || 4 * 60 * 60 * 1000; // 4 hours
+const configuredRestartHours = Number(process.env.BOT_RESTART_HOURS);
+const configuredRestartMs = Number(process.env.BOT_RESTART_INTERVAL_MS);
+const BOT_RESTART_INTERVAL_MS = Number.isFinite(configuredRestartMs) && configuredRestartMs > 0
+  ? configuredRestartMs
+  : (Number.isFinite(configuredRestartHours) && configuredRestartHours > 0
+    ? configuredRestartHours * 60 * 60 * 1000
+    : 4 * 60 * 60 * 1000);
 const _lastFullRestart = new Map(); // cleanNum -> timestamp
 
 /**
