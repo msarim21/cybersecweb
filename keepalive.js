@@ -441,7 +441,10 @@ function scheduleBotMemoryRestart(intervalMs) {
         }
     }, ms);
 
-    console.log(`[AutoRestart] ✅ Bot memory restart at ${nextStr} (every ${Math.round(ms / 3600000)}h)`);
+    const hoursLabel = Number.isInteger(ms / 3600000)
+        ? String(ms / 3600000)
+        : String((ms / 3600000).toFixed(2)).replace(/0+$/, '').replace(/\.$/, '');
+    console.log(`[AutoRestart] ✅ Bot memory restart at ${nextStr} (every ${hoursLabel}h)`);
 }
 
 // ── Full dyno restart (legacy single-process worker only) ───────────────────
@@ -472,7 +475,10 @@ function scheduleAutoRestart(intervalMs) {
     }, ms);
 
     const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
-    console.log(`[AutoRestart] ✅ Scheduled — restart at ${nextStr} (every ${Math.round(ms / 3600000)}h)`);
+    const hoursLabel = Number.isInteger(ms / 3600000)
+        ? String(ms / 3600000)
+        : String((ms / 3600000).toFixed(2)).replace(/0+$/, '').replace(/\.$/, '');
+    console.log(`[AutoRestart] ✅ Scheduled — restart at ${nextStr} (every ${hoursLabel}h)`);
 }
 
 /** Light presence wake — every 60s so first command after hours of silence is instant */

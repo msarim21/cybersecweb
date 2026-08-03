@@ -63,7 +63,7 @@
     },
     "MAX_CONCURRENT_BOTS": {
       "description": "Maximum active WhatsApp bot processes per web dyno on a 512 MB plan.",
-      "value": "2",
+      "value": "1",
       "required": false
     },
     "TOTAL_WEB_DYNOS": {

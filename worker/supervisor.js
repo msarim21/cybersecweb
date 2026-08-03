@@ -104,6 +104,8 @@ const _noSessionBots    = new Map(); // clean → timestamp of last clean exit
 const _restartLimitBots = new Map(); // clean → timestamp when limit was hit
 const _unhealthyStreak  = new Map(); // clean → consecutive unhealthy sync-tick count (debounce before full restart)
 const _restartJitterMs  = new Map(); // clean → random 0-30min jitter so scheduled memory restarts never bunch up
+let _syncInFlight = false;
+let _syncQueued = false;
 const NO_SESSION_PAUSE_MS    = 30 * 60 * 1000; // 30 minutes
 const RESTART_LIMIT_PAUSE_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -239,6 +241,10 @@ function _updateActiveBotCount() {
     setActiveBotCount(sharedBuffer, count);
 }
 
+function _activeThreadCount() {
+    return [...threads.values()].filter((entry) => entry?.thread).length;
+}
+
 // ── Thread management ─────────────────────────────────────────────────────────
 function _onThreadMessage(clean, msg) {
     if (!msg?.type) return;
@@ -305,6 +311,14 @@ function _isBotPaused(clean) {
 function _spawnThread(clean, opts = {}) {
     if (!clean) return null;
     if (threads.has(clean) && !opts.force) return threads.get(clean).thread;
+    const maxConcurrent = getMaxConcurrentBots();
+    const activeThreads = _activeThreadCount();
+    if (activeThreads >= maxConcurrent) {
+        console.log(chalk.gray(
+            `[Supervisor] ⏸ Spawn blocked at hard cap (${activeThreads}/${maxConcurrent}) — +${clean} queued`
+        ));
+        return null;
+    }
 
     ensureBotWorkspace(clean);
 
@@ -858,9 +872,24 @@ function startSupervisor() {
         `  Rotation: sync=${getSyncIntervalMs()}ms swap=${getRotationSwapMs()}ms interval=${getRotationIntervalMs()}ms ×${getRotationsPerSync()}${process.env.BOT_TURBO_ROTATION === '1' ? ' [TURBO]' : ''}\n`
     ));
 
-    const runSync = () => syncBots().catch((e) => {
-        console.log(chalk.yellow(`[Supervisor] syncBots error: ${e.message}`));
-    });
+    const runSync = async () => {
+        if (_syncInFlight) {
+            _syncQueued = true;
+            return;
+        }
+        _syncInFlight = true;
+        try {
+            await syncBots();
+        } catch (e) {
+            console.log(chalk.yellow(`[Supervisor] syncBots error: ${e.message}`));
+        } finally {
+            _syncInFlight = false;
+            if (_syncQueued) {
+                _syncQueued = false;
+                setImmediate(runSync);
+            }
+        }
+    };
 
     const syncMs = getSyncIntervalMs();
 
