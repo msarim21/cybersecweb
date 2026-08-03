@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Heroku Eco worker dynos sleep (no HTTP traffic). Web dyno stays awake via keepalive ping.
- * Default: host WhatsApp bots on the web dyno so linked numbers keep working 24/7.
+ * Heroku Eco web dynos stay awake via the HTTP process. Web dynos can also host
+ * WhatsApp bots when configured with WHATSAPP_HOST_DYNO=web.
  *
  * Set WHATSAPP_HOST_DYNO=worker to use the worker dyno instead (Basic/Performance plans).
  *
@@ -64,7 +64,11 @@ function getDynoIndex() {
  * Defaults to 1 (single dyno, no sharding).
  */
 function getTotalWorkerDynos() {
-    const t = parseInt(process.env.TOTAL_WORKER_DYNOS, 10);
+    const host = getWhatsAppHostDyno();
+    const configured = host === 'web'
+        ? (process.env.TOTAL_WEB_DYNOS || process.env.TOTAL_WORKER_DYNOS)
+        : process.env.TOTAL_WORKER_DYNOS;
+    const t = parseInt(configured, 10);
     return (t > 0) ? t : 1;
 }
 
