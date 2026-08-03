@@ -47,8 +47,8 @@
       "value": "production"
     },
     "WHATSAPP_HOST_DYNO": {
-      "description": "Which dyno type runs WhatsApp bots. 'web' = bots run on the web dyno (Eco plan friendly). No worker dyno needed.",
-      "value": "web",
+      "description": "Which dyno type runs WhatsApp bots. Keep this on 'worker' so the web dyno remains an API/frontend process.",
+      "value": "worker",
       "required": false
     },
     "BOT_ISOLATION": {
@@ -57,7 +57,7 @@
       "required": false
     },
     "DYNO_TOTAL_RAM_MB": {
-      "description": "Actual RAM ceiling of the dyno. Eco/Basic web dynos have 512MB.",
+      "description": "Actual RAM ceiling of the WhatsApp worker dyno.",
       "value": "512",
       "required": false
     },
@@ -83,6 +83,10 @@
   ],
   "formation": {
     "web": {
+      "quantity": 1,
+      "size": "eco"
+    },
+    "worker": {
       "quantity": 1,
       "size": "eco"
     }

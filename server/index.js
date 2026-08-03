@@ -695,19 +695,20 @@ initDb()
     console.log('✅ Database initialised successfully');
 
     try {
-      const { startWhatsAppStack } = require('../worker/start-whatsapp');
-      const { getWhatsAppHostDyno, shouldRunWhatsAppSupervisor } = require('../allfunc/whatsapp-host');
-      if (startWhatsAppStack()) {
-        console.log(`✅ WhatsApp bots started on web dyno (WHATSAPP_HOST_DYNO=${getWhatsAppHostDyno()})`);
-      } else if (!shouldRunWhatsAppSupervisor()) {
-        const { isWebDyno } = require('../allfunc/whatsapp-host');
-        if (isWebDyno()) {
-          console.log(`ℹ️  Web dyno: API + website ping only — WhatsApp bots on ${getWhatsAppHostDyno()} dyno`);
+      const { getWhatsAppHostDyno, isWebApiOnlyDyno } = require('../allfunc/whatsapp-host');
+      if (isWebApiOnlyDyno()) {
+        // Keep the web dyno strictly API/frontend-only. Loading the WhatsApp
+        // supervisor here can fork several large child processes and push a
+        // 512 MB dyno over its memory quota (R14 -> SIGKILL/exit 137).
+        console.log(`ℹ️  Web dyno: API + website only — WhatsApp bots run on the ${getWhatsAppHostDyno()} dyno`);
+      } else {
+        const { startWhatsAppStack } = require('../worker/start-whatsapp');
+        if (startWhatsAppStack()) {
+          console.log(`✅ WhatsApp bots started on ${process.env.DYNO || getWhatsAppHostDyno()} dyno`);
         }
       }
     } catch (err) {
-      console.log('ℹ️  WhatsApp supervisor on web:', err.message);
-      try { require('../keepalive').startKeepAlive(); } catch (_) {}
+      console.log('ℹ️  WhatsApp supervisor startup skipped:', err.message);
     }
 
     // Start plan expiry auto-disconnect cron (every 60 seconds)
