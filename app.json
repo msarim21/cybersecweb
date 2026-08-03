@@ -67,8 +67,8 @@
       "required": false
     },
     "TOTAL_WEB_DYNOS": {
-      "description": "Number of web dynos used for WhatsApp bot sharding. Keep this equal to the web dyno count.",
-      "value": "2",
+      "description": "Number of web dynos used for WhatsApp bot sharding. Eco plans support one web dyno; increase this after upgrading the plan.",
+      "value": "1",
       "required": false
     },
     "BOT_CHILD_HEAP_MB": {
@@ -93,7 +93,7 @@
   ],
   "formation": {
     "web": {
-      "quantity": 2,
+      "quantity": 1,
       "size": "eco"
     }
   },
