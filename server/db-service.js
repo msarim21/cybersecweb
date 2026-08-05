@@ -1352,6 +1352,35 @@ async function markPairingFailed(clean) {
   }
 }
 
+async function markPairingConnected(clean) {
+  const number = String(clean).replace(/[^0-9]/g, '');
+  if (!number) return;
+  try {
+    if (isMongoMode()) {
+      const { PairingRequest, BotSession } = M();
+      await PairingRequest.findOneAndUpdate(
+        { number },
+        { $set: { status: 'active', code: null, updatedAt: new Date() } },
+        { upsert: false }
+      ).catch(() => {});
+      await BotSession.findOneAndUpdate(
+        { number },
+        { $set: { pairingStatus: 'active', pairingCode: null, lastActive: new Date() } },
+        { upsert: false }
+      ).catch(() => {});
+      return;
+    }
+    await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'active', pairing_code = NULL, last_active = NOW()
+       WHERE number = $1`,
+      [number]
+    );
+  } catch (err) {
+    console.error('[db-service] markPairingConnected:', err.message);
+  }
+}
+
 async function getPairingState(clean) {
   try {
     if (isMongoMode()) {
@@ -1855,7 +1884,7 @@ module.exports = {
   getSiteSetting, setSiteSetting,
   countAdmins,
   getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
-  markPairingFailed, getPairingState, clearPairingRequest, ensurePairingRequest,
+  markPairingFailed, markPairingConnected, getPairingState, clearPairingRequest, ensurePairingRequest,
   setPairingCode, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices, getOwnerSubscriptionByNumber,
   deleteSessionCreds,

@@ -7,6 +7,7 @@ const fsSync = require('fs');
 
 const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
+const pairingFlights = new Map(); // clean number -> code-generation promise
 
 function ensureDir(p) {
   if (!fsSync.existsSync(p)) fsSync.mkdirSync(p, { recursive: true });
@@ -46,6 +47,42 @@ router.post('/request', protect, async (req, res) => {
   if (clean.length < 7 || clean.length > 15)
     return res.status(400).json({ error: 'Invalid phone number format.' });
 
+  // Do not let double-clicks or frontend retries create two WhatsApp
+  // sockets for the same number. The phone may receive a code from the first
+  // socket while the second socket invalidates its linking handshake.
+  const existingFlight = pairingFlights.get(clean);
+  if (existingFlight) {
+    try {
+      const result = await existingFlight;
+      if (result?.httpStatus) return res.status(result.httpStatus).json(result.body);
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Could not generate pairing code. Please try again.' });
+    }
+  }
+
+  let resolveFlight;
+  let rejectFlight;
+  const flight = new Promise((resolve, reject) => {
+    resolveFlight = resolve;
+    rejectFlight = reject;
+  });
+  pairingFlights.set(clean, flight);
+
+  try {
+    return await _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, rejectFlight);
+  } catch (err) {
+    rejectFlight(err);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: err.message || 'Could not generate pairing code. Please try again.' });
+    }
+    return;
+  } finally {
+    if (pairingFlights.get(clean) === flight) pairingFlights.delete(clean);
+  }
+});
+
+async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, rejectFlight) {
   // pair.js receives a WhatsApp JID and Baileys therefore uses the JID
   // directory. Older code only inspected the digits directory, allowing a
   // stale JID session to make pair.js skip requestPairingCode().
@@ -83,7 +120,9 @@ router.post('/request', protect, async (req, res) => {
 
     if (isInLinkedNumbersDb) {
       console.log(`[Pairing] ${clean}: Already paired (local files + DB confirmed) — blocking new pairing code`);
-      return res.status(409).json({ error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true });
+      const body = { error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true };
+      resolveFlight({ httpStatus: 409, body });
+      return res.status(409).json(body);
     } else {
       // Stale local files — number was logged out/removed from DB but local disk wasn't cleaned.
       // Clear the stale files so fresh pairing proceeds cleanly.
@@ -159,10 +198,12 @@ router.post('/request', protect, async (req, res) => {
 
     if (isActivelyConnected) {
       console.log(`[Pairing] ${clean}: Bot is actively CONNECTED (in dashboard + recent heartbeat) — blocking re-pairing`);
-      return res.status(409).json({
+      const body = {
         error: 'This number is already linked and connected. Unlink it first before re-pairing.',
         alreadyLinked: true
-      });
+      };
+      resolveFlight({ httpStatus: 409, body });
+      return res.status(409).json(body);
     }
 
     // Not actively connected — clear any stale DB data so fresh pairing works cleanly
@@ -177,6 +218,12 @@ router.post('/request', protect, async (req, res) => {
 
   // ── Number is NOT actively connected — proceed with fresh pairing ──────────
   console.log(`[Pairing] ${clean}: Generating fresh pairing code`);
+
+  // Stop any old pairing/reconnect runtime before touching its auth files.
+  // This is important when the previous request generated a code but never
+  // completed the link: the old socket must not race the new one.
+  stopPairingRuntime(clean);
+  await sleep(800);
 
   // Wipe any stale/partial session so pair.js always issues a fresh code
   for (const sessionPath of sessionPaths) {
@@ -205,18 +252,31 @@ router.post('/request', protect, async (req, res) => {
   }
 
   try {
-    // Clear require cache so a fresh connection is created each time
-    delete require.cache[require.resolve(PAIR_MODULE)];
-    const startpairing = require(PAIR_MODULE);
+    // In isolated deployment the supervisor is the only owner allowed to
+    // create a WhatsApp socket. Calling pair.js directly from the web route
+    // creates a second socket in the web process; that socket can generate a
+    // code but loses the link handshake when the worker-owned socket starts.
+    const supervisor = require('../../worker/supervisor');
+    if (supervisor.isSupervisorActive?.()) {
+      // handlePairingRequest also waits for its internal 120s supervisor
+      // timeout. Do not await it here: the HTTP route must poll the code file
+      // immediately and return as soon as the child generates a code.
+      supervisor.handlePairingRequest(clean).catch((err) => {
+        console.error(`[Pairing] supervisor pairing error for ${clean}:`, err.message);
+      });
+    } else {
+      // Use the canonical cached module. Clearing require.cache here created a
+      // second pair.js instance alongside the supervisor's instance.
+      const startpairing = require(PAIR_MODULE);
+      const jid = clean + '@s.whatsapp.net';
+      startpairing(jid).catch(err => {
+        console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
+      });
+    }
 
-    const jid = clean + '@s.whatsapp.net';
-
-    // Fire and forget — pair.js keeps the socket alive in the background
-    startpairing(jid).catch(err => {
-      console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
-    });
-
-    // Wait for pair.js to write pairing_<number>.json (max 40 seconds)
+    // Wait for the supervisor child/pair.js to write pairing_<number>.json.
+    // The DB state is also updated by pair.js, so this remains reliable when
+    // the pairing child runs in a separate isolated process.
     let code = null;
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
@@ -246,11 +306,15 @@ router.post('/request', protect, async (req, res) => {
         await clearPairingRequest(clean);
         await deleteSessionCreds(clean);
       } catch (_) {}
-      return res.status(500).json({ error: 'Timed out waiting for pairing code. Check the number and try again.' });
+      const result = { error: 'Timed out waiting for pairing code. Check the number and try again.' };
+      rejectFlight(new Error(result.error));
+      return res.status(500).json(result);
     }
 
     console.log(`[Pairing] ${clean}: Pairing code generated successfully`);
-    return res.json({ code, number: clean });
+    const result = { code, number: clean };
+    resolveFlight(result);
+    return res.json(result);
 
   } catch (err) {
     console.error('[Pairing]', err.message);
@@ -259,9 +323,10 @@ router.post('/request', protect, async (req, res) => {
       const { clearPairingRequest } = require('../db-service');
       await clearPairingRequest(clean);
     } catch (_) {}
+    rejectFlight(err);
     return res.status(500).json({ error: err.message || 'Could not generate pairing code. Please try again.' });
   }
-});
+}
 
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
 router.get('/status/:number', protect, (req, res) => {

@@ -483,6 +483,10 @@ async function _startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
+        // WhatsApp only accepts the pairing-code request during the initial
+        // socket handshake. Waiting several seconds can still return a code
+        // (and trigger the phone notification) while the linking handshake is
+        // already stale, which leaves the phone at "Couldn't link device".
         setTimeout(async () => {
             try {
                 let code = await nexus.requestPairingCode(phoneNumber);
@@ -523,7 +527,7 @@ async function _startpairing(nexusDevNumber) {
                     await markPairingFailed(phoneNumber);
                 } catch (_) {}
             }
-        }, 3000);
+        }, 750);
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
@@ -1281,6 +1285,14 @@ async function _startpairing(nexusDevNumber) {
 
             // Persist active status to DB
             updateSession(nexusDevNumber, 'active').catch(() => {});
+            // Pairing processor uses this state to know that the phone
+            // accepted the code and can safely hand the child to the normal
+            // bot lifecycle. Without it, pairing_status stays code_ready and
+            // the dashboard remains stuck in loading/recovering.
+            try {
+                const { markPairingConnected } = require('./server/db-service');
+                markPairingConnected(nexusDevNumber).catch(() => {});
+            } catch (_) {}
 
             // ✅ FIX: Backup session files to DB immediately on connect
             // CRITICAL: Worker dyno restore karta hai DB se — isliye yahan backup zaroori hai
