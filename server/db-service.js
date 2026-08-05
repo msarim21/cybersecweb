@@ -1820,6 +1820,15 @@ async function getBotPairingStatus(clean) {
   }
 
   const st = await getPairingState(digits).catch(() => null);
+  if (st?.status === 'active') {
+    return {
+      connected: true,
+      pairing: false,
+      syncing: false,
+      status: 'active',
+      ts: st.updatedAt || null,
+    };
+  }
   if (st?.status === 'code_ready') {
     return { connected: false, pairing: true, syncing: true, status: st.status };
   }

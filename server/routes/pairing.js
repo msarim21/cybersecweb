@@ -252,41 +252,71 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
   }
 
   try {
-    // In isolated deployment the supervisor is the only owner allowed to
-    // create a WhatsApp socket. Calling pair.js directly from the web route
-    // creates a second socket in the web process; that socket can generate a
-    // code but loses the link handshake when the worker-owned socket starts.
-    const supervisor = require('../../worker/supervisor');
-    if (supervisor.isSupervisorActive?.()) {
-      // handlePairingRequest also waits for its internal 120s supervisor
-      // timeout. Do not await it here: the HTTP route must poll the code file
-      // immediately and return as soon as the child generates a code.
-      supervisor.handlePairingRequest(clean).catch((err) => {
-        console.error(`[Pairing] supervisor pairing error for ${clean}:`, err.message);
-      });
+    const { isWebApiOnlyDyno } = require('../../allfunc/whatsapp-host');
+    const apiOnlyDyno = isWebApiOnlyDyno?.() === true;
+
+    if (apiOnlyDyno) {
+      // On Heroku the web and worker dynos have separate filesystems and
+      // separate Node processes. Queue the request in shared DB; the worker's
+      // pairing processor owns the only WhatsApp socket and will publish the
+      // code back to bot_sessions.
+      const { ensurePairingRequest } = require('../db-service');
+      await ensurePairingRequest(clean, { force: true });
+      console.log(`[Pairing] ${clean}: queued for WhatsApp worker dyno`);
     } else {
-      // Use the canonical cached module. Clearing require.cache here created a
-      // second pair.js instance alongside the supervisor's instance.
-      const startpairing = require(PAIR_MODULE);
-      const jid = clean + '@s.whatsapp.net';
-      startpairing(jid).catch(err => {
-        console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
-      });
+      // In isolated deployment the supervisor is the only owner allowed to
+      // create a WhatsApp socket. Calling pair.js directly from the web route
+      // creates a second socket in the web process; that socket can generate a
+      // code but loses the link handshake when the worker-owned socket starts.
+      const supervisor = require('../../worker/supervisor');
+      if (supervisor.isSupervisorActive?.()) {
+        // handlePairingRequest also waits for its internal 120s supervisor
+        // timeout. Do not await it here: the HTTP route must poll the code
+        // state immediately and return as soon as the child generates a code.
+        supervisor.handlePairingRequest(clean).catch((err) => {
+          console.error(`[Pairing] supervisor pairing error for ${clean}:`, err.message);
+        });
+      } else {
+        // Use the canonical cached module for local/same-dyno deployments.
+        const startpairing = require(PAIR_MODULE);
+        const jid = clean + '@s.whatsapp.net';
+        startpairing(jid).catch(err => {
+          console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
+        });
+      }
     }
 
-    // Wait for the supervisor child/pair.js to write pairing_<number>.json.
-    // The DB state is also updated by pair.js, so this remains reliable when
-    // the pairing child runs in a separate isolated process.
+    // Wait for the supervisor child/pair.js to publish the code. In a split
+    // web/worker deployment the worker filesystem is not visible here, so the
+    // database is the primary handoff and the local JSON remains a fallback.
     let code = null;
+    let codeUpdatedAt = null;
+    let pairingFailure = null;
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline) {
-      await sleep(1000);
+      await sleep(500);
+
+      try {
+        const { getPairingState } = require('../db-service');
+        const state = await getPairingState(clean);
+        if (state?.code && state.status === 'code_ready') {
+          code = state.code;
+          codeUpdatedAt = state.updatedAt || null;
+          break;
+        }
+        if (state?.status === 'failed') {
+          pairingFailure = 'WhatsApp pairing code generation failed. Please try again.';
+          break;
+        }
+      } catch (_) {}
+
       try {
         const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
         const obj = JSON.parse(raw);
         const savedNum = (obj.number || '').replace(/[^0-9]/g, '');
         if (obj.code && savedNum === clean) {
           code = obj.code;
+          codeUpdatedAt = obj.timestamp || null;
           break;
         }
       } catch (_) {}
@@ -306,13 +336,15 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
         await clearPairingRequest(clean);
         await deleteSessionCreds(clean);
       } catch (_) {}
-      const result = { error: 'Timed out waiting for pairing code. Check the number and try again.' };
+      const result = {
+        error: pairingFailure || 'Timed out waiting for pairing code. Check the number and try again.'
+      };
       rejectFlight(new Error(result.error));
       return res.status(500).json(result);
     }
 
     console.log(`[Pairing] ${clean}: Pairing code generated successfully`);
-    const result = { code, number: clean };
+    const result = { code, number: clean, updatedAt: codeUpdatedAt };
     resolveFlight(result);
     return res.json(result);
 
@@ -329,7 +361,7 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
 }
 
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
-router.get('/status/:number', protect, (req, res) => {
+router.get('/status/:number', protect, async (req, res) => {
   const clean    = req.params.number.replace(/[^0-9]/g, '');
   const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
   if (fsSync.existsSync(flagFile)) {
@@ -339,22 +371,67 @@ router.get('/status/:number', protect, (req, res) => {
     } catch (_) {}
     return res.json({ connected: true });
   }
-  res.json({ connected: false });
+  // The worker owns the WhatsApp socket, so its connected.flag is not visible
+  // on the web dyno. Read the shared DB state for cross-dyno status.
+  try {
+    const { getBotPairingStatus } = require('../db-service');
+    return res.json(await getBotPairingStatus(clean));
+  } catch (_) {
+    return res.json({ connected: false });
+  }
 });
 
 // ── GET /api/pairing/code/:number ────────────────────────────────────────────
 // Returns the current pairing code for a number (for polling)
-router.get('/code/:number', protect, (req, res) => {
+router.get('/code/:number', protect, async (req, res) => {
   const clean = req.params.number.replace(/[^0-9]/g, '');
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
+
+  // Primary source: DB shared by the web and worker dynos.
+  try {
+    const { getPairingState } = require('../db-service');
+    const state = await getPairingState(clean);
+    if (state?.status === 'failed') {
+      return res.status(409).json({
+        code: null,
+        status: 'failed',
+        error: 'WhatsApp pairing code generation failed. Please try again.'
+      });
+    }
+    if (state?.code && state.status === 'code_ready') {
+      return res.json({
+        code: state.code,
+        number: clean,
+        status: state.status,
+        updatedAt: state.updatedAt || null,
+        expiresInSec: 120
+      });
+    }
+    if (state?.status) {
+      return res.json({
+        code: null,
+        number: clean,
+        status: state.status,
+        updatedAt: state.updatedAt || null
+      });
+    }
+  } catch (_) {}
+
+  // Fallback for same-dyno/non-supervisor deployments.
   if (!fsSync.existsSync(PAIRING_JSON)) {
-    return res.json({ code: null });
+    return res.json({ code: null, number: clean, status: 'requested' });
   }
   try {
     const obj = JSON.parse(fsSync.readFileSync(PAIRING_JSON, 'utf-8'));
-    return res.json({ code: obj.code || null, number: clean });
+    return res.json({
+      code: obj.code || null,
+      number: clean,
+      status: obj.code ? 'code_ready' : 'in_progress',
+      updatedAt: obj.timestamp || null,
+      expiresInSec: 120
+    });
   } catch (_) {
-    return res.json({ code: null });
+    return res.json({ code: null, number: clean, status: 'in_progress' });
   }
 });
 
