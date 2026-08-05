@@ -42,6 +42,8 @@ services:
         value: "1"
       - key: WHATSAPP_HOST_DYNO
         value: worker
+      - key: WEB_API_ONLY
+        value: "0"
       - key: BOT_ISOLATION
         value: "1"
       - key: DYNO_TOTAL_RAM_MB

@@ -45,9 +45,14 @@ function canHostWhatsAppSessions() {
 
 /** Web dyno serving API only — WhatsApp bots run on worker (or another host dyno). */
 function isWebApiOnlyDyno() {
-    return (process.env.WEB_API_ONLY === '1'
-        || String(process.env.DYNO || '').startsWith('web'))
-        && getWhatsAppHostDyno() === 'worker';
+    if (getWhatsAppHostDyno() !== 'worker') return false;
+
+    // Prefer explicit role flags, but also infer the API role whenever this
+    // process is not the worker. This matters on Heroku when Dyno Metadata is
+    // disabled and DYNO is therefore unavailable: the web Procfile command
+    // must still never create a WhatsApp socket.
+    return process.env.WEB_API_ONLY === '1'
+        || !isWorkerDyno();
 }
 
 /**

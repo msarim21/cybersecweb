@@ -47,8 +47,13 @@
       "value": "production"
     },
     "WHATSAPP_HOST_DYNO": {
-      "description": "Run WhatsApp bots on the web dynos. The dynos shard linked numbers between themselves.",
-      "value": "web",
+      "description": "Run WhatsApp bots on the dedicated worker dyno. The web dyno only serves the API and dashboard.",
+      "value": "worker",
+      "required": false
+    },
+    "WEB_API_ONLY": {
+      "description": "Keep the web dyno API/frontend-only so it cannot create a second WhatsApp socket.",
+      "value": "1",
       "required": false
     },
     "BOT_ISOLATION": {
@@ -108,6 +113,10 @@
   ],
   "formation": {
     "web": {
+      "quantity": 1,
+      "size": "eco"
+    },
+    "worker": {
       "quantity": 1,
       "size": "eco"
     }
