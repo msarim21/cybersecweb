@@ -245,6 +245,19 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
   try { await fs.unlink(PAIRING_JSON); } catch (_) {}
 
+  // Reset the shared request state before the new socket is spawned. A
+  // previous attempt can leave status=code_ready in Mongo; if that record is
+  // not cleared first, the polling endpoint can expose a stale code while the
+  // new socket is still negotiating.
+  try {
+    const { ensurePairingRequest } = require('../db-service');
+    await ensurePairingRequest(clean, { force: true });
+    console.log(`[Pairing] ${clean}: Pairing state reset for this request`);
+  } catch (stateErr) {
+    // Pairing can still use the local JSON handoff when Mongo is unavailable.
+    console.warn(`[Pairing] ${clean}: Could not reset shared pairing state: ${stateErr.message}`);
+  }
+
   // ✅ Save pairing ownership BEFORE starting pair.js
   // So that when WhatsApp confirms pairing, session-db.js auto-saves to linked_numbers
   try {
@@ -265,8 +278,6 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
       // This branch is retained for explicitly split deployments only. The
       // production web-only formation uses the branch below so the request,
       // pairing socket, and bot all stay in one web process/dyno.
-      const { ensurePairingRequest } = require('../db-service');
-      await ensurePairingRequest(clean, { force: true });
       console.log(`[Pairing] ${clean}: queued for WhatsApp worker dyno`);
       const result = { async: true, number: clean, status: 'requested' };
       // Do not hold the browser request open while the worker establishes

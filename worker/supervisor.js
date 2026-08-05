@@ -912,6 +912,16 @@ async function handlePairingRequest(clean) {
         removeFromStoppedBots(num);
         killBot(num, 'SIGKILL');
 
+        // Reset the shared request state at the ownership boundary as well.
+        // The HTTP route normally does this first, but keeping it here
+        // prevents a stale code_ready record from being mistaken for the code
+        // produced by this newly spawned pairing socket.
+        try {
+            await require('../server/db-service').ensurePairingRequest(num, { force: true });
+        } catch (stateErr) {
+            console.warn(`[Supervisor] Pairing state reset warning for +${num}: ${stateErr.message}`);
+        }
+
         // Do not clear the pairing record here. It contains the owner and bot
         // name that session-db uses when connection.open saves linked_numbers.
         // Clearing it before the phone accepts the code loses that ownership
@@ -927,8 +937,17 @@ async function handlePairingRequest(clean) {
 
         try { const { deleteSessionCreds } = require('../session-db'); await deleteSessionCreds(num); } catch (_) {}
         try {
-            const pjson = path.join(__dirname, '..', 'nexstore', 'pairing', 'pairing.json');
-            if (fs.existsSync(pjson)) fs.unlinkSync(pjson);
+            // Remove both the legacy shared handoff and the current
+            // per-number handoff. The API prefers the local per-number file,
+            // so leaving it behind could expose the previous attempt's code
+            // even after the Mongo pairing state was reset.
+            const pairingDir = path.join(__dirname, '..', 'nexstore', 'pairing');
+            for (const pjson of [
+                path.join(pairingDir, 'pairing.json'),
+                path.join(pairingDir, `pairing_${num}.json`),
+            ]) {
+                if (fs.existsSync(pjson)) fs.unlinkSync(pjson);
+            }
         } catch (_) {}
         try { const { removeConnectedFlag } = require('../allfunc/connected-flag'); removeConnectedFlag(num); } catch (_) {}
 
