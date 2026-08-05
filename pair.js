@@ -102,6 +102,16 @@ function canonicalBotJid(number) {
     return clean ? `${clean}@s.whatsapp.net` : '';
 }
 
+function formatPairingCode(rawCode) {
+    const compact = String(rawCode || '')
+        .replace(/[^a-z0-9]/gi, '')
+        .toUpperCase();
+    if (compact.length !== 8) {
+        throw new Error(`WhatsApp returned an invalid pairing code length (${compact.length})`);
+    }
+    return `${compact.slice(0, 4)}-${compact.slice(4)}`;
+}
+
 function processQueue() {
     if (activeConnections < MAX_CONCURRENT_CONNECTIONS && connectionQueue.length > 0) {
         activeConnections++;
@@ -412,6 +422,13 @@ async function _startpairing(nexusDevNumber) {
     tracker.disconnected = false;
     tracker.reconnectSuppressed = false;
     tracker.lastActivity = Date.now();
+    tracker.pairingSession = process.env.BOT_PAIRING === '1';
+    tracker.pairingCodeIssued = false;
+    tracker.pairingConnected = false;
+    if (tracker.pairingCodeTimer) {
+        clearTimeout(tracker.pairingCodeTimer);
+        tracker.pairingCodeTimer = null;
+    }
 
     const { version, isLatest } = await fetchLatestBaileysVersion();
     
@@ -483,14 +500,32 @@ async function _startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
-        // WhatsApp only accepts the pairing-code request during the initial
-        // socket handshake. Waiting several seconds can still return a code
-        // (and trigger the phone notification) while the linking handshake is
-        // already stale, which leaves the phone at "Couldn't link device".
-        setTimeout(async () => {
+        // The latest Baileys requestPairingCode() sends the registration IQ over
+        // the socket immediately. Do not use a blind delay: on a cold dyno the
+        // socket may still be closed at 750ms, while on a warm dyno the same
+        // delay can be late enough for a short-lived registration handshake.
+        // Wait for this exact socket to be open, then issue the code once.
+        const issuePairingCode = async () => {
             try {
-                let code = await nexus.requestPairingCode(phoneNumber);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
+                const socketDeadline = Date.now() + 15_000;
+                while (
+                    tracker.connection === nexus &&
+                    !tracker.disconnected &&
+                    nexus.ws?.readyState !== 1 &&
+                    Date.now() < socketDeadline
+                ) {
+                    await sleep(100);
+                }
+                if (tracker.connection !== nexus || tracker.disconnected) {
+                    throw new Error('Pairing socket closed before code request');
+                }
+                if (nexus.ws?.readyState !== 1) {
+                    throw new Error('Pairing socket did not open before code request');
+                }
+                if (tracker.pairingCodeIssued) return;
+
+                tracker.pairingCodeIssued = true;
+                const code = formatPairingCode(await nexus.requestPairingCode(phoneNumber));
                 
                 console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
 
@@ -521,13 +556,15 @@ async function _startpairing(nexusDevNumber) {
                 
                 console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
             } catch (err) {
+                tracker.pairingCodeIssued = false;
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
                 try {
                     const { markPairingFailed } = require('./server/db-service');
                     await markPairingFailed(phoneNumber);
                 } catch (_) {}
             }
-        }, 750);
+        };
+        void issuePairingCode();
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
@@ -1074,10 +1111,29 @@ async function _startpairing(nexusDevNumber) {
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
             }
+            if (tracker.pairingCodeTimer) {
+                clearTimeout(tracker.pairingCodeTimer);
+                tracker.pairingCodeTimer = null;
+            }
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
+
+            // A pairing socket that dies before connection.open must not
+            // reconnect behind the user's back. Any code already displayed
+            // belongs to this dead socket and will always be rejected by
+            // WhatsApp when a replacement socket is created.
+            if (tracker.pairingSession && !tracker.pairingConnected) {
+                try {
+                    const { markPairingFailed } = require('./server/db-service');
+                    await markPairingFailed(nexusDevNumber);
+                } catch (_) {}
+                tracker.disconnected = true;
+                tracker.connection = null;
+                console.warn(chalk.yellow(`⚠️ Pairing socket closed before connection.open for ${nexusDevNumber}; stale code invalidated`));
+                return;
+            }
 
             // Persist the real socket state immediately. Without this, a
             // worker can keep refreshing lastActive while the old
@@ -1275,6 +1331,7 @@ async function _startpairing(nexusDevNumber) {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
             tracker.retryCount = 0;
             tracker.disconnected = false;
+            tracker.pairingConnected = true;
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;

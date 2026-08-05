@@ -24,6 +24,12 @@ function deleteFolderRecursive(p) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+function normalizePairingCode(rawCode) {
+  const compact = String(rawCode || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+  if (compact.length !== 8) return null;
+  return `${compact.slice(0, 4)}-${compact.slice(4)}`;
+}
+
 function stopPairingRuntime(clean) {
   // The supervisor deliberately ignores pair.stopBot() while a pairing is
   // in flight. A timed-out HTTP request must override that guard, otherwise
@@ -348,7 +354,13 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
     }
 
     console.log(`[Pairing] ${clean}: Pairing code generated successfully`);
-    const result = { code, number: clean, updatedAt: codeUpdatedAt };
+    const normalizedCode = normalizePairingCode(code);
+    if (!normalizedCode) {
+      stopPairingRuntime(clean);
+      rejectFlight(new Error('WhatsApp returned an invalid pairing code.'));
+      return res.status(502).json({ error: 'WhatsApp returned an invalid pairing code. Please try again.' });
+    }
+    const result = { code: normalizedCode, number: clean, updatedAt: codeUpdatedAt };
     resolveFlight(result);
     return res.json(result);
 
@@ -388,6 +400,7 @@ router.get('/status/:number', protect, async (req, res) => {
 // ── GET /api/pairing/code/:number ────────────────────────────────────────────
 // Returns the current pairing code for a number (for polling)
 router.get('/code/:number', protect, async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   const clean = req.params.number.replace(/[^0-9]/g, '');
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
 
@@ -403,8 +416,16 @@ router.get('/code/:number', protect, async (req, res) => {
       });
     }
     if (state?.code && state.status === 'code_ready') {
+      const code = normalizePairingCode(state.code);
+      if (!code) {
+        return res.status(409).json({
+          code: null,
+          status: 'failed',
+          error: 'WhatsApp returned an invalid pairing code. Please request a new code.'
+        });
+      }
       return res.json({
-        code: state.code,
+        code,
         number: clean,
         status: state.status,
         updatedAt: state.updatedAt || null,
@@ -427,10 +448,11 @@ router.get('/code/:number', protect, async (req, res) => {
   }
   try {
     const obj = JSON.parse(fsSync.readFileSync(PAIRING_JSON, 'utf-8'));
+    const code = normalizePairingCode(obj.code);
     return res.json({
-      code: obj.code || null,
+      code,
       number: clean,
-      status: obj.code ? 'code_ready' : 'in_progress',
+      status: code ? 'code_ready' : 'in_progress',
       updatedAt: obj.timestamp || null,
       expiresInSec: 120
     });
