@@ -144,7 +144,9 @@ let _lastRotationAt = Date.now();
 //   _restartLimitBots — hit MAX_RESTARTS_PER_HOUR. Pause 30 min then retry.
 const _noSessionBots    = new Map(); // clean → timestamp of last clean exit
 const _restartLimitBots = new Map(); // clean → timestamp when limit was hit
-const _unhealthyStreak  = new Map(); // clean → consecutive unhealthy sync-tick count (debounce before full restart)
+const _unhealthyStreak  = new Map(); // clean → consecutive unhealthy sync-tick count (debounce before recovery)
+const _lastUnhealthyRecovery = new Map(); // clean → timestamp of latest confirmed recovery
+const _intentionalStops = new Set(); // clean → worker termination requested by supervisor
 const _restartJitterMs  = new Map(); // clean → random 0-30min jitter so scheduled memory restarts never bunch up
 let _syncInFlight = false;
 let _syncQueued = false;
@@ -209,14 +211,17 @@ function _isThreadAlive(entry) {
 
 function _isThreadHealthy(clean, entry) {
     if (!entry?.thread) return false;
-    const gracePeriod = 10 * 60 * 1000;
+    // A child can take a few seconds to boot and write its first heartbeat,
+    // but ten minutes is long enough to leave a dead socket invisible.
+    const gracePeriod = 2 * 60 * 1000;
     if (Date.now() - (entry.spawnedAt || 0) < gracePeriod) return true;
 
     try {
-        const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
+        const { getBotHeartbeatAgeMs, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
         const hb = readBotHeartbeat(clean);
-        if (hb?.wsState === 1) return true;
-        if (isBotHeartbeatFresh(clean, 20 * 60 * 1000)) return true;
+        // A fresh heartbeat with wsState=0/-1 means the process is alive but
+        // the WhatsApp socket is not. Treat only an open WS as healthy.
+        if (hb?.wsState === 1 && getBotHeartbeatAgeMs(clean) <= 2 * 60 * 1000) return true;
     } catch (_) {}
 
     return false;
@@ -400,7 +405,10 @@ function _spawnThread(clean, opts = {}) {
         wrapSlot(sharedBuffer, slotIndex).clear();
         _updateActiveBotCount();
 
-        if (opts.noRestart || !_active) return;
+        // killBot() marks intentional shutdowns so terminating a stale worker
+        // cannot trigger the old thread's delayed hidden respawn.
+        const intentionallyStopped = _intentionalStops.delete(clean);
+        if (opts.noRestart || wasEntry?.noRestart || intentionallyStopped || !_active) return;
         if (code === 0) return;
 
         // Track restart times in a persistent Map so the circuit-breaker works
@@ -434,6 +442,8 @@ function killBot(botNum, signal = 'SIGTERM') {
     const clean = cleanBotNum(botNum);
     const entry = threads.get(clean);
     if (!entry?.thread) return false;
+    entry.noRestart = true;
+    _intentionalStops.add(clean);
     try { entry.thread.postMessage({ cmd: signal === 'SIGKILL' ? 'kill' : 'stop' }); } catch (_) {}
     try { entry.thread.terminate(); } catch (_) {}
     threads.delete(clean);
@@ -519,7 +529,7 @@ async function syncBots() {
         if (_hasRegisteredCreds(clean) && isConnected(clean)) promotePairingToNormal(clean);
     }
 
-    // 2. Restart unhealthy threads — debounced + staggered + 4h-guarded.
+    // 2. Restart unhealthy threads — debounced, staggered, and rate-limited.
     // A single stale heartbeat read is often just a slow-network moment, not a
     // dead socket, so we require 2 consecutive unhealthy sync ticks (~16s+)
     // before acting, and try a light wake first. Each bot is isolated in its
@@ -555,11 +565,11 @@ async function syncBots() {
             continue;
         }
 
-        // Hard 4h guard — this bot already got a full restart within the last
-        // 4h, so keep trying a light wake instead of nuking it again.
-        if (!canFullyRestartBot(clean)) {
-            console.log(chalk.gray(`[Supervisor] ⏳ +${clean} unstable but within 4h restart guard — light wake instead of full restart`));
-            // child self-heals its own idle/stale socket via startBotChildKeepAlive() sweep — just wait
+        // Reconnect recovery is separate from the scheduled memory-restart
+        // guard. A dead socket must not wait 2.5h after an earlier restart.
+        const lastRecovery = _lastUnhealthyRecovery.get(clean) || 0;
+        if (Date.now() - lastRecovery < 60_000) {
+            console.log(chalk.gray(`[Supervisor] ⏳ +${clean} recovery recently attempted — waiting before another restart`));
             continue;
         }
 
@@ -570,6 +580,7 @@ async function syncBots() {
         unhealthyRestarts += 1;
 
         console.log(chalk.red(`[Supervisor] 💀 +${clean} confirmed unhealthy — restarting thread (isolated; other bots unaffected)`));
+        _lastUnhealthyRecovery.set(clean, Date.now());
         recordBotRestart(clean);
         _unhealthyStreak.delete(clean);
         killBot(clean, 'SIGTERM');
@@ -1005,6 +1016,39 @@ function stopSupervisor() {
 }
 
 /**
+ * Return the actual runtime health for a bot. The auto-reconnect sweep must
+ * use this instead of treating a surviving worker_thread as an online bot.
+ */
+function getBotRuntimeStatus(botNum) {
+    const clean = cleanBotNum(botNum);
+    const entry = threads.get(clean);
+    if (!entry?.thread) return { thread: false, healthy: false };
+
+    let heartbeat = null;
+    try {
+        heartbeat = require('../allfunc/bot-heartbeat').readBotHeartbeat(clean);
+    } catch (_) {}
+
+    const heartbeatAge = heartbeat?.ts ? Date.now() - Number(heartbeat.ts) : Infinity;
+    const childRunning = wrapSlot(sharedBuffer, entry.slotIndex).isRunning();
+    const withinStartupGrace = Date.now() - (entry.spawnedAt || 0) < 2 * 60 * 1000;
+    const healthy = !entry.pairing && childRunning && (
+        withinStartupGrace ||
+        (heartbeat?.wsState === 1 && heartbeatAge <= 2 * 60 * 1000)
+    );
+
+    return {
+        thread: true,
+        childRunning,
+        heartbeatFresh: heartbeatAge <= 2 * 60 * 1000,
+        withinStartupGrace,
+        wsState: heartbeat?.wsState ?? -1,
+        ready: heartbeat?.ready === true,
+        healthy,
+    };
+}
+
+/**
  * Graceful shutdown — sends 'shutdown' message to each worker_thread so it can
  * SIGTERM its bot-runner child and let it flush session creds to DB before
  * exit. Used by worker.js on SIGTERM (Heroku dyno restart, scheduled
@@ -1070,6 +1114,7 @@ module.exports = {
     promotePairingToNormal,
     bootReconnectReport,
     _clearNoSessionBot,
+    getBotRuntimeStatus,
     getSharedBuffer  : () => sharedBuffer,
     getActiveBotCount: () => getActiveBotCount(sharedBuffer),
 };

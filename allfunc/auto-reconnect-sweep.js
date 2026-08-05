@@ -21,23 +21,23 @@ const chalk = require('chalk');
 
 // ── Tuning constants (all overridable via env) ───────────────────────────────
 
-/** How often to run the sweep (ms). Default: 5 minutes. */
-const SWEEP_INTERVAL_MS = Number(process.env.AUTO_RECONNECT_INTERVAL_MS) || 5 * 60 * 1000;
+/** How often to run the sweep (ms). Default: 1 minute. */
+const SWEEP_INTERVAL_MS = Number(process.env.AUTO_RECONNECT_INTERVAL_MS) || 60 * 1000;
 
 /**
  * A bot must be continuously offline for at least this long before
  * the sweep reconnects it. Prevents fighting with a bot that is
  * mid-connect (e.g. still syncing history after a restart).
- * Default: 3 minutes.
+ * Default: 45 seconds.
  */
-const BOT_OFFLINE_GRACE_MS = Number(process.env.AUTO_RECONNECT_GRACE_MS) || 3 * 60 * 1000;
+const BOT_OFFLINE_GRACE_MS = Number(process.env.AUTO_RECONNECT_GRACE_MS) || 45 * 1000;
 
 /**
  * After triggering a reconnect for a bot, don't try again for this
  * long even if it still appears offline (give it time to come up).
- * Default: 10 minutes.
+ * Default: 2 minutes.
  */
-const RECONNECT_COOLDOWN_MS = Number(process.env.AUTO_RECONNECT_COOLDOWN_MS) || 10 * 60 * 1000;
+const RECONNECT_COOLDOWN_MS = Number(process.env.AUTO_RECONNECT_COOLDOWN_MS) || 2 * 60 * 1000;
 
 // ── Internal state ───────────────────────────────────────────────────────────
 
@@ -62,25 +62,28 @@ function _isSessionFresh(sess, maxAgeMs) {
 
 /**
  * Returns true if the bot is currently live.
- * ✅ PRIMARY: checks connected.flag on filesystem — ground truth for live sockets.
- * Fallback: DB session fields (stale by up to 15 min, so flag always wins).
+ * In isolated mode, the supervisor heartbeat/WS state is authoritative.
+ * A connected.flag can survive an abrupt process crash, so it is only used
+ * as a fallback in flat mode where no supervisor runtime exists.
  */
 function _isBotOnline(clean, sess) {
-    // ── 1. Filesystem flag — most reliable (written by pair.js on connect) ──
+    // ── 1. Supervisor runtime health — thread existence alone is not live ─
+    try {
+        const sup = require('../worker/supervisor');
+        if (sup.isSupervisorActive && sup.isSupervisorActive() &&
+            typeof sup.getBotRuntimeStatus === 'function') {
+            const runtime = sup.getBotRuntimeStatus(clean);
+            if (runtime?.healthy) return true;
+            // Supervisor is authoritative while it is running. Do not fall
+            // through to stale CONNECTED/lastActive values from the DB.
+            return false;
+        }
+    } catch (_) {}
+
+    // ── 2. Flat-mode filesystem marker ────────────────────────────────────
     try {
         const { isConnected } = require('../allfunc/connected-flag');
         if (isConnected(clean)) return true;
-    } catch (_) {}
-
-    // ── 2. Supervisor thread map — bot thread is alive ────────────────────
-    try {
-        const sup = require('../worker/supervisor');
-        if (sup.isSupervisorActive && sup.isSupervisorActive()) {
-            // spawnBot guard: threads.has(clean) already prevents duplicates,
-            // but we also surface it here so we skip the candidate entirely.
-            const { _getBotThread } = sup;
-            if (typeof _getBotThread === 'function' && _getBotThread(clean)) return true;
-        }
     } catch (_) {}
 
     // ── 3. DB session fallback ────────────────────────────────────────────
@@ -111,7 +114,7 @@ function _isCoolingDown(clean) {
 
 /**
  * Attempt to reconnect a single bot.
- * Returns 'spawned' | 'queued' | 'skipped' | 'error'.
+ * Returns 'spawned' | 'queued' | 'deferred' | 'skipped' | 'error'.
  */
 async function _reconnectOne(clean) {
     const jid = `${clean}@s.whatsapp.net`;
@@ -135,21 +138,35 @@ async function _reconnectOne(clean) {
         removeFromStoppedBots(clean);
     } catch (_) {}
 
-    // ── Mark session active in DB so dashboard reflects reconnecting state ─
+    // ── FINAL live-check before touching anything ─────────────────────────
+    // The runtime may have become healthy after the candidate list was built.
+    // In supervisor mode, do not let a stale connected.flag hide that fact.
     try {
-        const { upsertBotSession } = require('../server/db-service');
-        await upsertBotSession(clean, 'active');
+        const sup = require('../worker/supervisor');
+        if (sup.isSupervisorActive?.() && sup.getBotRuntimeStatus) {
+            if (sup.getBotRuntimeStatus(clean)?.healthy) {
+                console.log(chalk.gray(`[AutoReconnect] ℹ️  +${clean} supervisor reports healthy — already online, skipping`));
+                return 'skipped';
+            }
+        } else {
+            const { isConnected } = require('../allfunc/connected-flag');
+            if (isConnected(clean)) {
+                console.log(chalk.gray(`[AutoReconnect] ℹ️  +${clean} connected.flag exists — already online, skipping`));
+                return 'skipped';
+            }
+        }
     } catch (_) {}
 
-    // ── FINAL live-check before touching anything ─────────────────────────
-    // The flag may have been written AFTER the sweep candidate list was built.
-    // Double-check here so we never kill a bot that just came online.
+    // ── Mark the socket as reconnecting only after the final live-check ────
+    // This avoids overwriting a fast recovery with CONNECTING immediately
+    // before returning 'skipped'.
     try {
-        const { isConnected } = require('../allfunc/connected-flag');
-        if (isConnected(clean)) {
-            console.log(chalk.gray(`[AutoReconnect] ℹ️  +${clean} connected.flag exists — already online, skipping`));
-            return 'skipped';
-        }
+        const { setBotConnectionStatus } = require('../server/db-service');
+        await setBotConnectionStatus(clean, 'CONNECTING', {
+            commandReady: false,
+            wsState: 0,
+            lastErrorMessage: 'Automatic reconnect in progress',
+        });
     } catch (_) {}
 
     // ── Supervisor (isolated) mode — use spawnBot ─────────────────────────
@@ -159,11 +176,13 @@ async function _reconnectOne(clean) {
             // Clear _noSessionBots so supervisor doesn't skip this bot
             if (typeof _clearNoSessionBot === 'function') _clearNoSessionBot(clean);
 
-            // Kill any stale thread first, then spawn fresh
-            killBot(clean, 'SIGTERM');
-            await new Promise(r => setTimeout(r, 800));
-            spawnBot(clean);
-            return 'spawned';
+            // Kill any stale thread first, then spawn fresh. A spawn can be
+            // deferred by MAX_CONCURRENT_BOTS; never report that as success or
+            // the bot can remain stuck until a long cooldown expires.
+            const killed = killBot(clean, 'SIGTERM');
+            if (killed) await new Promise(r => setTimeout(r, 800));
+            const thread = spawnBot(clean);
+            return thread ? 'spawned' : 'deferred';
         }
     } catch (_) {}
 
@@ -181,11 +200,11 @@ async function _reconnectOne(clean) {
         const pairMod = require('../pair');
 
         // Stop any zombie session first
-        if (typeof pairMod.stopBot === 'function') pairMod.stopBot(clean);
+            if (typeof pairMod.stopBot === 'function') pairMod.stopBot(clean);
         await new Promise(r => setTimeout(r, 500));
 
-        await pairMod(jid);
-        return 'queued';
+            await pairMod(jid);
+            return 'queued';
     } catch (e) {
         console.log(chalk.red(`[AutoReconnect] ❌ +${clean} pair error: ${e.message}`));
         return 'error';
@@ -234,7 +253,7 @@ async function runSweep() {
         console.log(chalk.cyan(`[AutoReconnect] 🔍 Sweep found ${candidates.length} offline bot(s) to reconnect`));
 
         // ── 5. Reconnect each candidate ────────────────────────────────────
-        let spawned = 0, skipped = 0, errors = 0;
+        let spawned = 0, skipped = 0, deferred = 0, errors = 0;
 
         for (const clean of candidates) {
             _lastReconnectAttempt.set(clean, Date.now());
@@ -244,6 +263,12 @@ async function runSweep() {
 
             if (result === 'spawned' || result === 'queued') spawned++;
             else if (result === 'skipped') skipped++;
+            else if (result === 'deferred') {
+                deferred++;
+                // A capacity-deferred reconnect was not attempted. Let the
+                // next sweep reconsider it instead of hiding it in cooldown.
+                _lastReconnectAttempt.delete(clean);
+            }
             else errors++;
 
             // Small delay between bots to avoid thundering herd
@@ -253,7 +278,9 @@ async function runSweep() {
         }
 
         if (spawned > 0) {
-            console.log(chalk.green(`[AutoReconnect] ✅ Reconnected ${spawned} bot(s) | skipped ${skipped} | errors ${errors}`));
+            console.log(chalk.green(`[AutoReconnect] ✅ Reconnect started for ${spawned} bot(s) | deferred ${deferred} | skipped ${skipped} | errors ${errors}`));
+        } else if (deferred > 0) {
+            console.log(chalk.yellow(`[AutoReconnect] ⏸ ${deferred} reconnect(s) deferred by the concurrent-bot cap; will retry automatically`));
         }
 
     } catch (err) {
@@ -276,8 +303,8 @@ function startAutoReconnectSweep() {
     const intervalMin = Math.round(SWEEP_INTERVAL_MS / 60000);
     console.log(chalk.green(`[AutoReconnect] 🚀 Auto-reconnect sweep started (every ${intervalMin} min, grace ${BOT_OFFLINE_GRACE_MS / 60000} min, cooldown ${RECONNECT_COOLDOWN_MS / 60000} min)`));
 
-    // First sweep runs after 2 minutes (give bots time to start normally first)
-    const firstDelay = Number(process.env.AUTO_RECONNECT_FIRST_DELAY_MS) || 2 * 60 * 1000;
+    // First sweep runs after 30 seconds (give normal startup a short head start)
+    const firstDelay = Number(process.env.AUTO_RECONNECT_FIRST_DELAY_MS) || 30 * 1000;
     setTimeout(() => {
         runSweep().catch(() => {});
         _sweepTimer = setInterval(() => {

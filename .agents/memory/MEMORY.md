@@ -2,3 +2,4 @@
 - [Module resolution fix](module-resolution.md) — root node_modules lacks runtime deps; symlink whatsapp-bot/node_modules or commands silently fail to load
 - [Config file dedup](config-dedup.md) — setting/config.js had duplicate content loaded twice, causing conflicting globals (prefa, owner, footer)
 - [Production deploy access](production-deploy-access.md) — verify Heroku app access before claiming a deploy; GitHub is the safe handoff when access is denied.
+- [Reconnect liveness](reconnect-liveness.md) — worker existence, DB freshness, and connected.flag are not sufficient; isolated recovery must require fresh WS heartbeat state.

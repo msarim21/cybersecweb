@@ -807,6 +807,8 @@ async function setBotConnectionStatus(number, connectionStatus, meta = {}) {
     if (meta.lastErrorMessage !== undefined) $set.lastErrorMessage = meta.lastErrorMessage;
     if (meta.reconnectAttempts !== undefined) $set.reconnectAttempts = meta.reconnectAttempts;
     if (meta.hostDyno !== undefined) $set.hostDyno = meta.hostDyno;
+      if (meta.commandReady !== undefined) $set.commandReady = meta.commandReady;
+      if (meta.wsState !== undefined) $set.wsState = meta.wsState;
     if (connectionStatus === 'CONNECTED') {
       $set.connectedAt = now;
       if (meta.lastErrorMessage === null) $set.lastErrorMessage = null;
@@ -829,11 +831,15 @@ async function setBotConnectionStatus(number, connectionStatus, meta = {}) {
            WHEN $3 IS NOT NULL THEN $3
            ELSE bot_sessions.last_error_message
          END,
-         reconnect_attempts = COALESCE($4, bot_sessions.reconnect_attempts),
-         host_dyno = COALESCE($5, bot_sessions.host_dyno),
+          reconnect_attempts = COALESCE($4, bot_sessions.reconnect_attempts),
+          host_dyno = COALESCE($5, bot_sessions.host_dyno),
+          command_ready = COALESCE($6, bot_sessions.command_ready),
+          ws_state = COALESCE($7, bot_sessions.ws_state),
          connected_at = CASE WHEN $2 = 'CONNECTED' THEN NOW() ELSE bot_sessions.connected_at END,
          last_active = NOW()`,
-      [clean, connectionStatus, errMsg, attempts, hostDyno]
+       [clean, connectionStatus, errMsg, attempts, hostDyno,
+        meta.commandReady !== undefined ? meta.commandReady : null,
+        meta.wsState !== undefined ? meta.wsState : null]
     );
   } catch (err) {
     console.error('[db-service] setBotConnectionStatus:', err.message);

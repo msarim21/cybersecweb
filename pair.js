@@ -989,6 +989,28 @@ async function startpairing(nexusDevNumber) {
             const errMsg = lastDisconnect?.error?.message || '';
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
 
+            // Persist the real socket state immediately. Without this, a
+            // worker can keep refreshing lastActive while the old
+            // connectionStatus remains CONNECTED, making the dashboard and
+            // reconnect sweep trust a dead socket.
+            try {
+                const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                setBotConnectionStatus(cleanForDb, 'DISCONNECTED', {
+                    commandReady: false,
+                    wsState: 0,
+                    lastErrorMessage: errMsg || `WhatsApp connection closed (${reason || 'unknown'})`,
+                }).catch(() => {});
+            } catch (_) {}
+
+            // connected.flag is a liveness marker, not a permanent pairing
+            // marker. Leaving it behind makes the reconnect sweep skip a dead
+            // socket forever, especially when the worker survives the drop.
+            try {
+                const { removeConnectedFlag } = require('./allfunc/connected-flag');
+                removeConnectedFlag(nexusDevNumber);
+            } catch (_) {}
+
             // Network-level errors → always retry with backoff (no give-up)
             const isNetworkError = errMsg && (
                 errMsg.includes('ENOTFOUND') ||
@@ -1283,6 +1305,14 @@ Your bot is ready. Send *.menu* to see all available commands.
             }
         } else if (connection === "connecting") {
             console.log(chalk.blue(`🔄 Connecting ${nexusDevNumber}...`));
+            try {
+                const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                setBotConnectionStatus(cleanForDb, 'CONNECTING', {
+                    commandReady: false,
+                    wsState: nexus?.ws?.readyState ?? 0,
+                }).catch(() => {});
+            } catch (_) {}
         }
     });
 
