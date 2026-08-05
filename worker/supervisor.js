@@ -912,16 +912,12 @@ async function handlePairingRequest(clean) {
         removeFromStoppedBots(num);
         killBot(num, 'SIGKILL');
 
-        // Reset the shared request state at the ownership boundary as well.
-        // The HTTP route normally does this first, but keeping it here
-        // prevents a stale code_ready record from being mistaken for the code
-        // produced by this newly spawned pairing socket.
-        try {
-            await require('../server/db-service').ensurePairingRequest(num, { force: true });
-        } catch (stateErr) {
-            console.warn(`[Supervisor] Pairing state reset warning for +${num}: ${stateErr.message}`);
-        }
-
+        // The route/queue claim already reset this attempt to `requested` and
+        // atomically claimed it as `in_progress`. Do not reset it here:
+        // the web-owned pairing processor polls every 150ms, so changing it
+        // back to `requested` makes the same request get claimed again and
+        // kills the live socket before it can generate a code.
+        //
         // Do not clear the pairing record here. It contains the owner and bot
         // name that session-db uses when connection.open saves linked_numbers.
         // Clearing it before the phone accepts the code loses that ownership

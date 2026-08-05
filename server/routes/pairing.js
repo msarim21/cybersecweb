@@ -285,27 +285,6 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
       const body = { error, code: 'PAIRING_HOST_MISCONFIGURED' };
       resolveFlight({ httpStatus: 503, body });
       return res.status(503).json(body);
-    } else {
-      // In isolated deployment the supervisor is the only owner allowed to
-      // create a WhatsApp socket. Calling pair.js directly from the web route
-      // creates a second socket in the web process; that socket can generate a
-      // code but loses the link handshake when the worker-owned socket starts.
-      const supervisor = require('../../worker/supervisor');
-      if (supervisor.isSupervisorActive?.()) {
-        // handlePairingRequest also waits for its internal 120s supervisor
-        // timeout. Do not await it here: the HTTP route must poll the code
-        // state immediately and return as soon as the child generates a code.
-        supervisor.handlePairingRequest(clean).catch((err) => {
-          console.error(`[Pairing] supervisor pairing error for ${clean}:`, err.message);
-        });
-      } else {
-        // Use the canonical cached module for local/same-dyno deployments.
-        const startpairing = require(PAIR_MODULE);
-        const jid = clean + '@s.whatsapp.net';
-        startpairing(jid).catch(err => {
-          console.error(`[Pairing] startpairing error for ${clean}:`, err.message);
-        });
-      }
     }
 
     // Do not hold this HTTP request open while WhatsApp negotiates the
@@ -317,8 +296,12 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
     // The client already polls /code/:number. That endpoint reads the local
     // JSON first, so this works even while MongoDB is read-only or contains a
     // stale `failed` pairing record.
-    const result = { async: true, number: clean, status: 'requested' };
-    console.log(`[Pairing] ${clean}: pairing runtime started on ${getWhatsAppHostDyno()} dyno; waiting via /code/${clean}`);
+    // The web route only enqueues the request. The web-owned pairing processor
+    // is the single caller of supervisor.handlePairingRequest(). Starting a
+    // socket here as well creates two runtimes for the same number; the second
+    // one kills the first before it can publish a code.
+    const result = { async: true, number: clean, status: 'requested', host: getWhatsAppHostDyno() };
+    console.log(`[Pairing] ${clean}: request queued for web-owned pairing processor on ${getWhatsAppHostDyno()} dyno`);
     resolveFlight(result);
     return res.json(result);
 
