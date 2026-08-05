@@ -4,3 +4,4 @@
 - [Production deploy access](production-deploy-access.md) — verify Heroku app access before claiming a deploy; GitHub is the safe handoff when access is denied.
 - [Reconnect liveness](reconnect-liveness.md) — worker existence, DB freshness, and connected.flag are not sufficient; isolated recovery must require fresh WS heartbeat state.
 - [Heroku pairing topology](heroku-pairing-topology.md) — production uses one web owner for API, pairing, and bots; never run a second WhatsApp host.
+- [Pairing login handoff](pairing-login-handoff.md) — keep the pairing socket alive after code_ready until connection.open, credential flush, and active-state commit complete.
