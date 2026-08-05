@@ -463,6 +463,60 @@ function spawnBot(botNum, opts = {}) {
 }
 
 /**
+ * Pairing needs a real WhatsApp socket, even when the dyno is already at its
+ * normal bot cap. Reserve one supervisor slot for the pairing child by
+ * intentionally stopping the least-recently-active normal bot first.
+ *
+ * This is deliberately supervisor-owned rather than a second ad-hoc socket:
+ * killBot() marks the old thread intentional, clears its slot, and prevents a
+ * delayed crash handler from respawning it while the pairing handshake runs.
+ */
+async function preparePairingSlot(botNum, waitMs = 15_000) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return false;
+
+    const deadline = Date.now() + waitMs;
+    const maxConcurrent = getMaxConcurrentBots();
+
+    while (Date.now() < deadline) {
+        const activeEntries = [...threads.entries()]
+            .filter(([number, entry]) => number !== clean && entry?.thread);
+        const normalEntries = activeEntries
+            .filter(([, entry]) => !entry?.pairing && !entry?.noRestart)
+            .sort(([a], [b]) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
+
+        // _spawnThread counts pairing entries too, so wait until the previous
+        // pairing child has actually left before trying to claim its slot.
+        if (threads.size < maxConcurrent && !activeEntries.some(([, entry]) => entry?.pairing)) {
+            return true;
+        }
+
+        const victim = normalEntries.find(([number]) =>
+            !global._pairingInFlight?.has(number)
+        );
+        if (victim) {
+            const [victimNumber] = victim;
+            console.log(chalk.yellow(
+                `[Supervisor] 🔗 Reserving slot for pairing +${clean} — rotating out +${victimNumber}`
+            ));
+            killBot(victimNumber, 'SIGTERM');
+            // Give Baileys time to close its WebSocket before the new
+            // registration socket is created; otherwise WhatsApp can return
+            // stream conflict 440 even though the old thread was terminated.
+            await new Promise((resolve) => setTimeout(resolve, 1_500));
+            continue;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    console.log(chalk.yellow(
+        `[Supervisor] ⏸ Pairing slot unavailable for +${clean} after ${waitMs}ms`
+    ));
+    return false;
+}
+
+/**
  * Single supervisor owner for replacing a dead or conflicted bot worker.
  * The health sync, auto-reconnect sweep, and reconnect endpoint all use this
  * path so they cannot kill/spawn the same number concurrently.
@@ -862,7 +916,19 @@ async function handlePairingRequest(clean) {
         try { const { removeConnectedFlag } = require('../allfunc/connected-flag'); removeConnectedFlag(num); } catch (_) {}
 
         ensureBotWorkspace(num);
-        spawnBot(num, { pairing: true, force: true, noRestart: true });
+        const slotReady = await preparePairingSlot(num);
+        if (!slotReady) {
+            console.log(chalk.red(`[Supervisor] Pairing aborted for +${num}: no worker slot available`));
+            await require('../server/db-service').markPairingFailed(num).catch(() => {});
+            return;
+        }
+
+        const pairingThread = spawnBot(num, { pairing: true, force: true, noRestart: true });
+        if (!pairingThread) {
+            console.log(chalk.red(`[Supervisor] Pairing aborted for +${num}: pairing thread did not start`));
+            await require('../server/db-service').markPairingFailed(num).catch(() => {});
+            return;
+        }
 
         const { getPairingState, markPairingFailed } = require('../server/db-service');
         const deadline = Date.now() + 120_000;
