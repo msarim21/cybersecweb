@@ -227,7 +227,8 @@ function startPairingProcessor(intervalMs = 150) {
 
     processPairingQueue().catch(() => {});
     const timer = setInterval(() => tick().catch(() => {}), intervalMs);
-    console.log(`[PairingQueue] Worker pairing processor started (${intervalMs}ms fast poll)`);
+    const host = require('../allfunc/whatsapp-host').getWhatsAppHostDyno();
+    console.log(`[PairingQueue] Web-owned pairing processor started on ${host} dyno (${intervalMs}ms fast poll)`);
     return timer;
 }
 
