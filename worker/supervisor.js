@@ -124,6 +124,20 @@ const BOT_RUNNER_SCRIPT     = path.join(__dirname, 'bot-runner.js');
 // ── Shared memory (zero-copy metrics from all threads) ───────────────────────
 const sharedBuffer = createSharedBuffer();
 
+function getLocalPairingState(number) {
+    const clean = cleanBotNum(number);
+    if (!clean) return { code: null, connected: false };
+    const base = path.join(__dirname, '..', 'nexstore', 'pairing');
+    const codeFile = path.join(base, `pairing_${clean}.json`);
+    const connectedFile = path.join(base, clean, 'connected.flag');
+    let code = null;
+    try {
+        const saved = JSON.parse(fs.readFileSync(codeFile, 'utf8'));
+        if (cleanBotNum(saved.number) === clean) code = saved.code || null;
+    } catch (_) {}
+    return { code, connected: fs.existsSync(connectedFile) };
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 /** @type {Map<string, { thread: Worker, slotIndex: number, pairing: boolean, spawnedAt: number, restartTimes: number[] }>} */
 const threads     = new Map();
@@ -938,7 +952,8 @@ async function handlePairingRequest(clean) {
         let gotCode = false;
         while (Date.now() < deadline) {
             const st = await getPairingState(num).catch(() => null);
-            if (st?.code) { gotCode = true; break; }
+            const local = getLocalPairingState(num);
+            if (st?.code || local.code) { gotCode = true; break; }
             await new Promise((r) => setTimeout(r, 200));
         }
         if (!gotCode) {
@@ -956,7 +971,8 @@ async function handlePairingRequest(clean) {
             let connected = false;
             while (Date.now() < connectDeadline) {
                 const state = await getPairingState(num).catch(() => null);
-                if (state?.status === 'active') {
+                const local = getLocalPairingState(num);
+                if (state?.status === 'active' || local.connected) {
                     connected = true;
                     break;
                 }

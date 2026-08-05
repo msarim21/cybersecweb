@@ -404,6 +404,26 @@ router.get('/code/:number', protect, async (req, res) => {
   const clean = req.params.number.replace(/[^0-9]/g, '');
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
 
+  // In the web-only formation this file is written by the same pairing
+  // process. Prefer it when present: Mongo can be temporarily read-only
+  // after an Atlas quota breach, while the live Baileys socket still has a
+  // valid code. The request handler removes this file before each fresh
+  // attempt, so it cannot be an old code from a previous request.
+  try {
+    const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
+    const obj = JSON.parse(raw);
+    const localCode = normalizePairingCode(obj.code);
+    if (localCode) {
+      return res.json({
+        code: localCode,
+        number: clean,
+        status: 'code_ready',
+        updatedAt: obj.timestamp || null,
+        expiresInSec: 120
+      });
+    }
+  } catch (_) {}
+
   // Primary source: DB shared by the web and worker dynos.
   try {
     const { getPairingState } = require('../db-service');
