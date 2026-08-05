@@ -296,71 +296,17 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
       }
     }
 
-    // Wait for the supervisor child/pair.js to publish the code. In a split
-    // web/worker deployment the worker filesystem is not visible here, so the
-    // database is the primary handoff and the local JSON remains a fallback.
-    let code = null;
-    let codeUpdatedAt = null;
-    let pairingFailure = null;
-    const deadline = Date.now() + 40_000;
-    while (Date.now() < deadline) {
-      await sleep(500);
-
-      try {
-        const { getPairingState } = require('../db-service');
-        const state = await getPairingState(clean);
-        if (state?.code && state.status === 'code_ready') {
-          code = state.code;
-          codeUpdatedAt = state.updatedAt || null;
-          break;
-        }
-        if (state?.status === 'failed') {
-          pairingFailure = 'WhatsApp pairing code generation failed. Please try again.';
-          break;
-        }
-      } catch (_) {}
-
-      try {
-        const raw = await fs.readFile(PAIRING_JSON, 'utf-8');
-        const obj = JSON.parse(raw);
-        const savedNum = (obj.number || '').replace(/[^0-9]/g, '');
-        if (obj.code && savedNum === clean) {
-          code = obj.code;
-          codeUpdatedAt = obj.timestamp || null;
-          break;
-        }
-      } catch (_) {}
-    }
-
-    if (!code) {
-      // Do not leave a live socket or owner/request state behind when code
-      // generation fails. Otherwise the next attempt sees CONNECTING forever
-      // or is rejected as already linked.
-      stopPairingRuntime(clean);
-      for (const sessionPath of sessionPaths) {
-        try { deleteFolderRecursive(sessionPath); } catch (_) {}
-      }
-      try { await fs.unlink(PAIRING_JSON); } catch (_) {}
-      try {
-        const { clearPairingRequest, deleteSessionCreds } = require('../db-service');
-        await clearPairingRequest(clean);
-        await deleteSessionCreds(clean);
-      } catch (_) {}
-      const result = {
-        error: pairingFailure || 'Timed out waiting for pairing code. Check the number and try again.'
-      };
-      rejectFlight(new Error(result.error));
-      return res.status(500).json(result);
-    }
-
-    console.log(`[Pairing] ${clean}: Pairing code generated successfully`);
-    const normalizedCode = normalizePairingCode(code);
-    if (!normalizedCode) {
-      stopPairingRuntime(clean);
-      rejectFlight(new Error('WhatsApp returned an invalid pairing code.'));
-      return res.status(502).json({ error: 'WhatsApp returned an invalid pairing code. Please try again.' });
-    }
-    const result = { code: normalizedCode, number: clean, updatedAt: codeUpdatedAt };
+    // Do not hold this HTTP request open while WhatsApp negotiates the
+    // registration socket. On the single-web dyno, slot rotation plus the
+    // Baileys handshake can take longer than a browser/proxy request timeout.
+    // More importantly, timing out here used to call stopPairingRuntime() and
+    // kill the live socket before it could publish its local pairing JSON.
+    //
+    // The client already polls /code/:number. That endpoint reads the local
+    // JSON first, so this works even while MongoDB is read-only or contains a
+    // stale `failed` pairing record.
+    const result = { async: true, number: clean, status: 'requested' };
+    console.log(`[Pairing] ${clean}: pairing runtime started; waiting via /code/${clean}`);
     resolveFlight(result);
     return res.json(result);
 
