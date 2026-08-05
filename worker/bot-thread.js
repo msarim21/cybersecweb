@@ -119,10 +119,12 @@ function spawnChild(opts = {}) {
         _restartTimes.push(Date.now());
         slot.setRestarts(_totalRestarts);
 
-        // ✅ FIX: Error 440 (session conflict) needs longer wait so WhatsApp server-side
-        // session settles before we reconnect. Minimum 60s regardless of backoff formula.
+        // Node normalizes exit codes above 255 (440 becomes 184). Treat both
+        // values as WhatsApp session conflict so the old socket gets time to
+        // settle before the replacement is started.
         const baseDelay = _restartDelay();
-        const delay = code === 440 ? Math.max(60_000, baseDelay) : baseDelay;
+        const isConflictExit = code === 440 || code === 184;
+        const delay = isConflictExit ? Math.max(60_000, baseDelay) : baseDelay;
         send('scheduledRestart', { delayMs: delay, attempt: _totalRestarts, exitCode: code });
 
         setTimeout(() => {

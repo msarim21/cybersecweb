@@ -314,14 +314,29 @@ router.post('/:id/reconnect', protect, async (req, res) => {
     try {
       const { upsertBotSession, setBotConnectionStatus: dbSetStatus } = require('../db-service');
       await upsertBotSession(clean, 'active');
+      await dbSetStatus(clean, 'CONNECTING', {
+        commandReady: false,
+        wsState: 0,
+        lastErrorMessage: 'Reconnect requested',
+      });
     } catch (_) {}
 
-    // Step 4: Fire startpairing (non-blocking — bot reconnects in background)
+    // Step 4: Start exactly one reconnect owner. When the supervisor is active,
+    // calling pair.js directly here creates a second socket outside the
+    // supervisor and can produce WhatsApp "Stream Errored (conflict)".
     try {
-      const startpairing = require('../../pair');
-      startpairing(jid).catch(err => {
-        console.error(`[reconnect] startpairing error for ${clean}:`, err.message);
-      });
+      const supervisor = require('../../worker/supervisor');
+      if (supervisor.isSupervisorActive?.()) {
+        const recovered = await supervisor.recoverBotExternal?.(clean, 'web-reconnect');
+        if (!recovered) {
+          return res.status(503).json({ error: 'Reconnect queued by bot supervisor. It will retry automatically.' });
+        }
+      } else {
+        const startpairing = require('../../pair');
+        startpairing(jid).catch(err => {
+          console.error(`[reconnect] startpairing error for ${clean}:`, err.message);
+        });
+      }
     } catch (pairErr) {
       console.error(`[reconnect] could not load pair.js:`, pairErr.message);
       return res.status(500).json({ error: 'Failed to start bot reconnect. Try again.' });

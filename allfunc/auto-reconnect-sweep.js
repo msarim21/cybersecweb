@@ -171,18 +171,12 @@ async function _reconnectOne(clean) {
 
     // ── Supervisor (isolated) mode — use spawnBot ─────────────────────────
     try {
-        const { isSupervisorActive, spawnBot, killBot, _clearNoSessionBot } = require('../worker/supervisor');
+        const { isSupervisorActive, recoverBotExternal } = require('../worker/supervisor');
         if (isSupervisorActive()) {
-            // Clear _noSessionBots so supervisor doesn't skip this bot
-            if (typeof _clearNoSessionBot === 'function') _clearNoSessionBot(clean);
-
-            // Kill any stale thread first, then spawn fresh. A spawn can be
-            // deferred by MAX_CONCURRENT_BOTS; never report that as success or
-            // the bot can remain stuck until a long cooldown expires.
-            const killed = killBot(clean, 'SIGTERM');
-            if (killed) await new Promise(r => setTimeout(r, 800));
-            const thread = spawnBot(clean);
-            return thread ? 'spawned' : 'deferred';
+            // Supervisor owns replacement now. This prevents the sweep from
+            // racing syncBots() and killing a newly spawned replacement.
+            const recovered = await recoverBotExternal(clean, 'auto-sweep');
+            return recovered ? 'spawned' : 'deferred';
         }
     } catch (_) {}
 

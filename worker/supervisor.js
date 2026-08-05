@@ -147,6 +147,7 @@ const _restartLimitBots = new Map(); // clean → timestamp when limit was hit
 const _unhealthyStreak  = new Map(); // clean → consecutive unhealthy sync-tick count (debounce before recovery)
 const _lastUnhealthyRecovery = new Map(); // clean → timestamp of latest confirmed recovery
 const _intentionalStops = new Set(); // clean → worker termination requested by supervisor
+const _recoveryInFlight = new Map(); // clean → supervisor-owned recovery promise
 const _restartJitterMs  = new Map(); // clean → random 0-30min jitter so scheduled memory restarts never bunch up
 let _syncInFlight = false;
 let _syncQueued = false;
@@ -461,6 +462,50 @@ function spawnBot(botNum, opts = {}) {
     return _spawnThread(clean, opts);
 }
 
+/**
+ * Single supervisor owner for replacing a dead or conflicted bot worker.
+ * The health sync, auto-reconnect sweep, and reconnect endpoint all use this
+ * path so they cannot kill/spawn the same number concurrently.
+ */
+function recoverBotExternal(botNum, reason = 'auto-reconnect') {
+    const clean = cleanBotNum(botNum);
+    if (!clean || !_active) return Promise.resolve(false);
+
+    const existing = _recoveryInFlight.get(clean);
+    if (existing) return existing;
+
+    let recovery;
+    recovery = (async () => {
+        try {
+            _clearNoSessionBot(clean);
+            const stopped = killBot(clean, 'SIGTERM');
+            if (stopped) await new Promise((resolve) => setTimeout(resolve, 1500));
+
+            const ready = await _ensureBotSessionReady(clean);
+            if (!ready) {
+                console.log(chalk.yellow(`[Supervisor] ⏸ Recovery deferred for +${clean} (${reason}) — no valid session`));
+                return false;
+            }
+
+            const thread = spawnBot(clean);
+            if (!thread) {
+                console.log(chalk.yellow(`[Supervisor] ⏸ Recovery deferred for +${clean} (${reason}) — concurrent-bot cap`));
+                return false;
+            }
+
+            console.log(chalk.green(`[Supervisor] 🔁 Recovery started for +${clean} (${reason})`));
+            return true;
+        } finally {
+            if (_recoveryInFlight.get(clean) === recovery) {
+                _recoveryInFlight.delete(clean);
+            }
+        }
+    })();
+
+    _recoveryInFlight.set(clean, recovery);
+    return recovery;
+}
+
 // ── Promotion: pairing complete → full bot ────────────────────────────────────
 function markBotPromoted(botNum) {
     const entry = threads.get(cleanBotNum(botNum));
@@ -541,6 +586,7 @@ async function syncBots() {
     for (const [clean, entry] of [...threads]) {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
+        if (_recoveryInFlight.has(clean)) continue;
         if (!myBots.has(clean)) continue;
 
         if (_isThreadHealthy(clean, entry)) {
@@ -583,9 +629,7 @@ async function syncBots() {
         _lastUnhealthyRecovery.set(clean, Date.now());
         recordBotRestart(clean);
         _unhealthyStreak.delete(clean);
-        killBot(clean, 'SIGTERM');
-        const ready = await _ensureBotSessionReady(clean);
-        if (ready) spawnBot(clean);
+        await recoverBotExternal(clean, 'unhealthy-sync');
     }
 
     // 3. Scheduled memory restart — staggered + configurable-interval guarded so bots spawned
@@ -1109,6 +1153,7 @@ module.exports = {
     spawnBot,
     killBot,
     stopBotExternal,
+    recoverBotExternal,
     handlePairingRequest,
     markBotPromoted,
     promotePairingToNormal,

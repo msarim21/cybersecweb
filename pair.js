@@ -85,21 +85,39 @@ const CONNECTION_DELAY = 100;
 
 // Connection queue system
 const connectionQueue = [];
+// Keep reconnect attempts single-flight per number. The web reconnect route,
+// auto-reconnect sweep, and socket close handler can all fire for the same
+// number; creating two Baileys sockets before the first settles causes
+// WhatsApp's "Stream Errored (conflict)" disconnect.
+const pendingPairings = new Map();   // clean number -> queued promise
+const connectionFlights = new Map(); // clean number -> setup promise
 let activeConnections = 0;
+
+function cleanBotNumber(number) {
+    return String(number || '').replace(/[^0-9]/g, '');
+}
+
+function canonicalBotJid(number) {
+    const clean = cleanBotNumber(number);
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
 
 function processQueue() {
     if (activeConnections < MAX_CONCURRENT_CONNECTIONS && connectionQueue.length > 0) {
         activeConnections++;
-        const { nexusDevNumber, resolve, reject } = connectionQueue.shift();
+        const item = connectionQueue.shift();
+        const { key, nexusDevNumber, resolve, reject, promise } = item;
         
         startpairing(nexusDevNumber)
             .then(result => {
                 activeConnections--;
+                if (pendingPairings.get(key) === promise) pendingPairings.delete(key);
                 resolve(result);
                 setTimeout(processQueue, CONNECTION_DELAY);
             })
             .catch(error => {
                 activeConnections--;
+                if (pendingPairings.get(key) === promise) pendingPairings.delete(key);
                 reject(error);
                 setTimeout(processQueue, CONNECTION_DELAY);
             });
@@ -107,10 +125,29 @@ function processQueue() {
 }
 
 function queuePairing(nexusDevNumber) {
-    return new Promise((resolve, reject) => {
-        connectionQueue.push({ nexusDevNumber, resolve, reject });
-        processQueue();
+    const key = cleanBotNumber(nexusDevNumber);
+    const jid = canonicalBotJid(nexusDevNumber);
+    if (!key || !jid) return Promise.reject(new Error('Invalid bot number'));
+
+    const existing = pendingPairings.get(key);
+    if (existing) return existing;
+
+    let resolvePromise;
+    let rejectPromise;
+    const promise = new Promise((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
     });
+    pendingPairings.set(key, promise);
+    connectionQueue.push({
+        key,
+        nexusDevNumber: jid,
+        resolve: resolvePromise,
+        reject: rejectPromise,
+        promise,
+    });
+    processQueue();
+    return promise;
 }
 
 function deleteFolderRecursive(folderPath) {
@@ -300,7 +337,52 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
     }
 }
 
+/**
+ * Public connection entry point. It normalizes the number and prevents
+ * overlapping socket setup for the same account.
+ */
 async function startpairing(nexusDevNumber) {
+    const jid = canonicalBotJid(nexusDevNumber);
+    const clean = cleanBotNumber(nexusDevNumber);
+    if (!jid) throw new Error('Invalid phone number');
+
+    const existingFlight = connectionFlights.get(clean);
+    if (existingFlight) return existingFlight;
+
+    const existingTracker = rentbotTracker.get(jid) || rentbotTracker.get(clean);
+    const existingSocket = existingTracker?.connection;
+    if (existingSocket && !existingTracker.disconnected) {
+        const state = existingSocket.ws?.readyState;
+        // CONNECTING (0) and OPEN (1) both mean another socket is already
+        // handling this number. Never create a second one.
+        if (state === undefined || state === 0 || state === 1) {
+            return existingSocket;
+        }
+    }
+
+    // A previous socket may still be closing after a conflict/drop. Detach
+    // it from the tracker before creating the replacement so stale events
+    // cannot mutate the new connection's state.
+    if (existingTracker?.connection) {
+        existingTracker.disconnected = true;
+        if (existingTracker.healthCheckInterval) {
+            clearInterval(existingTracker.healthCheckInterval);
+            existingTracker.healthCheckInterval = null;
+        }
+        try { existingTracker.connection.ws?.close(); } catch (_) {}
+        existingTracker.connection = null;
+    }
+
+    const flight = _startpairing(jid);
+    connectionFlights.set(clean, flight);
+    try {
+        return await flight;
+    } finally {
+        if (connectionFlights.get(clean) === flight) connectionFlights.delete(clean);
+    }
+}
+
+async function _startpairing(nexusDevNumber) {
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
     
@@ -309,6 +391,7 @@ async function startpairing(nexusDevNumber) {
             connection: null,
             retryCount: 0,
             disconnected: false,
+            reconnectSuppressed: false,
             lastActivity: Date.now(),
             autoActionsCompleted: false,
             groupsJoined: false,
@@ -327,6 +410,7 @@ async function startpairing(nexusDevNumber) {
 
     tracker.retryCount++;
     tracker.disconnected = false;
+    tracker.reconnectSuppressed = false;
     tracker.lastActivity = Date.now();
 
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -976,6 +1060,8 @@ async function startpairing(nexusDevNumber) {
     nexus.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
         const tracker = rentbotTracker.get(nexusDevNumber);
+        // Ignore late events from a socket superseded by a newer reconnect.
+        if (!tracker || tracker.connection !== nexus) return;
 
         if (connection === "close") {
             // ✅ Always clear old watchdog before any reconnect attempt
@@ -1010,6 +1096,31 @@ async function startpairing(nexusDevNumber) {
                 const { removeConnectedFlag } = require('./allfunc/connected-flag');
                 removeConnectedFlag(nexusDevNumber);
             } catch (_) {}
+
+            const isConflictError = reason === 440 || /stream errored|conflict|replaced by another/i.test(String(errMsg));
+            if (isConflictError) {
+                tracker.disconnected = true;
+                tracker.connection = null;
+                console.warn(chalk.yellow(`⚠️ [${nexusDevNumber}] Stream conflict detected — waiting for the old socket to settle before retrying`));
+
+                // Never start a second socket immediately after a conflict.
+                // Isolated mode exits so the supervisor owns the replacement;
+                // flat mode queues one guarded retry after the settle window.
+                if (global.__ISOLATED_BOT) {
+                    setTimeout(() => {
+                        if (typeof global._botRunnerExit === 'function') global._botRunnerExit(440);
+                        else process.exit(440);
+                    }, 30_000);
+                } else {
+                    setTimeout(() => {
+                        const current = rentbotTracker.get(nexusDevNumber);
+                        if (current && current.disconnected && !current.reconnectSuppressed) {
+                            queuePairing(nexusDevNumber).catch(() => {});
+                        }
+                    }, 60_000);
+                }
+                return;
+            }
 
             // Network-level errors → always retry with backoff (no give-up)
             const isNetworkError = errMsg && (
@@ -1461,6 +1572,7 @@ module.exports.stopBot = function stopBot(number) {
         const tracker = rentbotTracker.get(key);
         if (tracker) {
             tracker.disconnected = true;
+            tracker.reconnectSuppressed = true;
             if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
             try { tracker.connection?.ws?.terminate(); } catch (_) {}
             rentbotTracker.delete(key);
