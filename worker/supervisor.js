@@ -895,10 +895,13 @@ async function handlePairingRequest(clean) {
 
     try {
         const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
-        const { clearPairingRequest } = require('../server/db-service');
         removeFromStoppedBots(num);
-        await clearPairingRequest(num).catch(() => {});
         killBot(num, 'SIGKILL');
+
+        // Do not clear the pairing record here. It contains the owner and bot
+        // name that session-db uses when connection.open saves linked_numbers.
+        // Clearing it before the phone accepts the code loses that ownership
+        // and leaves the phone spinning at "Logging in...".
 
         // pair.js writes auth to nexstore/pairing/<digits>; some legacy paths
         // also created <digits>@s.whatsapp.net. Wipe both so the new pairing
@@ -944,6 +947,34 @@ async function handlePairingRequest(clean) {
             killBot(num, 'SIGTERM');
         } else {
             console.log(chalk.green(`[Supervisor] ✅ Pairing code ready for +${num}`));
+
+            // Code generation is only phase one. Keep the pairing socket alive
+            // while the user enters the code on the phone. Promoting/killing
+            // the child immediately after code_ready interrupts the WhatsApp
+            // login handshake and leaves the phone on "Logging in...".
+            const connectDeadline = Date.now() + 180_000;
+            let connected = false;
+            while (Date.now() < connectDeadline) {
+                const state = await getPairingState(num).catch(() => null);
+                if (state?.status === 'active') {
+                    connected = true;
+                    break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 1_000));
+            }
+
+            if (!connected) {
+                console.log(chalk.red(`[Supervisor] Pairing login timeout for +${num} — phone did not reach connection.open`));
+                await require('../server/db-service').markPairingFailed(num).catch(() => {});
+                killBot(num, 'SIGTERM');
+                return;
+            }
+
+            // Give creds.update/session backup and linked_numbers ownership
+            // time to finish before handing the socket to normal bot mode.
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+            console.log(chalk.green(`[Supervisor] ✅ Phone login confirmed for +${num}; promoting after session flush`));
+            promotePairingToNormal(num);
         }
     } finally {
         global._pairingInFlight.delete(num);

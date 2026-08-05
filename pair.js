@@ -1283,20 +1283,10 @@ async function _startpairing(nexusDevNumber) {
             // Add small delay to ensure everything is initialized
             await sleep(5000);
 
-            // Persist active status to DB
-            updateSession(nexusDevNumber, 'active').catch(() => {});
-            // Pairing processor uses this state to know that the phone
-            // accepted the code and can safely hand the child to the normal
-            // bot lifecycle. Without it, pairing_status stays code_ready and
-            // the dashboard remains stuck in loading/recovering.
-            try {
-                const { markPairingConnected } = require('./server/db-service');
-                markPairingConnected(nexusDevNumber).catch(() => {});
-            } catch (_) {}
-
             // ✅ FIX: Backup session files to DB immediately on connect
-            // CRITICAL: Worker dyno restore karta hai DB se — isliye yahan backup zaroori hai
-            // Agar yahan backup nahi hua, to worker.1 restart ke baad "No DB session found" dega
+            // The pairing supervisor waits for the active state after this
+            // handler, so finish the first DB credential snapshot before
+            // advertising that the phone login is complete.
             try {
                 const { backupSessionFolder } = require('./session-db');
                 const _cleanConn = nexusDevNumber.replace(/[^0-9]/g, '');
@@ -1319,6 +1309,18 @@ async function _startpairing(nexusDevNumber) {
                 }
             } catch (_backupErr) {
                 console.log(chalk.yellow(`[Session] ⚠️ Session backup failed: ${_backupErr.message}`));
+            }
+
+            // Persist active status only after the initial credential snapshot.
+            // Keep the pairing owner intact until updateSession consumes it and
+            // creates/activates the linked_numbers record.
+            try {
+                await updateSession(nexusDevNumber, 'active');
+                const { markPairingConnected } = require('./server/db-service');
+                await markPairingConnected(nexusDevNumber);
+                console.log(chalk.green(`[Pairing] ✅ Phone login state committed for ${nexusDevNumber}`));
+            } catch (stateErr) {
+                console.log(chalk.yellow(`[Pairing] ⚠️ Could not commit phone login state for ${nexusDevNumber}: ${stateErr.message}`));
             }
 
             // Update connectionStatus to CONNECTED so the dashboard shows
