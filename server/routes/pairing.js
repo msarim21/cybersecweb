@@ -256,10 +256,9 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
     const apiOnlyDyno = isWebApiOnlyDyno?.() === true;
 
     if (apiOnlyDyno) {
-      // On Heroku the web and worker dynos have separate filesystems and
-      // separate Node processes. Queue the request in shared DB; the worker's
-      // pairing processor owns the only WhatsApp socket and will publish the
-      // code back to bot_sessions.
+      // This branch is retained for explicitly split deployments only. The
+      // production web-only formation uses the branch below so the request,
+      // pairing socket, and bot all stay in one web process/dyno.
       const { ensurePairingRequest } = require('../db-service');
       await ensurePairingRequest(clean, { force: true });
       console.log(`[Pairing] ${clean}: queued for WhatsApp worker dyno`);

@@ -14,9 +14,9 @@ function deleteFolderRecursive(p) {
 }
 
 /**
- * Worker-only: process DB pairing queue.
- * When WHATSAPP_HOST_DYNO=worker, the web dyno writes pairing requests to DB
- * and this processor runs pair.js / bot-runner on the worker dyno only.
+ * Process the DB pairing queue on whichever dyno is configured as the single
+ * WhatsApp host. In the production web-only formation this runs inside the web
+ * process, so the API route and pairing socket share one owner and filesystem.
  */
 function isPairingHost() {
     try {

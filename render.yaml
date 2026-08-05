@@ -10,9 +10,9 @@ services:
       - key: NODE_ENV
         value: production
       - key: WHATSAPP_HOST_DYNO
-        value: worker
+        value: web
       - key: WEB_API_ONLY
-        value: "1"
+        value: "0"
       - key: NPM_CONFIG_LEGACY_PEER_DEPS
         value: "true"
       - key: MONGO_URL
@@ -27,53 +27,3 @@ services:
         sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
-
-  - type: worker
-    name: cybersecpro-worker
-    env: node
-    region: oregon
-    plan: free
-    buildCommand: npm install --legacy-peer-deps
-    startCommand: node worker.js
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: WHATSAPP_WORKER
-        value: "1"
-      - key: WHATSAPP_HOST_DYNO
-        value: worker
-      - key: WEB_API_ONLY
-        value: "0"
-      - key: BOT_ISOLATION
-        value: "1"
-      - key: DYNO_TOTAL_RAM_MB
-        value: "1024"
-      - key: BOT_CHILD_HEAP_MB
-        value: "96"
-      - key: MAX_MEM_PERCENT
-        value: "78"
-      - key: MAX_CONCURRENT_BOTS
-        value: "7"
-      - key: BOT_DISABLE_CHAT_STORE
-        value: "1"
-      - key: BOT_TURBO_ROTATION
-        value: "1"
-      - key: BOT_SYNC_INTERVAL_MS
-        value: "2000"
-      - key: BOT_ROTATION_INTERVAL_SEC
-        value: "6"
-      - key: BOT_ROTATION_SWAP_MS
-        value: "500"
-      - key: BOT_ROTATIONS_PER_SYNC
-        value: "4"
-      - key: NPM_CONFIG_LEGACY_PEER_DEPS
-        value: "true"
-      - key: MONGO_URL
-        sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: JWT_SECRET
-        fromService:
-          name: cybersecpro
-          type: web
-          envVarKey: JWT_SECRET

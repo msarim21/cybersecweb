@@ -4,7 +4,9 @@
  * Heroku Eco web dynos stay awake via the HTTP process. Web dynos can also host
  * WhatsApp bots when configured with WHATSAPP_HOST_DYNO=web.
  *
- * Set WHATSAPP_HOST_DYNO=worker to use the worker dyno instead (Basic/Performance plans).
+ * Set WHATSAPP_HOST_DYNO=web to keep the dashboard, pairing, and bots on one
+ * web dyno. A worker host is supported for larger formations but must not run
+ * at the same time as a web host.
  *
  * Multiple worker dynos (bot sharding):
  *   heroku ps:scale worker=3          — scale to 3 worker dynos
@@ -17,13 +19,20 @@ function getWhatsAppHostDyno() {
     if (process.env.WHATSAPP_HOST_DYNO) {
         return String(process.env.WHATSAPP_HOST_DYNO).toLowerCase();
     }
-    if (process.env.DYNO) return 'web';
-    return 'worker';
+    if (process.env.DYNO) return String(process.env.DYNO).startsWith('web') ? 'web' : 'worker';
+    return 'web';
 }
 
 function isWebDyno() {
-    return String(process.env.DYNO || '').startsWith('web')
-        || process.env.WEB_API_ONLY === '1';
+    const dyno = String(process.env.DYNO || '');
+    if (dyno.startsWith('web')) return true;
+    if (process.env.WEB_API_ONLY === '1') return true;
+
+    // Heroku may not expose DYNO metadata. In the single-web formation the
+    // explicit host setting is the authoritative role signal. The stack sets
+    // WHATSAPP_WORKER=1 internally after this check to reuse worker modules;
+    // that flag does not change the configured host.
+    return process.env.WHATSAPP_HOST_DYNO === 'web';
 }
 
 function isWorkerDyno() {
@@ -43,7 +52,7 @@ function canHostWhatsAppSessions() {
     return shouldRunWhatsAppSupervisor();
 }
 
-/** Web dyno serving API only — WhatsApp bots run on worker (or another host dyno). */
+/** True only when this web process is intentionally API-only. */
 function isWebApiOnlyDyno() {
     if (getWhatsAppHostDyno() !== 'worker') return false;
 

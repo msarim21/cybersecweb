@@ -47,13 +47,13 @@
       "value": "production"
     },
     "WHATSAPP_HOST_DYNO": {
-      "description": "Run WhatsApp bots on the dedicated worker dyno. The web dyno only serves the API and dashboard.",
-      "value": "worker",
+      "description": "Run the WhatsApp pairing socket and bots on the single web dyno together with the dashboard API.",
+      "value": "web",
       "required": false
     },
     "WEB_API_ONLY": {
-      "description": "Keep the web dyno API/frontend-only so it cannot create a second WhatsApp socket.",
-      "value": "1",
+      "description": "Set to 0 so the web dyno owns the WhatsApp supervisor, pairing processor, and bot sessions.",
+      "value": "0",
       "required": false
     },
     "BOT_ISOLATION": {
@@ -62,17 +62,17 @@
       "required": false
     },
     "DYNO_TOTAL_RAM_MB": {
-      "description": "Actual RAM ceiling of each web dyno.",
+      "description": "Actual RAM ceiling of the single web dyno hosting the API and WhatsApp bot.",
       "value": "512",
       "required": false
     },
     "MAX_CONCURRENT_BOTS": {
-      "description": "Maximum active WhatsApp bot processes per web dyno on a 512 MB plan.",
+      "description": "Maximum active WhatsApp bot processes on the single web dyno.",
       "value": "1",
       "required": false
     },
     "PRIMARY_BOT_NUMBER": {
-      "description": "Phone number that stays active for commands and self-chat on the single Eco web dyno.",
+      "description": "Phone number that stays active for commands and self-chat on the single web dyno.",
       "value": "923137140784",
       "required": false
     },
@@ -82,7 +82,7 @@
       "required": false
     },
     "TOTAL_WEB_DYNOS": {
-      "description": "Number of web dynos used for WhatsApp bot sharding. Eco plans support one web dyno; increase this after upgrading the plan.",
+      "description": "Number of web dynos used for WhatsApp bot sharding. Keep at 1 so only one web process owns each socket.",
       "value": "1",
       "required": false
     },
@@ -113,10 +113,6 @@
   ],
   "formation": {
     "web": {
-      "quantity": 1,
-      "size": "eco"
-    },
-    "worker": {
       "quantity": 1,
       "size": "eco"
     }
