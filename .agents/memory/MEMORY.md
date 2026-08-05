@@ -5,6 +5,7 @@
 - [Reconnect liveness](reconnect-liveness.md) — worker existence, DB freshness, and connected.flag are not sufficient; isolated recovery must require fresh WS heartbeat state.
 - [Heroku pairing topology](heroku-pairing-topology.md) — production uses one web owner for API, pairing, and bots; never run a second WhatsApp host.
 - [Pairing login handoff](pairing-login-handoff.md) — keep the pairing socket alive after code_ready until connection.open, credential flush, and active-state commit complete.
+- [Pairing state freshness](pairing-state-freshness.md) — clear prior DB and local code state before each new socket attempt or stale codes can be shown.
 - [Mongo quota pairing fallback](mongo-quota-pairing-fallback.md) — Atlas writes can block pairing state; web-only mode must use the local code file and connected flag as temporary handoff.
 - [Async pairing request](async-pairing-request.md) — pairing HTTP requests return immediately; the client polls the local/DB code handoff while the WhatsApp socket continues negotiating.
 - [Anti-delete storage boundary](antidelete-storage-boundary.md) — anti-delete is a disposable per-bot JSON cache; keep it out of Mongo session persistence by default.
