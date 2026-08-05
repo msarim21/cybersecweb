@@ -263,6 +263,11 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
       const { ensurePairingRequest } = require('../db-service');
       await ensurePairingRequest(clean, { force: true });
       console.log(`[Pairing] ${clean}: queued for WhatsApp worker dyno`);
+      const result = { async: true, number: clean, status: 'requested' };
+      // Do not hold the browser request open while the worker establishes
+      // WhatsApp. The client already polls /api/pairing/code/:number.
+      resolveFlight(result);
+      return res.json(result);
     } else {
       // In isolated deployment the supervisor is the only owner allowed to
       // create a WhatsApp socket. Calling pair.js directly from the web route

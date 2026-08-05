@@ -22,11 +22,13 @@ function getWhatsAppHostDyno() {
 }
 
 function isWebDyno() {
-    return String(process.env.DYNO || '').startsWith('web');
+    return String(process.env.DYNO || '').startsWith('web')
+        || process.env.WEB_API_ONLY === '1';
 }
 
 function isWorkerDyno() {
-    return String(process.env.DYNO || '').startsWith('worker');
+    return String(process.env.DYNO || '').startsWith('worker')
+        || process.env.WHATSAPP_WORKER === '1';
 }
 
 function shouldRunWhatsAppSupervisor() {
@@ -43,7 +45,9 @@ function canHostWhatsAppSessions() {
 
 /** Web dyno serving API only — WhatsApp bots run on worker (or another host dyno). */
 function isWebApiOnlyDyno() {
-    return isWebDyno() && getWhatsAppHostDyno() === 'worker';
+    return (process.env.WEB_API_ONLY === '1'
+        || String(process.env.DYNO || '').startsWith('web'))
+        && getWhatsAppHostDyno() === 'worker';
 }
 
 /**

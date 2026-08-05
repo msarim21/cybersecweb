@@ -9,6 +9,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: WHATSAPP_HOST_DYNO
+        value: worker
+      - key: WEB_API_ONLY
+        value: "1"
       - key: NPM_CONFIG_LEGACY_PEER_DEPS
         value: "true"
       - key: MONGO_URL
@@ -36,6 +40,8 @@ services:
         value: production
       - key: WHATSAPP_WORKER
         value: "1"
+      - key: WHATSAPP_HOST_DYNO
+        value: worker
       - key: BOT_ISOLATION
         value: "1"
       - key: DYNO_TOTAL_RAM_MB
