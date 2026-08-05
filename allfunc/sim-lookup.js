@@ -9,6 +9,12 @@ const DEFAULT_HEADERS = {
 
 const API_SOURCES = [
   {
+    name: 'AMScript SIM Info',
+    buildUrl: (q) => `https://amscript.xyz/PublicApi/Siminfo.php?number=${encodeURIComponent(q)}`,
+    priority: 120,
+    timeout: 12000,
+  },
+  {
     name: 'FAMOFC Live',
     buildUrl: (q) => `https://famofc.site/api/database.php?q=${encodeURIComponent(q)}`,
     priority: 100,
