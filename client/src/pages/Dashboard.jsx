@@ -487,7 +487,8 @@ const LinkModal = ({ onClose, onAdd }) => {
     };
   }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll worker for pairing code (async flow — web enqueues, worker generates)
+  // Poll the web-owned pairing runtime. Production uses one web dyno for the
+  // API, supervisor, socket, and bot; no worker dyno handoff is involved.
   useEffect(() => {
     if (step !== 2) {
       if (codePollRef.current) {
@@ -523,7 +524,7 @@ const LinkModal = ({ onClose, onAdd }) => {
       } catch (err) {
         if (err.response?.data?.status === 'failed') {
           setStep(1);
-          toast.error(err.response?.data?.error || 'Pairing failed on worker');
+          toast.error(err.response?.data?.error || 'Pairing failed on the web dyno');
           if (codePollRef.current) clearInterval(codePollRef.current);
         }
       }
@@ -669,8 +670,8 @@ const LinkModal = ({ onClose, onAdd }) => {
                   <div className="font-mono text-[10px] text-gray-500">Requesting pairing code for {form.number}…</div>
                   <div className="font-mono text-[10px] text-gray-600 mt-1">
                     {pairStatus === 'code_ready' ? 'Code ready…' :
-                     pairStatus === 'in_progress' ? 'Worker generating code…' :
-                     pairStatus === 'requested' ? 'Queued on worker dyno…' :
+                     pairStatus === 'in_progress' ? 'Web dyno generating code…' :
+                     pairStatus === 'requested' ? 'Starting on web dyno…' :
                      'Usually 5–10 seconds — please wait'}
                   </div>
                 </div>

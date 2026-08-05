@@ -271,19 +271,20 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
   }
 
   try {
-    const { isWebApiOnlyDyno } = require('../../allfunc/whatsapp-host');
+    const { getWhatsAppHostDyno, isWebApiOnlyDyno } = require('../../allfunc/whatsapp-host');
     const apiOnlyDyno = isWebApiOnlyDyno?.() === true;
 
     if (apiOnlyDyno) {
-      // This branch is retained for explicitly split deployments only. The
-      // production web-only formation uses the branch below so the request,
-      // pairing socket, and bot all stay in one web process/dyno.
-      console.log(`[Pairing] ${clean}: queued for WhatsApp worker dyno`);
-      const result = { async: true, number: clean, status: 'requested' };
-      // Do not hold the browser request open while the worker establishes
-      // WhatsApp. The client already polls /api/pairing/code/:number.
-      resolveFlight(result);
-      return res.json(result);
+      // Never silently queue pairing on another dyno. The web process owns the
+      // browser request, while the remote worker has a separate filesystem and
+      // socket lifecycle; that handoff leaves the UI stuck in CONNECTING.
+      const host = getWhatsAppHostDyno();
+      const error = `Pairing host misconfigured: this web process is API-only, but WhatsApp pairing is configured for ${host}. Set WHATSAPP_HOST_DYNO=web and WEB_API_ONLY=0.`;
+      console.error(`[Pairing] ${clean}: ${error}`);
+      await require('../db-service').markPairingFailed(clean).catch(() => {});
+      const body = { error, code: 'PAIRING_HOST_MISCONFIGURED' };
+      resolveFlight({ httpStatus: 503, body });
+      return res.status(503).json(body);
     } else {
       // In isolated deployment the supervisor is the only owner allowed to
       // create a WhatsApp socket. Calling pair.js directly from the web route
@@ -317,7 +318,7 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
     // JSON first, so this works even while MongoDB is read-only or contains a
     // stale `failed` pairing record.
     const result = { async: true, number: clean, status: 'requested' };
-    console.log(`[Pairing] ${clean}: pairing runtime started; waiting via /code/${clean}`);
+    console.log(`[Pairing] ${clean}: pairing runtime started on ${getWhatsAppHostDyno()} dyno; waiting via /code/${clean}`);
     resolveFlight(result);
     return res.json(result);
 
@@ -371,10 +372,12 @@ router.get('/code/:number', protect, async (req, res) => {
     const obj = JSON.parse(raw);
     const localCode = normalizePairingCode(obj.code);
     if (localCode) {
+      const { getWhatsAppHostDyno } = require('../../allfunc/whatsapp-host');
       return res.json({
         code: localCode,
         number: clean,
         status: 'code_ready',
+        host: getWhatsAppHostDyno(),
         updatedAt: obj.timestamp || null,
         expiresInSec: 120
       });
@@ -405,6 +408,7 @@ router.get('/code/:number', protect, async (req, res) => {
         code,
         number: clean,
         status: state.status,
+        host: require('../../allfunc/whatsapp-host').getWhatsAppHostDyno(),
         updatedAt: state.updatedAt || null,
         expiresInSec: 120
       });
@@ -414,6 +418,7 @@ router.get('/code/:number', protect, async (req, res) => {
         code: null,
         number: clean,
         status: state.status,
+        host: require('../../allfunc/whatsapp-host').getWhatsAppHostDyno(),
         updatedAt: state.updatedAt || null
       });
     }
