@@ -316,6 +316,11 @@ function _adMediaTypeFromMsg(msg) {
 
 const _adMongoSaveQueue = new Map();
 let _adMongoFlushTimer = null;
+// Anti-delete messages are a disposable cache, not account/session data.
+// Keep the durable copy in database/antidelete_store_<bot>.json files so a
+// busy bot cannot fill the MongoDB quota with media payloads and raw messages.
+// Mongo fallback can be explicitly enabled for a larger-tier deployment.
+const ANTIDELETE_MONGO_ENABLED = process.env.ANTIDELETE_MONGO_ENABLED === '1';
 
 async function _adEnsureMongoReady() {
     const { isMongoMode, isDbReady, initDb } = require('../server/db');
@@ -366,6 +371,7 @@ function _adScheduleMongoFlush() {
 }
 
 async function _adMongoGet(botNum, chatId, msgId) {
+    if (!ANTIDELETE_MONGO_ENABLED) return null;
     try {
         if (!(await _adEnsureMongoReady())) return null;
         const AntideleteCache = require('../server/models/AntideleteCache');
@@ -379,6 +385,7 @@ async function _adMongoGet(botNum, chatId, msgId) {
 }
 
 function _adMongoSave(botNum, chatId, msgId, entry) {
+    if (!ANTIDELETE_MONGO_ENABLED) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);
@@ -388,6 +395,7 @@ function _adMongoSave(botNum, chatId, msgId, entry) {
 }
 
 function _adMongoDelete(botNum, chatId, msgId) {
+    if (!ANTIDELETE_MONGO_ENABLED) return;
     const clean = cleanBotNum(botNum);
     if (!clean) return;
     const session = getAntideleteSession(clean);

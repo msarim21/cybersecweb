@@ -202,9 +202,14 @@ class AntideleteSessionStore {
     }
 
     sweep(cutoffTs) {
+        let changed = false;
         for (const [k, v] of this.memory) {
-            if (v?._ts && v._ts < cutoffTs) this.memory.delete(k);
+            if (v?._ts && v._ts < cutoffTs) {
+                this.memory.delete(k);
+                changed = true;
+            }
         }
+        if (changed) this.scheduleDiskSave();
     }
 
     sweepMediaFiles(cutoffTs) {
