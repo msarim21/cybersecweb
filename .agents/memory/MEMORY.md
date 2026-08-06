@@ -7,6 +7,7 @@
 - [Pairing login handoff](pairing-login-handoff.md) — keep the pairing socket alive after code_ready until connection.open, credential flush, and active-state commit complete.
 - [Pairing state freshness](pairing-state-freshness.md) — clear prior DB and local code state before each new socket attempt or stale codes can be shown.
 - [Baileys pairing readiness](baileys-pairing-readiness.md) — an absent `socket.ws.readyState` is unknown in Baileys 7, not proof that pairing cannot start.
+- [Mobile pairing code layout](mobile-pairing-code-layout.md) — keep the full eight-character code on one visible line inside a scrollable mobile modal.
 - [Mongo quota pairing fallback](mongo-quota-pairing-fallback.md) — Atlas writes can block pairing state; web-only mode must use the local code file and connected flag as temporary handoff.
 - [Async pairing request](async-pairing-request.md) — pairing HTTP requests return immediately; the client polls the local/DB code handoff while the WhatsApp socket continues negotiating.
 - [Anti-delete storage boundary](antidelete-storage-boundary.md) — anti-delete is a disposable per-bot JSON cache; keep it out of Mongo session persistence by default.
