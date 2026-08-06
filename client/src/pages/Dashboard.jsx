@@ -627,7 +627,7 @@ const LinkModal = ({ onClose, onAdd }) => {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <motion.div initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
-        className="w-full max-w-md rounded-2xl overflow-hidden"
+        className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl overscroll-contain"
         style={{ background: 'rgba(10,20,60,0.97)', backdropFilter: 'blur(30px)', border: '1px solid rgba(0,245,255,0.25)' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-[rgba(0,245,255,0.1)]">
           <div className="font-display text-sm text-[#00f5ff] tracking-widest">
@@ -691,8 +691,25 @@ const LinkModal = ({ onClose, onAdd }) => {
                   <div className="font-mono text-[9px] text-gray-600 mb-3">
                     Phone par wahi number hona chahiye — code 2 min mein expire hota hai
                   </div>
-                  <div className="font-display font-black text-4xl sm:text-5xl tracking-[10px] mb-4"
-                    style={{ color: '#00f5ff', textShadow: '0 0 30px rgba(0,245,255,0.9)', letterSpacing: '0.2em' }}>{code}</div>
+                  <div
+                    className="mb-4 flex min-w-0 items-center justify-center gap-2 sm:gap-3 whitespace-nowrap"
+                    aria-label={`Pairing code ${code}`}
+                  >
+                    {(code || '').split('-').map((part, index) => (
+                      <span
+                        key={`${part}-${index}`}
+                        className="font-display font-black text-[2.35rem] leading-none sm:text-5xl"
+                        style={{
+                          color: '#00f5ff',
+                          textShadow: '0 0 30px rgba(0,245,255,0.9)',
+                          letterSpacing: '0.12em',
+                        }}
+                      >
+                        {part}
+                        {index === 0 && (code || '').includes('-') ? '-' : ''}
+                      </span>
+                    ))}
+                  </div>
                   <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={handleCopy}
                     className="w-full py-3 rounded-xl font-display text-sm tracking-widest transition-all"
                     style={{ background: copied ? 'rgba(0,255,136,0.2)' : 'rgba(0,245,255,0.12)', border: copied ? '1px solid rgba(0,255,136,0.5)' : '1px solid rgba(0,245,255,0.4)', color: copied ? '#00ff88' : '#00f5ff' }}>
