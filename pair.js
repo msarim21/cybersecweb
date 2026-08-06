@@ -504,57 +504,76 @@ async function _startpairing(nexusDevNumber) {
         // the socket immediately. Do not use a blind delay: on a cold dyno the
         // socket may still be closed at 750ms, while on a warm dyno the same
         // delay can be late enough for a short-lived registration handshake.
-        // Wait for this exact socket to be open, then issue the code once.
+        //
+        // Baileys 7 does not expose its underlying WebSocket consistently as
+        // `nexus.ws`; on that version `readyState` is undefined even while the
+        // event socket is usable. Treat an unavailable readyState as unknown,
+        // not as proof that the socket is closed, and retry transient request
+        // failures while this exact tracker/socket is still alive.
         const issuePairingCode = async () => {
+            const deadline = Date.now() + 15_000;
+            let lastError = null;
+
             try {
-                const socketDeadline = Date.now() + 15_000;
-                while (
-                    tracker.connection === nexus &&
-                    !tracker.disconnected &&
-                    nexus.ws?.readyState !== 1 &&
-                    Date.now() < socketDeadline
-                ) {
-                    await sleep(100);
-                }
-                if (tracker.connection !== nexus || tracker.disconnected) {
-                    throw new Error('Pairing socket closed before code request');
-                }
-                if (nexus.ws?.readyState !== 1) {
-                    throw new Error('Pairing socket did not open before code request');
-                }
-                if (tracker.pairingCodeIssued) return;
+                while (Date.now() < deadline) {
+                    if (tracker.connection !== nexus || tracker.disconnected) {
+                        throw new Error('Pairing socket closed before code request');
+                    }
+                    if (tracker.pairingCodeIssued) return;
 
-                tracker.pairingCodeIssued = true;
-                const code = formatPairingCode(await nexus.requestPairingCode(phoneNumber));
-                
-                console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+                    // Older Baileys releases expose ws.readyState; Baileys 7
+                    // may not. Only wait when the state is explicitly known
+                    // to be non-open. An undefined state is handled by the
+                    // guarded request attempt below.
+                    const readyState = nexus.ws?.readyState;
+                    if (readyState !== undefined && readyState !== 1) {
+                        await sleep(100);
+                        continue;
+                    }
 
-                // Ensure pairing directory exists
-                ensureDirectoryExists('./nexstore/pairing');
-                
-                // Per-bot pairing file — multiple users can pair simultaneously
-                const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
-                fs.writeFileSync(
-                    `./nexstore/pairing/pairing_${cleanPairNum}.json`,
-                    JSON.stringify({ 
-                        number: nexusDevNumber,
-                        code: code,
-                        timestamp: new Date().toISOString()
-                    }, null, 2),
-                    'utf8'
-                );
+                    tracker.pairingCodeIssued = true;
+                    try {
+                        const code = formatPairingCode(await nexus.requestPairingCode(phoneNumber));
 
-                // Keep the DB pairing state in sync with the file consumed by
-                // the web route. This also makes polling/status reliable when
-                // the request was started directly on the web dyno.
-                try {
-                    const { setPairingCode } = require('./server/db-service');
-                    await setPairingCode(cleanPairNum, code);
-                } catch (dbErr) {
-                    console.log(chalk.yellow(`⚠️ Pairing code DB update failed: ${dbErr.message}`));
+                        console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+
+                        // Ensure pairing directory exists
+                        ensureDirectoryExists('./nexstore/pairing');
+
+                        // Per-bot pairing file — multiple users can pair simultaneously
+                        const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
+                        fs.writeFileSync(
+                            `./nexstore/pairing/pairing_${cleanPairNum}.json`,
+                            JSON.stringify({
+                                number: nexusDevNumber,
+                                code: code,
+                                timestamp: new Date().toISOString()
+                            }, null, 2),
+                            'utf8'
+                        );
+
+                        // Keep the DB pairing state in sync with the file consumed by
+                        // the web route. This also makes polling/status reliable when
+                        // the request was started directly on the web dyno.
+                        try {
+                            const { setPairingCode } = require('./server/db-service');
+                            await setPairingCode(cleanPairNum, code);
+                        } catch (dbErr) {
+                            console.log(chalk.yellow(`⚠️ Pairing code DB update failed: ${dbErr.message}`));
+                        }
+
+                        console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
+                        return;
+                    } catch (err) {
+                        lastError = err;
+                        tracker.pairingCodeIssued = false;
+                        if (tracker.connection !== nexus || tracker.disconnected) throw err;
+                        if (Date.now() >= deadline) throw err;
+                        await sleep(250);
+                    }
                 }
-                
-                console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
+
+                throw lastError || new Error('Pairing socket did not become ready before code request');
             } catch (err) {
                 tracker.pairingCodeIssued = false;
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
