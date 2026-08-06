@@ -522,9 +522,11 @@ const LinkModal = ({ onClose, onAdd }) => {
           if (codePollRef.current) clearInterval(codePollRef.current);
         }
       } catch (err) {
-        if (err.response?.data?.status === 'failed') {
+        if (err.response?.data?.status === 'failed' || err.response?.data?.status === 'expired') {
           setStep(1);
-          toast.error(err.response?.data?.error || 'Pairing failed on the web dyno');
+          setCode('');
+          setPairStatus(err.response?.data?.status || '');
+          toast.error(err.response?.data?.error || 'Pairing failed — generate a new code');
           if (codePollRef.current) clearInterval(codePollRef.current);
         }
       }

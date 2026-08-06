@@ -10,6 +10,8 @@ const botSessionSchema = new mongoose.Schema({
   sessionData: { type: mongoose.Schema.Types.Mixed, default: null },
   pairingCode:      { type: String, default: null },
   pairingStatus:    { type: String, default: null },
+  pairingAttemptId: { type: String, default: null },
+  pairingError:     { type: String, default: null },
   pairingOwnerId:   { type: String, default: null },
   pairingBotName:   { type: String, default: null },
   connectedAt:      { type: Date },

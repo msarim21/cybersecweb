@@ -951,14 +951,20 @@ async function handlePairingRequest(clean) {
         const slotReady = await preparePairingSlot(num);
         if (!slotReady) {
             console.log(chalk.red(`[Supervisor] Pairing aborted for +${num}: no worker slot available`));
-            await require('../server/db-service').markPairingFailed(num).catch(() => {});
+            await require('../server/db-service').markPairingFailed(
+                num,
+                'No WhatsApp worker slot was available on the pairing host'
+            ).catch(() => {});
             return;
         }
 
         const pairingThread = spawnBot(num, { pairing: true, force: true, noRestart: true });
         if (!pairingThread) {
             console.log(chalk.red(`[Supervisor] Pairing aborted for +${num}: pairing thread did not start`));
-            await require('../server/db-service').markPairingFailed(num).catch(() => {});
+            await require('../server/db-service').markPairingFailed(
+                num,
+                'The WhatsApp pairing worker could not be started'
+            ).catch(() => {});
             return;
         }
 
@@ -973,7 +979,10 @@ async function handlePairingRequest(clean) {
         }
         if (!gotCode) {
             console.log(chalk.red(`[Supervisor] Pairing timeout for +${num}`));
-            await require('../server/db-service').markPairingFailed(num).catch(() => {});
+            await require('../server/db-service').markPairingFailed(
+                num,
+                'WhatsApp WebSocket did not become ready or no pairing code was returned within 60 seconds'
+            ).catch(() => {});
             killBot(num, 'SIGTERM');
         } else {
             console.log(chalk.green(`[Supervisor] ✅ Pairing code ready for +${num}`));
@@ -996,7 +1005,10 @@ async function handlePairingRequest(clean) {
 
             if (!connected) {
                 console.log(chalk.red(`[Supervisor] Pairing login timeout for +${num} — phone did not reach connection.open`));
-                await require('../server/db-service').markPairingFailed(num).catch(() => {});
+                await require('../server/db-service').markPairingFailed(
+                    num,
+                    'Phone did not complete device linking before the 3-minute login window expired'
+                ).catch(() => {});
                 killBot(num, 'SIGTERM');
                 return;
             }

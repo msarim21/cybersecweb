@@ -557,17 +557,41 @@ async function ensurePairingRequest(number, opts = {}) {
     }
     const doc = await PairingRequest.findOneAndUpdate(
       { number: clean },
-      { $set: { status: 'requested', code: null, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      {
+        $set: {
+          status: 'requested',
+          code: null,
+          attemptId: null,
+          error: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
       { upsert: true, new: true }
     );
     try {
       await BotSession.findOneAndUpdate(
         { number: clean },
-        { $set: { status: 'pending', pairingStatus: 'requested', pairingCode: null, lastActive: new Date() } },
+          {
+            $set: {
+              status: 'pending',
+              pairingStatus: 'requested',
+              pairingCode: null,
+              pairingAttemptId: null,
+              pairingError: null,
+              lastActive: new Date(),
+            },
+          },
         { upsert: true, new: true }
       );
     } catch (_) {}
-    return doc ? { number: doc.number, status: doc.status, code: doc.code, updatedAt: doc.updatedAt } : null;
+    return doc ? {
+      number: doc.number,
+      status: doc.status,
+      code: doc.code,
+      attemptId: doc.attemptId || null,
+      updatedAt: doc.updatedAt,
+    } : null;
   }
   try {
     if (force) {
@@ -577,6 +601,8 @@ async function ensurePairingRequest(number, opts = {}) {
          ON CONFLICT (number) DO UPDATE
            SET pairing_status = 'requested',
                pairing_code = NULL,
+               pairing_attempt_id = NULL,
+               pairing_error = NULL,
                status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
                last_active = NOW()`,
         [clean]
@@ -594,6 +620,8 @@ async function ensurePairingRequest(number, opts = {}) {
                  WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_code
                  ELSE NULL
                END,
+               pairing_attempt_id = NULL,
+               pairing_error = NULL,
                status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
                last_active = NOW()`,
         [clean]
@@ -603,38 +631,58 @@ async function ensurePairingRequest(number, opts = {}) {
   return { number: clean, status: 'requested', code: null };
 }
 
-async function setPairingCode(number, code) {
+async function setPairingCode(number, code, options = {}) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean || !code) return null;
+  const attemptId = options.attemptId ? String(options.attemptId) : null;
   if (isMongoMode()) {
     const { PairingRequest, BotSession } = M();
     const reqDoc = await PairingRequest.findOneAndUpdate(
       { number: clean },
-      { $set: { status: 'code_ready', code, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      {
+        $set: { status: 'code_ready', code, attemptId, error: null, updatedAt: new Date() },
+        $setOnInsert: { createdAt: new Date() },
+      },
       { upsert: true, new: true }
     );
     try {
       await BotSession.findOneAndUpdate(
         { number: clean },
-        { $set: { pairingCode: code, pairingStatus: 'code_ready', lastActive: new Date() } },
+        {
+          $set: {
+            pairingCode: code,
+            pairingStatus: 'code_ready',
+            pairingAttemptId: attemptId,
+            pairingError: null,
+            lastActive: new Date(),
+          },
+        },
         { upsert: true, new: true }
       );
     } catch (_) {}
-    return reqDoc ? { number: reqDoc.number, status: reqDoc.status, code: reqDoc.code } : null;
+    return reqDoc ? {
+      number: reqDoc.number,
+      status: reqDoc.status,
+      code: reqDoc.code,
+      attemptId: reqDoc.attemptId,
+    } : null;
   }
   try {
     await pg().query(
-      `INSERT INTO bot_sessions (number, status, pairing_code, pairing_status, last_active)
-       VALUES ($1, 'pending', $2, 'code_ready', NOW())
+      `INSERT INTO bot_sessions
+         (number, status, pairing_code, pairing_status, pairing_attempt_id, pairing_error, last_active)
+       VALUES ($1, 'pending', $2, 'code_ready', $3, NULL, NOW())
        ON CONFLICT (number) DO UPDATE
          SET pairing_code = $2,
              pairing_status = 'code_ready',
+             pairing_attempt_id = $3,
+             pairing_error = NULL,
              status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
              last_active = NOW()`,
-      [clean, code]
+      [clean, code, attemptId]
     );
   } catch (_) {}
-  return { number: clean, status: 'code_ready', code };
+  return { number: clean, status: 'code_ready', code, attemptId };
 }
 
 async function getAndClearPairingOwner(number) {
@@ -1310,13 +1358,17 @@ async function resetPairingRequest(clean) {
       const { PairingRequest } = M();
       await PairingRequest.findOneAndUpdate(
         { number: clean },
-        { $set: { status: 'requested', code: null, updatedAt: new Date() } }
+        { $set: { status: 'requested', code: null, attemptId: null, error: null, updatedAt: new Date() } }
       );
       return;
     }
     await pg().query(
       `UPDATE bot_sessions
-       SET pairing_status = 'requested', pairing_code = NULL, last_active = NOW()
+         SET pairing_status = 'requested',
+             pairing_code = NULL,
+             pairing_attempt_id = NULL,
+             pairing_error = NULL,
+             last_active = NOW()
        WHERE number = $1`,
       [clean]
     );
@@ -1325,27 +1377,39 @@ async function resetPairingRequest(clean) {
   }
 }
 
-async function markPairingFailed(clean) {
+async function markPairingFailed(clean, reason = null) {
+  const number = String(clean).replace(/[^0-9]/g, '');
+  const error = reason ? String(reason).slice(0, 500) : null;
   try {
     if (isMongoMode()) {
       const { PairingRequest, BotSession } = M();
       await PairingRequest.findOneAndUpdate(
-        { number: clean },
-        { $set: { status: 'failed', code: null, updatedAt: new Date() } }
+        { number },
+        { $set: { status: 'failed', code: null, error, updatedAt: new Date() } }
       );
       try {
         await BotSession.findOneAndUpdate(
-          { number: clean },
-          { $set: { pairingStatus: 'failed', pairingCode: null, lastActive: new Date() } }
+          { number },
+          {
+            $set: {
+              pairingStatus: 'failed',
+              pairingCode: null,
+              pairingError: error,
+              lastActive: new Date(),
+            },
+          }
         );
       } catch (_) {}
       return;
     }
     await pg().query(
       `UPDATE bot_sessions
-       SET pairing_status = 'failed', pairing_code = NULL, last_active = NOW()
+       SET pairing_status = 'failed',
+           pairing_code = NULL,
+           pairing_error = $2,
+           last_active = NOW()
        WHERE number = $1`,
-      [clean]
+      [number, error]
     );
   } catch (err) {
     console.error('[db-service] markPairingFailed:', err.message);
@@ -1360,19 +1424,33 @@ async function markPairingConnected(clean) {
       const { PairingRequest, BotSession } = M();
       await PairingRequest.findOneAndUpdate(
         { number },
-        { $set: { status: 'active', code: null, updatedAt: new Date() } },
+        {
+          $set: { status: 'active', code: null, attemptId: null, error: null, updatedAt: new Date() },
+        },
         { upsert: false }
       ).catch(() => {});
       await BotSession.findOneAndUpdate(
         { number },
-        { $set: { pairingStatus: 'active', pairingCode: null, lastActive: new Date() } },
+        {
+          $set: {
+            pairingStatus: 'active',
+            pairingCode: null,
+            pairingAttemptId: null,
+            pairingError: null,
+            lastActive: new Date(),
+          },
+        },
         { upsert: false }
       ).catch(() => {});
       return;
     }
     await pg().query(
       `UPDATE bot_sessions
-       SET pairing_status = 'active', pairing_code = NULL, last_active = NOW()
+       SET pairing_status = 'active',
+           pairing_code = NULL,
+           pairing_attempt_id = NULL,
+           pairing_error = NULL,
+           last_active = NOW()
        WHERE number = $1`,
       [number]
     );
@@ -1391,6 +1469,8 @@ async function getPairingState(clean) {
         return {
           code,
           status: reqDoc.status,
+          attemptId: reqDoc.attemptId || null,
+          error: reqDoc.error || null,
           updatedAt: reqDoc.updatedAt || reqDoc.createdAt || null,
         };
       }
@@ -1402,11 +1482,14 @@ async function getPairingState(clean) {
       return {
         code,
         status: ps || botDoc.status || null,
+        attemptId: botDoc.pairingAttemptId || null,
+        error: botDoc.pairingError || null,
         updatedAt: botDoc.lastActive || null,
       };
     }
     const { rows } = await pg().query(
-      'SELECT pairing_code, pairing_status, last_active FROM bot_sessions WHERE number=$1 LIMIT 1',
+      `SELECT pairing_code, pairing_status, pairing_attempt_id, pairing_error, last_active
+       FROM bot_sessions WHERE number=$1 LIMIT 1`,
       [clean]
     );
     if (!rows[0]) return null;
@@ -1415,6 +1498,8 @@ async function getPairingState(clean) {
     return {
       code,
       status: row.pairing_status || null,
+      attemptId: row.pairing_attempt_id || null,
+      error: row.pairing_error || null,
       updatedAt: row.last_active || null,
     };
   } catch (err) {
@@ -1463,6 +1548,8 @@ async function clearPairingRequest(clean) {
           $unset: {
             pairingCode: 1,
             pairingStatus: 1,
+             pairingAttemptId: 1,
+             pairingError: 1,
             pairingOwnerId: 1,
             pairingBotName: 1,
           },
@@ -1478,6 +1565,8 @@ async function clearPairingRequest(clean) {
       `UPDATE bot_sessions
        SET pairing_code = NULL,
            pairing_status = NULL,
+           pairing_attempt_id = NULL,
+           pairing_error = NULL,
            pairing_owner_id = NULL,
            pairing_bot_name = NULL,
            last_active = NOW()

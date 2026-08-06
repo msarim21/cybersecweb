@@ -391,6 +391,22 @@ router.get('/code/:number', protect, async (req, res) => {
     const obj = JSON.parse(raw);
     const localCode = normalizePairingCode(obj.code);
     if (localCode) {
+      const expiresAt = obj.expiresAt ? Date.parse(obj.expiresAt) : (
+        obj.timestamp ? Date.parse(obj.timestamp) + 120_000 : 0
+      );
+      if (expiresAt && expiresAt <= Date.now()) {
+        try { await fs.unlink(PAIRING_JSON); } catch (_) {}
+        try {
+          const { markPairingFailed } = require('../db-service');
+          await markPairingFailed(clean, 'Pairing code expired before it was entered');
+        } catch (_) {}
+        return res.status(409).json({
+          code: null,
+          number: clean,
+          status: 'expired',
+          error: 'Pairing code expired. Generate a new code and enter it immediately.',
+        });
+      }
       const { getWhatsAppHostDyno } = require('../../allfunc/whatsapp-host');
       return res.json({
         code: localCode,
@@ -398,7 +414,8 @@ router.get('/code/:number', protect, async (req, res) => {
         status: 'code_ready',
         host: getWhatsAppHostDyno(),
         updatedAt: obj.timestamp || null,
-        expiresInSec: 120
+        expiresInSec: Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000)),
+        attemptId: obj.attemptId || null,
       });
     }
   } catch (_) {}
@@ -411,7 +428,7 @@ router.get('/code/:number', protect, async (req, res) => {
       return res.status(409).json({
         code: null,
         status: 'failed',
-        error: 'WhatsApp pairing code generation failed. Please try again.'
+        error: state.error || 'WhatsApp pairing code generation failed. Please try again.',
       });
     }
     if (state?.code && state.status === 'code_ready') {
@@ -423,13 +440,25 @@ router.get('/code/:number', protect, async (req, res) => {
           error: 'WhatsApp returned an invalid pairing code. Please request a new code.'
         });
       }
+      const updatedAtMs = state.updatedAt ? new Date(state.updatedAt).getTime() : 0;
+      if (updatedAtMs && updatedAtMs + 120_000 <= Date.now()) {
+        const { markPairingFailed } = require('../db-service');
+        await markPairingFailed(clean, 'Pairing code expired before it was entered');
+        return res.status(409).json({
+          code: null,
+          number: clean,
+          status: 'expired',
+          error: 'Pairing code expired. Generate a new code and enter it immediately.',
+        });
+      }
       return res.json({
         code,
         number: clean,
         status: state.status,
         host: require('../../allfunc/whatsapp-host').getWhatsAppHostDyno(),
         updatedAt: state.updatedAt || null,
-        expiresInSec: 120
+        expiresInSec: Math.max(1, Math.ceil((updatedAtMs + 120_000 - Date.now()) / 1000)),
+        attemptId: state.attemptId || null,
       });
     }
     if (state?.status) {
@@ -438,6 +467,7 @@ router.get('/code/:number', protect, async (req, res) => {
         number: clean,
         status: state.status,
         host: require('../../allfunc/whatsapp-host').getWhatsAppHostDyno(),
+        error: state.error || null,
         updatedAt: state.updatedAt || null
       });
     }
@@ -450,12 +480,24 @@ router.get('/code/:number', protect, async (req, res) => {
   try {
     const obj = JSON.parse(fsSync.readFileSync(PAIRING_JSON, 'utf-8'));
     const code = normalizePairingCode(obj.code);
+    const expiresAt = obj.expiresAt ? Date.parse(obj.expiresAt) : (
+      obj.timestamp ? Date.parse(obj.timestamp) + 120_000 : 0
+    );
+    if (expiresAt && expiresAt <= Date.now()) {
+      return res.status(409).json({
+        code: null,
+        number: clean,
+        status: 'expired',
+        error: 'Pairing code expired. Generate a new code and enter it immediately.',
+      });
+    }
     return res.json({
       code,
       number: clean,
       status: code ? 'code_ready' : 'in_progress',
       updatedAt: obj.timestamp || null,
-      expiresInSec: 120
+      expiresInSec: code && expiresAt ? Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000)) : 120,
+      attemptId: obj.attemptId || null,
     });
   } catch (_) {
     return res.json({ code: null, number: clean, status: 'in_progress' });

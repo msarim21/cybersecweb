@@ -22,6 +22,7 @@ const {
     Boom
 } = require('@hapi/boom')
 const EventEmitter = require('events');
+const crypto = require('crypto');
 const PhoneNumber = require('awesome-phonenumber')
 let phoneNumber = process.env.BOT_NUMBER || process.argv[2] || "";
 // Always enable pairing-code mode — actual number comes from startpairing(nexusDevNumber) arg
@@ -351,7 +352,7 @@ async function autoJoinGroups(nexus, nexusDevNumber) {
  * Public connection entry point. It normalizes the number and prevents
  * overlapping socket setup for the same account.
  */
-async function startpairing(nexusDevNumber) {
+async function startpairing(nexusDevNumber, options = {}) {
     const jid = canonicalBotJid(nexusDevNumber);
     const clean = cleanBotNumber(nexusDevNumber);
     if (!jid) throw new Error('Invalid phone number');
@@ -383,7 +384,7 @@ async function startpairing(nexusDevNumber) {
         existingTracker.connection = null;
     }
 
-    const flight = _startpairing(jid);
+    const flight = _startpairing(jid, options);
     connectionFlights.set(clean, flight);
     try {
         return await flight;
@@ -392,7 +393,7 @@ async function startpairing(nexusDevNumber) {
     }
 }
 
-async function _startpairing(nexusDevNumber) {
+async function _startpairing(nexusDevNumber, options = {}) {
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
     
@@ -422,9 +423,11 @@ async function _startpairing(nexusDevNumber) {
     tracker.disconnected = false;
     tracker.reconnectSuppressed = false;
     tracker.lastActivity = Date.now();
-    tracker.pairingSession = process.env.BOT_PAIRING === '1';
+    tracker.pairingSession = process.env.BOT_PAIRING === '1' || options.freshPairing === true;
     tracker.pairingCodeIssued = false;
     tracker.pairingConnected = false;
+    tracker.pairingPhase = tracker.pairingSession ? 'socket_starting' : null;
+    tracker.pairingAttemptId = null;
     if (tracker.pairingCodeTimer) {
         clearTimeout(tracker.pairingCodeTimer);
         tracker.pairingCodeTimer = null;
@@ -485,7 +488,9 @@ async function _startpairing(nexusDevNumber) {
     const _sessionAlreadyPaired = fs.existsSync(_existingCredsPath) && (() => {
         try {
             const _c = JSON.parse(fs.readFileSync(_existingCredsPath, 'utf-8'));
-            return !!((_c.noiseKey && _c.noiseKey.private) || _c.me || _c.registered);
+            // noiseKey is generated for every fresh Baileys auth state. It is
+            // not evidence that this phone has ever been linked.
+            return !!(_c.registered || _c.me?.id);
         } catch(_) { return false; }
     })();
 
@@ -506,7 +511,10 @@ async function _startpairing(nexusDevNumber) {
          // WebSocket is still handshaking. Prefer Baileys' public
          // waitForSocketOpen() helper, with a bounded fallback for older builds.
         const issuePairingCode = async () => {
-            const deadline = Date.now() + 15_000;
+            // A cold web dyno can need several seconds before the TLS/WebSocket
+            // handshake completes. Keep the same socket alive for the full
+            // connection timeout instead of declaring it dead after 15 seconds.
+            const deadline = Date.now() + 60_000;
             let lastError = null;
 
             try {
@@ -519,12 +527,12 @@ async function _startpairing(nexusDevNumber) {
                     try {
                          const remainingMs = Math.max(1, deadline - Date.now());
                          if (typeof nexus.waitForSocketOpen === 'function') {
-                             await Promise.race([
-                                 nexus.waitForSocketOpen(),
-                                 sleep(Math.min(5_000, remainingMs)).then(() => {
-                                     throw new Error('Timed out waiting for WhatsApp WebSocket to open');
-                                 }),
-                             ]);
+                             // Baileys owns the websocket timeout and removes
+                             // its listeners when the socket opens/closes.
+                             // Do not wrap this in repeated Promise.race calls:
+                             // a timed-out race would leave orphaned listeners
+                             // attached to the same socket.
+                             await nexus.waitForSocketOpen();
                          } else {
                              // Compatibility fallback for older Baileys builds.
                              const readyState = nexus.ws?.readyState;
@@ -534,8 +542,12 @@ async function _startpairing(nexusDevNumber) {
                              }
                          }
 
-                         tracker.pairingCodeIssued = true;
+                         tracker.pairingPhase = 'requesting_code';
                         const code = formatPairingCode(await nexus.requestPairingCode(phoneNumber));
+                         tracker.pairingCodeIssued = true;
+                         tracker.pairingPhase = 'code_ready';
+                         const pairingAttemptId = crypto.randomUUID();
+                         tracker.pairingAttemptId = pairingAttemptId;
 
                         console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
 
@@ -546,10 +558,12 @@ async function _startpairing(nexusDevNumber) {
                         const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
                         fs.writeFileSync(
                             `./nexstore/pairing/pairing_${cleanPairNum}.json`,
-                            JSON.stringify({
+                             JSON.stringify({
                                 number: nexusDevNumber,
                                 code: code,
-                                timestamp: new Date().toISOString()
+                                 timestamp: new Date().toISOString(),
+                                 expiresAt: new Date(Date.now() + 120_000).toISOString(),
+                                 attemptId: pairingAttemptId
                             }, null, 2),
                             'utf8'
                         );
@@ -558,8 +572,8 @@ async function _startpairing(nexusDevNumber) {
                         // the web route. This also makes polling/status reliable when
                         // the request was started directly on the web dyno.
                         try {
-                            const { setPairingCode } = require('./server/db-service');
-                            await setPairingCode(cleanPairNum, code);
+                             const { setPairingCode } = require('./server/db-service');
+                             await setPairingCode(cleanPairNum, code, { attemptId: pairingAttemptId });
                         } catch (dbErr) {
                             console.log(chalk.yellow(`⚠️ Pairing code DB update failed: ${dbErr.message}`));
                         }
@@ -581,7 +595,7 @@ async function _startpairing(nexusDevNumber) {
                 console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
                 try {
                     const { markPairingFailed } = require('./server/db-service');
-                    await markPairingFailed(phoneNumber);
+                    await markPairingFailed(phoneNumber, err.message);
                 } catch (_) {}
             }
         };
@@ -1148,9 +1162,13 @@ async function _startpairing(nexusDevNumber) {
             if (tracker.pairingSession && !tracker.pairingConnected) {
                 try {
                     const { markPairingFailed } = require('./server/db-service');
-                    await markPairingFailed(nexusDevNumber);
+                    await markPairingFailed(
+                        nexusDevNumber,
+                        errMsg || `WhatsApp pairing socket closed (${reason || 'unknown'})`
+                    );
                 } catch (_) {}
                 tracker.disconnected = true;
+                tracker.pairingPhase = 'failed';
                 tracker.connection = null;
                 console.warn(chalk.yellow(`⚠️ Pairing socket closed before connection.open for ${nexusDevNumber}; stale code invalidated`));
                 return;
@@ -1353,6 +1371,7 @@ async function _startpairing(nexusDevNumber) {
             tracker.retryCount = 0;
             tracker.disconnected = false;
             tracker.pairingConnected = true;
+            tracker.pairingPhase = 'connected';
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;

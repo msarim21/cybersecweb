@@ -201,7 +201,7 @@ async function processPairingQueue() {
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
                     try {
-                        await markPairingFailed(clean);
+                        await markPairingFailed(clean, `Pairing processor error: ${err.message}`);
                     } catch (_) {}
                 } finally {
                     global._pairingInFlight.delete(clean);

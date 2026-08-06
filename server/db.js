@@ -199,6 +199,8 @@ const initDb = async () => {
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS session_data JSONB DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_code VARCHAR(32)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_status VARCHAR(20)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_attempt_id VARCHAR(80)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_error TEXT`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_owner_id VARCHAR(50)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_bot_name VARCHAR(64)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'public'`).catch(() => {});
