@@ -3,8 +3,8 @@ name: Baileys pairing readiness
 description: Readiness behavior required by current Baileys pairing-code flow.
 ---
 
-Baileys 7 may not expose a reliable `socket.ws.readyState` on the object returned by `makeWASocket`. An undefined readyState must be treated as unknown, not as a closed socket; pairing-code requests should use a bounded retry while the tracked socket remains current.
+Baileys 7 may not expose a reliable `socket.ws.readyState` on the object returned by `makeWASocket`. Pairing-code requests must wait for the socket's public `waitForSocketOpen()` helper when available, with a bounded retry while the tracked socket remains current.
 
-**Why:** Treating an absent internal WebSocket property as “not open” caused every pairing attempt to fail before `requestPairingCode()` ran, leaving the UI in its loading state.
+**Why:** `requestPairingCode()` sends its registration IQ immediately. Issuing it before the underlying WebSocket is open can produce a code that WhatsApp rejects even though the UI displays it correctly.
 
-**How to apply:** Prefer Baileys connection events for lifecycle state. If a low-level readiness guard is needed for compatibility with older releases, only wait when `readyState` is explicitly non-open and retry transient request failures within the existing pairing deadline.
+**How to apply:** Wait on `waitForSocketOpen()` before requesting the code and retain the explicit `readyState` check only as an older-version fallback. Keep the request bounded by the pairing deadline and verify the tracker still owns the socket.

@@ -500,16 +500,11 @@ async function _startpairing(nexusDevNumber) {
             throw new Error('Invalid phone number');
         }
         
-        // The latest Baileys requestPairingCode() sends the registration IQ over
-        // the socket immediately. Do not use a blind delay: on a cold dyno the
-        // socket may still be closed at 750ms, while on a warm dyno the same
-        // delay can be late enough for a short-lived registration handshake.
-        //
-        // Baileys 7 does not expose its underlying WebSocket consistently as
-        // `nexus.ws`; on that version `readyState` is undefined even while the
-        // event socket is usable. Treat an unavailable readyState as unknown,
-        // not as proof that the socket is closed, and retry transient request
-        // failures while this exact tracker/socket is still alive.
+         // Baileys requestPairingCode() sends the registration IQ immediately.
+         // Its v7 socket may not expose a useful `ws.readyState`, so checking
+         // that property alone can issue the request while the underlying
+         // WebSocket is still handshaking. Prefer Baileys' public
+         // waitForSocketOpen() helper, with a bounded fallback for older builds.
         const issuePairingCode = async () => {
             const deadline = Date.now() + 15_000;
             let lastError = null;
@@ -521,18 +516,25 @@ async function _startpairing(nexusDevNumber) {
                     }
                     if (tracker.pairingCodeIssued) return;
 
-                    // Older Baileys releases expose ws.readyState; Baileys 7
-                    // may not. Only wait when the state is explicitly known
-                    // to be non-open. An undefined state is handled by the
-                    // guarded request attempt below.
-                    const readyState = nexus.ws?.readyState;
-                    if (readyState !== undefined && readyState !== 1) {
-                        await sleep(100);
-                        continue;
-                    }
-
-                    tracker.pairingCodeIssued = true;
                     try {
+                         const remainingMs = Math.max(1, deadline - Date.now());
+                         if (typeof nexus.waitForSocketOpen === 'function') {
+                             await Promise.race([
+                                 nexus.waitForSocketOpen(),
+                                 sleep(Math.min(5_000, remainingMs)).then(() => {
+                                     throw new Error('Timed out waiting for WhatsApp WebSocket to open');
+                                 }),
+                             ]);
+                         } else {
+                             // Compatibility fallback for older Baileys builds.
+                             const readyState = nexus.ws?.readyState;
+                             if (readyState !== undefined && readyState !== 1) {
+                                 await sleep(Math.min(100, remainingMs));
+                                 continue;
+                             }
+                         }
+
+                         tracker.pairingCodeIssued = true;
                         const code = formatPairingCode(await nexus.requestPairingCode(phoneNumber));
 
                         console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
