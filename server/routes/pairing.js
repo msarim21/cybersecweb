@@ -302,6 +302,42 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
     // one kills the first before it can publish a code.
     const result = { async: true, number: clean, status: 'requested', host: getWhatsAppHostDyno() };
     console.log(`[Pairing] ${clean}: request queued for web-owned pairing processor on ${getWhatsAppHostDyno()} dyno`);
+
+    // Kick the processor immediately instead of waiting for its next interval.
+    // This removes a race during startup where the API is ready but the first
+    // 150ms queue tick has not yet run. If the database is unavailable, there
+    // is no queue for the processor to claim, so use the local same-process
+    // runtime as a deliberate fallback; its local pairing JSON is still the
+    // source used by /code/:number.
+    setImmediate(async () => {
+      let queueHadWork = false;
+      try {
+        const { processPairingQueue } = require('../../worker/pairing-processor');
+        queueHadWork = await processPairingQueue();
+      } catch (kickErr) {
+        console.error(`[Pairing] ${clean}: processor kick failed:`, kickErr.message);
+      }
+
+      if (queueHadWork) return;
+
+      try {
+        const supervisor = require('../../worker/supervisor');
+        if (supervisor.isSupervisorActive?.()) {
+          supervisor.handlePairingRequest(clean).catch((runtimeErr) => {
+            console.error(`[Pairing] ${clean}: direct supervisor fallback failed:`, runtimeErr.message);
+          });
+          return;
+        }
+
+        const startpairing = require(PAIR_MODULE);
+        startpairing(`${clean}@s.whatsapp.net`).catch((runtimeErr) => {
+          console.error(`[Pairing] ${clean}: local pairing fallback failed:`, runtimeErr.message);
+        });
+      } catch (runtimeErr) {
+        console.error(`[Pairing] ${clean}: could not start pairing runtime:`, runtimeErr.message);
+      }
+    });
+
     resolveFlight(result);
     return res.json(result);
 

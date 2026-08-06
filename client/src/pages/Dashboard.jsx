@@ -538,7 +538,10 @@ const LinkModal = ({ onClose, onAdd }) => {
         toast.error('Timed out waiting for pairing code. Try again.');
         if (codePollRef.current) clearInterval(codePollRef.current);
       }
-    }, 90000);
+    // Baileys may need more than a minute on a cold dyno before the
+    // registration socket opens. The backend keeps the pairing attempt alive
+    // for 120 seconds, so do not send the user back to the first step sooner.
+    }, 150000);
 
     return () => {
       cancelled = true;

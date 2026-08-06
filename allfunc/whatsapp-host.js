@@ -32,7 +32,15 @@ function isWebDyno() {
     // explicit host setting is the authoritative role signal. The stack sets
     // WHATSAPP_WORKER=1 internally after this check to reuse worker modules;
     // that flag does not change the configured host.
-    return process.env.WHATSAPP_HOST_DYNO === 'web';
+    if (process.env.WHATSAPP_HOST_DYNO === 'web') return true;
+
+    // Local/Replit processes do not provide Heroku's DYNO metadata. When no
+    // host was explicitly configured, the only safe default is the local
+    // process itself; otherwise the API starts successfully but the WhatsApp
+    // supervisor and pairing processor never start.
+    if (!dyno && !process.env.WHATSAPP_HOST_DYNO) return true;
+
+    return false;
 }
 
 function isWorkerDyno() {
