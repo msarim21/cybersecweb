@@ -11,3 +11,4 @@
 - [Mongo quota pairing fallback](mongo-quota-pairing-fallback.md) — Atlas writes can block pairing state; web-only mode must use the local code file and connected flag as temporary handoff.
 - [Async pairing request](async-pairing-request.md) — pairing HTTP requests return immediately; the client polls the local/DB code handoff while the WhatsApp socket continues negotiating.
 - [Anti-delete storage boundary](antidelete-storage-boundary.md) — anti-delete is a disposable per-bot JSON cache; keep it out of Mongo session persistence by default.
+- [Pairing browser identity](pairing-browser-identity.md) — phone-number linking uses an Ubuntu Chrome companion profile; Safari-style identity produced rejected codes.

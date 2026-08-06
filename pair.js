@@ -448,6 +448,16 @@ async function _startpairing(nexusDevNumber, options = {}) {
     // Prevents message data mixing when multiple users are connected simultaneously
     const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
 
+    // WhatsApp phone-number linking is a companion-device registration flow.
+    // Use the stable Chrome companion profile for it instead of presenting the
+    // socket as Safari; WhatsApp can display a code for either profile, but
+    // Safari-style registration has been rejected by the phone as "Couldn't
+    // link device" even when the code reached the UI.
+    const browserProfile = Browsers.ubuntu('Chrome');
+    if (tracker.pairingSession) {
+        console.log(chalk.cyan(`[Pairing] Using Chrome companion profile for +${nexusDevNumber.replace(/[^0-9]/g, '')}`));
+    }
+
     const nexus = makeWASocket({
         logger: pino({ level: "silent" }),
         printQRInTerminal: false,
@@ -457,7 +467,7 @@ async function _startpairing(nexusDevNumber, options = {}) {
         },
         msgRetryCounterMap: msgRetryCounterCache,
         version,
-        browser: Browsers.macOS("Safari"),
+        browser: browserProfile,
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
