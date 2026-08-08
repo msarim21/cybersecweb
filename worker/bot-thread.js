@@ -44,6 +44,8 @@ let _restartTimes   = [];
 let _totalRestarts  = 0;
 let _shuttingDown   = false;
 let _pingInterval   = null;
+const _pairingSession = Boolean(pairing);
+const _noRestartSession = Boolean(noRestart);
 
 function send(type, payload = {}) {
     try { parentPort.postMessage({ type, botNumber, ...payload }); } catch (_) {}
@@ -159,17 +161,21 @@ function shutdown() {
 parentPort.on('message', (msg) => {
     switch (msg?.cmd) {
         case 'start':
-            spawnChild({ pairing: Boolean(msg.pairing) });
+            spawnChild({
+                pairing: msg.pairing === undefined ? _pairingSession : Boolean(msg.pairing),
+                noRestart: _noRestartSession,
+            });
             break;
         case 'stop':
             _shuttingDown = true;
             stopChild('SIGTERM');
             break;
         case 'restart':
+            if (_noRestartSession) break;
             stopChild('SIGTERM');
             setTimeout(() => {
                 _shuttingDown = false;
-                spawnChild();
+                spawnChild({ pairing: _pairingSession });
             }, 2000);
             break;
         case 'kill':
@@ -210,6 +216,6 @@ send('ready');
 // and invalidates the code that was already shown to the user. Preserve the
 // supervisor's noRestart contract for the initial child as well as later exits.
 spawnChild({
-    pairing: Boolean(pairing),
-    noRestart: Boolean(noRestart),
+    pairing: _pairingSession,
+    noRestart: _noRestartSession,
 });

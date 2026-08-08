@@ -17,8 +17,15 @@ const pairingRoute = read('server/routes/pairing.js');
 // registration socket invalidates the code that WhatsApp already displayed.
 assert.match(botThread, /pairing,\s*\/\/ pairing sessions must keep exactly one child socket/);
 assert.match(botThread, /noRestart,\s*\/\/ supervisor-owned sessions must not self-respawn/);
-assert.match(botThread, /spawnChild\(\{\s*pairing: Boolean\(pairing\),\s*noRestart: Boolean\(noRestart\)/s);
+assert.match(botThread, /spawnChild\(\{\s*pairing: _pairingSession,\s*noRestart: _noRestartSession/s);
 assert.match(supervisor, /pairing\s*: Boolean\(opts\.pairing\),\s*noRestart\s*: Boolean\(opts\.noRestart\)/s);
+
+// The active supervisor/queue formation must have exactly one pairing owner.
+// A direct fallback after a transient empty queue result creates a second
+// registration socket and invalidates the first code.
+assert.match(pairingRoute, /do not start a direct supervisor fallback here/);
+assert.match(pairingRoute, /if \(supervisor\.isSupervisorActive\?\.\(\)\) \{\s*console\.log\(\`\[Pairing\]/s);
+assert.doesNotMatch(pairingRoute, /supervisor\.handlePairingRequest\(clean\)\.catch/);
 
 // The code must be requested only after Baileys reports the socket as open,
 // and the socket must use a stable Chrome companion identity.

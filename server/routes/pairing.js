@@ -305,10 +305,15 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
 
     // Kick the processor immediately instead of waiting for its next interval.
     // This removes a race during startup where the API is ready but the first
-    // 150ms queue tick has not yet run. If the database is unavailable, there
-    // is no queue for the processor to claim, so use the local same-process
-    // runtime as a deliberate fallback; its local pairing JSON is still the
-    // source used by /code/:number.
+    // 150ms queue tick has not yet run.
+    //
+    // IMPORTANT: do not start a direct supervisor fallback here. The queue and
+    // this HTTP route run in the same web process, and a delayed DB read can
+    // make the queue return false even though the request becomes claimable a
+    // moment later. Starting a supervisor directly in that gap creates two
+    // registration owners for the same number; the second socket invalidates
+    // the first pairing code and WhatsApp reports "Couldn't link device".
+    // The processor remains the single owner on the configured WhatsApp host.
     setImmediate(async () => {
       let queueHadWork = false;
       try {
@@ -320,12 +325,13 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
 
       if (queueHadWork) return;
 
+      // In API-only/non-supervisor mode there is no worker queue owner, so the
+      // legacy local fallback remains valid. Never use it while the supervisor
+      // is active: that would be a second socket owner too.
       try {
         const supervisor = require('../../worker/supervisor');
         if (supervisor.isSupervisorActive?.()) {
-          supervisor.handlePairingRequest(clean).catch((runtimeErr) => {
-            console.error(`[Pairing] ${clean}: direct supervisor fallback failed:`, runtimeErr.message);
-          });
+          console.log(`[Pairing] ${clean}: queue has no claim yet; waiting for the next processor tick`);
           return;
         }
 
