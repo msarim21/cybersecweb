@@ -29,6 +29,8 @@ const {
     env,                // env vars to forward to child
     maxRestartsPerHour, // default 12
     restartDelayMs,     // base delay before first restart
+    pairing,            // pairing sessions must keep exactly one child socket
+    noRestart,          // supervisor-owned sessions must not self-respawn
 } = workerData;
 
 const MAX_RESTARTS_PER_HOUR = maxRestartsPerHour ?? 12;
@@ -203,4 +205,11 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT',  shutdown);
 
 send('ready');
-spawnChild();
+// Pairing is a single WhatsApp registration handshake. If its child exits,
+// starting a replacement from this worker creates a second registration socket
+// and invalidates the code that was already shown to the user. Preserve the
+// supervisor's noRestart contract for the initial child as well as later exits.
+spawnChild({
+    pairing: Boolean(pairing),
+    noRestart: Boolean(noRestart),
+});

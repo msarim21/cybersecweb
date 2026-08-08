@@ -12,3 +12,4 @@
 - [Async pairing request](async-pairing-request.md) — pairing HTTP requests return immediately; the client polls the local/DB code handoff while the WhatsApp socket continues negotiating.
 - [Anti-delete storage boundary](antidelete-storage-boundary.md) — anti-delete is a disposable per-bot JSON cache; keep it out of Mongo session persistence by default.
 - [Pairing browser identity](pairing-browser-identity.md) — phone-number linking uses an Ubuntu Chrome companion profile; Safari-style identity produced rejected codes.
+- [Pairing child ownership](pairing-child-ownership.md) — supervisor noRestart must propagate through worker-thread startup or a dead pairing socket can self-respawn and invalidate its code.

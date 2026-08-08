@@ -395,6 +395,8 @@ function _spawnThread(clean, opts = {}) {
             env             : _buildThreadEnv({ BOT_PAIRING: opts.pairing ? '1' : '0' }),
             maxRestartsPerHour: MAX_RESTARTS_PER_HOUR,
             restartDelayMs  : 10_000,
+            pairing         : Boolean(opts.pairing),
+            noRestart       : Boolean(opts.noRestart),
         },
     });
 
