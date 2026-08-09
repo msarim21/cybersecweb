@@ -12,6 +12,7 @@ const botThread = read('worker/bot-thread.js');
 const supervisor = read('worker/supervisor.js');
 const pair = read('pair.js');
 const pairingRoute = read('server/routes/pairing.js');
+const pairingProcessor = read('worker/pairing-processor.js');
 
 // A pairing child must not restart itself after a socket close. A second
 // registration socket invalidates the code that WhatsApp already displayed.
@@ -37,5 +38,16 @@ assert.match(pair, /await nexus\.requestPairingCode\(phoneNumber\)/);
 // socket when a proxy/browser request times out.
 assert.match(pairingRoute, /const result = \{ async: true, number: clean, status: 'requested'/);
 assert.match(pairingRoute, /setImmediate\(async \(\) => \{/);
+
+// The database queue may contain several requested numbers, but only one
+// WhatsApp registration socket may run at a time. Otherwise the second socket
+// invalidates the first code and the user sees a plausible but rejected code.
+assert.match(pairingProcessor, /if \(global\._pairingProcessorBusy\) return true/);
+assert.match(pairingProcessor, /global\._pairingProcessorBusy = true/);
+assert.match(pairingProcessor, /global\._pairingProcessorBusy = false/);
+assert.match(pairingProcessor, /global\._pairingInFlight\.has\(clean\)/);
+assert.match(pairingProcessor, /break;\s*}\s*return true;/s);
+assert.match(supervisor, /Pairing queued for \+\$\{num\}: worker slot is still in use/);
+assert.match(supervisor, /resetPairingRequest\(num\)/);
 
 console.log('[pairing-lifecycle] PASS: single-child handoff, socket readiness, Chrome identity, and async request invariants');

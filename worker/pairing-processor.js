@@ -29,6 +29,11 @@ function isPairingHost() {
 
 async function processPairingQueue() {
     if (!isPairingHost()) return false;
+    // The interval timer can overlap while a database query is in flight.
+    // Serialize the claim phase so two ticks cannot each claim a different
+    // number before _pairingProcessorBusy is set for the first runtime.
+    if (global._pairingProcessorTickBusy) return true;
+    global._pairingProcessorTickBusy = true;
 
     try {
         const {
@@ -43,6 +48,13 @@ async function processPairingQueue() {
         if (!pending.length) return false;
 
         if (!global._pairingInFlight) global._pairingInFlight = new Set();
+        // A WhatsApp registration code is socket-scoped. Even though each
+        // number has its own request record, opening two registration sockets
+        // at the same time makes Baileys/WhatsApp invalidate one of them.
+        // Keep the queue durable in the database and claim only one request;
+        // the next interval will pick up the next number after this runtime
+        // reaches connection.open or fails.
+        if (global._pairingProcessorBusy) return true;
 
         for (const clean of pending) {
             if (!clean) continue;
@@ -92,6 +104,7 @@ async function processPairingQueue() {
             const claimed = await markPairingInProgress(clean).catch(() => false);
             if (!claimed) continue;
 
+            global._pairingProcessorBusy = true;
             (async () => {
                 try {
                     const { logBotEvent } = require('../allfunc/bot-lifecycle');
@@ -205,13 +218,20 @@ async function processPairingQueue() {
                     } catch (_) {}
                 } finally {
                     global._pairingInFlight.delete(clean);
+                    global._pairingProcessorBusy = false;
                 }
             })();
+            // Do not claim another request during this poll. The runtime above
+            // owns the only registration socket until its full login handoff
+            // completes.
+            break;
         }
         return true;
     } catch (err) {
         console.error('[PairingQueue] Error:', err.message);
         return false;
+    } finally {
+        global._pairingProcessorTickBusy = false;
     }
 }
 

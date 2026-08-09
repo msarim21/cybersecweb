@@ -952,11 +952,12 @@ async function handlePairingRequest(clean) {
         ensureBotWorkspace(num);
         const slotReady = await preparePairingSlot(num);
         if (!slotReady) {
-            console.log(chalk.red(`[Supervisor] Pairing aborted for +${num}: no worker slot available`));
-            await require('../server/db-service').markPairingFailed(
-                num,
-                'No WhatsApp worker slot was available on the pairing host'
-            ).catch(() => {});
+            // A different pairing socket may still be finishing its login
+            // handoff. This is a capacity condition, not a bad phone number
+            // or a rejected code. Return the request to the durable queue so
+            // the single pairing processor retries it after that socket exits.
+            console.log(chalk.yellow(`[Supervisor] Pairing queued for +${num}: worker slot is still in use`));
+            await require('../server/db-service').resetPairingRequest(num).catch(() => {});
             return;
         }
 
