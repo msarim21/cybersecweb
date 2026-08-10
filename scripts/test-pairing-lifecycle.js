@@ -49,5 +49,13 @@ assert.match(pairingProcessor, /global\._pairingInFlight\.has\(clean\)/);
 assert.match(pairingProcessor, /break;\s*}\s*return true;/s);
 assert.match(supervisor, /Pairing queued for \+\$\{num\}: worker slot is still in use/);
 assert.match(supervisor, /resetPairingRequest\(num\)/);
+assert.match(supervisor, /global\._pairingOwner = num/);
+assert.match(supervisor, /Sync\/recovery paused while pairing/);
+assert.match(supervisor, /async function stopBotAndWait/);
+assert.match(supervisor, /entry\.thread\.postMessage\(\{ cmd: 'stop' \}\)/);
+assert.match(supervisor, /pairing → full bot \(same socket\)/);
+assert.match(botThread, /case 'promote':/);
+assert.match(botThread, /await stopChild\('SIGTERM'\)/);
+assert.match(botThread, /child\.exitCode === null\)\s*\{\s*try \{ child\.kill\('SIGKILL'\)/s);
 
 console.log('[pairing-lifecycle] PASS: single-child handoff, socket readiness, Chrome identity, and async request invariants');

@@ -44,8 +44,8 @@ let _restartTimes   = [];
 let _totalRestarts  = 0;
 let _shuttingDown   = false;
 let _pingInterval   = null;
-const _pairingSession = Boolean(pairing);
-const _noRestartSession = Boolean(noRestart);
+let _pairingSession = Boolean(pairing);
+let _noRestartSession = Boolean(noRestart);
 
 function send(type, payload = {}) {
     try { parentPort.postMessage({ type, botNumber, ...payload }); } catch (_) {}
@@ -142,17 +142,45 @@ function spawnChild(opts = {}) {
 }
 
 function stopChild(signal = 'SIGTERM') {
-    if (!_child || _child.killed) return;
-    try { _child.kill(signal); } catch (_) {}
-    _child = null;
-    updateSlot();
+    const child = _child;
+    if (!child || child.killed || child.exitCode !== null) {
+        _child = null;
+        updateSlot();
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (_child === child) _child = null;
+            updateSlot();
+            resolve();
+        };
+
+        child.once('exit', finish);
+        try { child.kill(signal); } catch (_) { finish(); return; }
+
+        // bot-runner normally flushes credentials before exiting. Never leave
+        // an orphaned Baileys socket behind if that graceful shutdown stalls.
+        setTimeout(() => {
+            // child.killed only means Node successfully sent the signal; it
+            // does not mean the process has exited. Check exitCode so a
+            // stalled Baileys process still gets hard-killed.
+            if (child.exitCode === null) {
+                try { child.kill('SIGKILL'); } catch (_) {}
+            }
+            finish();
+        }, signal === 'SIGKILL' ? 2_000 : 18_000);
+    });
 }
 
-function shutdown() {
+async function shutdown() {
     if (_shuttingDown) return;
     _shuttingDown = true;
     clearInterval(_pingInterval);
-    stopChild('SIGTERM');
+    await stopChild('SIGTERM');
     slot.clear();
     send('threadStopped');
     setTimeout(() => process.exit(0), 2000);
@@ -167,8 +195,7 @@ parentPort.on('message', (msg) => {
             });
             break;
         case 'stop':
-            _shuttingDown = true;
-            stopChild('SIGTERM');
+            shutdown().catch(() => process.exit(1));
             break;
         case 'restart':
             if (_noRestartSession) break;
@@ -179,7 +206,15 @@ parentPort.on('message', (msg) => {
             }, 2000);
             break;
         case 'kill':
-            stopChild('SIGKILL');
+            stopChild('SIGKILL').catch(() => {});
+            break;
+        case 'promote':
+            // Keep the already-authenticated socket alive. Killing it and
+            // spawning a second registered socket immediately after pairing
+            // can produce a 440 conflict and lose the just-created session.
+            _pairingSession = false;
+            _noRestartSession = false;
+            send('promoted');
             break;
         case 'ping':
             send('pong', { pid: _child?.pid, running: slot.isRunning() });

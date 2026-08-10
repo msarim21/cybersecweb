@@ -473,9 +473,63 @@ function killBot(botNum, signal = 'SIGTERM') {
 function spawnBot(botNum, opts = {}) {
     const clean = cleanBotNum(botNum);
     if (!clean) return null;
+    // Pairing owns the only WhatsApp registration socket. Normal recovery,
+    // autoload, and rotation must not start an old bot while that socket is
+    // waiting for the phone to finish linking.
+    if (global._pairingOwner && !opts.pairing && clean !== global._pairingOwner) {
+        console.log(chalk.gray(
+            `[Supervisor] ⏸ Normal spawn suppressed during pairing +${global._pairingOwner}: +${clean}`
+        ));
+        return null;
+    }
     if (threads.has(clean) && !opts.force) return threads.get(clean).thread;
     if (opts.force) killBot(clean);
     return _spawnThread(clean, opts);
+}
+
+/**
+ * Stop a normal bot and wait for its nested bot-runner/Baileys child to exit.
+ * Worker.terminate() only stops the worker_thread; without this handshake the
+ * child socket can remain alive long enough to commit the old account after
+ * the new pairing socket has already displayed its code.
+ */
+async function stopBotAndWait(botNum, timeoutMs = 20_000) {
+    const clean = cleanBotNum(botNum);
+    const entry = threads.get(clean);
+    if (!entry?.thread) return true;
+
+    entry.noRestart = true;
+    _intentionalStops.add(clean);
+
+    const exited = new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            resolve(ok);
+        };
+        entry.thread.once('exit', () => finish(true));
+        try {
+            entry.thread.postMessage({ cmd: 'stop' });
+        } catch (_) {
+            finish(false);
+        }
+        setTimeout(() => finish(false), timeoutMs);
+    });
+
+    const cleanExit = await exited;
+    if (!cleanExit) {
+        try { entry.thread.terminate(); } catch (_) {}
+        if (threads.get(clean) === entry) {
+            threads.delete(clean);
+            wrapSlot(sharedBuffer, entry.slotIndex).clear();
+            _updateActiveBotCount();
+        }
+        console.log(chalk.red(`[Supervisor] ⚠️ Forced stop for +${clean}: child did not exit cleanly`));
+        return false;
+    }
+    console.log(chalk.yellow(`[Supervisor] Stopped +${clean} after child socket exit`));
+    return true;
 }
 
 /**
@@ -515,11 +569,10 @@ async function preparePairingSlot(botNum, waitMs = 15_000) {
             console.log(chalk.yellow(
                 `[Supervisor] 🔗 Reserving slot for pairing +${clean} — rotating out +${victimNumber}`
             ));
-            killBot(victimNumber, 'SIGTERM');
-            // Give Baileys time to close its WebSocket before the new
-            // registration socket is created; otherwise WhatsApp can return
-            // stream conflict 440 even though the old thread was terminated.
-            await new Promise((resolve) => setTimeout(resolve, 1_500));
+            // Wait for the nested bot-runner to finish closing its actual
+            // Baileys socket. A worker-thread terminate alone can orphan that
+            // child and let its old connection.open handler commit later.
+            await stopBotAndWait(victimNumber);
             continue;
         }
 
@@ -589,17 +642,22 @@ function promotePairingToNormal(botNum) {
     if (!entry?.pairing) return false;
     if (!_hasRegisteredCreds(clean)) return false;
 
-    console.log(chalk.cyan(`[Supervisor] 🔄 Promoting +${clean}: pairing → full bot`));
-    killBot(clean, 'SIGTERM');
-    setTimeout(() => {
-        if (!_active || threads.has(clean)) return;
-        spawnBot(clean);
-    }, 2500);
+    console.log(chalk.cyan(`[Supervisor] 🔄 Promoting +${clean}: pairing → full bot (same socket)`));
+    entry.pairing = false;
+    entry.noRestart = false;
+    try { entry.thread.postMessage({ cmd: 'promote' }); } catch (_) {}
     return true;
 }
 
 // ── syncBots ─────────────────────────────────────────────────────────────────
 async function syncBots() {
+    if (global._pairingOwner) {
+        console.log(chalk.gray(
+            `[Supervisor] ⏸ Sync/recovery paused while pairing +${global._pairingOwner} owns the WhatsApp socket`
+        ));
+        return false;
+    }
+
     try {
         const { syncStoppedWithLinkedNumbers } = require('../allfunc/stopped-bots');
         await syncStoppedWithLinkedNumbers();
@@ -897,6 +955,13 @@ async function handlePairingRequest(clean) {
     const num = cleanBotNum(clean);
     if (!num) return;
     if (!global._pairingInFlight) global._pairingInFlight = new Set();
+    if (global._pairingOwner && global._pairingOwner !== num) {
+        console.log(chalk.gray(
+            `[Supervisor] Pairing +${num} remains queued while +${global._pairingOwner} owns the socket`
+        ));
+        await require('../server/db-service').resetPairingRequest(num).catch(() => {});
+        return;
+    }
 
     // User requested a fresh code — supersede any in-flight pairing child.
     if (global._pairingInFlight.has(num)) {
@@ -906,6 +971,7 @@ async function handlePairingRequest(clean) {
         await new Promise((r) => setTimeout(r, 800));
     }
     global._pairingInFlight.add(num);
+    global._pairingOwner = num;
 
     console.log(chalk.cyan(`[Supervisor] 🔗 Pairing +${num} — spawning isolated thread`));
 
@@ -1024,6 +1090,7 @@ async function handlePairingRequest(clean) {
         }
     } finally {
         global._pairingInFlight.delete(num);
+        if (global._pairingOwner === num) delete global._pairingOwner;
     }
 }
 
@@ -1297,6 +1364,7 @@ module.exports = {
     killBot,
     stopBotExternal,
     recoverBotExternal,
+    stopBotAndWait,
     handlePairingRequest,
     markBotPromoted,
     promotePairingToNormal,
