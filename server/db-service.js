@@ -1279,8 +1279,42 @@ async function disconnectAllUserDevices(userId) {
 // PAIRING QUEUE — used by worker/pairing-processor.js (isolated mode)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Requests stuck in `in_progress` are orphaned when the process that claimed
+ * them restarts or crashes — the number then becomes permanently unpairable.
+ * Return anything older than 5 minutes back to `requested`.
+ */
+async function reclaimStalePairingClaims(staleMs = 5 * 60_000) {
+  try {
+    const cutoff = new Date(Date.now() - staleMs);
+    if (isMongoMode()) {
+      const { PairingRequest } = M();
+      const res = await PairingRequest.updateMany(
+        { status: 'in_progress', updatedAt: { $lt: cutoff } },
+        { $set: { status: 'requested', updatedAt: new Date() } }
+      );
+      if (res?.modifiedCount) {
+        console.log(`[db-service] Reclaimed ${res.modifiedCount} stale pairing claim(s)`);
+      }
+      return res?.modifiedCount || 0;
+    }
+    const { rowCount } = await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'requested'
+       WHERE pairing_status = 'in_progress'
+         AND (last_active IS NULL OR last_active < NOW() - INTERVAL '5 minutes')`
+    );
+    if (rowCount) console.log(`[db-service] Reclaimed ${rowCount} stale pairing claim(s)`);
+    return rowCount;
+  } catch (err) {
+    console.error('[db-service] reclaimStalePairingClaims:', err.message);
+    return 0;
+  }
+}
+
 async function getPendingPairingRequests() {
   try {
+    await reclaimStalePairingClaims();
     if (isMongoMode()) {
       const { PairingRequest, LinkedNumber } = M();
       const docs = await PairingRequest.find({ status: 'requested' })
@@ -1981,7 +2015,7 @@ module.exports = {
   saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,
   countAdmins,
-  getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
+  getPendingPairingRequests, reclaimStalePairingClaims, markPairingInProgress, resetPairingRequest,
   markPairingFailed, markPairingConnected, getPairingState, clearPairingRequest, ensurePairingRequest,
   setPairingCode, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices, getOwnerSubscriptionByNumber,
