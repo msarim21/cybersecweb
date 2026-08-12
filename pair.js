@@ -1211,7 +1211,30 @@ async function _startpairing(nexusDevNumber, options = {}) {
             // reconnect behind the user's back. Any code already displayed
             // belongs to this dead socket and will always be rejected by
             // WhatsApp when a replacement socket is created.
-            if (tracker.pairingSession && !tracker.pairingConnected) {
+            // WhatsApp closes the registration socket with 515 (restartRequired)
+            // *immediately after* the phone accepts the pairing code — often
+            // before `connection.open` ever fires. Treating that close as a
+            // failure killed pairing at the exact moment it succeeded. Only
+            // fail when the socket died without registered credentials.
+            const _credsRegistered = !!(
+                nexus?.authState?.creds?.registered ||
+                nexus?.authState?.creds?.me?.id ||
+                nexus?.user?.id
+            );
+            if (tracker.pairingSession && !tracker.pairingConnected
+                && reason === DisconnectReason.restartRequired && _credsRegistered) {
+                console.log(chalk.blue(`🔄 [${nexusDevNumber}] Pairing accepted — restarting socket to finish login`));
+                tracker.pairingPhase = 'restarting_after_pair';
+                if (global.__ISOLATED_BOT) {
+                    setTimeout(() => process.exit(1), 2000);
+                    return;
+                }
+                await sleep(2000);
+                queuePairing(nexusDevNumber);
+                return;
+            }
+
+            if (tracker.pairingSession && !tracker.pairingConnected && !_credsRegistered) {
                 try {
                     const { markPairingFailed } = require('./server/db-service');
                     await markPairingFailed(
