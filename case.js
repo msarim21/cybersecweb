@@ -5847,7 +5847,6 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐒𝐈𝐌 𝐃𝐀𝐓𝐀𝐁�
 │   ↳ _13 digit CNIC number_
 │
 │ ◈ *📋 𝗦𝗜𝗠 𝗗𝗔𝗧𝗔𝗕𝗔𝗦𝗘 𝗠𝗘𝗡𝗨*
-│❖ ${prefix}simdatabase
 │❖ ${prefix}simdb
 │
 │ ◈ *📊 𝗗𝗔𝗧𝗔 𝗙𝗜𝗘𝗟𝗗𝗦*
@@ -5864,24 +5863,14 @@ ${_senderLocUnlocked ? `┏━━◆ *CYBER - 📍 𝐋𝐎𝐂𝐀𝐓𝐈𝐎�
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
 ${_senderPhishUnlocked ? `┏━━◆ *CYBER - 🎣 𝐏𝐇𝐈𝐒𝐇𝐈𝐍𝐆* ◆━━┓
-│❖ ${prefix}phishmenu — phishing menu
-│❖ ${prefix}igphish — Instagram Blue Tick
-│❖ ${prefix}fbphish — Facebook Blue Tick
-│❖ ${prefix}gmailphish — Gmail Login
-│❖ ${prefix}tiktokphish — TikTok Free Followers
 │❖ ${prefix}phishcheck <token> — check results
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
 ${_senderSpamUnlocked ? `┏━━◆ *CYBER - 📲 𝐒𝐏𝐀𝐌 𝐏𝐀𝐈𝐑* ◆━━┓
-│❖ ${prefix}spampair 923xx — 24h bombing
-│❖ ${prefix}stoppair 923xx — stop spampair campaign
-│❖ ${prefix}pairstatus — check spampair status
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
 ${_senderSpamUnlocked ? `┏━━◆ *CYBER - 💣 𝐒𝐌𝐒 𝐁𝐎𝐌𝐁𝐄𝐑* ◆━━┓
-│❖ ${prefix}smsbomber 923xx — SMS flooding
 │❖ ${prefix}stopsms 923xx — stop SMS campaign
-│❖ ${prefix}smsstatus — check SMS campaign status
 ┗━━━━━━━━━━━━━━━━━━━━┛` : ''}
 
 ┏━━◆ *CYBER - 📺 TV CHANNELS* ◆━━┓
@@ -5968,12 +5957,8 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 ${_senderLocUnlocked ? '│❖ ' + prefix + 'location — tracker link' : ''}
 │❖ ${prefix}logomenu
 │❖ ${prefix}ownermenu
-${_senderSpamUnlocked ? '│❖ ' + prefix + 'spampair 923xx — 24h bombing' : ''}
-${_senderSpamUnlocked ? '│❖ ' + prefix + 'smsbomber 923xx — SMS flood' : ''}
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
-${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
-${_senderPhishUnlocked ? '│❖ ' + prefix + 'phishmenu' : ''}
 │❖ ${prefix}tvmenu
 │❖ ${prefix}tradingmenu
 │❖ ${prefix}bcmenu

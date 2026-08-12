@@ -2,13 +2,16 @@ const express = require('express');
 const router  = express.Router();
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const crypto = require('crypto');
 const { generateToken } = require('../middleware/auth');
 const {
   findUserById,
+  findUserByEmail,
+  findUserByGoogleId,
   createUser,
+  setUserGoogleId,
   setTrialExpiry,
 } = require('../db-service');
-const { getPool } = require('../db');
 
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -26,24 +29,22 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
 
       if (!email) return done(null, false, { message: 'No email from Google' });
 
-      const pool = getPool();
-      let { rows } = await pool.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
-      let user = rows[0];
+      let user = await findUserByGoogleId(googleId);
 
       if (!user) {
-        const emailRes = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
-        user = emailRes.rows[0];
+        user = await findUserByEmail(email);
         if (user) {
-          await pool.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, user.id]);
+          await setUserGoogleId(user.id, googleId);
           user.google_id = googleId;
         }
       }
 
       if (!user) {
-        const username = name.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20) + '_' + Math.floor(Math.random() * 9999);
-        const dummyPw  = await require('bcryptjs').hash(googleId + Date.now(), 10);
+        const suffix = crypto.randomBytes(3).toString('hex');
+        const username = `${name.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20) || 'user'}_${suffix}`;
+        const dummyPw  = crypto.randomBytes(32).toString('base64url');
         const newUser  = await createUser(username, email, dummyPw);
-        await pool.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, newUser.id]);
+        await setUserGoogleId(newUser.id, googleId);
 
         const trialExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
         await setTrialExpiry(newUser.id, trialExpiry);

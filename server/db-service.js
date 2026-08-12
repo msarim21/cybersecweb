@@ -23,9 +23,15 @@ function normUser(u) {
     password:          o.password,
     role:              o.role,
     subscription_plan: o.subscriptionPlan || o.subscription_plan,
+    subscription_status: o.subscriptionStatus || o.subscription_status || 'trial',
+    trial_start:       o.trialStart || o.trial_start || null,
     trial_expires_at:  o.trialExpiresAt   || o.trial_expires_at  || null,
+    subscription_expiry: o.subscriptionExpiry || o.subscription_expiry || null,
+    activated_by_admin: o.activatedByAdmin || o.activated_by_admin || false,
     upgrade_request:   o.upgradeRequest   || o.upgrade_request   || 'none',
     upgrade_request_at: o.upgradeRequestAt || o.upgrade_request_at || null,
+    license_key:       o.licenseKey || o.license_key || null,
+    google_id:         o.googleId || o.google_id || null,
     banned:            o.banned,
     last_active:       o.lastActive  || o.last_active,
     created_at:        o.createdAt   || o.created_at,
@@ -61,6 +67,25 @@ async function findUserByEmail(email, includePassword = false) {
   }
   const { rows } = await pg().query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
   return rows[0] || null;
+}
+
+async function findUserByGoogleId(googleId) {
+  if (!googleId) return null;
+  if (isMongoMode()) {
+    const { User } = M();
+    return normUser(await User.findOne({ googleId }));
+  }
+  const { rows } = await pg().query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+  return rows[0] || null;
+}
+
+async function setUserGoogleId(id, googleId) {
+  if (isMongoMode()) {
+    const { User } = M();
+    await User.findByIdAndUpdate(id, { googleId });
+    return;
+  }
+  await pg().query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, id]);
 }
 
 async function findUserById(id) {
@@ -545,6 +570,7 @@ async function savePairingOwner(number, userId, botName) {
 
 async function ensurePairingRequest(number, opts = {}) {
   const force = opts.force === true;
+  const ownerId = opts.ownerId != null ? String(opts.ownerId) : null;
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return null;
   if (isMongoMode()) {
@@ -562,6 +588,7 @@ async function ensurePairingRequest(number, opts = {}) {
           status: 'requested',
           code: null,
           attemptId: null,
+           ...(ownerId ? { ownerId } : {}),
           error: null,
           updatedAt: new Date(),
         },
@@ -735,6 +762,63 @@ async function isNumberInLinkedNumbers(number) {
     );
     return rows.length > 0;
   } catch (_) { return false; }
+}
+
+async function isNumberOwnedByUser(number, userId) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || userId == null) return false;
+  if (isMongoMode()) {
+    const { LinkedNumber, BotSession, PairingRequest } = M();
+    const linked = await LinkedNumber.exists({
+      ownerId: userId,
+      number: { $regex: `^${clean}(?:@s\\.whatsapp\\.net)?$`, $options: 'i' },
+    });
+    if (linked) return true;
+    const session = await BotSession.exists({ number: clean, pairingOwnerId: String(userId) });
+    if (session) return true;
+    const request = await PairingRequest.exists({ number: clean, ownerId: String(userId) });
+    return Boolean(request);
+  }
+  const { rows } = await pg().query(
+    `SELECT 1
+       FROM bot_sessions bs
+      WHERE bs.number = $1 AND bs.pairing_owner_id = $2
+     UNION ALL
+     SELECT 1
+       FROM linked_numbers ln
+      WHERE REGEXP_REPLACE(ln.number,'[^0-9]','','g') = $1 AND ln.owner_id = $3
+     LIMIT 1`,
+    [clean, String(userId), userId]
+  );
+  return rows.length > 0;
+}
+
+async function getNumberClaimOwner(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  if (isMongoMode()) {
+    const { LinkedNumber, BotSession, PairingRequest } = M();
+    const linked = await LinkedNumber.findOne({
+      number: { $regex: `^${clean}(?:@s\\.whatsapp\\.net)?$`, $options: 'i' },
+    }).select('ownerId').lean();
+    if (linked?.ownerId) return String(linked.ownerId);
+    const session = await BotSession.findOne({ number: clean }).select('pairingOwnerId').lean();
+    if (session?.pairingOwnerId) return String(session.pairingOwnerId);
+    const request = await PairingRequest.findOne({ number: clean }).select('ownerId').lean();
+    return request?.ownerId ? String(request.ownerId) : null;
+  }
+  const { rows } = await pg().query(
+    `SELECT owner_id::text AS owner_id
+       FROM linked_numbers
+      WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1
+     UNION ALL
+     SELECT pairing_owner_id AS owner_id
+       FROM bot_sessions
+      WHERE number = $1 AND pairing_owner_id IS NOT NULL
+     LIMIT 1`,
+    [clean]
+  );
+  return rows[0]?.owner_id ? String(rows[0].owner_id) : null;
 }
 
 // ── Per-number bot mode (self/public) stored in bot_sessions.bot_mode ───────
@@ -2001,14 +2085,15 @@ async function resetStaleConnectionStatuses() {
 }
 
 module.exports = {
-  findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
+  findUserByEmail, findUserByGoogleId, findUserById, findUserByEmailOrUsername, findUserByUsername,
+  setUserGoogleId,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
   banUser, deleteUser, updateUserPlan, getAllUsers, getStats,
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   setLinkedNumberStatus,
-  savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers,
+  savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers, isNumberOwnedByUser, getNumberClaimOwner,
   getBotMode, setBotMode,
   upsertBotSession, getActiveBotSessions, getBotSessionsByNumbers, setBotConnectionStatus,
   getAllActiveLinkedNumbers,

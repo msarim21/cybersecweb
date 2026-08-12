@@ -173,6 +173,16 @@ router.post('/', protect, async (req, res) => {
     if (!number || !botName)
       return res.status(400).json({ error: 'Number and bot name are required.' });
 
+    const clean = String(number).replace(/[^0-9]/g, '');
+    if (clean.length < 7 || clean.length > 15)
+      return res.status(400).json({ error: 'Invalid phone number format.' });
+    if (String(botName).trim().length > 50)
+      return res.status(400).json({ error: 'Bot name cannot exceed 50 characters.' });
+
+    const ownNumbers = await getNumbersByOwner(req.user.id);
+    const existing = ownNumbers.find((n) => String(n.number).replace(/[^0-9]/g, '') === clean);
+    if (existing) return res.status(200).json(existing);
+
     const user = await findUserById(req.user.id);
 
     if (isTrialExpired(user)) {

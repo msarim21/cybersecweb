@@ -5,6 +5,7 @@ const pairingRequestSchema = new mongoose.Schema({
   status:    { type: String, enum: ['requested', 'in_progress', 'code_ready', 'failed', 'expired'], default: 'requested' },
   code:      { type: String, default: null },
   attemptId: { type: String, default: null },
+  ownerId:   { type: String, default: null, index: true },
   error:     { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

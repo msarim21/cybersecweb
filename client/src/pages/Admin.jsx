@@ -2460,7 +2460,7 @@ Ye action immediately apply hoga.`)) return;
               <motion.div key="bugaccess" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 <div className="mb-5">
                   <h2 className="font-display text-xl font-bold tracking-widest" style={{ color: '#00ff88' }}>🐛 BUG & SIM DATABASE ACCESS CONTROL</h2>
-                  <p className="font-mono text-[10px] text-gray-500 mt-0.5">Manage secret code for .bugmenu and .simdatabase commands (.addkey1)</p>
+                  <p className="font-mono text-[10px] text-gray-500 mt-0.5">Manage the secret code for protected bug-menu commands (.addkey1)</p>
                 </div>
 
                 <div className="space-y-4 max-w-lg">
