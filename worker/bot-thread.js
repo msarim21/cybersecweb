@@ -46,6 +46,10 @@ let _shuttingDown   = false;
 let _pingInterval   = null;
 let _pairingSession = Boolean(pairing);
 let _noRestartSession = Boolean(noRestart);
+// Set after a pairing child exits with code 75 (WhatsApp 515 restart after the
+// pairing code was accepted). The replacement child must load the freshly
+// registered session instead of starting another registration handshake.
+let _forceNoPairing  = false;
 
 function send(type, payload = {}) {
     try { parentPort.postMessage({ type, botNumber, ...payload }); } catch (_) {}
@@ -79,7 +83,7 @@ function spawnChild(opts = {}) {
     const childEnv = {
         ...env,
         BOT_NUMBER  : botNumber,
-        BOT_PAIRING : opts.pairing ? '1' : (env.BOT_PAIRING === '1' ? '1' : '0'),
+        BOT_PAIRING : (!_forceNoPairing && (opts.pairing || env.BOT_PAIRING === '1')) ? '1' : '0',
         WHATSAPP_WORKER: '1',
         BOT_ISOLATION  : '1',
     };
@@ -101,6 +105,19 @@ function spawnChild(opts = {}) {
         _child = null;
         updateSlot();
         send('exit', { code, signal, restarts: _totalRestarts });
+
+        // Exit code 75 = pairing accepted, WhatsApp asked for a socket restart
+        // (515). Credentials are already registered, so restart exactly once as
+        // a normal session even for noRestart pairing children — otherwise the
+        // bot dies at the moment pairing succeeds.
+        if (!_shuttingDown && code === 75) {
+            _pairingSession   = false;
+            _noRestartSession = false;
+            _forceNoPairing   = true;
+            send('pairRestart', { reason: 'restartRequired after pairing accepted' });
+            setTimeout(() => { if (!_shuttingDown) spawnChild(); }, 3000);
+            return;
+        }
 
         if (_shuttingDown || opts.noRestart) return;
 

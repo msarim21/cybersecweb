@@ -1226,7 +1226,11 @@ async function _startpairing(nexusDevNumber, options = {}) {
                 console.log(chalk.blue(`🔄 [${nexusDevNumber}] Pairing accepted — restarting socket to finish login`));
                 tracker.pairingPhase = 'restarting_after_pair';
                 if (global.__ISOLATED_BOT) {
-                    setTimeout(() => process.exit(1), 2000);
+                    // Exit code 75 tells the supervising thread/parent that this
+                    // was a successful pairing needing a restart, NOT a crash.
+                    // A pairing child is spawned with noRestart, so a plain
+                    // exit(1) here left the session dead right after success.
+                    setTimeout(() => process.exit(75), 2000);
                     return;
                 }
                 await sleep(2000);

@@ -226,7 +226,31 @@ async function processPairingQueue() {
                     });
                     if (!global._pairingChildPids) global._pairingChildPids = new Map();
                     global._pairingChildPids.set(clean, child);
-                    child.on('exit', () => global._pairingChildPids?.delete(clean));
+                    child.on('exit', (code) => {
+                        global._pairingChildPids?.delete(clean);
+                        // Exit code 75 = pairing accepted but WhatsApp closed the
+                        // socket with 515 (restartRequired). Nothing else restarts
+                        // this fork, so relaunch once WITHOUT pairing mode to
+                        // finish login with the freshly registered credentials.
+                        if (code !== 75) return;
+                        try {
+                            const restarted = fork(runner, [clean], {
+                                env: {
+                                    ...process.env,
+                                    WHATSAPP_WORKER: '1',
+                                    BOT_ISOLATION: '1',
+                                    BOT_NUMBER: clean,
+                                    BOT_PAIRING: '0',
+                                },
+                                stdio: 'inherit',
+                                cwd: path.join(__dirname, '..'),
+                            });
+                            global._pairingChildPids.set(clean, restarted);
+                            restarted.on('exit', () => global._pairingChildPids?.delete(clean));
+                        } catch (e) {
+                            console.error(`[PairingQueue] Restart after pairing failed for ${clean}:`, e.message);
+                        }
+                    });
 
                     // Phase 1: Wait for pairing code (max 90s)
                     const codeDeadline = Date.now() + 90_000;
@@ -272,6 +296,19 @@ async function processPairingQueue() {
                         if (st?.status === 'failed' || !st) break;
                         await new Promise((r) => setTimeout(r, 1000));
                     }
+
+                    // Never leave the UI spinning: if the number never went
+                    // active within the window, record a real failure.
+                    try {
+                        const finalSt = await getPairingState(clean).catch(() => null);
+                        if (finalSt && finalSt.status !== 'active' && finalSt.status !== 'failed') {
+                            try { child.kill('SIGKILL'); } catch (_) {}
+                            await markPairingFailed(
+                                clean,
+                                'Pairing not completed in time — please request a new code'
+                            ).catch(() => {});
+                        }
+                    } catch (_) {}
                 } catch (err) {
                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
                     try {
