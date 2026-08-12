@@ -27,6 +27,21 @@ function isPairingHost() {
     }
 }
 
+/**
+ * Wait until a claimed number reaches a terminal pairing outcome (active/failed)
+ * or the deadline passes. Used in supervisor mode so only one registration
+ * socket is ever open at a time.
+ */
+async function waitForPairingOutcome(clean, getPairingState, timeoutMs = 240_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const st = await getPairingState(clean).catch(() => null);
+        if (!st) break;
+        if (st.status === 'active' || st.status === 'failed') break;
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+}
+
 async function processPairingQueue() {
     if (!isPairingHost()) return false;
     // The interval timer can overlap while a database query is in flight.
@@ -54,7 +69,18 @@ async function processPairingQueue() {
         // Keep the queue durable in the database and claim only one request;
         // the next interval will pick up the next number after this runtime
         // reaches connection.open or fails.
-        if (global._pairingProcessorBusy) return true;
+        // Watchdog: if a previous runtime crashed before releasing the lock,
+        // the queue would stay blocked forever. Force-release after 5 minutes.
+        if (global._pairingProcessorBusy) {
+            const since = global._pairingProcessorBusySince || 0;
+            if (since && Date.now() - since > 5 * 60_000) {
+                console.warn('[PairingQueue] Busy lock held >5min — force releasing');
+                global._pairingProcessorBusy = false;
+                global._pairingProcessorBusySince = 0;
+            } else {
+                return true;
+            }
+        }
 
         for (const clean of pending) {
             if (!clean) continue;
@@ -105,6 +131,7 @@ async function processPairingQueue() {
             if (!claimed) continue;
 
             global._pairingProcessorBusy = true;
+            global._pairingProcessorBusySince = Date.now();
             (async () => {
                 try {
                     const { logBotEvent } = require('../allfunc/bot-lifecycle');
@@ -113,7 +140,12 @@ async function processPairingQueue() {
                     // Isolated mode: supervisor spawns a dedicated pairing child
                     const { isSupervisorActive, handlePairingRequest } = require('./supervisor');
                     if (isSupervisorActive()) {
+                        global._pairingInFlight.add(clean);
                         await handlePairingRequest(clean);
+                        // Hold the single-socket lock until this number reaches a
+                        // terminal outcome, otherwise the next tick opens a second
+                        // registration socket and WhatsApp invalidates the code.
+                        await waitForPairingOutcome(clean, getPairingState);
                         return;
                     }
 
@@ -198,10 +230,23 @@ async function processPairingQueue() {
 
                     // Phase 1: Wait for pairing code (max 90s)
                     const codeDeadline = Date.now() + 90_000;
+                    let gotCode = false;
                     while (Date.now() < codeDeadline) {
                         const st = await getPairingState(clean).catch(() => null);
-                        if (st?.code || st?.status === 'active') break;
+                        if (st?.code || st?.status === 'active') { gotCode = true; break; }
                         await new Promise((r) => setTimeout(r, 400));
+                    }
+
+                    // No code within 90s means the registration socket is stuck.
+                    // Kill it and surface a real error instead of leaving the UI
+                    // spinning on CONNECTING forever.
+                    if (!gotCode) {
+                        try { child.kill('SIGKILL'); } catch (_) {}
+                        await markPairingFailed(
+                            clean,
+                            'No pairing code issued within 90s — please try again'
+                        ).catch(() => {});
+                        return;
                     }
 
                     // Phase 2: Wait for user to enter code → bot becomes active (max 3 min)
@@ -235,6 +280,7 @@ async function processPairingQueue() {
                 } finally {
                     global._pairingInFlight.delete(clean);
                     global._pairingProcessorBusy = false;
+                    global._pairingProcessorBusySince = 0;
                 }
             })();
             // Do not claim another request during this poll. The runtime above
