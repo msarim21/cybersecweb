@@ -150,10 +150,26 @@ async function processPairingQueue() {
                         return;
                     }
 
-                    // No valid creds in DB — proceed with destructive fresh pairing
+                    // No valid creds in DB — proceed with destructive fresh pairing.
+                    // Wipe BOTH the digits folder and the legacy
+                    // `<digits>@s.whatsapp.net` folder; leaving the legacy one
+                    // behind made pair.js reuse stale auth keys and the phone
+                    // answered "Couldn't link device".
+                    const legacySessionPath = path.join(
+                        __dirname, '..', 'nexstore', 'pairing', `${clean}@s.whatsapp.net`
+                    );
                     if (fs.existsSync(sessionPath)) {
                         deleteFolderRecursive(sessionPath);
                     }
+                    if (fs.existsSync(legacySessionPath)) {
+                        deleteFolderRecursive(legacySessionPath);
+                    }
+                    try {
+                        const staleCode = path.join(
+                            __dirname, '..', 'nexstore', 'pairing', `pairing_${clean}.json`
+                        );
+                        if (fs.existsSync(staleCode)) fs.unlinkSync(staleCode);
+                    } catch (_) {}
 
                     try {
                         const { deleteSessionCreds } = require('../session-db');

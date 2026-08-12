@@ -435,8 +435,50 @@ async function _startpairing(nexusDevNumber, options = {}) {
 
     const { version, isLatest } = await fetchLatestBaileysVersion();
     
-    // Ensure session directory exists
-    const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
+    // ✅ FIX (pairing): auth state MUST live in the digits-only folder.
+    // _startpairing() receives a canonical JID (`<digits>@s.whatsapp.net`), so the
+    // old path created `./nexstore/pairing/<digits>@s.whatsapp.net` while the rest
+    // of the app (pairing-processor, autoload, session-db, keepalive) reads/wipes
+    // `./nexstore/pairing/<digits>`. Result: a "fresh" pairing reused stale auth
+    // keys from a previous expired attempt and WhatsApp rejected the code with
+    // "Couldn't link device".
+    const cleanSessionNumber = cleanBotNumber(nexusDevNumber);
+    const sessionPath = `./nexstore/pairing/${cleanSessionNumber}`;
+    const legacySessionPath = `./nexstore/pairing/${cleanSessionNumber}@s.whatsapp.net`;
+
+    // Migrate (or drop) the legacy JID-named folder so both paths can never
+    // hold two different auth states for the same number.
+    try {
+        if (fs.existsSync(legacySessionPath)) {
+            const legacyCreds = path.join(legacySessionPath, 'creds.json');
+            const hasRegistered = fs.existsSync(legacyCreds) && (() => {
+                try {
+                    const c = JSON.parse(fs.readFileSync(legacyCreds, 'utf-8'));
+                    return !!(c.registered || c.me?.id);
+                } catch (_) { return false; }
+            })();
+            if (hasRegistered && !fs.existsSync(path.join(sessionPath, 'creds.json'))) {
+                ensureDirectoryExists(sessionPath);
+                for (const f of fs.readdirSync(legacySessionPath)) {
+                    try { fs.copyFileSync(path.join(legacySessionPath, f), path.join(sessionPath, f)); } catch (_) {}
+                }
+                console.log(chalk.cyan(`[Pairing] Migrated legacy session folder for ${cleanSessionNumber}`));
+            }
+            deleteFolderRecursive(legacySessionPath);
+        }
+    } catch (_) {}
+
+    // A fresh pairing request must always start from an empty auth state.
+    // Reusing half-written keys from an expired code is the #1 cause of
+    // "Couldn't link device" on the phone.
+    if (tracker.pairingSession) {
+        deleteFolderRecursive(sessionPath);
+        try {
+            const stalePairFile = `./nexstore/pairing/pairing_${cleanSessionNumber}.json`;
+            if (fs.existsSync(stalePairFile)) fs.unlinkSync(stalePairFile);
+        } catch (_) {}
+    }
+
     ensureDirectoryExists(sessionPath);
     
     const {
