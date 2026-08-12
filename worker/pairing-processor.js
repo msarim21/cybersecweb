@@ -224,10 +224,14 @@ async function processPairingQueue() {
                         stdio: 'inherit',
                         cwd: path.join(__dirname, '..'),
                     });
+                    let activeChild = child;
                     if (!global._pairingChildPids) global._pairingChildPids = new Map();
                     global._pairingChildPids.set(clean, child);
                     child.on('exit', (code) => {
-                        global._pairingChildPids?.delete(clean);
+                        if (activeChild === child) {
+                            global._pairingChildPids?.delete(clean);
+                            activeChild = null;
+                        }
                         // Exit code 75 = pairing accepted but WhatsApp closed the
                         // socket with 515 (restartRequired). Nothing else restarts
                         // this fork, so relaunch once WITHOUT pairing mode to
@@ -245,8 +249,13 @@ async function processPairingQueue() {
                                 stdio: 'inherit',
                                 cwd: path.join(__dirname, '..'),
                             });
+                            activeChild = restarted;
                             global._pairingChildPids.set(clean, restarted);
-                            restarted.on('exit', () => global._pairingChildPids?.delete(clean));
+                            restarted.on('exit', () => {
+                                if (activeChild !== restarted) return;
+                                global._pairingChildPids?.delete(clean);
+                                activeChild = null;
+                            });
                         } catch (e) {
                             console.error(`[PairingQueue] Restart after pairing failed for ${clean}:`, e.message);
                         }
@@ -265,7 +274,7 @@ async function processPairingQueue() {
                     // Kill it and surface a real error instead of leaving the UI
                     // spinning on CONNECTING forever.
                     if (!gotCode) {
-                        try { child.kill('SIGKILL'); } catch (_) {}
+                        try { activeChild?.kill('SIGKILL'); } catch (_) {}
                         await markPairingFailed(
                             clean,
                             'No pairing code issued within 90s — please try again'
@@ -283,7 +292,9 @@ async function processPairingQueue() {
                         if (st?.status === 'active') {
                             // Give child 8s to flush Signal keys to DB before SIGTERM
                             await new Promise(r => setTimeout(r, 8000));
-                            try { child.kill('SIGTERM'); } catch (_) {}
+                            const childToStop = activeChild;
+                            activeChild = null;
+                            try { childToStop?.kill('SIGTERM'); } catch (_) {}
                             // Give parent autoload time to pick it up
                             await new Promise(r => setTimeout(r, 5000));
                             try {
@@ -302,7 +313,7 @@ async function processPairingQueue() {
                     try {
                         const finalSt = await getPairingState(clean).catch(() => null);
                         if (finalSt && finalSt.status !== 'active' && finalSt.status !== 'failed') {
-                            try { child.kill('SIGKILL'); } catch (_) {}
+                            try { activeChild?.kill('SIGKILL'); } catch (_) {}
                             await markPairingFailed(
                                 clean,
                                 'Pairing not completed in time — please request a new code'
@@ -315,6 +326,11 @@ async function processPairingQueue() {
                         await markPairingFailed(clean, `Pairing processor error: ${err.message}`);
                     } catch (_) {}
                 } finally {
+                    const trackedChild = global._pairingChildPids?.get(clean);
+                    if (trackedChild && trackedChild.exitCode == null && !trackedChild.killed) {
+                        try { trackedChild.kill('SIGTERM'); } catch (_) {}
+                    }
+                    global._pairingChildPids?.delete(clean);
                     global._pairingInFlight.delete(clean);
                     global._pairingProcessorBusy = false;
                     global._pairingProcessorBusySince = 0;

@@ -9,6 +9,22 @@ const PAIRING_BASE = path.join(__dirname, '../../nexstore/pairing');
 const PAIR_MODULE = path.join(__dirname, '../../pair');
 const pairingFlights = new Map(); // clean number -> code-generation promise
 
+async function requirePairingOwner(req, res, next) {
+  try {
+    const clean = String(req.params.number || req.body?.phoneNumber || '').replace(/[^0-9]/g, '');
+    if (!clean) return res.status(400).json({ error: 'Invalid phone number format.' });
+    const { isNumberOwnedByUser } = require('../db-service');
+    if (!(await isNumberOwnedByUser(clean, req.user.id))) {
+      return res.status(404).json({ error: 'Pairing request not found.' });
+    }
+    req.pairingNumber = clean;
+    next();
+  } catch (err) {
+    console.error('[Pairing] Ownership check failed:', err.message);
+    res.status(500).json({ error: 'Could not verify pairing request ownership.' });
+  }
+}
+
 function ensureDir(p) {
   if (!fsSync.existsSync(p)) fsSync.mkdirSync(p, { recursive: true });
 }
@@ -53,10 +69,17 @@ router.post('/request', protect, async (req, res) => {
   if (clean.length < 7 || clean.length > 15)
     return res.status(400).json({ error: 'Invalid phone number format.' });
 
+  const { getNumberClaimOwner } = require('../db-service');
+  const claimOwner = await getNumberClaimOwner(clean);
+  if (claimOwner && claimOwner !== String(req.user.id)) {
+    return res.status(409).json({ error: 'This number is already linked or being paired by another account.' });
+  }
+
   // Do not let double-clicks or frontend retries create two WhatsApp
   // sockets for the same number. The phone may receive a code from the first
   // socket while the second socket invalidates its linking handshake.
-  const existingFlight = pairingFlights.get(clean);
+  const flightKey = clean;
+  const existingFlight = pairingFlights.get(flightKey);
   if (existingFlight) {
     try {
       const result = await existingFlight;
@@ -73,7 +96,7 @@ router.post('/request', protect, async (req, res) => {
     resolveFlight = resolve;
     rejectFlight = reject;
   });
-  pairingFlights.set(clean, flight);
+  pairingFlights.set(flightKey, flight);
 
   try {
     return await _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, rejectFlight);
@@ -84,7 +107,7 @@ router.post('/request', protect, async (req, res) => {
     }
     return;
   } finally {
-    if (pairingFlights.get(clean) === flight) pairingFlights.delete(clean);
+    if (pairingFlights.get(flightKey) === flight) pairingFlights.delete(flightKey);
   }
 });
 
@@ -117,8 +140,8 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
     // → clear them and allow fresh pairing instead of blocking forever.
     let isInLinkedNumbersDb = false;
     try {
-      const { isNumberInLinkedNumbers } = require('../db-service');
-      isInLinkedNumbersDb = await isNumberInLinkedNumbers(clean);
+      const { isNumberOwnedByUser } = require('../db-service');
+      isInLinkedNumbersDb = await isNumberOwnedByUser(clean, req.user.id);
     } catch (_) {
       // DB check failed — fall back to safe block (assume in DB)
       isInLinkedNumbersDb = true;
@@ -160,10 +183,11 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
       // Step 1: Is this number shown as ACTIVE in the dashboard (linked_numbers)?
       const lnResult = await pool.query(
         `SELECT status FROM linked_numbers
-         WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1
+           WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1
+            AND owner_id = $2
            AND status = 'active'
          LIMIT 1`,
-        [clean]
+         [clean, req.user.id]
       );
       if (lnResult.rows.length > 0) {
         // Step 2: Is the bot actually CONNECTED right now (bot_sessions)?
@@ -187,7 +211,8 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
         const BotSession = require('../models/BotSession');
         const LinkedNumberModel = require('../models/LinkedNumber');
         const ln = await LinkedNumberModel.findOne({
-          number: { $in: [clean, clean + '@s.whatsapp.net'] },
+           number: { $regex: `^${clean}(?:@s\\.whatsapp\\.net)?$`, $options: 'i' },
+           ownerId: req.user.id,
           status: 'active'
         }).lean();
         if (ln) {
@@ -251,7 +276,7 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
   // new socket is still negotiating.
   try {
     const { ensurePairingRequest } = require('../db-service');
-    await ensurePairingRequest(clean, { force: true });
+    await ensurePairingRequest(clean, { force: true, ownerId: req.user.id });
     console.log(`[Pairing] ${clean}: Pairing state reset for this request`);
   } catch (stateErr) {
     // Pairing can still use the local JSON handoff when Mongo is unavailable.
@@ -360,8 +385,8 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
 }
 
 // ── GET /api/pairing/status/:number ──────────────────────────────────────────
-router.get('/status/:number', protect, async (req, res) => {
-  const clean    = req.params.number.replace(/[^0-9]/g, '');
+router.get('/status/:number', protect, requirePairingOwner, async (req, res) => {
+  const clean    = req.pairingNumber;
   const flagFile = path.join(PAIRING_BASE, clean, 'connected.flag');
   if (fsSync.existsSync(flagFile)) {
     try {
@@ -382,9 +407,9 @@ router.get('/status/:number', protect, async (req, res) => {
 
 // ── GET /api/pairing/code/:number ────────────────────────────────────────────
 // Returns the current pairing code for a number (for polling)
-router.get('/code/:number', protect, async (req, res) => {
+router.get('/code/:number', protect, requirePairingOwner, async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  const clean = req.params.number.replace(/[^0-9]/g, '');
+  const clean = req.pairingNumber;
   const PAIRING_JSON = path.join(PAIRING_BASE, `pairing_${clean}.json`);
 
   // In the web-only formation this file is written by the same pairing

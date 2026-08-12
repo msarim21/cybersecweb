@@ -493,7 +493,7 @@ function spawnBot(botNum, opts = {}) {
  * child socket can remain alive long enough to commit the old account after
  * the new pairing socket has already displayed its code.
  */
-async function stopBotAndWait(botNum, timeoutMs = 20_000) {
+async function stopBotAndWait(botNum, timeoutMs = 25_000) {
     const clean = cleanBotNum(botNum);
     const entry = threads.get(clean);
     if (!entry?.thread) return true;

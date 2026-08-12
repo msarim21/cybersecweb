@@ -5,7 +5,7 @@ const os = require('os');
 let _menuSkeleton = null;
 
 function _menuCategories(prefix, bugUnlocked) {
-    const bug = bugUnlocked ? `│❖ ${prefix}bugmenu\n│❖ ${prefix}simdatabase\n` : '';
+    const bug = bugUnlocked ? `│❖ ${prefix}bugmenu\n` : '';
     return `│❖ ${prefix}allmenu
 │❖ ${prefix}aimenu
 │❖ ${prefix}animemenu
