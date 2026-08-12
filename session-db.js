@@ -344,7 +344,11 @@ async function backupSessionFolder(number, sessionPath) {
     const fs = require('fs');
     const path = require('path');
     const clean = String(number).replace(/[^0-9]/g, '');
-    const dir = sessionPath || path.join(__dirname, 'nexstore', 'pairing', `${clean}@s.whatsapp.net`);
+    // ✅ FIX: default to the digits-only folder (the one pair.js actually uses);
+    // fall back to the legacy JID folder only if it still exists.
+    const digitsDir = path.join(__dirname, 'nexstore', 'pairing', clean);
+    const legacyDir = path.join(__dirname, 'nexstore', 'pairing', `${clean}@s.whatsapp.net`);
+    const dir = sessionPath || (fs.existsSync(digitsDir) ? digitsDir : legacyDir);
     if (!fs.existsSync(dir)) return false;
 
     // ✅ FIX: Sirf essential files backup karo — MongoDB 16MB limit se bachne ke liye
