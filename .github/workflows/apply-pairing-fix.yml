@@ -1,0 +1,21 @@
+name: Apply pairing fix patch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply patch
+        run: |
+          git config user.name "lovable-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout -b fix/pairing-515-restart
+          git apply .lovable-patches/pairing-515.patch
+          node --check pair.js
+          git commit -am "fix(pairing): survive 515 restart after code accepted; pin baileys"
+          git push -f origin fix/pairing-515-restart
