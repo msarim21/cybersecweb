@@ -40,6 +40,13 @@ function deleteFolderRecursive(p) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Mirrors server/routes/numbers.js — keep both in sync.
+function getPlanLimit(plan) {
+  if (plan === 'pro') return 5;
+  if (plan === 'enterprise') return 999;
+  return 1;
+}
+
 function normalizePairingCode(rawCode) {
   const compact = String(rawCode || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
   if (compact.length !== 8) return null;
@@ -112,6 +119,30 @@ router.post('/request', protect, async (req, res) => {
 });
 
 async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, rejectFlight) {
+  // Plan limit must be enforced here: a successful pairing now links the number
+  // automatically, so it never passes through POST /api/numbers where the
+  // quota used to be checked.
+  try {
+    const { getNumbersByOwner, findUserById } = require('../db-service');
+    const owned = await getNumbersByOwner(req.user.id);
+    const alreadyOwned = owned.some((n) => String(n.number).replace(/[^0-9]/g, '') === clean);
+    if (!alreadyOwned) {
+      const user = await findUserById(req.user.id);
+      const limit = getPlanLimit(user?.subscription_plan);
+      if (owned.length >= limit) {
+        const body = {
+          error: 'PLAN_LIMIT_REACHED',
+          message: `You have reached the ${String(user?.subscription_plan || 'free').toUpperCase()} plan limit of ${limit} number(s).`,
+          limit,
+        };
+        resolveFlight({ httpStatus: 403, body });
+        return res.status(403).json(body);
+      }
+    }
+  } catch (limitErr) {
+    console.warn(`[Pairing] plan-limit check skipped for ${clean}: ${limitErr.message}`);
+  }
+
   // pair.js receives a WhatsApp JID and Baileys therefore uses the JID
   // directory. Older code only inspected the digits directory, allowing a
   // stale JID session to make pair.js skip requestPairingCode().

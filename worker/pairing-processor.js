@@ -151,12 +151,23 @@ async function handleNumber(clean, service) {
     getBotSessionsByNumbers,
   } = service;
 
-  // Already linked → never request a new code.
+  // Already linked AND still holding credentials → boot the bot, do not ask
+  // WhatsApp for a new code. A linked_numbers row on its own is NOT enough:
+  // after an unlink the row survives, and refusing to pair then made the
+  // number permanently unpairable.
   const linked = await isNumberInLinkedNumbers(clean).catch(() => false);
   if (linked) {
-    console.log(`[PairingQueue] ${clean} already linked — clearing request`);
-    await clearPairingRequest(clean).catch(() => {});
-    return;
+    let hasCreds = false;
+    try {
+      hasCreds = await require('../lib/pairing-engine').hasRegisteredSession(clean);
+    } catch (_) {}
+    if (hasCreds) {
+      console.log(`[PairingQueue] ${clean} already linked — reconnecting bot`);
+      await service.finalizePairedNumber(clean).catch(() => {});
+      await startBotFor(clean);
+      return;
+    }
+    console.log(`[PairingQueue] ${clean} linked but has no session — pairing again`);
   }
 
   const sessions = await getBotSessionsByNumbers([clean]).catch(() => ({}));
@@ -173,7 +184,7 @@ async function handleNumber(clean, service) {
       console.log(`[PairingQueue] ${clean} has stored credentials — reconnecting instead of pairing`);
       const { restoreCredsFromDb } = require('../session-db');
       await restoreCredsFromDb(clean, path.join(PAIR_ROOT, clean)).catch(() => {});
-      await clearPairingRequest(clean).catch(() => {});
+      await service.finalizePairedNumber(clean).catch(() => {});
       await startBotFor(clean);
       return;
     }
@@ -192,8 +203,10 @@ async function handleNumber(clean, service) {
   const exitCode = await runPairChild(clean);
 
   if (exitCode === 0) {
-    console.log(`[PairingQueue] ✅ +${clean} paired — starting bot`);
-    await clearPairingRequest(clean).catch(() => {});
+    console.log(`[PairingQueue] ✅ +${clean} paired — linking + starting bot`);
+    // The runner already finalized, but a crash between "open" and the DB
+    // write must not leave an unlinked number: finalize is idempotent.
+    await service.finalizePairedNumber(clean).catch(() => {});
     await sleep(1500);
     await startBotFor(clean);
     return;
