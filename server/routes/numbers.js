@@ -8,6 +8,7 @@ const {
   addNumber,
   toggleNumber,
   deleteNumber,
+  deleteNumberByPhone,
   findUserById,
   banUser,
   getSiteSetting,
@@ -369,9 +370,9 @@ router.post('/:id/force-disconnect', protect, async (req, res) => {
     const clean = String(target.number).replace(/[^0-9]/g, '');
     cleanupDisconnectedNumber(clean, target.number);
     await tryDeleteDbCreds(target.number);
+    await deleteNumberByPhone(clean);
     try {
-      const { upsertBotSession, clearPairingRequest } = require('../db-service');
-      await upsertBotSession(clean, 'inactive');
+      const { clearPairingRequest } = require('../db-service');
       await clearPairingRequest(clean);
     } catch (_) {}
 
@@ -390,9 +391,10 @@ router.delete('/:id', protect, async (req, res) => {
       const clean = String(deleted.number).replace(/[^0-9]/g, '');
       cleanupDisconnectedNumber(clean, deleted.number);
       await tryDeleteDbCreds(deleted.number);
+      await deleteNumberByPhone(clean);
       try {
-        const { upsertBotSession } = require('../db-service');
-        await upsertBotSession(clean, 'inactive');
+        const { clearPairingRequest } = require('../db-service');
+        await clearPairingRequest(clean);
       } catch (_) {}
     }
     res.json({ message: 'Number deleted successfully.' });
