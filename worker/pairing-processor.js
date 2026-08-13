@@ -123,23 +123,40 @@ async function startBotFor(clean) {
     removeFromStoppedBots(clean);
   } catch (_) {}
 
+  let started = false;
   try {
     const { isSupervisorActive, spawnBot } = require('./supervisor');
     if (isSupervisorActive()) {
       const thread = spawnBot(clean, { force: true });
       if (!thread) throw new Error(`Bot supervisor could not start +${clean}`);
-      return true;
+      started = true;
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn(`[PairingQueue] Supervisor start failed for ${clean}: ${err.message}`);
+  }
 
-  try {
+  if (!started) try {
     const { autoLoadPairs } = require('../autoload');
     await autoLoadPairs({ concurrent: true });
-    return true;
+    started = true;
   } catch (err) {
     console.error(`[PairingQueue] Could not start bot for ${clean}:`, err.message);
     throw err;
   }
+
+  // Pairing is not complete until the real command socket reports ready.
+  const service = require('../server/db-service');
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const sessions = await service.getBotSessionsByNumbers([clean]).catch(() => ({}));
+    const session = sessions?.[clean];
+    if (session?.commandReady === true && session?.connectionStatus === 'CONNECTED') return true;
+    if (session?.connectionStatus === 'LOGGED_OUT' || session?.connectionStatus === 'ERROR') {
+      throw new Error(session?.lastErrorMessage || `Bot +${clean} failed to connect`);
+    }
+    await sleep(1500);
+  }
+  throw new Error(`Bot +${clean} did not become command-ready within 90 seconds`);
 }
 
 /**
