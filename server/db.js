@@ -23,37 +23,100 @@ function _connectionLive() {
 
 const isDbReady = () => _dbReady && _connectionLive();
 
+// Faster, more resilient Mongo connection settings.
+// - compressors: less bytes over the wire (Atlas <-> Heroku) => quicker queries
+// - maxIdleTimeMS: recycle dead sockets instead of hanging on them
+// - waitQueueTimeoutMS: fail fast instead of piling up requests
+// - autoIndex only outside production (index builds slow down boot)
 const MONGO_OPTS = {
-  serverSelectionTimeoutMS: 15000,
-  socketTimeoutMS:          60000,
-  connectTimeoutMS:         20000,
+  serverSelectionTimeoutMS: 10000,
+  socketTimeoutMS:          45000,
+  connectTimeoutMS:         10000,
   heartbeatFrequencyMS:     10000,
+  maxIdleTimeMS:            60000,
+  waitQueueTimeoutMS:       10000,
   retryWrites:              true,
   retryReads:               true,
-  maxPoolSize:              20,
-  minPoolSize:              2,
+  maxPoolSize:              Number(process.env.MONGO_POOL_MAX || 25),
+  minPoolSize:              Number(process.env.MONGO_POOL_MIN || 5),
+  compressors:              ['zlib'],
+  autoIndex:                process.env.NODE_ENV !== 'production',
 };
+
+// Don't let queries hang forever when the connection is down — fail in 12s
+// so callers can retry instead of freezing a command.
+mongoose.set('bufferTimeoutMS', 12000);
+mongoose.set('strictQuery', false);
+
+let _reconnectAttempts = 0;
+let _reconnectTimer = null;
+let _pingTimer = null;
+
+function _scheduleReconnect() {
+  if (_reconnectTimer) return;
+  const delay = Math.min(30000, 1000 * Math.pow(2, _reconnectAttempts++));
+  _reconnectTimer = setTimeout(() => {
+    _reconnectTimer = null;
+    initDb().catch((err) => {
+      console.error('MongoDB reconnect failed:', err.message);
+      _scheduleReconnect();
+    });
+  }, delay);
+  if (_reconnectTimer.unref) _reconnectTimer.unref();
+}
+
+function _startKeepAlive() {
+  if (_pingTimer) return;
+  // Cheap ping keeps the Atlas socket warm so the first real query after an
+  // idle period isn't paying a fresh handshake (this is the "slow first
+  // command after some minutes" symptom).
+  _pingTimer = setInterval(() => {
+    if (mongoose.connection.readyState !== 1) return;
+    mongoose.connection.db.admin().ping().catch(() => {});
+  }, 30000);
+  if (_pingTimer.unref) _pingTimer.unref();
+}
 
 function _attachMongoHandlers() {
   if (_mongoHandlersAttached || !MONGO_URL) return;
   _mongoHandlersAttached = true;
+  _startKeepAlive();
   mongoose.connection.on('disconnected', () => {
     console.warn('⚠️  MongoDB disconnected — auto-reconnecting...');
     _dbReady = false;
     _initPromise = null;
-    setTimeout(() => {
-      initDb().catch((err) => {
-        console.error('MongoDB reconnect failed:', err.message);
-      });
-    }, 2000);
+    _scheduleReconnect();
   });
   mongoose.connection.on('error', (err) => {
     console.error('MongoDB error:', err.message);
   });
+  mongoose.connection.on('connected', () => {
+    _reconnectAttempts = 0;
+  });
   mongoose.connection.on('reconnected', () => {
     _dbReady = true;
+    _reconnectAttempts = 0;
     console.log('✅ MongoDB reconnected');
   });
+}
+
+
+// autoIndex is off in production for a fast boot, so build the indexes once
+// in the background instead — otherwise prod queries stay unindexed.
+let _indexesEnsured = false;
+function _ensureIndexes() {
+  if (_indexesEnsured) return;
+  _indexesEnsured = true;
+  setTimeout(() => {
+    for (const name of ['BotSession', 'LinkedNumber', 'PairingRequest', 'User', 'SiteSettings']) {
+      try {
+        const model = mongoose.models[name] || require(`./models/${name}`);
+        model.createIndexes().catch((err) => {
+          console.warn(`index build (${name}):`, err.message);
+        });
+      } catch (_) { /* model not loaded in this process */ }
+    }
+  }, 1500).unref?.();
 }
 
 const initDb = async () => {
@@ -93,6 +156,7 @@ const initDb = async () => {
     _attachMongoHandlers();
     _dbReady = true;
     console.log('✅ MongoDB connected');
+    _ensureIndexes();
     return;
   }
 

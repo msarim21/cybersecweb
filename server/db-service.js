@@ -822,29 +822,39 @@ async function getNumberClaimOwner(number) {
 }
 
 // ── Per-number bot mode (self/public) stored in bot_sessions.bot_mode ───────
+const _botModeCache = new Map(); // number -> { v, exp }
+const BOT_MODE_TTL_MS = 10000;
+
 async function getBotMode(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return 'public';
+  const hit = _botModeCache.get(clean);
+  if (hit && hit.exp > Date.now()) return hit.v;
+  let mode = 'public';
   if (isMongoMode()) {
     try {
       const { BotSession } = M();
       const doc = await BotSession.findOne({ number: clean }).select('botMode').lean();
-      return doc?.botMode || 'public';
+      mode = doc?.botMode || 'public';
+    } catch (_) { return 'public'; }
+  } else {
+    try {
+      const { rows } = await pg().query(
+        'SELECT bot_mode FROM bot_sessions WHERE number=$1 LIMIT 1',
+        [clean]
+      );
+      mode = rows[0]?.bot_mode || 'public';
     } catch (_) { return 'public'; }
   }
-  try {
-    const { rows } = await pg().query(
-      'SELECT bot_mode FROM bot_sessions WHERE number=$1 LIMIT 1',
-      [clean]
-    );
-    return rows[0]?.bot_mode || 'public';
-  } catch (_) { return 'public'; }
+  _botModeCache.set(clean, { v: mode, exp: Date.now() + BOT_MODE_TTL_MS });
+  return mode;
 }
 
 async function setBotMode(number, mode) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return;
   const safeMode = mode === 'self' ? 'self' : 'public';
+  _botModeCache.set(clean, { v: safeMode, exp: Date.now() + BOT_MODE_TTL_MS });
   if (isMongoMode()) {
     try {
       const { BotSession } = M();
@@ -1071,7 +1081,8 @@ async function getBotSessionsByNumbers(numbers) {
 async function getActiveBotSessions() {
   if (isMongoMode()) {
     const { BotSession } = M();
-    return (await BotSession.find({ status: 'active' }).sort({ lastActive: -1 })).map(s => s.number);
+    return (await BotSession.find({ status: 'active' })
+      .select('number').sort({ lastActive: -1 }).lean()).map(s => s.number);
   }
   const { rows } = await pg().query("SELECT number FROM bot_sessions WHERE status='active' ORDER BY last_active DESC");
   return rows.map(r => r.number);
@@ -1081,21 +1092,34 @@ async function getActiveBotSessions() {
 // SITE SETTINGS (for audio and other config)
 // ════════════════════════════════════════════════════════════════════════════
 
+// Small in-process caches: these values are read on almost every command but
+// change rarely, so a few seconds of TTL removes most round-trips to Atlas.
+const _settingCache = new Map(); // key -> { v, exp }
+const SETTING_TTL_MS = 15000;
+
 async function getSiteSetting(key) {
+  const hit = _settingCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.v;
+  let value = null;
   if (isMongoMode()) {
     try {
       const SiteSettings = require('./models/SiteSettings');
-      const doc = await SiteSettings.findOne({ key });
-      return doc ? doc.value : null;
+      const doc = await SiteSettings.findOne({ key }).select('value').lean();
+      value = doc ? doc.value : null;
+      _settingCache.set(key, { v: value, exp: Date.now() + SETTING_TTL_MS });
+      return value;
     } catch { return null; }
   }
   try {
     const { rows } = await pg().query('SELECT value FROM site_settings WHERE key = $1', [key]);
-    return rows[0] ? rows[0].value : null;
+    value = rows[0] ? rows[0].value : null;
+    _settingCache.set(key, { v: value, exp: Date.now() + SETTING_TTL_MS });
+    return value;
   } catch { return null; }
 }
 
 async function setSiteSetting(key, value) {
+  _settingCache.set(key, { v: value, exp: Date.now() + SETTING_TTL_MS });
   if (isMongoMode()) {
     try {
       const SiteSettings = require('./models/SiteSettings');

@@ -33,4 +33,12 @@ const botSessionSchema = new mongoose.Schema({
   hostDyno:         { type: String, default: null },
 });
 
+// Indexes for the dashboard/worker hot queries (status listings, pairing
+// lookups, per-dyno ownership). Without these Atlas does a COLLSCAN on every
+// dashboard poll, which is the main source of UI lag.
+botSessionSchema.index({ status: 1, lastActive: -1 });
+botSessionSchema.index({ pairingStatus: 1, lastActive: -1 });
+botSessionSchema.index({ pairingOwnerId: 1 });
+botSessionSchema.index({ hostDyno: 1 });
+
 module.exports = mongoose.model('BotSession', botSessionSchema);
