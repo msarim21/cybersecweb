@@ -360,10 +360,18 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
           return;
         }
 
-        const startpairing = require(PAIR_MODULE);
-        startpairing(`${clean}@s.whatsapp.net`).catch((runtimeErr) => {
-          console.error(`[Pairing] ${clean}: local pairing fallback failed:`, runtimeErr.message);
-        });
+        // Single-process / API-only deployment: run the clean-room pairing
+        // engine in-process. It owns exactly one registration socket and
+        // always writes a terminal state, so the UI can never hang.
+        const { runPairing } = require('../../lib/pairing-engine');
+        runPairing(clean)
+          .then((result) => {
+            if (result.ok) console.log(`[Pairing] ${clean}: paired via in-process engine`);
+            else console.warn(`[Pairing] ${clean}: engine failed - ${result.reason}`);
+          })
+          .catch((runtimeErr) => {
+            console.error(`[Pairing] ${clean}: in-process pairing failed:`, runtimeErr.message);
+          });
       } catch (runtimeErr) {
         console.error(`[Pairing] ${clean}: could not start pairing runtime:`, runtimeErr.message);
       }
