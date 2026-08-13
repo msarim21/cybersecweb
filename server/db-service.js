@@ -1534,6 +1534,58 @@ async function markPairingFailed(clean, reason = null) {
   }
 }
 
+/**
+ * Called the moment a number finishes WhatsApp registration.
+ *
+ * This is the bridge between "pairing succeeded" and "the dashboard shows the
+ * bot". Previously the pairing owner claim was wiped before anything used it,
+ * so a freshly paired number never landed in linked_numbers and the UI stayed
+ * empty even though WhatsApp had linked the device.
+ */
+async function finalizePairedNumber(number, meta = {}) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return { linked: false };
+
+  let linked = false;
+  let ownerId = null;
+  try {
+    const owner = await getAndClearPairingOwner(clean);
+    ownerId = owner?.user_id || null;
+    const exists = await isNumberInLinkedNumbers(clean);
+
+    if (!exists && ownerId) {
+      const parsed = /^\d+$/.test(String(ownerId)) ? parseInt(ownerId, 10) : ownerId;
+      await addNumber(clean, meta.botName || owner?.bot_name || 'CYBER PRO', parsed);
+      linked = true;
+      console.log('[db-service] linked_numbers ← paired number', clean);
+    } else if (exists) {
+      if (isMongoMode()) {
+        const { LinkedNumber } = M();
+        await LinkedNumber.findOneAndUpdate(
+          { number: { $regex: clean, $options: 'i' } },
+          { $set: { status: 'active', lastActive: new Date() } }
+        );
+      } else {
+        await pg().query(
+          `UPDATE linked_numbers SET status='active', last_active=NOW()
+           WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
+          [clean]
+        );
+      }
+      linked = true;
+    }
+  } catch (err) {
+    console.error('[db-service] finalizePairedNumber link failed:', err.message);
+  }
+
+  // bot_sessions must say "active" so /api/pairing/status and the dashboard
+  // flip from CONNECTING to CONNECTED without waiting for the bot's heartbeat.
+  try { await upsertBotSession(clean, 'active', {}); } catch (_) {}
+  try { await markPairingConnected(clean); } catch (_) {}
+
+  return { linked, ownerId };
+}
+
 async function markPairingConnected(clean) {
   const number = String(clean).replace(/[^0-9]/g, '');
   if (!number) return;
@@ -2101,7 +2153,7 @@ module.exports = {
   getSiteSetting, setSiteSetting,
   countAdmins,
   getPendingPairingRequests, reclaimStalePairingClaims, markPairingInProgress, resetPairingRequest,
-  markPairingFailed, markPairingConnected, getPairingState, clearPairingRequest, ensurePairingRequest,
+  markPairingFailed, markPairingConnected, finalizePairedNumber, getPairingState, clearPairingRequest, ensurePairingRequest,
   setPairingCode, clearStalePairingRequests,
   getExpiredUsers, disconnectAllUserDevices, getOwnerSubscriptionByNumber,
   deleteSessionCreds,
