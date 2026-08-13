@@ -178,12 +178,7 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
       isInLinkedNumbersDb = true;
     }
 
-    if (isInLinkedNumbersDb) {
-      console.log(`[Pairing] ${clean}: Already paired (local files + DB confirmed) — blocking new pairing code`);
-      const body = { error: 'This number is already linked. Unlink it first before re-pairing.', alreadyLinked: true };
-      resolveFlight({ httpStatus: 409, body });
-      return res.status(409).json(body);
-    } else {
+    if (!isInLinkedNumbersDb) {
       // Stale local files — number was logged out/removed from DB but local disk wasn't cleaned.
       // Clear the stale files so fresh pairing proceeds cleanly.
       console.log(`[Pairing] ${clean}: Local files found but NOT in DB (stale state) — clearing local files for fresh pairing`);
@@ -191,6 +186,9 @@ async function _requestPairingCode(req, res, clean, phoneNumber, resolveFlight, 
         try { deleteFolderRecursive(sessionPath); } catch (_) {}
       }
     }
+    // A linked row or local creds do not prove that a bot is live. Continue to
+    // the cross-dyno connection check below; it blocks only a recent CONNECTED
+    // session and clears stale linked/session state for LOGGED_OUT bots.
   }
 
   // ── ACTIVE CONNECTION CHECK ───────────────────────────────────────────────

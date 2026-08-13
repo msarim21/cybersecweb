@@ -21,6 +21,6 @@ pairingRequestSchema.index({ number: 1, status: 1 });
 // indexes with the same key pattern but different options (IndexOptionsConflict),
 // and this partial+TTL index still serves the same query shapes.
 const PAIRING_REQUEST_TTL_SECONDS = (parseInt(process.env.PAIRING_REQUEST_RETENTION_DAYS || '2', 10)) * 86400;
-pairingRequestSchema.index({ updatedAt: 1 }, { expireAfterSeconds: PAIRING_REQUEST_TTL_SECONDS, partialFilterExpression: { status: { $in: ['code_ready', 'failed', 'expired'] } } });
+pairingRequestSchema.index({ updatedAt: 1 }, { expireAfterSeconds: PAIRING_REQUEST_TTL_SECONDS });
 
 module.exports = mongoose.model('PairingRequest', pairingRequestSchema);
