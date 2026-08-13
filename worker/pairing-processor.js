@@ -126,16 +126,19 @@ async function startBotFor(clean) {
   try {
     const { isSupervisorActive, spawnBot } = require('./supervisor');
     if (isSupervisorActive()) {
-      spawnBot(clean, { force: true });
-      return;
+      const thread = spawnBot(clean, { force: true });
+      if (!thread) throw new Error(`Bot supervisor could not start +${clean}`);
+      return true;
     }
   } catch (_) {}
 
   try {
     const { autoLoadPairs } = require('../autoload');
-    await autoLoadPairs({ concurrent: true }).catch(() => {});
+    await autoLoadPairs({ concurrent: true });
+    return true;
   } catch (err) {
     console.error(`[PairingQueue] Could not start bot for ${clean}:`, err.message);
+    throw err;
   }
 }
 
@@ -208,7 +211,15 @@ async function handleNumber(clean, service) {
     // write must not leave an unlinked number: finalize is idempotent.
     await service.finalizePairedNumber(clean).catch(() => {});
     await sleep(1500);
-    await startBotFor(clean);
+    try {
+      await startBotFor(clean);
+    } catch (startErr) {
+      await service.setBotConnectionStatus?.(clean, 'ERROR', {
+        commandReady: false,
+        lastErrorMessage: `Paired, but bot startup failed: ${startErr.message}`,
+      }).catch(() => {});
+      throw startErr;
+    }
     return;
   }
 
