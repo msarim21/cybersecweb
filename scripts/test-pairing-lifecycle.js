@@ -29,8 +29,8 @@ assert.match(pairingRoute, /if \(supervisor\.isSupervisorActive\?\.\(\)\) \{\s*c
 assert.doesNotMatch(pairingRoute, /supervisor\.handlePairingRequest\(clean\)\.catch/);
 
 // The code must be requested only after Baileys reports the socket as open,
-// and the socket must use a stable Chrome companion identity.
-assert.match(pair, /const browserProfile = Browsers\.ubuntu\('Chrome'\)/);
+// and pairing + normal bot handoff must use the same Safari identity.
+assert.match(pair, /const browserProfile = Browsers\.macOS\('Safari'\)/);
 assert.match(pair, /await nexus\.waitForSocketOpen\(\)/);
 assert.match(pair, /await nexus\.requestPairingCode\(phoneNumber\)/);
 
@@ -42,20 +42,16 @@ assert.match(pairingRoute, /setImmediate\(async \(\) => \{/);
 // The database queue may contain several requested numbers, but only one
 // WhatsApp registration socket may run at a time. Otherwise the second socket
 // invalidates the first code and the user sees a plausible but rejected code.
-assert.match(pairingProcessor, /if \(global\._pairingProcessorBusy\) return true/);
+assert.match(pairingProcessor, /if \(lockHeld\(\)\) return true/);
 assert.match(pairingProcessor, /global\._pairingProcessorBusy = true/);
 assert.match(pairingProcessor, /global\._pairingProcessorBusy = false/);
-assert.match(pairingProcessor, /global\._pairingInFlight\.has\(clean\)/);
-assert.match(pairingProcessor, /break;\s*}\s*return true;/s);
-assert.match(supervisor, /Pairing queued for \+\$\{num\}: worker slot is still in use/);
-assert.match(supervisor, /resetPairingRequest\(num\)/);
-assert.match(supervisor, /global\._pairingOwner = num/);
+assert.match(pairingProcessor, /runPairChild\(clean\)/);
+assert.match(pairingProcessor, /killExistingChild\(clean\)/);
+assert.match(pairingProcessor, /global\._pairingOwner = clean/);
 assert.match(supervisor, /Sync\/recovery paused while pairing/);
 assert.match(supervisor, /async function stopBotAndWait/);
 assert.match(supervisor, /entry\.thread\.postMessage\(\{ cmd: 'stop' \}\)/);
-assert.match(supervisor, /pairing → full bot \(same socket\)/);
-assert.match(botThread, /case 'promote':/);
 assert.match(botThread, /await stopChild\('SIGTERM'\)/);
 assert.match(botThread, /child\.exitCode === null\)\s*\{\s*try \{ child\.kill\('SIGKILL'\)/s);
 
-console.log('[pairing-lifecycle] PASS: single-child handoff, socket readiness, Chrome identity, and async request invariants');
+console.log('[pairing-lifecycle] PASS: single-child handoff, socket readiness, Safari identity, and async request invariants');
