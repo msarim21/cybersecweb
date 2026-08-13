@@ -1137,7 +1137,16 @@ async function deleteNumberByPhone(phone) {
     try {
       await BotSession.findOneAndUpdate(
         { number: clean },
-        { $set: { status: 'inactive', connectionStatus: 'LOGGED_OUT', sessionData: null } }
+        {
+          $set: {
+            status: 'inactive',
+            connectionStatus: 'LOGGED_OUT',
+            sessionData: null,
+            commandReady: false,
+            wsState: 0,
+          },
+          $unset: { pairingOwnerId: 1, pairingBotName: 1, pairingStatus: 1 },
+        }
       );
     } catch (e) { console.error('[db] deleteNumberByPhone mongo BotSession error:', e.message); }
     return;
@@ -1147,7 +1156,9 @@ async function deleteNumberByPhone(phone) {
   } catch (e) { console.error('[db] deleteNumberByPhone pg error:', e.message); }
   try {
     await pg().query(
-      `UPDATE bot_sessions SET status='inactive', connection_status='LOGGED_OUT', session_data=NULL
+      `UPDATE bot_sessions
+       SET status='inactive', connection_status='LOGGED_OUT', session_data=NULL,
+           command_ready=FALSE, ws_state=0, pairing_owner_id=NULL, pairing_status=NULL
        WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
       [clean]
     );
