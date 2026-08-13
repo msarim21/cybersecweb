@@ -156,10 +156,17 @@ async function runBot() {
     }
 
     if (!isPairing) {
-        const restored = await restoreSessionIfNeeded(jid);
+        // The pairing child persists credentials immediately before this bot
+        // is spawned, but cross-dyno/database visibility can lag briefly.
+        // Retry instead of exiting cleanly and leaving a paired, dead bot.
+        let restored = false;
+        for (let attempt = 1; attempt <= 5 && !restored; attempt += 1) {
+            restored = await restoreSessionIfNeeded(jid);
+            if (!restored && attempt < 5) await delay(2000);
+        }
         if (!restored) {
             console.log(chalk.yellow(`[BotRunner:${BOT_NUMBER}] No saved session in DB — pair once via website`));
-            process.exit(0);
+            process.exit(1);
         }
     }
 
