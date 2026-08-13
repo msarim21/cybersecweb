@@ -490,14 +490,12 @@ async function _startpairing(nexusDevNumber, options = {}) {
     // Prevents message data mixing when multiple users are connected simultaneously
     const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
 
-    // WhatsApp phone-number linking is a companion-device registration flow.
-    // Use the stable Chrome companion profile for it instead of presenting the
-    // socket as Safari; WhatsApp can display a code for either profile, but
-    // Safari-style registration has been rejected by the phone as "Couldn't
-    // link device" even when the code reached the UI.
-    const browserProfile = Browsers.ubuntu('Chrome');
+    // Use the same Safari companion identity for pairing and normal bot boots.
+    // Changing browser identities during handoff can make a freshly linked
+    // device look like a different session.
+    const browserProfile = Browsers.macOS('Safari');
     if (tracker.pairingSession) {
-        console.log(chalk.cyan(`[Pairing] Using Chrome companion profile for +${nexusDevNumber.replace(/[^0-9]/g, '')}`));
+        console.log(chalk.cyan(`[Pairing] Using Safari companion profile for +${nexusDevNumber.replace(/[^0-9]/g, '')}`));
     }
 
     const nexus = makeWASocket({
@@ -1455,6 +1453,12 @@ async function _startpairing(nexusDevNumber, options = {}) {
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
+            // The messages.upsert command listener is registered before this
+            // handler. Once connection.open fires, commands are immediately
+            // available; publish that fact instead of leaving the dashboard in
+            // SYNCING until the next 30-second watchdog tick.
+            tracker.commandReady = true;
+            tracker.syncing = false;
             
             // Add small delay to ensure everything is initialized
             await sleep(5000);
@@ -1507,7 +1511,11 @@ async function _startpairing(nexusDevNumber, options = {}) {
                 setBotConnectionStatus(cleanForDb, 'CONNECTED', {
                     lastErrorMessage: null,
                     reconnectAttempts: 0,
+                    commandReady: true,
+                    wsState: 1,
                 }).catch(() => {});
+                const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+                touchBotHeartbeat(cleanForDb, { event: 'ready', wsState: 1, ready: true });
             } catch (_) {}
 
             // Write connected flag so web panel can auto-save the number
