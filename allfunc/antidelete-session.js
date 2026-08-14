@@ -189,10 +189,30 @@ class AntideleteSessionStore {
                 };
                 if (row.mediaBufferB64 && row.mediaBufferB64.length > B64_MAX * 1.4) {
                     delete row.mediaBufferB64;
-                }
+            }
                 entries.push([key, row]);
             }
-            fs.writeFileSync(this.diskPath, JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES)), 'utf-8');
+            const payload = JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES));
+            // Async write + atomic rename — sync writes here were blocking the
+            // event loop on every cached message, freezing the bot.
+            const tmp = `${this.diskPath}.tmp`;
+            if (this._writing) { this._pendingPayload = payload; return; }
+            this._writing = true;
+            fs.promises.writeFile(tmp, payload, 'utf-8')
+                .then(() => fs.promises.rename(tmp, this.diskPath))
+                .catch(() => {})
+                .finally(() => {
+                    this._writing = false;
+                    if (this._pendingPayload) {
+                        const p = this._pendingPayload;
+                        this._pendingPayload = null;
+                        this._writing = true;
+                        fs.promises.writeFile(tmp, p, 'utf-8')
+                            .then(() => fs.promises.rename(tmp, this.diskPath))
+                            .catch(() => {})
+                            .finally(() => { this._writing = false; });
+                    }
+                });
         } catch (_) {}
     }
 
@@ -320,6 +340,6 @@ module.exports = {
     cleanBotNum,
     migrateLegacyAntideleteStore,
     DISK_DEBOUNCE_MS,
-    ANTIDELETE_MAX_ENTRIES,
-    ANTIDELETE_RETENTION_MS,
+   ANTIDELETE_MAX_ENTRIES,
+   ANTIDELETE_RETENTION_MS,
 };
