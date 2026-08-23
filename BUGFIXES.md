@@ -75,3 +75,194 @@ Pushed to: https://github.com/msarim21/cybersecweb
 **Result:** When any WhatsApp number successfully pairs (connection opens), its number is immediately and permanently saved to `linked_numbers` in the database. The dashboard shows it on the next refresh and it never disappears.
 
 **Files:** `server/db-service.js`, `session-db.js`
+
+## Bug 8 - BOT OFFLINE on Dashboard (Critical Fix)
+**Problem:** Bot is running and connected to WhatsApp but dashboard shows "BOT OFFLINE".
+
+**Root Cause:**
+On Heroku, the **web dyno** and **worker dyno** have separate ephemeral filesystems. Heartbeat files written by the worker dyno (`database/bots/<num>/heartbeat.json`) are completely invisible to the web dyno — so `isBotHeartbeatFresh()` always returns `false` on the web dyno. The only cross-dyno liveness signal is the database `lastActive` timestamp.
+
+In `server/routes/numbers.js`, the bot is shown as `online` only when:
+```js
+if (sess?.connectionStatus === 'CONNECTED' && lastFresh) return 'online';
+```
+Where `lastFresh = Date.now() - sess.lastActive <= 15 minutes`.
+
+The bug was in `allfunc/bot-heartbeat.js` — inside `touchBotHeartbeat()`, there was an early `return` when `extra.ready === false`:
+```js
+if (extra.ready === false) return;   // ← BUG: skips upsertBotSession
+await upsertBotSession(clean, 'active', meta);
+```
+This meant `upsertBotSession()` (which updates `lastActive` in the DB) was NEVER called when the bot was in a non-ready state (e.g. still syncing, wsState not yet 1). After 15 minutes, `lastActive` became stale → `lastFresh = false` → dashboard showed "BOT OFFLINE" forever.
+
+**Fix:**
+- `allfunc/bot-heartbeat.js`: Removed the `if (extra.ready === false) return;` guard. `upsertBotSession` is now always called when the DB throttle window passes, keeping `lastActive` fresh every ~60 seconds regardless of ready state. The `commandReady` field is still only set when `ready === true`, preserving existing behavior.
+
+**Files:** `allfunc/bot-heartbeat.js`
+
+## Bug 9 - Antidelete "Original Message Not in Cache" (Critical Fix)
+**Problem:** Antidelete frequently shows `[Original message not in cache]` when someone deletes a message, even though the bot was running and online.
+
+**Root Cause:**
+In `pair.js`, the `messages.upsert` event handler had this order:
+
+```js
+// 1. Ephemeral unwrap
+nexusboijid.message = ...ephemeralMessage...
+
+// 2. ❌ PRIVATE MODE GUARD — early return here
+if (!nexus.public && !nexusboijid.key.fromMe && chatUpdate.type === 'notify') return;
+
+// 3. case.js fires...
+
+// 4. setImmediate() {
+//      cacheMessageForAntidelete(nexusboijid, nexus);  ← NEVER REACHED in private mode
+// }
+```
+
+When the bot is in **private/self mode** (`.self` command), any message received from another person hits the guard at step 2 and returns immediately — the `cacheMessageForAntidelete` call inside `setImmediate` at step 4 is **never executed**. The message is never stored in the antidelete cache. When the sender deletes it, the bot has no record of it and reports `[Original message not in cache]`.
+
+**Fix:**
+- `pair.js`: Moved `cacheMessageForAntidelete` call to BEFORE the private-mode guard (but after the ephemeral unwrap). The cache now runs for every valid incoming message regardless of bot mode. Removed the duplicate call from inside `setImmediate`.
+
+**Result:** Antidelete now correctly caches messages from all senders in all bot modes (public, private, group-only, etc.), so delete events reliably recover the original message content.
+
+**Files:** `pair.js`
+
+## Bug 10 - "Already Linked" Error After WhatsApp Logout (Critical Fix)
+**Problem:** Jab WhatsApp se number logout ho jata hai (Error 405, bad session, ya explicit logout), to dashboard mein "NO NUMBERS LINKED YET" dikhta hai lekin re-pair karne par yeh error aata hai:
+```
+This number is already linked (session restored from DB). Unlink it first before re-pairing.
+```
+
+**Root Cause:**
+Jab WhatsApp disconnect ya logout event fire hota tha (`pair.js` mein), ye cheezein hoti thi:
+1. `forceCleanupSession()` → local filesystem session delete hota (nexstore/pairing/)
+2. `setBotConnectionStatus('LOGGED_OUT')` → bot_sessions.connection_status update hota
+3. `linked_numbers.status` → 'inactive' set hota (dashboard se number gayab)
+
+**Lekin yeh nahi hota:**
+- `deleteSessionCreds()` — **kabhi nahi call hota** → `session_creds` table mein purana stale data rehta tha!
+
+Jab user dobara pair karne ki koshish karta:
+1. `pairing.js` → `hasSessionInDb(clean)` → `session_creds` mein purana data milta → `true` return
+2. Bina `connection_status` check kiye BLOCK kar deta → "already linked" error
+3. Dashboard mein number nahi dikhta (linked_numbers inactive) lekin pairing bhi nahi ho sakti
+
+**Fix:**
+**Part A — `pair.js` (4 handlers fixed):** Har LOGGED_OUT event (405, 440 max retries, badSession, loggedOut) pe `deleteSessionCreds()` + `removeLinkedNumber()` call added:
+```js
+try {
+    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+    deleteSessionCreds(cleanForDb).catch(() => {});   // DB session creds delete
+    removeLinkedNumber(cleanForDb).catch(() => {});   // linked_numbers cleanup
+} catch (_) {}
+```
+
+**Part B — `server/routes/pairing.js` (smart status check):** `hasSessionInDb()` true return karne par seedha block karne ki jagah pehle `connection_status` check karo. Agar LOGGED_OUT/ERROR/DISCONNECTED/inactive ho to auto-clear karo aur fresh pairing allow karo:
+```js
+const staleStatuses = ['LOGGED_OUT', 'ERROR', 'DISCONNECTED', 'inactive'];
+if (connStatus && staleStatuses.includes(connStatus)) {
+    await deleteSessionCreds(clean).catch(() => {});
+    await removeLinkedNumber(clean).catch(() => {});
+    // Fall through — fresh pairing allowed
+} else {
+    return res.status(409).json({ error: 'This number is already linked...' });
+}
+```
+
+**Files:** `pair.js`, `server/routes/pairing.js`
+
+---
+
+## Bug 11 - Bot Shows Offline When No Messages Coming (Watchdog Gap)
+**Problem:** Bot WhatsApp se connected hota hai (wsState=1) lekin agar chat quiet ho (koi incoming message nahi) to website per "BOT OFFLINE" dikhna shuru ho jata hai kuch time baad.
+
+**Root Cause:**
+`allfunc/bot-heartbeat.js` ka `touchBotHeartbeat()` sirf tab call hota tha jab koi event fire ho:
+- Message receive ho
+- Connection open/ready event ho
+
+Lekin agar bot connected hai aur koi message nahi aa raha to `touchBotHeartbeat` call nahi hota. `lastActive` DB mein update nahi hota. 15 minute ke baad `lastFresh = false` → dashboard "BOT OFFLINE" dikhaane lagta.
+
+`pair.js` ka 30-second watchdog sirf `sendPresenceUpdate()` call karta tha — `touchBotHeartbeat()` nahi.
+
+**Fix:**
+`pair.js` watchdog (`setInterval` jo har 30s pe chalta hai) mein `touchBotHeartbeat` call added kiya jab `wsState === 1` (WebSocket open):
+```js
+if (wsState === 1) {
+    nexus.sendPresenceUpdate('available').catch(() => {});
+    // NEW: DB mein lastActive update karo (DB throttle = 60s, watchdog = 30s → har 60s DB update)
+    try {
+        const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+        touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
+    } catch (_) {}
+}
+```
+
+**Result:** Jab tak bot ka WebSocket open hai, har 60 seconds mein DB `lastActive` update hota hai. 15-minute online window ke andar bot always "ONLINE" dikhega, chahe koi message na aaye.
+
+**Files:** `pair.js`
+
+---
+
+## Bug 12 - Bot Keeps Working After Trial Expires (Delayed / Missed Disconnect)
+**Problem:** User ka free trial khatam hone ke baad bhi uska bot kaam karta rehta tha aur number disconnect nahi hota tha turant — sirf `server/jobs/planExpiryJob.js` (har 60s) database state update karta tha, lekin live WhatsApp socket alag process/dyno (worker) mein chalta hai, isliye DB update se socket foran band nahi hota tha.
+
+**Root Cause:** Trial-expiry enforcement sirf ek periodic DB sweep tha jo cross-process live connection ko force-kill nahi karta. Agar bot idle bhi ho (koi incoming message nahi), to us process ke andar koi check hi nahi tha jo owner ka subscription status dobara verify kare.
+
+**Fix:**
+- `allfunc/force-disconnect.js` (new): shared helper jo ek number ko turant socket-kill + DB creds wipe + `stopped-bots` list mein add + connected-flag remove karta hai (idempotent, planExpiryJob ki wipe-logic se consistent).
+- `allfunc/subscription-guard.js` (new): `isNumberAuthorized(number)` — 20s cache ke saath owner ka ban/trial-expiry status check karta hai; `enforceSubscriptionOrDisconnect()` agar unauthorized ho to foran `forceDisconnectNumber()` call karta hai.
+- `pair.js`: har incoming message se pehle aur 30s watchdog tick per (idle bots ke liye) subscription guard call hoti hai — expired/banned number ka reply turant drop ho jata hai aur socket turant disconnect ho jata hai (max ~30s latency for idle bots, near-instant for active ones).
+- `server/db-service.js`: naya `getOwnerSubscriptionByNumber()` — number se seedha owner ka banned/subscriptionStatus/trialExpiresAt resolve karta hai (Mongo + Postgres dono).
+- `server/routes/admin.js`: Ban toggle ab turant `forceDisconnectNumber()` call karta hai (pehle sirf DB flag set hota tha). Trial-extend / upgrade-approve / plan-update / plan-expiry endpoints ab `_reenableUserNumbers()` call karte hain jo `stopped-bots` clear karta hai aur guard cache invalidate karta hai, taake admin ke allow karne ke turant baad number dobara pair/reconnect ho sake.
+
+**Result:** Trial expire hote hi (ya admin ban karte hi) bot turant band ho jata hai aur number disconnect ho jata hai — chahe woh live message process kar raha ho ya idle ho. Number tab tak reconnect nahi ho sakta jab tak admin trial extend ya upgrade approve na kare.
+
+**Files:** `allfunc/force-disconnect.js` (new), `allfunc/subscription-guard.js` (new), `pair.js`, `server/db-service.js`, `server/routes/admin.js`
+
+---
+
+## Bug 13 - MongoDB Storage Quota Fills Up (~100 Users Ke Liye Scale Nahi Karta)
+**Problem:** Admin panel mein MongoDB Atlas storage quota warning (555MB used) aa rahi thi. `ChatMessage` aur `PairingRequest` collections ki koi retention limit nahi thi, aur unlinked/expired numbers ke `BotSession.sessionData` (WhatsApp credential blobs) bhi hamesha ke liye DB mein pade rehte the.
+
+**Root Cause:** Koi bhi automatic cleanup/archiving job nahi tha in teeno collections ke liye (sirf `antideletecaches` ka apna cleanup job tha), is liye storage sirf badhta hi jata tha.
+
+**Fix:**
+- `server/jobs/storageGuardJob.js` (new): har 6 ghante mein chalta hai —
+  1. 30 din se purane `ChatMessage` docs ko `database/archives/chat-messages/*.json` mein archive karke Mongo se delete karta hai.
+  2. 2 din se purane resolved `PairingRequest` docs (transient data, archive ki zarurat nahi) delete karta hai.
+  3. Unlinked numbers ke 14+ din purane inactive `BotSession` docs ko (credentials strip karke) `database/archives/bot-sessions/*.json` mein archive karke delete karta hai.
+- `server/models/ChatMessage.js` aur `server/models/PairingRequest.js`: TTL indexes add kiye taake collections khud-ba-khud bounded rahen (backlog cleanup ke liye job zaroori hai, lekin aage se TTL index bhi apna kaam karega).
+- Retention windows env vars se configurable hain: `CHAT_MESSAGE_RETENTION_DAYS` (default 30), `PAIRING_REQUEST_RETENTION_DAYS` (default 2), `ORPHAN_SESSION_RETENTION_DAYS` (default 14).
+- `database/archives/` (`.gitignore`'d, sirf disk per rehta hai) — purana data delete karne se pehle yahan JSON files mein save hota hai, is se MongoDB storage khali hoti hai lekin data zaya nahi hota.
+
+**Result:** MongoDB mein sirf recent/active data rehta hai (chat history 30 din, pairing requests 2 din, dead sessions 14 din), extra/purana data local JSON archives mein move ho jata hai — DB ~100 users ke liye scale karta hai bina quota hit kiye.
+
+**Files:** `server/jobs/storageGuardJob.js` (new), `server/models/ChatMessage.js`, `server/models/PairingRequest.js`, `server/index.js`, `.gitignore`
+
+---
+
+## Bug 14 — Antidelete: "[Original message not in cache]" Always Shown (Critical Fix)
+
+**Problem:** Antidelete command is enabled and detecting deletes, but ALWAYS shows `[Original message not in cache]` — the deleted message content is never recovered.
+
+**Root Cause (3 issues):**
+
+1. **`!isCmd` filter in `case.js`** — The antidelete message cache (line ~4161) was guarded by `if (!isCmd && ...)`. `isCmd` is `true` for ANY message that starts with the bot prefix (`.`). This means every command-format message (e.g. `.hi`, `.menu`, `.sticker`) sent by other users was **never stored** in the antidelete cache. When those messages were deleted, the lookup always returned null → `[Original message not in cache]`.
+
+   The comment directly above even says *"ALL messages — antidelete first priority"*, revealing the intent was to cache all messages, but the filter was added incorrectly.
+
+2. **`saveAntideleteCfg` missing `enabled` field** — When the `.antidelete private` command saved the config, it only wrote `{"mode":"private"}`. Some lookup paths in `antidelete-helpers.js` also check the `enabled` field, causing inconsistency after a save.
+
+3. **Duplicate "not in cache" reports** — When a delete event fires back-to-back (WhatsApp sometimes sends type 0 + type 5 protocol messages for the same delete), the dedup guard was NOT marked on a cache-miss, causing two identical `[Original message not in cache]` reports to be sent.
+
+**Fix:**
+
+- **`case.js`**: Replaced `if (!isCmd && ...)` guard with `if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && ...)` — now ALL messages (including command-style messages from other users) are cached for antidelete recovery.
+- **`case.js` `saveAntideleteCfg`**: Normalises the saved config to always include both `mode` and `enabled` fields: `{ mode: cfg.mode || 'off', enabled: (cfg.mode && cfg.mode !== 'off') }`.
+- **`allfunc/antidelete-helpers.js` `_adHandleMessageDelete`**: Added `_adMarkDeleteProcessed()` call even when the cached message is not found (cache-miss path), preventing duplicate `[not in cache]` reports.
+
+**Files:** `case.js`, `allfunc/antidelete-helpers.js`

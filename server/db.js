@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const MONGO_URL = process.env.MONGO_URL;
+const MONGO_URL = process.env.MONGO_URL || process.env.MONGODB_URI;
 const PG_URL    = process.env.DATABASE_URL ||
   (process.env.NODE_ENV !== 'production'
     ? 'postgresql://postgres:password@helium/heliumdb?sslmode=disable'
@@ -132,6 +132,10 @@ const initDb = async () => {
         license_key       VARCHAR(100)   DEFAULT NULL,
         upgrade_request   VARCHAR(20)  DEFAULT 'none'  CHECK (upgrade_request IN ('none','pro','enterprise')),
         upgrade_request_at TIMESTAMPTZ DEFAULT NULL,
+        subscription_status VARCHAR(30)  DEFAULT 'trial',
+        trial_start         TIMESTAMPTZ  DEFAULT NULL,
+        activated_by_admin  BOOLEAN      DEFAULT false,
+        subscription_expiry TIMESTAMPTZ  DEFAULT NULL,
         banned            BOOLEAN      DEFAULT false,
         last_active       TIMESTAMPTZ  DEFAULT NOW(),
         created_at        TIMESTAMPTZ  DEFAULT NOW()
@@ -144,6 +148,21 @@ const initDb = async () => {
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS license_key VARCHAR(100) DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upgrade_request VARCHAR(20) DEFAULT 'none'`).catch(() => {});
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upgrade_request_at TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) DEFAULT 'trial'`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_start TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS activated_by_admin BOOLEAN DEFAULT false`).catch(() => {});
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expiry TIMESTAMPTZ DEFAULT NULL`).catch(() => {});
+    // Backfill subscription_status for existing users based on current plan
+    await client.query(`
+      UPDATE users SET subscription_status = CASE
+        WHEN subscription_plan = 'pro' THEN 'active_pro'
+        WHEN subscription_plan = 'enterprise' THEN 'active_enterprise'
+        WHEN trial_expires_at IS NOT NULL AND trial_expires_at < NOW() THEN 'expired'
+        ELSE 'trial'
+      END
+      WHERE subscription_status IS NULL OR subscription_status = 'trial'
+        AND subscription_plan IN ('pro','enterprise')
+    `).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS linked_numbers (
@@ -180,6 +199,8 @@ const initDb = async () => {
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS session_data JSONB DEFAULT NULL`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_code VARCHAR(32)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_status VARCHAR(20)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_attempt_id VARCHAR(80)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_error TEXT`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_owner_id VARCHAR(50)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS pairing_bot_name VARCHAR(64)`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(10) DEFAULT 'public'`).catch(() => {});
@@ -188,6 +209,10 @@ const initDb = async () => {
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS bot_mode_locked BOOLEAN DEFAULT false`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS command_ready BOOLEAN DEFAULT false`).catch(() => {});
     await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS ws_state INTEGER DEFAULT -1`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS connection_status VARCHAR(20)`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS last_error_message TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS reconnect_attempts INTEGER DEFAULT 0`).catch(() => {});
+    await client.query(`ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS host_dyno VARCHAR(64)`).catch(() => {});
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_messages (

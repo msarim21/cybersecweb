@@ -1,11 +1,10 @@
 const jwt = require('jsonwebtoken');
 const { findUserById, updateUserLastActive, isPlanExpired } = require('../db-service');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'cybersecpro_default_secret_change_in_production';
-const DEFAULT_JWT = 'cybersecpro_default_secret_change_in_production';
+const JWT_SECRET = process.env.JWT_SECRET;
 
-if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_JWT) {
-  console.error('[SECURITY] CRITICAL: JWT_SECRET is not set in production! Set it in environment variables.');
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 characters.');
 }
 
 const protect = async (req, res, next) => {
@@ -21,9 +20,18 @@ const protect = async (req, res, next) => {
     if (!user)       return res.status(401).json({ error: 'User not found.' });
     if (user.banned) return res.status(403).json({ error: 'Account banned.' });
 
-    // Check plan expiry (skip for admin)
+    // Check plan expiry (skip for admin).
+    // Whitelist account-management routes so expired users can still:
+    //   • view their profile/status  • request an upgrade  • chat with admin
     if (user.role !== 'admin' && isPlanExpired(user)) {
-      return res.status(403).json({ error: 'Plan expired. Contact admin to renew.' });
+      const ALLOWED_EXPIRED = [
+        '/upgrade-request', '/profile', '/stats', '/chat', '/license-key',
+      ];
+      const url = req.path || req.url || '';
+      const isAllowed = ALLOWED_EXPIRED.some(p => url.includes(p));
+      if (!isAllowed) {
+        return res.status(403).json({ error: 'Plan expired. Contact admin to renew.', planExpired: true });
+      }
     }
 
     try { await updateUserLastActive(decoded.id); } catch (_) { /* non-fatal */ }

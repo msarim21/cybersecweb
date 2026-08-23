@@ -8,6 +8,7 @@ const {
   addNumber,
   toggleNumber,
   deleteNumber,
+  deleteNumberByPhone,
   findUserById,
   banUser,
   getSiteSetting,
@@ -76,9 +77,26 @@ function getPlanLimit(plan) {
 }
 
 function isTrialExpired(user) {
-  if (!user.trial_expires_at) return false;
+  if (!user) return false;
+  // Check subscriptionStatus field first (new system — highest priority)
+  const subStatus = user.subscription_status || user.subscriptionStatus || null;
+  if (subStatus === 'expired') return true;
+  if (subStatus === 'active_pro' || subStatus === 'active_enterprise') return false;
+  // Admin-activated paid users are never expired
+  if (user.activated_by_admin || user.activatedByAdmin) return false;
+  // Paid plan with no status set — not expired
   if (user.subscription_plan === 'pro' || user.subscription_plan === 'enterprise') return false;
+  // Free trial fallback
+  if (!user.trial_expires_at) return false;
   return new Date(user.trial_expires_at) < new Date();
+}
+
+function deriveSessionHealth(connStatus, botPhase) {
+  if (connStatus === 'ERROR' || connStatus === 'LOGGED_OUT') return 'critical';
+  if (connStatus === 'CONNECTED' && botPhase === 'online') return 'healthy';
+  if (botPhase === 'syncing' || botPhase === 'starting' || connStatus === 'CONNECTING') return 'recovering';
+  if (connStatus === 'DISCONNECTED') return 'degraded';
+  return 'unknown';
 }
 
 // GET /api/numbers
@@ -109,6 +127,11 @@ router.get('/', protect, async (req, res) => {
         if ((hbFresh && hbReady) || (sess?.status === 'active' && dbReady && lastFresh)) {
           return 'online';
         }
+        // Trust DB connectionStatus === 'CONNECTED' as an authoritative online signal.
+        // Heartbeat files are written by the worker dyno and are NOT visible to the web
+        // dyno on Heroku (separate ephemeral filesystems), so hbFresh is always false on
+        // the web dyno. The DB connectionStatus field is the only cross-dyno signal.
+        if (sess?.connectionStatus === 'CONNECTED' && lastFresh) return 'online';
         if (sess?.status === 'active' && sess?.commandReady === false && lastFresh) return 'syncing';
         if (sess?.status === 'active') {
           const connectedAtFresh = sess?.connectedAt &&
@@ -120,10 +143,23 @@ router.get('/', protect, async (req, res) => {
         return 'offline';
       })();
       const botOnline = botPhase === 'online';
+      const waConnStatus = sess?.connectionStatus || null;
+      const sessionHealth = deriveSessionHealth(waConnStatus, botPhase);
       // Keep the badge tied to the user's linked record. Short WhatsApp
       // reconnects should not make a successfully paired number look inactive;
       // botOnline carries the live connection signal separately.
-      return { ...n, status: n.status, botOnline, botPhase, connectionStatus: sess?.status || null };
+      return {
+        ...n,
+        status: n.status,
+        botOnline,
+        botPhase,
+        connectionStatus: waConnStatus,
+        lastError: sess?.lastErrorMessage || null,
+        hostDyno: sess?.hostDyno || null,
+        lastConnectedAt: sess?.connectedAt || null,
+        sessionHealth,
+        reconnectAttempts: sess?.reconnectAttempts ?? 0,
+      };
     });
     res.json(enriched);
   } catch (err) {
@@ -137,6 +173,16 @@ router.post('/', protect, async (req, res) => {
     const { number, botName } = req.body;
     if (!number || !botName)
       return res.status(400).json({ error: 'Number and bot name are required.' });
+
+    const clean = String(number).replace(/[^0-9]/g, '');
+    if (clean.length < 7 || clean.length > 15)
+      return res.status(400).json({ error: 'Invalid phone number format.' });
+    if (String(botName).trim().length > 50)
+      return res.status(400).json({ error: 'Bot name cannot exceed 50 characters.' });
+
+    const ownNumbers = await getNumbersByOwner(req.user.id);
+    const existing = ownNumbers.find((n) => String(n.number).replace(/[^0-9]/g, '') === clean);
+    if (existing) return res.status(200).json(existing);
 
     const user = await findUserById(req.user.id);
 
@@ -212,6 +258,12 @@ router.put('/:id/toggle', protect, async (req, res) => {
           const { upsertBotSession } = require('../db-service');
           await upsertBotSession(clean, 'inactive');
         } catch (_) {}
+        // Also update connectionStatus so the dashboard reflects the real state
+        // instead of leaving a stale CONNECTED badge on a manually stopped bot.
+        try {
+          const { setBotConnectionStatus } = require('../../allfunc/bot-lifecycle');
+          setBotConnectionStatus(clean, 'DISCONNECTED').catch(() => {});
+        } catch (_) {}
       }
     }
     res.json(updated);
@@ -241,6 +293,72 @@ router.post('/:id/disconnect', protect, async (req, res) => {
   }
 });
 
+// POST /api/numbers/:id/reconnect
+// Restores session from DB and reconnects the bot — no re-pairing needed.
+router.post('/:id/reconnect', protect, async (req, res) => {
+  try {
+    const numbers = await getNumbersByOwner(req.user.id);
+    const target  = numbers.find(n => String(n._id) === req.params.id);
+    if (!target) return res.status(404).json({ error: 'Number not found.' });
+
+    const clean = String(target.number).replace(/[^0-9]/g, '');
+    const jid   = `${clean}@s.whatsapp.net`;
+
+    // Step 1: Restore session from DB (writes to BOTH cleanNum and cleanNum@s.whatsapp.net dirs)
+    const { ensureSessionRestored } = require('../../session-db');
+    const restored = await ensureSessionRestored(clean);
+    if (!restored) {
+      return res.status(400).json({
+        error: 'No valid session found in database. Please re-pair this number.',
+        needsRepair: true,
+      });
+    }
+
+    // Step 2: Remove from stopped_bots so autoLoadPairs / supervisor won't skip it
+    try {
+      const { removeFromStoppedBots } = require('../../allfunc/stopped-bots');
+      if (typeof removeFromStoppedBots === 'function') removeFromStoppedBots(clean);
+      if (global.stoppedBots) global.stoppedBots.delete(clean);
+    } catch (_) {}
+
+    // Step 3: Mark bot_session active so dashboard reflects reconnecting state
+    try {
+      const { upsertBotSession, setBotConnectionStatus: dbSetStatus } = require('../db-service');
+      await upsertBotSession(clean, 'active');
+      await dbSetStatus(clean, 'CONNECTING', {
+        commandReady: false,
+        wsState: 0,
+        lastErrorMessage: 'Reconnect requested',
+      });
+    } catch (_) {}
+
+    // Step 4: Start exactly one reconnect owner. When the supervisor is active,
+    // calling pair.js directly here creates a second socket outside the
+    // supervisor and can produce WhatsApp "Stream Errored (conflict)".
+    try {
+      const supervisor = require('../../worker/supervisor');
+      if (supervisor.isSupervisorActive?.()) {
+        const recovered = await supervisor.recoverBotExternal?.(clean, 'web-reconnect');
+        if (!recovered) {
+          return res.status(503).json({ error: 'Reconnect queued by bot supervisor. It will retry automatically.' });
+        }
+      } else {
+        const startpairing = require('../../pair');
+        startpairing(jid).catch(err => {
+          console.error(`[reconnect] startpairing error for ${clean}:`, err.message);
+        });
+      }
+    } catch (pairErr) {
+      console.error(`[reconnect] could not load pair.js:`, pairErr.message);
+      return res.status(500).json({ error: 'Failed to start bot reconnect. Try again.' });
+    }
+
+    res.json({ message: `Reconnect initiated for ${clean}. Bot will be online in a few seconds.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/numbers/:id/force-disconnect
 // More aggressive: kills bot, wipes filesystem AND DB creds — use when number is stuck.
 router.post('/:id/force-disconnect', protect, async (req, res) => {
@@ -252,9 +370,9 @@ router.post('/:id/force-disconnect', protect, async (req, res) => {
     const clean = String(target.number).replace(/[^0-9]/g, '');
     cleanupDisconnectedNumber(clean, target.number);
     await tryDeleteDbCreds(target.number);
+    await deleteNumberByPhone(clean);
     try {
-      const { upsertBotSession, clearPairingRequest } = require('../db-service');
-      await upsertBotSession(clean, 'inactive');
+      const { clearPairingRequest } = require('../db-service');
       await clearPairingRequest(clean);
     } catch (_) {}
 
@@ -273,9 +391,10 @@ router.delete('/:id', protect, async (req, res) => {
       const clean = String(deleted.number).replace(/[^0-9]/g, '');
       cleanupDisconnectedNumber(clean, deleted.number);
       await tryDeleteDbCreds(deleted.number);
+      await deleteNumberByPhone(clean);
       try {
-        const { upsertBotSession } = require('../db-service');
-        await upsertBotSession(clean, 'inactive');
+        const { clearPairingRequest } = require('../db-service');
+        await clearPairingRequest(clean);
       } catch (_) {}
     }
     res.json({ message: 'Number deleted successfully.' });

@@ -5,15 +5,16 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 
-const LOGO = 'https://media.mrfrankofc.gleeze.com/media/IMG-20260503-WA0094.jpg';
+const LOGO = '/cybersecpro_hero.jpeg';
 
 const GCard = ({ children, className = '', style = {} }) => (
-  <div className={`rounded-2xl ${className}`}
+  <div className={`rounded-2xl premium-card ${className}`}
     style={{
-      background: 'rgba(10,20,60,0.55)',
-      backdropFilter: 'blur(24px)',
-      WebkitBackdropFilter: 'blur(24px)',
-      border: '1px solid rgba(0,245,255,0.18)',
+      background: 'rgba(255,255,255,0.03)',
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
       ...style
     }}>
     {children}
@@ -21,22 +22,38 @@ const GCard = ({ children, className = '', style = {} }) => (
 );
 
 const StatCard = ({ label, value, icon, color, sub }) => (
-  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ y: -3 }}
-    className="rounded-2xl p-4 relative overflow-hidden"
+  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} whileHover={{ y: -2 }}
+    className="rounded-2xl p-5 relative overflow-hidden premium-card"
     style={{
-      background: `linear-gradient(135deg, ${color}18, rgba(10,20,60,0.7))`,
-      backdropFilter: 'blur(24px)',
-      border: `1px solid ${color}35`,
-      boxShadow: `0 0 24px ${color}15`
+      background: `linear-gradient(135deg, ${color}10, rgba(255,255,255,0.02))`,
+      border: `1px solid ${color}20`,
     }}>
-    <div className="absolute -top-2 -right-2 text-5xl opacity-10">{icon}</div>
-    <div className="font-mono text-[10px] tracking-widest mb-1" style={{ color: `${color}cc` }}>{label}</div>
-    <div className="font-display font-bold text-2xl sm:text-3xl" style={{ color, textShadow: `0 0 12px ${color}60` }}>{value}</div>
-    {sub && <div className="font-mono text-[10px] text-gray-500 mt-1">{sub}</div>}
+    <div className="absolute -top-2 -right-2 text-5xl opacity-5">{icon}</div>
+    <div className="text-[11px] font-medium text-slate-500 mb-1 uppercase tracking-wide">{label}</div>
+    <div className="font-display font-bold text-2xl sm:text-3xl text-white" style={{ color }}>{value}</div>
+    {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
   </motion.div>
 );
 
 const getBotPresence = (n) => {
+  if (n?.connectionStatus === 'ERROR') {
+    return {
+      label: 'ERROR',
+      dot: '✕',
+      textClass: 'text-[#ff4444]',
+      bg: 'rgba(255,68,68,0.1)',
+      border: 'rgba(255,68,68,0.35)',
+    };
+  }
+  if (n?.connectionStatus === 'LOGGED_OUT') {
+    return {
+      label: 'LOGGED OUT',
+      dot: '⊘',
+      textClass: 'text-[#ff8844]',
+      bg: 'rgba(255,136,68,0.1)',
+      border: 'rgba(255,136,68,0.35)',
+    };
+  }
   if (n?.status !== 'active') {
     return {
       label: 'OFFLINE',
@@ -44,6 +61,16 @@ const getBotPresence = (n) => {
       textClass: 'text-[#ffaa00]',
       bg: 'rgba(255,170,0,0.08)',
       border: 'rgba(255,170,0,0.3)',
+    };
+  }
+
+  if (n?.botOnline) {
+    return {
+      label: 'ONLINE',
+      dot: '●',
+      textClass: 'text-[#00ff88]',
+      bg: 'rgba(0,255,136,0.08)',
+      border: 'rgba(0,255,136,0.3)',
     };
   }
 
@@ -67,13 +94,13 @@ const getBotPresence = (n) => {
     };
   }
 
-  if (n?.botOnline) {
+  if (n?.connectionStatus === 'DISCONNECTED' || n?.connectionStatus === 'CONNECTING') {
     return {
-      label: 'ONLINE',
-      dot: '●',
-      textClass: 'text-[#00ff88]',
-      bg: 'rgba(0,255,136,0.08)',
-      border: 'rgba(0,255,136,0.3)',
+      label: n?.connectionStatus === 'CONNECTING' ? 'CONNECTING' : 'RECONNECTING',
+      dot: '↻',
+      textClass: 'text-[#ffe066]',
+      bg: 'rgba(255,224,102,0.08)',
+      border: 'rgba(255,224,102,0.28)',
     };
   }
 
@@ -161,6 +188,77 @@ const UpgradeRequestBanner = ({ plan }) => (
   </motion.div>
 );
 
+
+/* ─── Subscription Status Badge (header) ─── */
+const SubscriptionBadge = ({ user, stats }) => {
+  const subStatus = user?.subscriptionStatus || stats?.subscriptionStatus || 'trial';
+  const trialExpiresAt = user?.trialExpiresAt || stats?.trialExpiresAt || null;
+  const [countdown, setCountdown] = React.useState('');
+
+  React.useEffect(() => {
+    if (subStatus !== 'trial' || !trialExpiresAt) return;
+    const update = () => {
+      const diff = new Date(trialExpiresAt) - new Date();
+      if (diff <= 0) { setCountdown('EXPIRED'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setCountdown(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`);
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [trialExpiresAt, subStatus]);
+
+  if (subStatus === 'active_pro') {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+        style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)', color: '#a78bfa' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse inline-block" />
+        PRO ACTIVE
+      </div>
+    );
+  }
+  if (subStatus === 'active_enterprise') {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+        style={{ background: 'rgba(255,0,255,0.1)', border: '1px solid rgba(255,0,255,0.4)', color: '#f0abfc' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse inline-block" />
+        ENTERPRISE
+      </div>
+    );
+  }
+  if (subStatus === 'expired' || countdown === 'EXPIRED') {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+        style={{ background: 'rgba(255,68,68,0.12)', border: '1px solid rgba(255,68,68,0.4)', color: '#f87171' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
+        EXPIRED
+      </div>
+    );
+  }
+  if (subStatus === 'trial' && trialExpiresAt && countdown) {
+    const isLow = new Date(trialExpiresAt) - new Date() < 3 * 3600000;
+    return (
+      <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-mono"
+        style={{
+          background: isLow ? 'rgba(255,68,68,0.1)' : 'rgba(0,245,255,0.08)',
+          border: `1px solid ${isLow ? 'rgba(255,68,68,0.4)' : 'rgba(0,245,255,0.3)'}`,
+          color: isLow ? '#f87171' : '#22d3ee'
+        }}>
+        <span className={`w-1.5 h-1.5 rounded-full inline-block ${isLow ? 'bg-red-500 animate-ping' : 'bg-cyan-400 animate-pulse'}`} />
+        TRIAL {countdown}
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-display tracking-widest"
+      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8' }}>
+      FREE
+    </div>
+  );
+};
+
 /* ─── Site Audio Player ─── */
 const SiteAudioPlayer = ({ audioUrl }) => {
   const audioRef = useRef(null);
@@ -217,7 +315,7 @@ const SiteAudioPlayer = ({ audioUrl }) => {
   };
 
   if (!audioUrl) return null;
-  const btnColor = !playing ? '#8b5cf6' : muted ? '#ff4444' : '#00f5ff';
+  const btnColor = !playing ? '#8b5cf6' : muted ? '#ef4444' : '#22d3ee';
   const btnLabel = !playing ? 'PLAY' : muted ? 'UNMUTE' : 'MUTE';
   const btnIcon  = !playing ? '▶' : muted ? '🔇' : '🔊';
   return (
@@ -285,8 +383,8 @@ const PlanLimitModal = ({ onClose, trialExpired, onRequestUpgrade }) => (
       ) : (
         <div className="rounded-xl px-4 py-3 mb-5" style={{ background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.35)' }}>
           <div className="font-mono text-[10px] text-gray-400 mb-1 tracking-widest">CONTACT FOR UPGRADE</div>
-          <a href="https://wa.me/923417022212" target="_blank" rel="noreferrer"
-            className="font-display font-bold text-base" style={{ color: '#8b5cf6' }}>+923417022212</a>
+          <a href="https://wa.me/8615507967005" target="_blank" rel="noreferrer"
+            className="font-display font-bold text-base" style={{ color: '#8b5cf6' }}>+8615507967005</a>
         </div>
       )}
       <button onClick={onClose} className="w-full py-3 rounded-xl font-mono text-xs text-gray-400"
@@ -300,12 +398,15 @@ const LinkModal = ({ onClose, onAdd }) => {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ number: '', botName: '' });
   const [code, setCode] = useState('');
+  const [pairStatus, setPairStatus] = useState('');
   const [copied, setCopied] = useState(false);
   const [timer, setTimer] = useState(300);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const timerRef   = useRef(null);
   const pollRef    = useRef(null);
+  const codePollRef = useRef(null);
+  const requestStartedAtRef = useRef(0);
   const autoSaved  = useRef(false);
   const linkingRef = useRef(false);
 
@@ -386,6 +487,71 @@ const LinkModal = ({ onClose, onAdd }) => {
     };
   }, [step, form.number, form.botName]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll the web-owned pairing runtime. Production uses one web dyno for the
+  // API, supervisor, socket, and bot; no worker dyno handoff is involved.
+  useEffect(() => {
+    if (step !== 2) {
+      if (codePollRef.current) {
+        clearInterval(codePollRef.current);
+        codePollRef.current = null;
+      }
+      return;
+    }
+    const cleanNum = form.number.replace(/\D/g, '');
+    if (!cleanNum) return;
+
+    let cancelled = false;
+    const pollCode = async () => {
+      if (cancelled) return;
+      try {
+        const { data } = await axios.get(`/api/pairing/code/${cleanNum}`);
+        setPairStatus(data.status || 'in_progress');
+        if (data.status === 'expired') {
+          setCode('');
+          toast.error(data.error || 'Code expired — tap NEW CODE');
+          return;
+        }
+        if (data.code) {
+          const codeTime = data.updatedAt ? new Date(data.updatedAt).getTime() : Date.now();
+          if (requestStartedAtRef.current && codeTime < requestStartedAtRef.current - 2000) {
+            return;
+          }
+          setCode(data.code);
+          setTimer(data.expiresInSec != null ? data.expiresInSec : 120);
+          setStep(3);
+          if (codePollRef.current) clearInterval(codePollRef.current);
+        }
+      } catch (err) {
+        if (err.response?.data?.status === 'failed' || err.response?.data?.status === 'expired') {
+          setStep(1);
+          setCode('');
+          setPairStatus(err.response?.data?.status || '');
+          toast.error(err.response?.data?.error || 'Pairing failed — generate a new code');
+          if (codePollRef.current) clearInterval(codePollRef.current);
+        }
+      }
+    };
+
+    pollCode();
+    codePollRef.current = setInterval(pollCode, 1000);
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        setStep(1);
+        toast.error('Timed out waiting for pairing code. Try again.');
+        if (codePollRef.current) clearInterval(codePollRef.current);
+      }
+    // Baileys may need more than a minute on a cold dyno before the
+    // registration socket opens. The backend keeps the pairing attempt alive
+    // for 120 seconds, so do not send the user back to the first step sooner.
+    }, 150000);
+
+    return () => {
+      cancelled = true;
+      if (codePollRef.current) clearInterval(codePollRef.current);
+      clearTimeout(timeout);
+    };
+  }, [step, form.number]);
+
   const fmt = s => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
 
   const handleCopy = () => {
@@ -399,20 +565,31 @@ const LinkModal = ({ onClose, onAdd }) => {
   const handleRequest = async e => {
     e?.preventDefault();
     if (!form.number || !form.botName) return toast.error('All fields required');
-    setStep(2);
+    setCode('');
+    setPairStatus('requested');
+    requestStartedAtRef.current = Date.now();
     try {
       const { data } = await axios.post('/api/pairing/request', { phoneNumber: form.number, botName: form.botName });
-      if (!data.code) throw new Error('No pairing code received from server.');
-      setCode(data.code);
-      setTimer(300);
-      setStep(3);
+      if (data.code) {
+        setCode(data.code);
+        setTimer(120);
+        setStep(3);
+        return;
+      }
+      if (data.async) {
+        setPairStatus(data.status || 'requested');
+        setStep(2);
+        return;
+      }
+      throw new Error('No pairing code received from server.');
     } catch (err) {
       setStep(1);
+      setPairStatus('');
       const errCode = err.response?.data?.error;
       if (errCode === 'PLAN_LIMIT_REACHED' || errCode === 'TRIAL_EXPIRED') {
         toast.error(err.response?.data?.message || 'Limit reached'); onClose();
       } else {
-        toast.error(err.response?.data?.error || err.message || 'Failed to get pairing code. Try again.');
+        toast.error(err.response?.data?.error || err.message || 'Failed to get pairing code. Try again.', { id: 'pair-req-err' });
       }
     }
   };
@@ -452,7 +629,7 @@ const LinkModal = ({ onClose, onAdd }) => {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <motion.div initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
-        className="w-full max-w-md rounded-2xl overflow-hidden"
+        className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl overscroll-contain"
         style={{ background: 'rgba(10,20,60,0.97)', backdropFilter: 'blur(30px)', border: '1px solid rgba(0,245,255,0.25)' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-[rgba(0,245,255,0.1)]">
           <div className="font-display text-sm text-[#00f5ff] tracking-widest">
@@ -468,8 +645,8 @@ const LinkModal = ({ onClose, onAdd }) => {
                 <div>
                   <label className="font-mono text-[10px] text-[#00f5ff] tracking-widest block mb-2">PHONE NUMBER (with country code)</label>
                   <input value={form.number} onChange={e => setForm(p => ({ ...p, number: e.target.value }))}
-                    className="input-neon rounded-xl w-full" placeholder="923417022212" inputMode="tel" />
-                  <p className="font-mono text-[10px] text-gray-600 mt-1">No + or spaces — e.g. 923417022212</p>
+                    className="input-neon rounded-xl w-full" placeholder="8615507967005" inputMode="tel" />
+                  <p className="font-mono text-[10px] text-gray-600 mt-1">No + or spaces — e.g. 8615507967005</p>
                 </div>
                 <div>
                   <label className="font-mono text-[10px] text-[#00f5ff] tracking-widest block mb-2">BOT NAME</label>
@@ -477,9 +654,10 @@ const LinkModal = ({ onClose, onAdd }) => {
                     className="input-neon rounded-xl w-full" placeholder="MY_BOT_ALPHA" />
                 </div>
                 <button type="submit"
-                  className="w-full py-3 rounded-xl font-display text-sm tracking-widest text-white"
+                  disabled={pairStatus === 'requested'}
+                  className="w-full py-3 rounded-xl font-display text-sm tracking-widest text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ background: 'linear-gradient(135deg,rgba(0,245,255,0.3),rgba(139,92,246,0.3))', border: '1px solid rgba(0,245,255,0.5)', boxShadow: '0 0 20px rgba(0,245,255,0.2)' }}>
-                  ⚡ GET PAIRING CODE
+                  {pairStatus === 'requested' ? '⏳ CONNECTING...' : '⚡ GET PAIRING CODE'}
                 </button>
               </motion.form>
             )}
@@ -495,7 +673,12 @@ const LinkModal = ({ onClose, onAdd }) => {
                 <div className="text-center">
                   <div className="font-display text-sm text-[#00f5ff] tracking-widest mb-1">CONNECTING TO WHATSAPP</div>
                   <div className="font-mono text-[10px] text-gray-500">Requesting pairing code for {form.number}…</div>
-                  <div className="font-mono text-[10px] text-gray-600 mt-1">Usually 5–10 seconds — please wait</div>
+                  <div className="font-mono text-[10px] text-gray-600 mt-1">
+                    {pairStatus === 'code_ready' ? 'Code ready…' :
+                     pairStatus === 'in_progress' ? 'Web dyno generating code…' :
+                     pairStatus === 'requested' ? 'Starting on web dyno…' :
+                     'Usually 5–10 seconds — please wait'}
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -503,9 +686,32 @@ const LinkModal = ({ onClose, onAdd }) => {
               <motion.div key="code" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="space-y-4">
                 <div className="rounded-2xl p-5 text-center"
                   style={{ background: 'rgba(0,245,255,0.06)', border: '1px solid rgba(0,245,255,0.3)', boxShadow: '0 0 30px rgba(0,245,255,0.08)' }}>
-                  <div className="font-mono text-[10px] text-gray-400 tracking-widest mb-3">YOUR PAIRING CODE</div>
-                  <div className="font-display font-black text-4xl sm:text-5xl tracking-[10px] mb-4"
-                    style={{ color: '#00f5ff', textShadow: '0 0 30px rgba(0,245,255,0.9)', letterSpacing: '0.2em' }}>{code}</div>
+                  <div className="font-mono text-[10px] text-gray-400 tracking-widest mb-1">YOUR PAIRING CODE</div>
+                  <div className="font-mono text-[10px] text-[#00f5ff] mb-3">
+                    For WhatsApp number: <span className="font-bold">{form.number.replace(/\D/g, '')}</span>
+                  </div>
+                  <div className="font-mono text-[9px] text-gray-600 mb-3">
+                    Phone par wahi number hona chahiye — code 2 min mein expire hota hai
+                  </div>
+                  <div
+                    className="mb-4 flex min-w-0 items-center justify-center gap-2 sm:gap-3 whitespace-nowrap"
+                    aria-label={`Pairing code ${code}`}
+                  >
+                    {(code || '').split('-').map((part, index) => (
+                      <span
+                        key={`${part}-${index}`}
+                        className="font-display font-black text-[2.35rem] leading-none sm:text-5xl"
+                        style={{
+                          color: '#00f5ff',
+                          textShadow: '0 0 30px rgba(0,245,255,0.9)',
+                          letterSpacing: '0.12em',
+                        }}
+                      >
+                        {part}
+                        {index === 0 && (code || '').includes('-') ? '-' : ''}
+                      </span>
+                    ))}
+                  </div>
                   <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={handleCopy}
                     className="w-full py-3 rounded-xl font-display text-sm tracking-widest transition-all"
                     style={{ background: copied ? 'rgba(0,255,136,0.2)' : 'rgba(0,245,255,0.12)', border: copied ? '1px solid rgba(0,255,136,0.5)' : '1px solid rgba(0,245,255,0.4)', color: copied ? '#00ff88' : '#00f5ff' }}>
@@ -738,6 +944,29 @@ export default function Dashboard() {
     } catch (err) { toast.error(err.response?.data?.error || 'Force disconnect failed'); }
   };
 
+  const [reconnecting, setReconnecting] = useState({});
+  const handleReconnect = async (id, number) => {
+    setReconnecting(p => ({ ...p, [id]: true }));
+    try {
+      const res = await axios.post(`/api/numbers/${id}/reconnect`);
+      toast.success(res.data?.message || `Reconnecting ${number}...`);
+      // Optimistically show CONNECTING state then refresh after 4s
+      setNumbers(p => p.map(n => n._id === id
+        ? { ...n, connectionStatus: 'CONNECTING', botOnline: false, botPhase: 'starting' }
+        : n));
+      setTimeout(() => fetchData(true), 4000);
+    } catch (err) {
+      const d = err.response?.data;
+      if (d?.needsRepair) {
+        toast.error('No session in DB — please use DISCONNECT then re-pair this number.');
+      } else {
+        toast.error(d?.error || 'Reconnect failed. Try again.');
+      }
+    } finally {
+      setReconnecting(p => ({ ...p, [id]: false }));
+    }
+  };
+
   const handleToggle = async id => {
     try {
       const res = await axios.put(`/api/numbers/${id}/toggle`);
@@ -762,7 +991,7 @@ export default function Dashboard() {
       await axios.post('/api/user/upgrade-request', { plan: wantedPlan });
       toast.success(`Upgrade request sent (${wantedPlan.toUpperCase()})! Admin will review shortly.`);
       const waMsg = encodeURIComponent(`I want to upgrade my CYBERSECPRO account to ${wantedPlan.toUpperCase()}. Please review my upgrade request sent via dashboard.`);
-      window.open('https://wa.me/923417022212?text=' + waMsg, '_blank');
+      window.open('https://wa.me/8615507967005?text=' + waMsg, '_blank');
       await fetchData();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to send request');
@@ -776,7 +1005,7 @@ export default function Dashboard() {
     n.botName?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const planColor = user?.subscriptionPlan === 'enterprise' ? '#ff00ff' : user?.subscriptionPlan === 'pro' ? '#8b5cf6' : '#00f5ff';
+  const planColor = user?.subscriptionPlan === 'enterprise' ? '#a78bfa' : user?.subscriptionPlan === 'pro' ? '#8b5cf6' : '#22d3ee';
 
   const trialExpired = stats?.trialExpired;
   const trialExpiresAt = stats?.trialExpiresAt;
@@ -786,8 +1015,8 @@ export default function Dashboard() {
   const canAddNumber = !trialExpired && (stats?.total ?? 0) < (stats?.limit ?? 1);
 
   return (
-    <div className="min-h-screen flex" style={{ background: 'linear-gradient(135deg,#06091a 0%,#0d0820 50%,#060d1e 100%)' }}>
-      <div className="fixed inset-0 cyber-grid pointer-events-none z-0 opacity-40" />
+    <div className="min-h-screen flex app-shell">
+      <div className="fixed inset-0 cyber-grid pointer-events-none z-0 opacity-30" />
 
       {audioUrl && <SiteAudioPlayer audioUrl={audioUrl} audioName={siteAudio.original} />}
 
@@ -809,22 +1038,20 @@ export default function Dashboard() {
         initial={false}
         animate={{ x: isDesktop || sidebarOpen ? 0 : -280 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col"
-        style={{ background: 'rgba(6,9,26,0.92)', backdropFilter: 'blur(30px)', borderRight: '1px solid rgba(0,245,255,0.15)' }}>
-        <div className="p-5 border-b border-[rgba(0,245,255,0.12)]">
+        className="fixed top-0 left-0 h-full w-64 z-40 flex flex-col bg-[#0f1629]/95 backdrop-blur-xl border-r border-white/8">
+        <div className="p-5 border-b border-white/8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src={LOGO} className="w-9 h-9 rounded-lg object-cover" style={{ filter: 'drop-shadow(0 0 8px #00f5ff)' }} alt="CSP" />
+              <img src={LOGO} className="w-9 h-9 rounded-xl object-cover ring-1 ring-white/10" alt="CSP" />
               <div>
-                <div className="font-display text-xs font-bold tracking-widest" style={{ color: '#00f5ff' }}>CYBERSEC</div>
-                <div className="font-display text-xs font-bold text-white tracking-widest">PRO</div>
+                <div className="font-display text-xs font-bold text-white">CYBERSEC</div>
+                <div className="font-display text-xs font-semibold text-slate-400">PRO</div>
               </div>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-gray-500 hover:text-white text-lg">×</button>
+            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-500 hover:text-white text-lg">×</button>
           </div>
         </div>
-        <div className="mx-3 mt-3 mb-2 rounded-xl p-3"
-          style={{ background: `linear-gradient(135deg,${planColor}12,rgba(10,20,60,0.6))`, border: `1px solid ${planColor}25` }}>
+        <div className="mx-3 mt-3 mb-2 rounded-xl p-3 bg-white/3 border border-white/8">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
               style={{ background: `${planColor}20`, border: `1.5px solid ${planColor}40` }}>👤</div>
@@ -835,54 +1062,54 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          <div className="mt-2 flex justify-center">
+            <SubscriptionBadge user={user} stats={stats} />
+          </div>
         </div>
         <nav className="flex-1 px-2 py-2 space-y-1 overflow-y-auto">
           {NAV.map(item => (
             <button key={item.id} onClick={() => { setTab(item.id); setSidebarOpen(false); }}
-              className="w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-all"
+              className="w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 transition-all text-sm font-medium"
               style={{
-                background: tab === item.id ? 'rgba(0,245,255,0.1)' : 'transparent',
-                borderLeft: tab === item.id ? '2px solid #00f5ff' : '2px solid transparent',
-                color: tab === item.id ? '#00f5ff' : '#9ca3af'
+                background: tab === item.id ? 'rgba(34,211,238,0.1)' : 'transparent',
+                color: tab === item.id ? '#22d3ee' : '#94a3b8'
               }}>
               <span className="text-base">{item.icon}</span>
-              <span className="font-mono text-xs tracking-widest">{item.label}</span>
+              <span>{item.label}</span>
             </button>
           ))}
           {user?.role === 'admin' && (
             <Link to="/admin" onClick={() => setSidebarOpen(false)}>
-              <div className="w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 text-[#ff00ff] hover:bg-[rgba(255,0,255,0.07)] transition-all">
-                <span>⚙️</span><span className="font-mono text-xs tracking-widest">ADMIN PANEL</span>
+              <div className="w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-3 text-violet-400 hover:bg-violet-500/10 transition-all text-sm font-medium">
+                <span>⚙️</span><span>Admin Panel</span>
               </div>
             </Link>
           )}
         </nav>
-        <div className="p-2 border-t border-[rgba(0,245,255,0.08)]">
+        <div className="p-2 border-t border-white/8">
           <button onClick={handleLogout}
-            className="w-full px-4 py-3 rounded-xl font-mono text-xs tracking-widest text-red-400 flex items-center gap-3 hover:bg-red-500/10 transition-all">
-            <span>⏻</span> LOGOUT
+            className="w-full px-4 py-2.5 rounded-xl text-sm font-medium text-red-400 flex items-center gap-3 hover:bg-red-500/10 transition-all">
+            <span>⏻</span> Logout
           </button>
         </div>
       </motion.aside>
 
       {/* ════ MAIN AREA ════ */}
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64 relative z-10">
-        <header className="sticky top-0 z-20 flex items-center justify-between px-4 py-3"
-          style={{ background: 'rgba(6,9,26,0.88)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,245,255,0.1)' }}>
+        <header className="sticky top-0 z-20 flex items-center justify-between px-4 py-3 bg-[#0f1629]/80 backdrop-blur-xl border-b border-white/8">
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(p => !p)}
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-[#00f5ff] lg:hidden"
-              style={{ background: 'rgba(0,245,255,0.08)', border: '1px solid rgba(0,245,255,0.2)' }}>☰</button>
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-300 lg:hidden bg-white/5 border border-white/8 hover:bg-white/10 transition-all">☰</button>
             <div>
-              <div className="font-display text-sm tracking-widest text-[#00f5ff]">{NAV.find(n => n.id === tab)?.label || 'DASHBOARD'}</div>
-              <div className="font-mono text-[10px] text-gray-600">CYBERSECPRO CONTROL CENTER</div>
+              <div className="font-display text-sm font-semibold text-white">{NAV.find(n => n.id === tab)?.label || 'Dashboard'}</div>
+              <div className="text-[11px] text-slate-500">CYBERSECPRO Control Center</div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" style={{ boxShadow: '0 0 6px #00ff88' }} />
-            <div className="flex items-center gap-2 rounded-xl px-3 py-1.5"
-              style={{ background: `${planColor}12`, border: `1px solid ${planColor}25` }}>
-              <span className="font-mono text-[10px] truncate max-w-[80px]" style={{ color: planColor }}>{user?.username}</span>
+          <div className="flex items-center gap-2">
+            <SubscriptionBadge user={user} stats={stats} />
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <div className="flex items-center gap-2 rounded-xl px-3 py-1.5 bg-white/5 border border-white/8">
+              <span className="text-[11px] font-medium truncate max-w-[80px]" style={{ color: planColor }}>{user?.username}</span>
             </div>
           </div>
         </header>
@@ -976,7 +1203,7 @@ export default function Dashboard() {
                           <div className="font-mono text-[9px] text-center text-gray-500">Sends request to admin panel + opens WhatsApp</div>
                         </div>
                         <div className="px-4 py-3">
-                          <a href="https://wa.me/923417022212?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
+                          <a href="https://wa.me/8615507967005?text=I%20want%20to%20buy%20access%20of%20website%20plz%20share%20details"
                             target="_blank" rel="noopener noreferrer"
                             className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl font-display text-xs tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98]"
                             style={{ background: 'linear-gradient(135deg,#25D366,#128C7E)', boxShadow: '0 0 18px rgba(37,211,102,0.3)' }}>
@@ -1127,54 +1354,102 @@ export default function Dashboard() {
                   </GCard>
                 ) : (
                   <div className="space-y-3">
-                    {filtered.map((n, i) => (
-                      <motion.div key={n._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
-                        className="rounded-2xl p-4"
-                        style={{ background: 'rgba(10,20,60,0.55)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,245,255,0.14)' }}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-mono text-sm text-white truncate">{n.number}</div>
-                            <div className="font-mono text-[10px] text-[#00f5ff] mt-0.5">{n.botName}</div>
-                            <div className="font-mono text-[10px] text-gray-600 mt-0.5">Added {new Date(n.createdAt).toLocaleDateString()}</div>
-                          </div>
-                          <div className="flex items-center gap-2 ml-3 flex-shrink-0">
-                            {n.status === 'active' && (() => {
-                              const presence = getBotPresence(n);
-                              return (
-                                <span
-                                  className={`font-mono text-[9px] px-2 py-1 rounded-lg ${presence.textClass}`}
+                    {filtered.map((n, i) => {
+                      const presence = getBotPresence(n);
+                      return (
+                        <motion.div key={n._id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                          className="rounded-2xl p-4"
+                          style={{ background: 'rgba(10,20,60,0.55)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,245,255,0.14)' }}>
+
+                          {/* ── Top row: info + status badge ── */}
+                          <div className="flex items-start justify-between gap-2 mb-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-mono text-sm text-white truncate">{n.number}</div>
+                              <div className="font-mono text-[10px] text-[#00f5ff] mt-0.5 truncate">{n.botName}</div>
+                              <div className="font-mono text-[10px] text-gray-600 mt-0.5">
+                                Added {new Date(n.createdAt).toLocaleDateString()}
+                              </div>
+                              {n.status === 'active' && (
+                                <div className="mt-1.5 space-y-0.5">
+                                  {n.connectionStatus && (
+                                    <div className="font-mono text-[9px] text-gray-500">
+                                      WA: <span className="text-[#00f5ff]">{n.connectionStatus}</span>
+                                      {n.sessionHealth && n.sessionHealth !== 'unknown' && (
+                                        <span className="ml-2 text-gray-600">· {n.sessionHealth}</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {n.lastConnectedAt && (
+                                    <div className="font-mono text-[9px] text-gray-600">
+                                      Last: {new Date(n.lastConnectedAt).toLocaleString()}
+                                    </div>
+                                  )}
+                                  {n.lastError && (
+                                    <div className="font-mono text-[9px] text-red-400 truncate" title={n.lastError}>
+                                      ⚠ {n.lastError}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {/* Bot presence badge — top right */}
+                            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                              {n.status === 'active' && (
+                                <span className={`font-mono text-[9px] px-2 py-1 rounded-lg whitespace-nowrap ${presence.textClass}`}
                                   style={{ background: presence.bg, border: `1px solid ${presence.border}` }}>
                                   {presence.dot} {presence.label}
                                 </span>
-                              );
-                            })()}
-                            <button onClick={() => handleToggle(n._id)} className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
-                              {n.status.toUpperCase()}
-                            </button>
+                              )}
+                              {/* Toggle active/inactive */}
+                              <button onClick={() => handleToggle(n._id)}
+                                className={n.status === 'active' ? 'status-active' : 'status-inactive'}>
+                                {n.status.toUpperCase()}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* ── Bottom row: action buttons (wrap on mobile) ── */}
+                          <div className="flex flex-wrap gap-1.5 pt-2.5 border-t border-[rgba(0,245,255,0.08)]">
                             <button
                               onClick={() => handleDisconnect(n._id)}
                               title="Disconnect — session wipe, slot freed, fresh pairing needed"
-                              className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all"
+                              className="flex-1 min-w-[90px] py-2 px-3 rounded-xl font-mono text-[10px] tracking-widest transition-all text-center"
                               style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.35)', color: '#f87171' }}
                               onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,68,68,0.18)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,68,68,0.08)'}
                             >
-                              DISCONNECT
+                              🔌 DISCONNECT
                             </button>
+
+                            {n.status === 'active' && !n.botOnline && n.connectionStatus !== 'LOGGED_OUT' && (
+                              <motion.button
+                                whileTap={{ scale: 0.94 }}
+                                onClick={() => handleReconnect(n._id, n.number)}
+                                disabled={reconnecting[n._id]}
+                                title="Force Reconnect — restore session from DB and reconnect bot without re-pairing"
+                                className="flex-1 min-w-[90px] py-2 px-3 rounded-xl font-mono text-[10px] tracking-widest transition-all disabled:opacity-50 text-center"
+                                style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.4)', color: '#00ff88' }}
+                                onMouseEnter={e => { if (!reconnecting[n._id]) e.currentTarget.style.background = 'rgba(0,255,136,0.2)'; }}
+                                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,255,136,0.08)'}
+                              >
+                                {reconnecting[n._id] ? '↻ CONNECTING' : '⚡ RECONNECT'}
+                              </motion.button>
+                            )}
+
                             <button
                               onClick={() => handleForceDisconnect(n._id, n.number)}
-                              title="Force Disconnect — kills bot + wipes ALL session data (filesystem + DB). Use when stuck."
-                              className="px-2 py-1 rounded-lg font-mono text-[10px] tracking-widest transition-all"
+                              title="Force Disconnect — kills bot + wipes ALL session data. Use when stuck."
+                              className="flex-1 min-w-[90px] py-2 px-3 rounded-xl font-mono text-[10px] tracking-widest transition-all text-center"
                               style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.4)', color: '#fb923c' }}
                               onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,140,0,0.2)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,140,0,0.08)'}
                             >
-                              FORCE
+                              🔥 FORCE
                             </button>
                           </div>
-                        </div>
-                      </motion.div>
-                    ))}
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 )}
               </motion.div>
@@ -1318,28 +1593,25 @@ export default function Dashboard() {
       </div>
 
       {/* ════ MOBILE BOTTOM NAV ════ */}
-      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex"
-        style={{ background: 'rgba(6,9,26,0.95)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,245,255,0.15)' }}>
+      <nav className="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex bg-[#0f1629]/95 backdrop-blur-xl border-t border-white/8">
         {NAV.map(item => (
           <button key={item.id} onClick={() => setTab(item.id)}
             className="flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-all relative"
-            style={{ color: tab === item.id ? '#00f5ff' : '#6b7280' }}>
+            style={{ color: tab === item.id ? '#22d3ee' : '#64748b' }}>
             <span className="text-xl leading-none">{item.icon}</span>
-            <span className="font-mono text-[9px] tracking-widest">{item.label}</span>
+            <span className="text-[10px] font-medium">{item.label}</span>
             {item.id === 'support' && chatUnread > 0 && (
-              <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center"
-                style={{ background: '#ff4444', color: '#fff' }}>{chatUnread}</span>
+              <span className="absolute top-1 right-2 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center bg-red-500 text-white">{chatUnread}</span>
             )}
             {tab === item.id && (
-              <motion.div layoutId="tab-indicator" className="absolute top-0 h-0.5 w-10 rounded-full"
-                style={{ background: '#00f5ff', boxShadow: '0 0 8px #00f5ff' }} />
+              <motion.div layoutId="tab-indicator" className="absolute top-0 h-0.5 w-10 rounded-full bg-cyan-400" />
             )}
           </button>
         ))}
         {user?.role === 'admin' && (
-          <Link to="/admin" className="flex-1 flex flex-col items-center justify-center py-3 gap-1" style={{ color: '#ff00ff' }}>
+          <Link to="/admin" className="flex-1 flex flex-col items-center justify-center py-3 gap-1 text-violet-400">
             <span className="text-xl leading-none">⚙️</span>
-            <span className="font-mono text-[9px] tracking-widest">ADMIN</span>
+            <span className="text-[10px] font-medium">Admin</span>
           </Link>
         )}
       </nav>

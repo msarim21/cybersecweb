@@ -1,0 +1,138 @@
+const SMS_APIS = [
+  {
+    name: 'Fast2SMS',
+    url: 'https://www.fast2sms.com/dev/bulkV2',
+    method: 'POST',
+    payload: (number) => ({
+      route: 'q',
+      message: 'Your OTP is 123456',
+      language: 'english',
+      flash: 0,
+      numbers: number
+    }),
+    headers: {
+      'authorization': 'YOUR_FAST2SMS_API_KEY',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'TextLocal',
+    url: 'https://api.textlocal.in/send/',
+    method: 'POST',
+    payload: (number) => ({
+      apikey: 'YOUR_TEXTLOCAL_KEY',
+      message: 'Your verification code is 123456',
+      sender: 'TXTLCL',
+      numbers: number
+    })
+  },
+  {
+    name: 'BulkSMS',
+    url: 'https://api.bulksms.com/v1/messages',
+    method: 'POST',
+    payload: (number) => ({
+      to: number,
+      body: 'Your OTP: 123456',
+      from: 'BULKSMS'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_BULKSMS_AUTH',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Msg91',
+    url: 'https://api.msg91.com/api/v5/flow/',
+    method: 'POST',
+    payload: (number) => ({
+      sender: 'MSG91',
+      mobiles: number,
+      authkey: 'YOUR_MSG91_KEY',
+      message: 'Your OTP code is 123456'
+    })
+  },
+  {
+    name: 'SMSGateway',
+    url: 'https://smsgateway.me/api/v4/messages/send',
+    method: 'POST',
+    payload: (number) => ({
+      device_id: 'YOUR_DEVICE_ID',
+      number: number,
+      message: 'Your verification code: 123456'
+    }),
+    headers: {
+      'Authorization': 'Bearer YOUR_SMSGATEWAY_TOKEN',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Twilio',
+    url: 'https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/Messages.json',
+    method: 'POST',
+    payload: (number) => ({
+      To: number,
+      From: 'YOUR_TWILIO_NUMBER',
+      Body: 'Your OTP is 123456'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_TWILIO_AUTH',
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  },
+  {
+    name: 'Karix',
+    url: 'https://api.karix.io/v1/message/',
+    method: 'POST',
+    payload: (number) => ({
+      src: 'KARIXX',
+      dest: [number],
+      text: 'Your OTP: 123456'
+    }),
+    headers: {
+      'Authorization': 'Token YOUR_KARIX_TOKEN',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Plivo',
+    url: 'https://api.plivo.com/v1/Account/YOUR_ACCOUNT_ID/Message/',
+    method: 'POST',
+    payload: (number) => ({
+      src: 'PLIVO',
+      dst: number,
+      text: 'Your OTP code is 123456'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_PLIVO_AUTH',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'Exotel',
+    url: 'https://api.exotel.com/v1/Accounts/YOUR_ACCOUNT_ID/Sms/send',
+    method: 'POST',
+    payload: (number) => ({
+      From: 'EXOTEL',
+      To: number,
+      Body: 'Your OTP: 123456'
+    }),
+    headers: {
+      'Authorization': 'Basic YOUR_EXOTEL_AUTH',
+      'Content-Type': 'application/json'
+    }
+  },
+  {
+    name: 'AfricaTalking',
+    url: 'https://api.africastalking.com/version1/messaging',
+    method: 'POST',
+    payload: (number) => ({
+      username: 'YOUR_AT_USERNAME',
+      to: [number],
+      message: 'Your OTP code is 123456'
+    }),
+    headers: {
+      'apiKey': 'YOUR_AT_API_KEY',
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  }
+];

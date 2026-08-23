@@ -37,4 +37,14 @@ const SecurityGuard = {
     },
 };
 
+// Periodic cleanup — remove buckets inactive for 10+ minutes to prevent memory leak
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of SecurityGuard._buckets.entries()) {
+        if (now - bucket.lastRefill > 10 * 60 * 1000) {
+            SecurityGuard._buckets.delete(key);
+        }
+    }
+}, 10 * 60 * 1000).unref();
+
 module.exports = { SecurityGuard };

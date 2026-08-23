@@ -29,6 +29,8 @@ const {
     env,                // env vars to forward to child
     maxRestartsPerHour, // default 12
     restartDelayMs,     // base delay before first restart
+    pairing,            // pairing sessions must keep exactly one child socket
+    noRestart,          // supervisor-owned sessions must not self-respawn
 } = workerData;
 
 const MAX_RESTARTS_PER_HOUR = maxRestartsPerHour ?? 12;
@@ -42,6 +44,12 @@ let _restartTimes   = [];
 let _totalRestarts  = 0;
 let _shuttingDown   = false;
 let _pingInterval   = null;
+let _pairingSession = Boolean(pairing);
+let _noRestartSession = Boolean(noRestart);
+// Set after a pairing child exits with code 75 (WhatsApp 515 restart after the
+// pairing code was accepted). The replacement child must load the freshly
+// registered session instead of starting another registration handshake.
+let _forceNoPairing  = false;
 
 function send(type, payload = {}) {
     try { parentPort.postMessage({ type, botNumber, ...payload }); } catch (_) {}
@@ -75,7 +83,7 @@ function spawnChild(opts = {}) {
     const childEnv = {
         ...env,
         BOT_NUMBER  : botNumber,
-        BOT_PAIRING : opts.pairing ? '1' : (env.BOT_PAIRING === '1' ? '1' : '0'),
+        BOT_PAIRING : (!_forceNoPairing && (opts.pairing || env.BOT_PAIRING === '1')) ? '1' : '0',
         WHATSAPP_WORKER: '1',
         BOT_ISOLATION  : '1',
     };
@@ -98,7 +106,29 @@ function spawnChild(opts = {}) {
         updateSlot();
         send('exit', { code, signal, restarts: _totalRestarts });
 
+        // Exit code 75 = pairing accepted, WhatsApp asked for a socket restart
+        // (515). Credentials are already registered, so restart exactly once as
+        // a normal session even for noRestart pairing children — otherwise the
+        // bot dies at the moment pairing succeeds.
+        if (!_shuttingDown && code === 75) {
+            _pairingSession   = false;
+            _noRestartSession = false;
+            _forceNoPairing   = true;
+            send('pairRestart', { reason: 'restartRequired after pairing accepted' });
+            setTimeout(() => { if (!_shuttingDown) spawnChild(); }, 3000);
+            return;
+        }
+
         if (_shuttingDown || opts.noRestart) return;
+
+        // ✅ FIX: code=0 = intentional clean exit (no session, bot stopped, or manual disconnect)
+        // Do NOT restart — Supervisor syncBots() will re-evaluate. Restarting here causes
+        // an infinite tight loop: no-session → exit(0) → restart → no-session → exit(0) → ...
+        // This was the primary cause of R14 memory errors on Heroku.
+        if (code === 0) {
+            send('cleanExit', { reason: 'intentional exit (no-session or stopped)' });
+            return;
+        }
 
         const recent = _recentRestarts();
         if (recent >= MAX_RESTARTS_PER_HOUR) {
@@ -110,8 +140,13 @@ function spawnChild(opts = {}) {
         _restartTimes.push(Date.now());
         slot.setRestarts(_totalRestarts);
 
-        const delay = _restartDelay();
-        send('scheduledRestart', { delayMs: delay, attempt: _totalRestarts });
+        // Node normalizes exit codes above 255 (440 becomes 184). Treat both
+        // values as WhatsApp session conflict so the old socket gets time to
+        // settle before the replacement is started.
+        const baseDelay = _restartDelay();
+        const isConflictExit = code === 440 || code === 184;
+        const delay = isConflictExit ? Math.max(60_000, baseDelay) : baseDelay;
+        send('scheduledRestart', { delayMs: delay, attempt: _totalRestarts, exitCode: code });
 
         setTimeout(() => {
             if (!_shuttingDown) spawnChild();
@@ -124,17 +159,45 @@ function spawnChild(opts = {}) {
 }
 
 function stopChild(signal = 'SIGTERM') {
-    if (!_child || _child.killed) return;
-    try { _child.kill(signal); } catch (_) {}
-    _child = null;
-    updateSlot();
+    const child = _child;
+    if (!child || child.killed || child.exitCode !== null) {
+        _child = null;
+        updateSlot();
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (_child === child) _child = null;
+            updateSlot();
+            resolve();
+        };
+
+        child.once('exit', finish);
+        try { child.kill(signal); } catch (_) { finish(); return; }
+
+        // bot-runner normally flushes credentials before exiting. Never leave
+        // an orphaned Baileys socket behind if that graceful shutdown stalls.
+        setTimeout(() => {
+            // child.killed only means Node successfully sent the signal; it
+            // does not mean the process has exited. Check exitCode so a
+            // stalled Baileys process still gets hard-killed.
+            if (child.exitCode === null) {
+                try { child.kill('SIGKILL'); } catch (_) {}
+            }
+            finish();
+        }, signal === 'SIGKILL' ? 2_000 : 18_000);
+    });
 }
 
-function shutdown() {
+async function shutdown() {
     if (_shuttingDown) return;
     _shuttingDown = true;
     clearInterval(_pingInterval);
-    stopChild('SIGTERM');
+    await stopChild('SIGTERM');
     slot.clear();
     send('threadStopped');
     setTimeout(() => process.exit(0), 2000);
@@ -143,21 +206,32 @@ function shutdown() {
 parentPort.on('message', (msg) => {
     switch (msg?.cmd) {
         case 'start':
-            spawnChild({ pairing: Boolean(msg.pairing) });
+            spawnChild({
+                pairing: msg.pairing === undefined ? _pairingSession : Boolean(msg.pairing),
+                noRestart: _noRestartSession,
+            });
             break;
         case 'stop':
-            _shuttingDown = true;
-            stopChild('SIGTERM');
+            shutdown().catch(() => process.exit(1));
             break;
         case 'restart':
+            if (_noRestartSession) break;
             stopChild('SIGTERM');
             setTimeout(() => {
                 _shuttingDown = false;
-                spawnChild();
+                spawnChild({ pairing: _pairingSession });
             }, 2000);
             break;
         case 'kill':
-            stopChild('SIGKILL');
+            stopChild('SIGKILL').catch(() => {});
+            break;
+        case 'promote':
+            // Keep the already-authenticated socket alive. Killing it and
+            // spawning a second registered socket immediately after pairing
+            // can produce a 440 conflict and lose the just-created session.
+            _pairingSession = false;
+            _noRestartSession = false;
+            send('promoted');
             break;
         case 'ping':
             send('pong', { pid: _child?.pid, running: slot.isRunning() });
@@ -189,4 +263,11 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT',  shutdown);
 
 send('ready');
-spawnChild();
+// Pairing is a single WhatsApp registration handshake. If its child exits,
+// starting a replacement from this worker creates a second registration socket
+// and invalidates the code that was already shown to the user. Preserve the
+// supervisor's noRestart contract for the initial child as well as later exits.
+spawnChild({
+    pairing: _pairingSession,
+    noRestart: _noRestartSession,
+});

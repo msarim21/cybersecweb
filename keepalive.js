@@ -19,6 +19,10 @@ function getAppUrl() {
     if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
         return `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
     }
+    // Heroku: detect from DYNO env + app name pattern
+    if (process.env.DYNO && process.env.HEROKU_APP_NAME) {
+        return `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
+    }
     return null;
 }
 
@@ -73,8 +77,8 @@ function isWhatsAppWorker() {
     return false;
 }
 
-const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 10 * 60 * 1000;
-const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 45 * 60 * 1000;
+const WA_STALE_MS = Number(process.env.WA_STALE_MS) || 3 * 60 * 1000; // reduced from 10min to 3min for faster dead-socket detection
+const WA_ZOMBIE_MS = Number(process.env.WA_ZOMBIE_MS) || 5 * 60 * 1000; // reduced from 15min to 5min — isolated child self-restart makes fast recovery safe (only this bot restarts, ~10s respawn)
 
 function _supervisorActive() {
     try {
@@ -156,13 +160,35 @@ async function sweepStaleWhatsAppSockets() {
 
         const wsState = nexus.ws?.readyState ?? -1;
 
-        // Isolated child: light wake only — never stopBot+pair (causes WA "Syncing" hang)
+        // Isolated child: light wake first. If the wake itself keeps failing
+        // (presence update times out) while the socket still LOOKS open (wsState===1),
+        // that is proof of a truly frozen/zombie socket — not just "nobody messaged
+        // it in a while". Previously this only ever light-woke and NEVER escalated
+        // (comment said stopBot+pair causes a WA "Syncing" hang) — so a genuinely
+        // zombie socket in isolated mode could stay stuck indefinitely (observed:
+        // 16+ min command-response delay). Fix: escalate to a controlled self-exit.
+        // bot-thread.js's child 'exit' handler auto-respawns ONLY this one bot
+        // process within ~10s — other bots are completely unaffected.
         if (_ownBot) {
             if (wsState === 1) {
                 const silentMs = Date.now() - (tracker.lastWAMessage || tracker.lastActivity || 0);
                 if (silentMs >= WA_STALE_MS) {
                     const { lightWakeSocket } = require('./allfunc/socket-wake');
-                    await lightWakeSocket(nexus, tracker).catch(() => false);
+                    const woke = await lightWakeSocket(nexus, tracker).catch(() => false);
+                    if (!woke) {
+                        tracker._staleWakeFails = (tracker._staleWakeFails || 0) + 1;
+                        const zombie = silentMs >= WA_ZOMBIE_MS;
+                        const failLimit = zombie ? 2 : 4;
+                        if (tracker._staleWakeFails >= failLimit) {
+                            console.log(`[SocketKeepAlive] 💀 ${clean} zombie socket in isolated child (${Math.round(silentMs / 60000)}m idle, ${tracker._staleWakeFails} failed wakes) — self-restarting this bot only`);
+                            tracker._staleWakeFails = 0;
+                            try { await _backupOwnSession(); } catch (_) {}
+                            setTimeout(() => process.exit(1), 500);
+                            continue;
+                        }
+                    } else {
+                        tracker._staleWakeFails = 0;
+                    }
                 }
             }
             continue;
@@ -172,14 +198,21 @@ async function sweepStaleWhatsAppSockets() {
         const silentMs = Date.now() - lastWa;
 
         if (wsState === 3 || wsState === -1) {
-            // If pair.js is already handling a 440-retry loop, don't interfere —
-            // a second reconnect attempt would cause another 440 and extend the loop.
+            // pair.js already handling a 440-retry — don't interfere
             if (tracker.err440Retry > 0) continue;
 
-            // Cooldown: skip reconnect if we already tried within last 45s
+            // pair.js already set disconnected=true and is reconnecting — skip
+            if (tracker.disconnected) continue;
+
+            // Bot connected recently (<120s) — ws can briefly be null during
+            // Baileys internal teardown right before pair.js's connection.update
+            // handler fires. Triggering stopBot here creates a double reconnect.
+            if (tracker.lastOpenAt && Date.now() - tracker.lastOpenAt < 120_000) continue;
+
+            // Cooldown: skip reconnect if we already tried within last 90s
             if (!global._socketKACooldown) global._socketKACooldown = new Map();
             const lastTry = global._socketKACooldown.get(clean) || 0;
-            if (Date.now() - lastTry < 45_000) continue;
+            if (Date.now() - lastTry < 90_000) continue;
             global._socketKACooldown.set(clean, Date.now());
             console.log(`[SocketKeepAlive] ${clean} ws closed (${wsState}) — reconnecting`);
             try {
@@ -277,6 +310,19 @@ async function refreshBotSessions() {
         // If tracker exists but is empty while DB has linked numbers → autoload missed bots
         if (hasTracker && trackerSize === 0) {
             if (nums.length > 0) {
+                // Safety: skip autoload if bot already runs in a pairing child process.
+                // In flat mode, pairing-processor forks a child that hosts the bot.
+                // Parent tracker is empty while child is alive — without this check,
+                // autoload opens a second socket for same number → WhatsApp Error 440.
+                const hasActivePairingChild = nums.some(n => {
+                    const clean = String(n).replace(/[^0-9]/g, '');
+                    const child = global._pairingChildPids?.get(clean);
+                    return child && child.exitCode === null;
+                });
+                if (hasActivePairingChild) {
+                    console.log('[KeepAlive] ℹ️ Bot running in pairing child — skipping autoload (prevents Error 440)');
+                    return;
+                }
                 console.log(`[KeepAlive] 🔄 Tracker empty but DB has ${nums.length} assigned number(s) — triggering autoload...`);
                 try {
                     const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
@@ -296,6 +342,14 @@ async function refreshBotSessions() {
                 ? trackerMap.get(jid) || trackerMap.get(clean)
                 : null;
             if (!tracker) {
+                // Skip intentionally-stopped bots — user disconnected them from the
+                // dashboard and they live in stopped_bots.json. Reconnecting them here
+                // contradicts the user's explicit action and causes a Error 440 loop.
+                try {
+                    const { isStopped } = require('./allfunc/stopped-bots');
+                    if (isStopped(clean)) continue;
+                } catch (_) {}
+
                 console.log(`[KeepAlive] 🔌 ${clean} not in tracker — reconnecting missed session...`);
                 try {
                     const { restoreCredsFromDb } = require('./session-db');
@@ -306,6 +360,15 @@ async function refreshBotSessions() {
                 } catch (_) {}
                 continue;
             }
+
+            // Skip bots that pair.js gave up on (440 conflict loop / re-pair required).
+            if (tracker.disconnected && (tracker.err440Retry > 0 || tracker.conflictPingPong > 0)) continue;
+            if (tracker.err440Retry > 0 || tracker.conflictPingPong > 0) continue;
+            try {
+                const pairMod = require('./pair');
+                const cleanCheck = String(clean);
+                if (typeof pairMod.isReconnectBlocked === 'function' && pairMod.isReconnectBlocked(cleanCheck)) continue;
+            } catch (_) {}
 
             const ws = tracker.connection && tracker.connection.ws;
             const wsState = ws ? ws.readyState : -1;
@@ -324,9 +387,9 @@ async function refreshBotSessions() {
 // ── Prince AI API warmup — prevent first-command cold-start delay ─────────────
 async function warmupPrinceAPIs() {
     const endpoints = [
-        'https://api.princetechn.com/api/ai/gpt4?apikey=prince&q=hi',
-        'https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=hi',
-        'https://api.princetechn.com/api/ai/deepseek-llm?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/openai?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/geminiai?apikey=prince&q=hi',
+        'https://api.princetechn.com/api/ai/deepseek-v3?apikey=prince&q=hi',
     ];
     for (const url of endpoints) {
         try {
@@ -338,13 +401,15 @@ async function warmupPrinceAPIs() {
     console.log('[KeepAlive] 🔥 Prince AI APIs warmup triggered');
 }
 
-/** Bot memory restart interval (hours). 0 = off. Default 3h — clears per-bot heap leaks. */
+/** Bot memory restart interval (hours). 0 = off. Default 4h — matches the
+ *  4h minimum-uptime guarantee; bots must never be force-restarted before 4h.
+ *  An explicit BOT_RESTART_HOURS/AUTO_RESTART_HOURS env var always wins (admin override). */
 function getBotRestartHours() {
     const bot = Number(process.env.BOT_RESTART_HOURS);
-    if (Number.isFinite(bot)) return bot;
+    if (Number.isFinite(bot) && bot >= 0) return bot;
     const legacy = Number(process.env.AUTO_RESTART_HOURS);
     if (Number.isFinite(legacy) && legacy > 0) return legacy;
-    return 3;
+    return 4;
 }
 
 // ── Per-bot child restart (supervisor mode — web dyno stays up) ─────────────
@@ -376,7 +441,10 @@ function scheduleBotMemoryRestart(intervalMs) {
         }
     }, ms);
 
-    console.log(`[AutoRestart] ✅ Bot memory restart at ${nextStr} (every ${Math.round(ms / 3600000)}h)`);
+    const hoursLabel = Number.isInteger(ms / 3600000)
+        ? String(ms / 3600000)
+        : String((ms / 3600000).toFixed(2)).replace(/0+$/, '').replace(/\.$/, '');
+    console.log(`[AutoRestart] ✅ Bot memory restart at ${nextStr} (every ${hoursLabel}h)`);
 }
 
 // ── Full dyno restart (legacy single-process worker only) ───────────────────
@@ -407,7 +475,10 @@ function scheduleAutoRestart(intervalMs) {
     }, ms);
 
     const nextStr = new Date(restartAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true });
-    console.log(`[AutoRestart] ✅ Scheduled — restart at ${nextStr} (every ${Math.round(ms / 3600000)}h)`);
+    const hoursLabel = Number.isInteger(ms / 3600000)
+        ? String(ms / 3600000)
+        : String((ms / 3600000).toFixed(2)).replace(/0+$/, '').replace(/\.$/, '');
+    console.log(`[AutoRestart] ✅ Scheduled — restart at ${nextStr} (every ${hoursLabel}h)`);
 }
 
 /** Light presence wake — every 60s so first command after hours of silence is instant */
@@ -462,6 +533,14 @@ function startBotChildKeepAlive() {
     // Those send sendPresenceUpdate every 90s which stacks with markOnlineOnConnect
     // + keepAlive WS pings → WhatsApp rate-overlimit → commands die ~1 min after connect.
     // TCP keepalive (30s) + pair.js watchdog presence (5min) is sufficient.
+    //
+    // ✅ FIX: self-heal THIS bot's own socket if it goes stale/unstable. Without
+    // this, an isolated child never proactively wakes its own idle/flaky socket —
+    // it just sits there until the supervisor's heartbeat check eventually decides
+    // to kill+restart the whole thread. sweepStaleWhatsAppSockets() already has an
+    // isolated-child branch (global.__ISOLATED_BOT) that only ever touches this
+    // bot's own connection — it can never affect any other bot.
+    setInterval(() => sweepStaleWhatsAppSockets().catch(() => {}), 90 * 1000);
     setInterval(() => backupAntideleteSessions().catch(() => {}), 5 * 60 * 1000);
 
     // Session-folder backup every 10 min — keeps DB creds fresh so a hard kill
@@ -487,8 +566,10 @@ function startKeepAlive() {
     const supervisorMode = _supervisorActive();
     const waHost = isWhatsAppWorker();
 
-    // Website ping every 8 min — Heroku Eco sleeps ~30min without HTTP traffic
-    _timer = setInterval(selfPing, 8 * 60 * 1000);
+    // Website ping every 5 min — Heroku Eco sleeps ~30min without HTTP traffic
+    _timer = setInterval(selfPing, 5 * 60 * 1000);
+    // Also ping at startup after a short delay
+    setTimeout(selfPing, 10 * 1000);
 
     if (!supervisorMode && waHost) {
         // Legacy single-process on the WhatsApp host dyno only
@@ -532,13 +613,25 @@ function startKeepAlive() {
 
     const restartHours = getBotRestartHours();
     if (supervisorMode) {
-        // Full worker dyno restart every BOT_RESTART_HOURS
-        if (restartHours > 0) {
-            scheduleAutoRestart(restartHours * 60 * 60 * 1000);
-            console.log(`[KeepAlive] ✅ Full worker dyno restart every ${restartHours}h (supervisor mode)`);
-        }
+        // ✅ FIX: Do NOT schedule a restart timer here. worker.js already starts
+        // worker/auto-restarter.js in supervisor/isolated mode, which is the ONE
+        // authoritative BOT_RESTART_HOURS timer and does a proper *graceful*
+        // restart (flushes every bot's session to DB first, stops the
+        // supervisor cleanly). Previously this scheduleAutoRestart() ran in
+        // PARALLEL with auto-restarter.js — two independent timers racing on
+        // the same interval — and this one just did cleanupBotMemory()+exit(0)
+        // with no session flush. Whichever fired first won, which is why all
+        // bots appeared to restart together earlier than the intended 4h.
+        console.log(`[KeepAlive] Supervisor mode — restart scheduling owned solely by worker/auto-restarter.js (every ${restartHours}h, graceful)`);
     } else if (waHost && restartHours > 0) {
-        scheduleAutoRestart(restartHours * 60 * 60 * 1000);
+        // ✅ FIX: Skip duplicate timer — worker.js already calls startAutoRestarter()
+        // in both flat and isolated modes. If that ran first, global._autoRestarterScheduled
+        // is set and we must NOT schedule a second timer that races the first one.
+        if (global._autoRestarterScheduled) {
+            console.log(`[KeepAlive] Auto-restarter already armed via worker/auto-restarter.js (every ${restartHours}h) — skipping duplicate timer`);
+        } else {
+            scheduleAutoRestart(restartHours * 60 * 60 * 1000);
+        }
     } else if (restartHours <= 0) {
         console.log('[KeepAlive] Bot memory restart disabled (BOT_RESTART_HOURS=0)');
     }

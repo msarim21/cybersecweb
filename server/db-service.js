@@ -23,9 +23,15 @@ function normUser(u) {
     password:          o.password,
     role:              o.role,
     subscription_plan: o.subscriptionPlan || o.subscription_plan,
+    subscription_status: o.subscriptionStatus || o.subscription_status || 'trial',
+    trial_start:       o.trialStart || o.trial_start || null,
     trial_expires_at:  o.trialExpiresAt   || o.trial_expires_at  || null,
+    subscription_expiry: o.subscriptionExpiry || o.subscription_expiry || null,
+    activated_by_admin: o.activatedByAdmin || o.activated_by_admin || false,
     upgrade_request:   o.upgradeRequest   || o.upgrade_request   || 'none',
     upgrade_request_at: o.upgradeRequestAt || o.upgrade_request_at || null,
+    license_key:       o.licenseKey || o.license_key || null,
+    google_id:         o.googleId || o.google_id || null,
     banned:            o.banned,
     last_active:       o.lastActive  || o.last_active,
     created_at:        o.createdAt   || o.created_at,
@@ -61,6 +67,25 @@ async function findUserByEmail(email, includePassword = false) {
   }
   const { rows } = await pg().query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
   return rows[0] || null;
+}
+
+async function findUserByGoogleId(googleId) {
+  if (!googleId) return null;
+  if (isMongoMode()) {
+    const { User } = M();
+    return normUser(await User.findOne({ googleId }));
+  }
+  const { rows } = await pg().query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+  return rows[0] || null;
+}
+
+async function setUserGoogleId(id, googleId) {
+  if (isMongoMode()) {
+    const { User } = M();
+    await User.findByIdAndUpdate(id, { googleId });
+    return;
+  }
+  await pg().query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, id]);
 }
 
 async function findUserById(id) {
@@ -168,35 +193,161 @@ async function banUser(id, banned) {
 }
 
 async function deleteUser(id) {
+  // User deletion is a destructive operation, so remove every runtime/session
+  // artifact before deleting the owner record. Otherwise an autoload sweep can
+  // resurrect a deleted WhatsApp number from a stale BotSession or disk creds.
+  const cleanNumbers = [];
+  const clean = (value) => String(value || '').replace(/[^0-9]/g, '');
+  const wipeLocalNumber = (number) => {
+    const n = clean(number);
+    if (!n) return;
+    const fs = require('fs');
+    const path = require('path');
+    const base = path.join(process.cwd(), 'nexstore', 'pairing');
+    for (const dir of [path.join(base, n), path.join(base, `${n}@s.whatsapp.net`)]) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+    }
+    try { fs.rmSync(path.join(base, `pairing_${n}.json`), { force: true }); } catch (_) {}
+    try { fs.rmSync(path.join(base, 'pairing.json'), { force: true }); } catch (_) {}
+    try {
+      const { removeConnectedFlag } = require('../allfunc/connected-flag');
+      removeConnectedFlag(n);
+    } catch (_) {}
+    try {
+      // Keep deleted numbers blocked from automatic reconnect. A future
+      // pairing request explicitly removes this marker after it has wiped the
+      // old session.
+      const { addToStoppedBots } = require('../allfunc/stopped-bots');
+      addToStoppedBots(n);
+    } catch (_) {}
+  };
+
+  const stopRuntimeNumber = (number) => {
+    const n = clean(number);
+    if (!n) return;
+    // The supervisor wraps pair.stopBot() and intentionally ignores normal
+    // stops while a pairing child is in flight. Admin deletion must override
+    // that guard, otherwise the deleted account can finish pairing later.
+    try {
+      const { stopBotExternal } = require('../worker/supervisor');
+      if (typeof stopBotExternal === 'function') stopBotExternal(n);
+    } catch (_) {}
+    try {
+      const { stopBot } = require('../pair');
+      if (typeof stopBot === 'function') stopBot(n);
+    } catch (_) {}
+    wipeLocalNumber(n);
+    cleanNumbers.push(n);
+  };
+
   if (isMongoMode()) {
-    const { User, LinkedNumber } = M();
+    const { User, LinkedNumber, BotSession, PairingRequest } = M();
+    const owned = await LinkedNumber.find({ ownerId: id }).select('number').lean().catch(() => []);
+    const pendingOwned = await BotSession.find({ pairingOwnerId: String(id) })
+      .select('number').lean().catch(() => []);
+    owned.push(...pendingOwned);
+    for (const row of owned) stopRuntimeNumber(row.number);
+    const numbers = [...new Set(cleanNumbers)];
+    if (numbers.length) {
+      await BotSession.deleteMany({ number: { $in: numbers } }).catch(() => {});
+      await PairingRequest.deleteMany({ number: { $in: numbers } }).catch(() => {});
+    }
+    await BotSession.deleteMany({ pairingOwnerId: String(id) }).catch(() => {});
     await LinkedNumber.deleteMany({ ownerId: id });
     await User.findByIdAndDelete(id);
     return;
   }
+  const { rows: owned } = await pg().query(
+    `SELECT number FROM linked_numbers WHERE owner_id = $1`,
+    [id]
+  );
+  const { rows: pendingOwned } = await pg().query(
+    `SELECT number FROM bot_sessions WHERE pairing_owner_id = $1`,
+    [String(id)]
+  );
+  owned.push(...pendingOwned);
+  for (const row of owned) stopRuntimeNumber(row.number);
+  const numbers = [...new Set(cleanNumbers)];
+  if (numbers.length) {
+    await pg().query(
+      `DELETE FROM bot_sessions
+       WHERE REGEXP_REPLACE(number, '[^0-9]', '', 'g') = ANY($1::text[])`,
+      [numbers]
+    );
+  }
+  await pg().query(
+    `DELETE FROM bot_sessions WHERE pairing_owner_id = $1`,
+    [String(id)]
+  );
   await pg().query('DELETE FROM users WHERE id = $1', [id]);
 }
 
-async function updateUserPlan(id, plan) {
+async function updateUserPlan(id, plan, opts = {}) {
+  const { activatedByAdmin = true, subscriptionExpiry = null } = opts;
+  const subStatus = plan === 'pro' ? 'active_pro'
+    : plan === 'enterprise' ? 'active_enterprise'
+    : 'trial';
   if (isMongoMode()) {
     const { User } = M();
-    const u = await User.findByIdAndUpdate(id, { subscriptionPlan: plan, upgradeRequest: 'none' }, { new: true });
+    const update = {
+      subscriptionPlan: plan,
+      subscriptionStatus: subStatus,
+      upgradeRequest: 'none',
+      activatedByAdmin: plan !== 'free' ? true : false,
+    };
+    // When upgrading to paid: clear trial expiry so trial logic never fires
+    if (plan === 'pro' || plan === 'enterprise') {
+      update.trialExpiresAt = null;
+      if (subscriptionExpiry) update.subscriptionExpiry = subscriptionExpiry;
+    }
+    const u = await User.findByIdAndUpdate(id, update, { new: true });
     return u ? normUser(u) : null;
   }
-  const { rows } = await pg().query(
-    "UPDATE users SET subscription_plan = $1, upgrade_request = 'none' WHERE id = $2 RETURNING id, username, email, subscription_plan",
-    [plan, id]
-  );
+  let query, params;
+  if (plan === 'pro' || plan === 'enterprise') {
+    query = `UPDATE users SET
+      subscription_plan = $1,
+      subscription_status = $2,
+      upgrade_request = 'none',
+      activated_by_admin = true,
+      trial_expires_at = NULL,
+      subscription_expiry = $3
+    WHERE id = $4
+    RETURNING id, username, email, subscription_plan, subscription_status`;
+    params = [plan, subStatus, subscriptionExpiry, id];
+  } else {
+    query = `UPDATE users SET subscription_plan = $1, subscription_status = $2, upgrade_request = 'none' WHERE id = $3
+    RETURNING id, username, email, subscription_plan, subscription_status`;
+    params = [plan, subStatus, id];
+  }
+  const { rows } = await pg().query(query, params);
   return rows[0] || null;
 }
 
 async function setTrialExpiry(id, expiresAt) {
+  const trialStart = new Date();
   if (isMongoMode()) {
     const { User } = M();
-    await User.findByIdAndUpdate(id, { trialExpiresAt: expiresAt });
+    await User.findByIdAndUpdate(id, {
+      trialExpiresAt: expiresAt,
+      trialStart: trialStart,
+      subscriptionStatus: 'trial',
+    });
     return;
   }
-  await pg().query('UPDATE users SET trial_expires_at = $1 WHERE id = $2', [expiresAt, id]);
+  await pg().query(
+    'UPDATE users SET trial_expires_at = $1, trial_start = $2, subscription_status = $3 WHERE id = $4',
+    [expiresAt, trialStart, 'trial', id]
+  );
+}
+
+async function setLicenseKey(id, key) {
+  if (isMongoMode()) {
+    const { User } = M();
+    await User.findByIdAndUpdate(id, { licenseKey: key || null });
+    return;
+  }
+  await pg().query('UPDATE users SET license_key = $1 WHERE id = $2', [key || null, id]);
 }
 
 async function requestUpgrade(id, plan) {
@@ -236,14 +387,30 @@ async function getPendingUpgradeRequests() {
 }
 
 async function approveUpgrade(id, plan) {
+  const subStatus = plan === 'pro' ? 'active_pro' : 'active_enterprise';
   if (isMongoMode()) {
     const { User } = M();
-    const u = await User.findByIdAndUpdate(id, { subscriptionPlan: plan, upgradeRequest: 'none' }, { new: true });
+    const u = await User.findByIdAndUpdate(id, {
+      subscriptionPlan: plan,
+      subscriptionStatus: subStatus,
+      upgradeRequest: 'none',
+      upgradeRequestAt: null,
+      activatedByAdmin: true,
+      trialExpiresAt: null,   // clear trial so it never re-triggers expiry
+    }, { new: true });
     return u ? normUser(u) : null;
   }
   const { rows } = await pg().query(
-    "UPDATE users SET subscription_plan = $1, upgrade_request = 'none', upgrade_request_at = NULL WHERE id = $2 RETURNING id, username, email, subscription_plan",
-    [plan, id]
+    `UPDATE users SET
+      subscription_plan = $1,
+      subscription_status = $2,
+      upgrade_request = 'none',
+      upgrade_request_at = NULL,
+      activated_by_admin = true,
+      trial_expires_at = NULL
+    WHERE id = $3
+    RETURNING id, username, email, subscription_plan, subscription_status`,
+    [plan, subStatus, id]
   );
   return rows[0] || null;
 }
@@ -403,6 +570,7 @@ async function savePairingOwner(number, userId, botName) {
 
 async function ensurePairingRequest(number, opts = {}) {
   const force = opts.force === true;
+  const ownerId = opts.ownerId != null ? String(opts.ownerId) : null;
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return null;
   if (isMongoMode()) {
@@ -415,17 +583,42 @@ async function ensurePairingRequest(number, opts = {}) {
     }
     const doc = await PairingRequest.findOneAndUpdate(
       { number: clean },
-      { $set: { status: 'requested', code: null, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      {
+        $set: {
+          status: 'requested',
+          code: null,
+          attemptId: null,
+           ...(ownerId ? { ownerId } : {}),
+          error: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
       { upsert: true, new: true }
     );
     try {
       await BotSession.findOneAndUpdate(
         { number: clean },
-        { $set: { status: 'pending', pairingStatus: 'requested', pairingCode: null, lastActive: new Date() } },
+          {
+            $set: {
+              status: 'pending',
+              pairingStatus: 'requested',
+              pairingCode: null,
+              pairingAttemptId: null,
+              pairingError: null,
+              lastActive: new Date(),
+            },
+          },
         { upsert: true, new: true }
       );
     } catch (_) {}
-    return doc ? { number: doc.number, status: doc.status, code: doc.code, updatedAt: doc.updatedAt } : null;
+    return doc ? {
+      number: doc.number,
+      status: doc.status,
+      code: doc.code,
+      attemptId: doc.attemptId || null,
+      updatedAt: doc.updatedAt,
+    } : null;
   }
   try {
     if (force) {
@@ -435,6 +628,8 @@ async function ensurePairingRequest(number, opts = {}) {
          ON CONFLICT (number) DO UPDATE
            SET pairing_status = 'requested',
                pairing_code = NULL,
+               pairing_attempt_id = NULL,
+               pairing_error = NULL,
                status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
                last_active = NOW()`,
         [clean]
@@ -452,6 +647,8 @@ async function ensurePairingRequest(number, opts = {}) {
                  WHEN bot_sessions.pairing_status IN ('requested', 'in_progress', 'code_ready') THEN bot_sessions.pairing_code
                  ELSE NULL
                END,
+               pairing_attempt_id = NULL,
+               pairing_error = NULL,
                status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
                last_active = NOW()`,
         [clean]
@@ -461,38 +658,58 @@ async function ensurePairingRequest(number, opts = {}) {
   return { number: clean, status: 'requested', code: null };
 }
 
-async function setPairingCode(number, code) {
+async function setPairingCode(number, code, options = {}) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean || !code) return null;
+  const attemptId = options.attemptId ? String(options.attemptId) : null;
   if (isMongoMode()) {
     const { PairingRequest, BotSession } = M();
     const reqDoc = await PairingRequest.findOneAndUpdate(
       { number: clean },
-      { $set: { status: 'code_ready', code, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      {
+        $set: { status: 'code_ready', code, attemptId, error: null, updatedAt: new Date() },
+        $setOnInsert: { createdAt: new Date() },
+      },
       { upsert: true, new: true }
     );
     try {
       await BotSession.findOneAndUpdate(
         { number: clean },
-        { $set: { pairingCode: code, pairingStatus: 'code_ready', lastActive: new Date() } },
+        {
+          $set: {
+            pairingCode: code,
+            pairingStatus: 'code_ready',
+            pairingAttemptId: attemptId,
+            pairingError: null,
+            lastActive: new Date(),
+          },
+        },
         { upsert: true, new: true }
       );
     } catch (_) {}
-    return reqDoc ? { number: reqDoc.number, status: reqDoc.status, code: reqDoc.code } : null;
+    return reqDoc ? {
+      number: reqDoc.number,
+      status: reqDoc.status,
+      code: reqDoc.code,
+      attemptId: reqDoc.attemptId,
+    } : null;
   }
   try {
     await pg().query(
-      `INSERT INTO bot_sessions (number, status, pairing_code, pairing_status, last_active)
-       VALUES ($1, 'pending', $2, 'code_ready', NOW())
+      `INSERT INTO bot_sessions
+         (number, status, pairing_code, pairing_status, pairing_attempt_id, pairing_error, last_active)
+       VALUES ($1, 'pending', $2, 'code_ready', $3, NULL, NOW())
        ON CONFLICT (number) DO UPDATE
          SET pairing_code = $2,
              pairing_status = 'code_ready',
+             pairing_attempt_id = $3,
+             pairing_error = NULL,
              status = CASE WHEN bot_sessions.status = 'active' THEN bot_sessions.status ELSE 'pending' END,
              last_active = NOW()`,
-      [clean, code]
+      [clean, code, attemptId]
     );
   } catch (_) {}
-  return { number: clean, status: 'code_ready', code };
+  return { number: clean, status: 'code_ready', code, attemptId };
 }
 
 async function getAndClearPairingOwner(number) {
@@ -547,10 +764,74 @@ async function isNumberInLinkedNumbers(number) {
   } catch (_) { return false; }
 }
 
+async function isNumberOwnedByUser(number, userId) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || userId == null) return false;
+  if (isMongoMode()) {
+    const { LinkedNumber, BotSession, PairingRequest } = M();
+    const linked = await LinkedNumber.exists({
+      ownerId: userId,
+      number: { $regex: `^${clean}(?:@s\\.whatsapp\\.net)?$`, $options: 'i' },
+    });
+    if (linked) return true;
+    const session = await BotSession.exists({ number: clean, pairingOwnerId: String(userId) });
+    if (session) return true;
+    const request = await PairingRequest.exists({ number: clean, ownerId: String(userId) });
+    return Boolean(request);
+  }
+  const { rows } = await pg().query(
+    `SELECT 1
+       FROM bot_sessions bs
+      WHERE bs.number = $1 AND bs.pairing_owner_id = $2
+     UNION ALL
+     SELECT 1
+       FROM linked_numbers ln
+      WHERE REGEXP_REPLACE(ln.number,'[^0-9]','','g') = $1 AND ln.owner_id = $3
+     LIMIT 1`,
+    [clean, String(userId), userId]
+  );
+  return rows.length > 0;
+}
+
+async function getNumberClaimOwner(number) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  if (isMongoMode()) {
+    const { LinkedNumber, BotSession, PairingRequest } = M();
+    const linked = await LinkedNumber.findOne({
+      number: { $regex: `^${clean}(?:@s\\.whatsapp\\.net)?$`, $options: 'i' },
+    }).select('ownerId').lean();
+    if (linked?.ownerId) return String(linked.ownerId);
+    const session = await BotSession.findOne({ number: clean }).select('pairingOwnerId').lean();
+    if (session?.pairingOwnerId) return String(session.pairingOwnerId);
+    const request = await PairingRequest.findOne({ number: clean }).select('ownerId').lean();
+    return request?.ownerId ? String(request.ownerId) : null;
+  }
+  const { rows } = await pg().query(
+    `SELECT owner_id::text AS owner_id
+       FROM linked_numbers
+      WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1
+     UNION ALL
+     SELECT pairing_owner_id AS owner_id
+       FROM bot_sessions
+      WHERE number = $1 AND pairing_owner_id IS NOT NULL
+     LIMIT 1`,
+    [clean]
+  );
+  return rows[0]?.owner_id ? String(rows[0].owner_id) : null;
+}
+
 // ── Per-number bot mode (self/public) stored in bot_sessions.bot_mode ───────
 async function getBotMode(number) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return 'public';
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      const doc = await BotSession.findOne({ number: clean }).select('botMode').lean();
+      return doc?.botMode || 'public';
+    } catch (_) { return 'public'; }
+  }
   try {
     const { rows } = await pg().query(
       'SELECT bot_mode FROM bot_sessions WHERE number=$1 LIMIT 1',
@@ -564,6 +845,17 @@ async function setBotMode(number, mode) {
   const clean = String(number).replace(/[^0-9]/g, '');
   if (!clean) return;
   const safeMode = mode === 'self' ? 'self' : 'public';
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        { $set: { botMode: safeMode, lastActive: new Date() } },
+        { upsert: true }
+      );
+    } catch (_) {}
+    return;
+  }
   try {
     await pg().query(
       `INSERT INTO bot_sessions (number, status, bot_mode, last_active)
@@ -636,9 +928,55 @@ async function getAllNumbers() {
   }));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// BOT SESSION METHODS
-// ════════════════════════════════════════════════════════════════════════════
+/** Persist WhatsApp socket connection state for dashboard + recovery. */
+async function setBotConnectionStatus(number, connectionStatus, meta = {}) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean || !connectionStatus) return;
+  const now = new Date();
+  if (isMongoMode()) {
+    const { BotSession } = M();
+    const $set = { connectionStatus, lastActive: now };
+    if (meta.lastErrorMessage !== undefined) $set.lastErrorMessage = meta.lastErrorMessage;
+    if (meta.reconnectAttempts !== undefined) $set.reconnectAttempts = meta.reconnectAttempts;
+    if (meta.hostDyno !== undefined) $set.hostDyno = meta.hostDyno;
+      if (meta.commandReady !== undefined) $set.commandReady = meta.commandReady;
+      if (meta.wsState !== undefined) $set.wsState = meta.wsState;
+    if (connectionStatus === 'CONNECTED') {
+      $set.connectedAt = now;
+      if (meta.lastErrorMessage === null) $set.lastErrorMessage = null;
+      if (meta.reconnectAttempts === 0) $set.reconnectAttempts = 0;
+    }
+    await BotSession.findOneAndUpdate({ number: clean }, { $set }, { upsert: true });
+    return;
+  }
+  try {
+    const errMsg = meta.lastErrorMessage !== undefined ? meta.lastErrorMessage : null;
+    const attempts = meta.reconnectAttempts !== undefined ? meta.reconnectAttempts : null;
+    const hostDyno = meta.hostDyno !== undefined ? meta.hostDyno : null;
+    await pg().query(
+      `INSERT INTO bot_sessions (number, status, connection_status, last_error_message, reconnect_attempts, host_dyno, connected_at, last_active)
+       VALUES ($1, 'pending', $2, $3, COALESCE($4, 0), $5, CASE WHEN $2 = 'CONNECTED' THEN NOW() ELSE NULL END, NOW())
+       ON CONFLICT (number) DO UPDATE SET
+         connection_status = $2,
+         last_error_message = CASE
+           WHEN $2 = 'CONNECTED' THEN NULL
+           WHEN $3 IS NOT NULL THEN $3
+           ELSE bot_sessions.last_error_message
+         END,
+          reconnect_attempts = COALESCE($4, bot_sessions.reconnect_attempts),
+          host_dyno = COALESCE($5, bot_sessions.host_dyno),
+          command_ready = COALESCE($6, bot_sessions.command_ready),
+          ws_state = COALESCE($7, bot_sessions.ws_state),
+         connected_at = CASE WHEN $2 = 'CONNECTED' THEN NOW() ELSE bot_sessions.connected_at END,
+         last_active = NOW()`,
+       [clean, connectionStatus, errMsg, attempts, hostDyno,
+        meta.commandReady !== undefined ? meta.commandReady : null,
+        meta.wsState !== undefined ? meta.wsState : null]
+    );
+  } catch (err) {
+    console.error('[db-service] setBotConnectionStatus:', err.message);
+  }
+}
 
 async function upsertBotSession(number, status, meta = {}) {
   const clean = number.replace(/[^0-9]/g, '');
@@ -711,7 +1049,7 @@ async function getBotSessionsByNumbers(numbers) {
   if (isMongoMode()) {
     const { BotSession } = M();
     const docs = await BotSession.find({ number: { $in: cleans } })
-      .select('number status lastActive connectedAt commandReady wsState')
+      .select('number status lastActive connectedAt commandReady wsState connectionStatus lastErrorMessage reconnectAttempts hostDyno')
       .lean();
     for (const s of docs) {
       map[s.number] = s;
@@ -720,7 +1058,9 @@ async function getBotSessionsByNumbers(numbers) {
   }
   const { rows } = await pg().query(
     `SELECT number, status, last_active AS "lastActive", connected_at AS "connectedAt",
-            command_ready AS "commandReady", ws_state AS "wsState"
+            command_ready AS "commandReady", ws_state AS "wsState",
+            connection_status AS "connectionStatus", last_error_message AS "lastErrorMessage",
+            reconnect_attempts AS "reconnectAttempts", host_dyno AS "hostDyno"
      FROM bot_sessions WHERE number = ANY($1::text[])`,
     [cleans]
   );
@@ -784,16 +1124,45 @@ async function countAdmins() {
 
 async function deleteNumberByPhone(phone) {
   const clean = phone.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+  if (!clean) return;
   if (isMongoMode()) {
-    const { LinkedNumber } = M();
+    const { LinkedNumber, BotSession } = M();
     try {
-      await LinkedNumber.findOneAndDelete({ number: { $regex: clean } });
-    } catch (e) { console.error('[db] deleteNumberByPhone mongo error:', e.message); }
+      // deleteMany handles duplicates; matches both "923..." and "923...@s.whatsapp.net"
+      await LinkedNumber.deleteMany({
+        number: { $regex: clean, $options: 'i' }
+      });
+    } catch (e) { console.error('[db] deleteNumberByPhone mongo LinkedNumber error:', e.message); }
+    // Also mark bot_session as logged_out and clear session_data so restart won't auto-reconnect
+    try {
+      await BotSession.findOneAndUpdate(
+        { number: clean },
+        {
+          $set: {
+            status: 'inactive',
+            connectionStatus: 'LOGGED_OUT',
+            sessionData: null,
+            commandReady: false,
+            wsState: 0,
+          },
+          $unset: { pairingOwnerId: 1, pairingBotName: 1, pairingStatus: 1 },
+        }
+      );
+    } catch (e) { console.error('[db] deleteNumberByPhone mongo BotSession error:', e.message); }
     return;
   }
   try {
-    await pg().query('DELETE FROM linked_numbers WHERE number LIKE $1', [`%${clean}%`]);
+    await pg().query('DELETE FROM linked_numbers WHERE REGEXP_REPLACE(number,\'[^0-9]\',\'\',\'g\') = $1', [clean]);
   } catch (e) { console.error('[db] deleteNumberByPhone pg error:', e.message); }
+  try {
+    await pg().query(
+      `UPDATE bot_sessions
+       SET status='inactive', connection_status='LOGGED_OUT', session_data=NULL,
+           command_ready=FALSE, ws_state=0, pairing_owner_id=NULL, pairing_status=NULL
+       WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
+      [clean]
+    );
+  } catch (e) { console.error('[db] deleteNumberByPhone pg BotSession clear error:', e.message); }
 }
 
 async function getAllActiveLinkedNumbers() {
@@ -872,10 +1241,12 @@ async function getExpiredUsers() {
   const now = new Date();
   if (isMongoMode()) {
     const { User } = M();
-    // Users whose trialExpiresAt has passed and plan is not 'free'
+    // Find users on 'trial' or 'free' plan whose trial has expired
+    // AND who have NOT been upgraded to a paid plan by admin
     const users = await User.find({
       trialExpiresAt: { $lt: now, $ne: null },
-      subscriptionPlan: { $ne: 'free' },
+      activatedByAdmin: { $ne: true },             // skip admin-activated paid users
+      subscriptionStatus: { $nin: ['active_pro', 'active_enterprise', 'expired'] },
       banned: { $ne: true },
     }).lean();
     return users.map(u => ({
@@ -889,9 +1260,11 @@ async function getExpiredUsers() {
   // PostgreSQL fallback
   try {
     const { rows } = await pg().query(
-      `SELECT id, username, email, subscription_plan, trial_expires_at FROM users
+      `SELECT id, username, email, subscription_plan, subscription_status, trial_expires_at FROM users
        WHERE trial_expires_at < $1 AND trial_expires_at IS NOT NULL
-         AND subscription_plan != 'free' AND (banned IS NULL OR banned = false)`,
+         AND (activated_by_admin IS NULL OR activated_by_admin = false)
+         AND (subscription_status IS NULL OR subscription_status NOT IN ('active_pro','active_enterprise','expired'))
+         AND (banned IS NULL OR banned = false)`,
       [now]
     );
     return rows.map(r => ({
@@ -902,6 +1275,64 @@ async function getExpiredUsers() {
       trialExpiresAt: r.trial_expires_at,
     }));
   } catch (_) { return []; }
+}
+
+/**
+ * Resolve the owning user's subscription status directly from a WhatsApp
+ * number. Used by allfunc/subscription-guard.js to enforce trial-expiry
+ * disconnects in real time (not just via the periodic planExpiryJob sweep).
+ *
+ * Returns null if the number isn't linked to any user (caller should treat
+ * that as "not authorized" — a bot with no owner has nothing to protect).
+ */
+async function getOwnerSubscriptionByNumber(number) {
+  const clean = String(number || '').replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  try {
+    if (isMongoMode()) {
+      const { LinkedNumber, User } = M();
+      // Prefix regex only narrows candidates (numbers are stored in varying
+      // formats, e.g. with/without country-code prefix or '@s.whatsapp.net'
+      // suffix) — the exact match below prevents disconnecting the wrong
+      // owner when two numbers share a prefix (e.g. "923001234567" vs
+      // "923001234567890").
+      const candidates = await LinkedNumber.find({ number: { $regex: clean } })
+        .sort({ createdAt: -1 }).lean();
+      const linked = candidates.find(c => String(c.number).replace(/[^0-9]/g, '') === clean);
+      if (!linked) return null;
+      const user = await User.findById(linked.ownerId).lean();
+      if (!user) return null;
+      return {
+        userId: String(user._id),
+        banned: Boolean(user.banned),
+        subscriptionStatus: user.subscriptionStatus || null,
+        activatedByAdmin: Boolean(user.activatedByAdmin),
+        trialExpiresAt: user.trialExpiresAt || null,
+        linkedNumberStatus: linked.status,
+      };
+    }
+    const { rows } = await pg().query(
+      `SELECT u.id, u.banned, u.subscription_status, u.activated_by_admin, u.trial_expires_at, ln.status AS linked_status
+       FROM linked_numbers ln
+       JOIN users u ON u.id = ln.owner_id
+       WHERE REGEXP_REPLACE(ln.number, '[^0-9]', '', 'g') = $1
+       ORDER BY ln.created_at DESC LIMIT 1`,
+      [clean]
+    );
+    if (!rows.length) return null;
+    const r = rows[0];
+    return {
+      userId: String(r.id),
+      banned: Boolean(r.banned),
+      subscriptionStatus: r.subscription_status || null,
+      activatedByAdmin: Boolean(r.activated_by_admin),
+      trialExpiresAt: r.trial_expires_at || null,
+      linkedNumberStatus: r.linked_status,
+    };
+  } catch (err) {
+    console.error('[db-service] getOwnerSubscriptionByNumber:', err.message);
+    return null;
+  }
 }
 
 async function disconnectAllUserDevices(userId) {
@@ -921,7 +1352,7 @@ async function disconnectAllUserDevices(userId) {
       }
       // Downgrade user plan to free
       const { User } = M();
-      await User.findByIdAndUpdate(userId, { $set: { subscriptionPlan: 'free', trialExpiresAt: null } });
+      await User.findByIdAndUpdate(userId, { $set: { subscriptionPlan: 'free', subscriptionStatus: 'expired', trialExpiresAt: null } });
     } else {
       const { rows } = await pg().query(
         "UPDATE linked_numbers SET status='inactive', last_active=NOW() WHERE owner_id=$1 AND status='active' RETURNING id",
@@ -929,7 +1360,7 @@ async function disconnectAllUserDevices(userId) {
       );
       disconnected = rows.length;
       await pg().query(
-        "UPDATE users SET subscription_plan='free', trial_expires_at=NULL WHERE id=$1",
+        "UPDATE users SET subscription_plan='free', subscription_status='expired', trial_expires_at=NULL WHERE id=$1",
         [userId]
       );
     }
@@ -943,18 +1374,80 @@ async function disconnectAllUserDevices(userId) {
 // PAIRING QUEUE — used by worker/pairing-processor.js (isolated mode)
 // ════════════════════════════════════════════════════════════════════════════
 
-async function getPendingPairingRequests() {
+/**
+ * Requests stuck in `in_progress` are orphaned when the process that claimed
+ * them restarts or crashes — the number then becomes permanently unpairable.
+ * Return anything older than 5 minutes back to `requested`.
+ */
+async function reclaimStalePairingClaims(staleMs = 5 * 60_000) {
   try {
+    const cutoff = new Date(Date.now() - staleMs);
     if (isMongoMode()) {
       const { PairingRequest } = M();
-      const docs = await PairingRequest.find({ status: 'requested' })
-        .sort({ createdAt: 1 }).limit(5).lean();
-      return docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+      const res = await PairingRequest.updateMany(
+        { status: 'in_progress', updatedAt: { $lt: cutoff } },
+        { $set: { status: 'requested', updatedAt: new Date() } }
+      );
+      if (res?.modifiedCount) {
+        console.log(`[db-service] Reclaimed ${res.modifiedCount} stale pairing claim(s)`);
+      }
+      return res?.modifiedCount || 0;
     }
+    const { rowCount } = await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'requested'
+       WHERE pairing_status = 'in_progress'
+         AND (last_active IS NULL OR last_active < NOW() - INTERVAL '5 minutes')`
+    );
+    if (rowCount) console.log(`[db-service] Reclaimed ${rowCount} stale pairing claim(s)`);
+    return rowCount;
+  } catch (err) {
+    console.error('[db-service] reclaimStalePairingClaims:', err.message);
+    return 0;
+  }
+}
+
+async function getPendingPairingRequests() {
+  try {
+    await reclaimStalePairingClaims();
+    if (isMongoMode()) {
+      const { PairingRequest, LinkedNumber } = M();
+      const docs = await PairingRequest.find({ status: 'requested' })
+        .sort({ createdAt: 1 }).limit(20).lean();
+      const candidates = docs.map(d => String(d.number).replace(/[^0-9]/g, '')).filter(Boolean);
+      if (!candidates.length) return [];
+
+      // Filter out numbers that are already active in linked_numbers (source of truth).
+      // This prevents sending a fresh pairing code to a number that is already paired.
+      const activeLinked = await LinkedNumber.find({
+        $or: candidates.map(n => ({ number: { $regex: `^${n}` } })),
+        status: 'active',
+      }).select('number').lean().catch(() => []);
+      const activeSet = new Set(
+        activeLinked.map(d => String(d.number).replace(/[^0-9]/g, ''))
+      );
+
+      // Clear stale pairing requests for already-active numbers (fire-and-forget)
+      for (const n of candidates) {
+        if (activeSet.has(n)) {
+          PairingRequest.deleteOne({ number: n }).catch(() => {});
+        }
+      }
+
+      return candidates.filter(n => !activeSet.has(n)).slice(0, 5);
+    }
+
+    // PostgreSQL: exclude numbers already active in linked_numbers
     const { rows } = await pg().query(
-      `SELECT number FROM bot_sessions
-       WHERE pairing_status = 'requested'
-       ORDER BY last_active ASC NULLS LAST
+      `SELECT bs.number FROM bot_sessions bs
+       WHERE bs.pairing_status = 'requested'
+         AND NOT EXISTS (
+           SELECT 1 FROM linked_numbers ln
+           WHERE REGEXP_REPLACE(ln.number,'[^0-9]','','g')
+               = REGEXP_REPLACE(bs.number,'[^0-9]','','g')
+             AND ln.status = 'active'
+         )
+       ORDER BY bs.last_active ASC NULLS LAST
        LIMIT 5`
     );
     return rows.map(r => String(r.number).replace(/[^0-9]/g, '')).filter(Boolean);
@@ -994,13 +1487,17 @@ async function resetPairingRequest(clean) {
       const { PairingRequest } = M();
       await PairingRequest.findOneAndUpdate(
         { number: clean },
-        { $set: { status: 'requested', code: null, updatedAt: new Date() } }
+        { $set: { status: 'requested', code: null, attemptId: null, error: null, updatedAt: new Date() } }
       );
       return;
     }
     await pg().query(
       `UPDATE bot_sessions
-       SET pairing_status = 'requested', pairing_code = NULL, last_active = NOW()
+         SET pairing_status = 'requested',
+             pairing_code = NULL,
+             pairing_attempt_id = NULL,
+             pairing_error = NULL,
+             last_active = NOW()
        WHERE number = $1`,
       [clean]
     );
@@ -1009,24 +1506,137 @@ async function resetPairingRequest(clean) {
   }
 }
 
-async function markPairingFailed(clean) {
+async function markPairingFailed(clean, reason = null) {
+  const number = String(clean).replace(/[^0-9]/g, '');
+  const error = reason ? String(reason).slice(0, 500) : null;
   try {
     if (isMongoMode()) {
-      const { PairingRequest } = M();
+      const { PairingRequest, BotSession } = M();
       await PairingRequest.findOneAndUpdate(
-        { number: clean },
-        { $set: { status: 'failed', updatedAt: new Date() } }
+        { number },
+        { $set: { status: 'failed', code: null, error, updatedAt: new Date() } }
       );
+      try {
+        await BotSession.findOneAndUpdate(
+          { number },
+          {
+            $set: {
+              pairingStatus: 'failed',
+              pairingCode: null,
+              pairingError: error,
+              lastActive: new Date(),
+            },
+          }
+        );
+      } catch (_) {}
       return;
     }
     await pg().query(
       `UPDATE bot_sessions
-       SET pairing_status = 'failed', last_active = NOW()
+       SET pairing_status = 'failed',
+           pairing_code = NULL,
+           pairing_error = $2,
+           last_active = NOW()
        WHERE number = $1`,
-      [clean]
+      [number, error]
     );
   } catch (err) {
     console.error('[db-service] markPairingFailed:', err.message);
+  }
+}
+
+/**
+ * Called the moment a number finishes WhatsApp registration.
+ *
+ * This is the bridge between "pairing succeeded" and "the dashboard shows the
+ * bot". Previously the pairing owner claim was wiped before anything used it,
+ * so a freshly paired number never landed in linked_numbers and the UI stayed
+ * empty even though WhatsApp had linked the device.
+ */
+async function finalizePairedNumber(number, meta = {}) {
+  const clean = String(number).replace(/[^0-9]/g, '');
+  if (!clean) return { linked: false };
+
+  let linked = false;
+  let ownerId = null;
+  try {
+    const owner = await getAndClearPairingOwner(clean);
+    ownerId = owner?.user_id || null;
+    const exists = await isNumberInLinkedNumbers(clean);
+
+    if (!exists && ownerId) {
+      const parsed = /^\d+$/.test(String(ownerId)) ? parseInt(ownerId, 10) : ownerId;
+      await addNumber(clean, meta.botName || owner?.bot_name || 'CYBER PRO', parsed);
+      linked = true;
+      console.log('[db-service] linked_numbers ← paired number', clean);
+    } else if (exists) {
+      if (isMongoMode()) {
+        const { LinkedNumber } = M();
+        await LinkedNumber.findOneAndUpdate(
+          { number: { $regex: clean, $options: 'i' } },
+          { $set: { status: 'active', lastActive: new Date() } }
+        );
+      } else {
+        await pg().query(
+          `UPDATE linked_numbers SET status='active', last_active=NOW()
+           WHERE REGEXP_REPLACE(number,'[^0-9]','','g') = $1`,
+          [clean]
+        );
+      }
+      linked = true;
+    }
+  } catch (err) {
+    console.error('[db-service] finalizePairedNumber link failed:', err.message);
+  }
+
+  // bot_sessions must say "active" so /api/pairing/status and the dashboard
+  // flip from CONNECTING to CONNECTED without waiting for the bot's heartbeat.
+  try { await upsertBotSession(clean, 'active', {}); } catch (_) {}
+  try { await markPairingConnected(clean); } catch (_) {}
+
+  return { linked, ownerId };
+}
+
+async function markPairingConnected(clean) {
+  const number = String(clean).replace(/[^0-9]/g, '');
+  if (!number) return;
+  try {
+    if (isMongoMode()) {
+      const { PairingRequest, BotSession } = M();
+      await PairingRequest.findOneAndUpdate(
+        { number },
+        {
+          $set: { status: 'active', code: null, attemptId: null, error: null, updatedAt: new Date() },
+        },
+        { upsert: false }
+      ).catch(() => {});
+      await BotSession.findOneAndUpdate(
+        { number },
+        {
+          $set: {
+            pairingStatus: 'active',
+            pairingCode: null,
+            pairingAttemptId: null,
+            pairingError: null,
+            lastActive: new Date(),
+          },
+        },
+        { upsert: false }
+      ).catch(() => {});
+      return;
+    }
+    await pg().query(
+      `UPDATE bot_sessions
+       SET pairing_status = 'active',
+           pairing_code = NULL,
+           pairing_attempt_id = NULL,
+           pairing_error = NULL,
+           last_active = NOW()
+       WHERE number = $1`,
+      [number]
+    );
+  } catch (err) {
+    console.error('[db-service] markPairingConnected:', err.message);
   }
 }
 
@@ -1036,30 +1646,41 @@ async function getPairingState(clean) {
       const { PairingRequest } = M();
       const reqDoc = await PairingRequest.findOne({ number: clean }).lean();
       if (reqDoc) {
+        const code = ['code_ready'].includes(reqDoc.status) ? reqDoc.code : null;
         return {
-          code: reqDoc.code,
+          code,
           status: reqDoc.status,
+          attemptId: reqDoc.attemptId || null,
+          error: reqDoc.error || null,
           updatedAt: reqDoc.updatedAt || reqDoc.createdAt || null,
         };
       }
       const { BotSession } = M();
       const botDoc = await BotSession.findOne({ number: clean }).lean().catch(() => null);
       if (!botDoc) return null;
+      const ps = botDoc.pairingStatus || null;
+      const code = ps === 'code_ready' ? (botDoc.pairingCode || null) : null;
       return {
-        code: botDoc.pairingCode || null,
-        status: botDoc.pairingStatus || botDoc.status || null,
+        code,
+        status: ps || botDoc.status || null,
+        attemptId: botDoc.pairingAttemptId || null,
+        error: botDoc.pairingError || null,
         updatedAt: botDoc.lastActive || null,
       };
     }
     const { rows } = await pg().query(
-      'SELECT pairing_code, pairing_status, last_active FROM bot_sessions WHERE number=$1 LIMIT 1',
+      `SELECT pairing_code, pairing_status, pairing_attempt_id, pairing_error, last_active
+       FROM bot_sessions WHERE number=$1 LIMIT 1`,
       [clean]
     );
     if (!rows[0]) return null;
     const row = rows[0];
+    const code = row.pairing_status === 'code_ready' ? (row.pairing_code || null) : null;
     return {
-      code: row.pairing_code || null,
+      code,
       status: row.pairing_status || null,
+      attemptId: row.pairing_attempt_id || null,
+      error: row.pairing_error || null,
       updatedAt: row.last_active || null,
     };
   } catch (err) {
@@ -1104,7 +1725,17 @@ async function clearPairingRequest(clean) {
     try {
       await BotSession.findOneAndUpdate(
         { number },
-        { $unset: { pairingCode: 1, pairingStatus: 1 }, $set: { lastActive: new Date() } },
+        {
+          $unset: {
+            pairingCode: 1,
+            pairingStatus: 1,
+             pairingAttemptId: 1,
+             pairingError: 1,
+            pairingOwnerId: 1,
+            pairingBotName: 1,
+          },
+          $set: { lastActive: new Date() }
+        },
         { upsert: false }
       );
     } catch (_) {}
@@ -1115,6 +1746,10 @@ async function clearPairingRequest(clean) {
       `UPDATE bot_sessions
        SET pairing_code = NULL,
            pairing_status = NULL,
+           pairing_attempt_id = NULL,
+           pairing_error = NULL,
+           pairing_owner_id = NULL,
+           pairing_bot_name = NULL,
            last_active = NOW()
        WHERE number = $1`,
       [number]
@@ -1224,16 +1859,28 @@ function isPlanExpired(user) {
   if (!user) return false;
   // Admins never expire
   if (user.role === 'admin') return false;
+
+  // ── Priority 1: subscriptionStatus field (new system) ──
+  const subStatus = user.subscription_status || user.subscriptionStatus || null;
+  if (subStatus === 'expired') return true;
+  if (subStatus === 'active_pro' || subStatus === 'active_enterprise') return false;
+
+  // ── Priority 2: activatedByAdmin flag — paid users are never downgraded ──
+  const adminActivated = user.activated_by_admin || user.activatedByAdmin || false;
+  if (adminActivated) return false;
+
   const plan = user.subscription_plan || user.subscriptionPlan || 'free';
-  // Paid plans expire via plan_expires_at if set by admin
+
+  // ── Priority 3: Paid plans — check plan_expires_at if admin set an end date ──
   if (plan === 'pro' || plan === 'enterprise') {
     const planExp = user.plan_expires_at || user.planExpiresAt || null;
-    if (!planExp) return false;
+    if (!planExp) return false;   // no expiry set = lifetime plan
     return new Date(planExp) < new Date();
   }
-  // Free trial: check trial_expires_at
+
+  // ── Priority 4: Free trial — check trial_expires_at ──
   const expiresAt = user.trial_expires_at || user.trialExpiresAt || null;
-  if (!expiresAt) return false;
+  if (!expiresAt) return false;   // no trial set = no expiry
   return new Date(expiresAt) < new Date();
 }
 
@@ -1443,6 +2090,15 @@ async function getBotPairingStatus(clean) {
   }
 
   const st = await getPairingState(digits).catch(() => null);
+  if (st?.status === 'active') {
+    return {
+      connected: true,
+      pairing: false,
+      syncing: false,
+      status: 'active',
+      ts: st.updatedAt || null,
+    };
+  }
   if (st?.status === 'code_ready') {
     return { connected: false, pairing: true, syncing: true, status: st.status };
   }
@@ -1453,28 +2109,69 @@ async function getBotPairingStatus(clean) {
   return { connected: false };
 }
 
+/**
+ * Reset stale bot_session connection statuses on startup.
+ * After a restart, previously CONNECTED sessions are stale — the bot process
+ * is gone. We reset them to RECONNECTING so the dashboard shows an accurate
+ * status until the supervisor reconnects them.
+ */
+async function resetStaleConnectionStatuses() {
+  if (isMongoMode()) {
+    try {
+      const { BotSession } = M();
+      await BotSession.updateMany(
+        { connectionStatus: 'CONNECTED' },
+        {
+          $set: {
+            connectionStatus: 'RECONNECTING',
+            commandReady: false,
+            wsState: 0,
+          },
+        }
+      );
+    } catch (e) {
+      console.error('[db] resetStaleConnectionStatuses mongo error:', e.message);
+    }
+    return;
+  }
+  try {
+    await pg().query(
+      `UPDATE bot_sessions
+       SET connection_status = 'RECONNECTING',
+           command_ready = FALSE,
+           ws_state = 0
+       WHERE connection_status = 'CONNECTED'`
+    );
+  } catch (err) {
+    console.error('[db-service] resetStaleConnectionStatuses:', err.message);
+  }
+}
+
 module.exports = {
-  findUserByEmail, findUserById, findUserByEmailOrUsername, findUserByUsername,
+  findUserByEmail, findUserByGoogleId, findUserById, findUserByEmailOrUsername, findUserByUsername,
+  setUserGoogleId,
   createUser, updateUserLastActive, updateUsername, updatePassword, setAdminRole,
   banUser, deleteUser, updateUserPlan, getAllUsers, getStats,
   setTrialExpiry, requestUpgrade, getPendingUpgradeRequests, approveUpgrade, rejectUpgrade,
   getNumbersByOwner, countNumbersByOwner, getUserLinkedCount,
   addNumber, toggleNumber, deleteNumber, deleteNumberByPhone, getAllNumbers,
   setLinkedNumberStatus,
-  savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers,
+  savePairingOwner, getAndClearPairingOwner, isNumberInLinkedNumbers, isNumberOwnedByUser, getNumberClaimOwner,
   getBotMode, setBotMode,
-  upsertBotSession, getActiveBotSessions, getBotSessionsByNumbers,
+  upsertBotSession, getActiveBotSessions, getBotSessionsByNumbers, setBotConnectionStatus,
   getAllActiveLinkedNumbers,
   saveSessionCreds, getSessionCreds,
   getSiteSetting, setSiteSetting,
   countAdmins,
-  getPendingPairingRequests, markPairingInProgress, resetPairingRequest,
-  markPairingFailed, getPairingState, clearPairingRequest, ensurePairingRequest,
+  getPendingPairingRequests, reclaimStalePairingClaims, markPairingInProgress, resetPairingRequest,
+  markPairingFailed, markPairingConnected, finalizePairedNumber, getPairingState, clearPairingRequest, ensurePairingRequest,
   setPairingCode, clearStalePairingRequests,
-  getExpiredUsers, disconnectAllUserDevices,
+  getExpiredUsers, disconnectAllUserDevices, getOwnerSubscriptionByNumber,
   deleteSessionCreds,
   hasFirstConnected, markFirstConnected,
+  resetStaleConnectionStatuses,
   isPlanExpired,
+  setLicenseKey,
   sendChatMessage, getChatMessages, markChatMessagesRead,
   getActiveChatUsers, getChatUnreadCounts,
   getBotPairingStatus,

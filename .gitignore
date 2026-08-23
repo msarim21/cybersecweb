@@ -58,4 +58,6 @@ nexstore/pairing/**/*
 database/antidelete_store.json
 database/antidelete_pending.json
 database/stopped_bots.json
+database/archives/**/*
+!database/archives/.gitkeep
 uploads/

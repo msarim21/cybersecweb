@@ -15,18 +15,18 @@ const {
 } = require("@whiskeysockets/baileys");
 
 // Persist session state to PostgreSQL so restarts can reload sessions
-const { updateSession, removeLinkedNumber, saveCredsToDb, hasFirstConnected, markFirstConnected, ensureSessionRestored, backupSessionFolder } = require('./session-db');
-const { clearPairingRequest, setPairingCode, setLinkedNumberStatus } = require('./server/db-service');
-const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
-require('./allfunc/antidelete-helpers');
+const { updateSession } = require('./session-db');
 const NodeCache = require("node-cache");
 const _ = require('lodash')
 const {
     Boom
 } = require('@hapi/boom')
 const EventEmitter = require('events');
+const crypto = require('crypto');
 const PhoneNumber = require('awesome-phonenumber')
-const pairingCode = process.env.BOT_PAIRING === '1' || process.argv.includes('--pairing-code');
+let phoneNumber = process.env.BOT_NUMBER || process.argv[2] || "";
+// Always enable pairing-code mode — actual number comes from startpairing(nexusDevNumber) arg
+const pairingCode = true;
 const useMobile = process.argv.includes("--mobile");
 const readline = require("readline");
 const pino = require('pino')
@@ -49,13 +49,16 @@ if (!global.pairEmitter) {
 }
 // ===========================================================================
 
-// In-memory chat store — disabled in isolated bot children to save RAM on 1GB dynos.
-const _useChatStore = process.env.BOT_DISABLE_CHAT_STORE !== '1'
-    && process.env.WHATSAPP_WORKER !== '1';
-const store = (_useChatStore && makeInMemoryStore)
-    ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
-    : null;
-let msgRetryCounterCache;
+// msgRetryCounterCache properly initialized — tracks pending retry state per message
+let msgRetryCounterCache = new NodeCache();
+
+// ✅ Global error handlers — prevent unhandled rejection/exception crashes
+process.on('unhandledRejection', (reason) => {
+    console.error('[Bot] Unhandled Promise Rejection (non-fatal):', reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[Bot] Uncaught Exception (non-fatal):', err.message);
+});
 
 // UPDATED: Newsletter channels to auto-follow
 const NEWSLETTER_CHANNELS = [
@@ -64,161 +67,68 @@ const NEWSLETTER_CHANNELS = [
    
 ];
 
-// Auto-join groups has been disabled. Keep the manual join command only.
-const GROUP_INVITE_CODES = [];
+// UPDATED: Group invite codes to auto-join (extracted from links)
+const GROUP_INVITE_CODES = [
+    "Ck0AofLxsqUB1DaTfUNcpn", // from https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc
+
+    "HigciU0ocjyD3cmlrgZtjO"  // from https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc
+
+];
 
 // Track which groups we've joined per session
 const joinedGroups = new Map();
 
 // Global tracking for all rentbots
-const rentbotTracker = global._rentbotTracker || new Map();
-global._rentbotTracker = rentbotTracker;
+const rentbotTracker = new Map();
 const MAX_RETRIES_440 = 3;
 const MAX_CONCURRENT_CONNECTIONS = 50;
 const CONNECTION_DELAY = 100;
 
-function normalizeBotKeys(number) {
-    const clean = String(number || '').replace(/[^0-9]/g, '');
-    const jid = clean ? `${clean}@s.whatsapp.net` : String(number || '');
-    return { clean, jid };
-}
-
-function getTrackerEntry(number) {
-    const { clean, jid } = normalizeBotKeys(number);
-    return rentbotTracker.get(jid) || rentbotTracker.get(clean) || null;
-}
-
-function setTrackerEntry(number, tracker) {
-    const { clean, jid } = normalizeBotKeys(number);
-    if (clean) rentbotTracker.set(clean, tracker);
-    if (jid) rentbotTracker.set(jid, tracker);
-    return tracker;
-}
-
-/** Bot is WS-open but not yet accepting commands (WhatsApp still syncing). */
-function markBotCommandReady(nexusDevNumber, nexus) {
-    const tracker = getTrackerEntry(nexusDevNumber);
-    if (!tracker || tracker.commandReady) return;
-    tracker.commandReady = true;
-    tracker.syncing = false;
-    const { clean } = normalizeBotKeys(nexusDevNumber);
-    if (!clean) return;
-
-    touchBotHeartbeat(clean, {
-        event: 'ready',
-        ready: true,
-        syncing: false,
-        wsState: nexus?.ws?.readyState ?? 1,
-    });
-    updateSession(nexusDevNumber, 'active', { commandReady: true }).catch(() => {});
-
-    try {
-        const { writeConnectedFlag } = require('./allfunc/connected-flag');
-        writeConnectedFlag(clean, { connected: true, number: clean, ts: Date.now(), ready: true });
-    } catch (_) {}
-    console.log(chalk.green(`✅ [${clean}] Command-ready — accepting messages`));
-    if (typeof tracker.onCommandReady === 'function') {
-        const fn = tracker.onCommandReady;
-        tracker.onCommandReady = null;
-        fn().catch(() => {});
-    }
-}
-
-function deleteTrackerEntry(number) {
-    const { clean, jid } = normalizeBotKeys(number);
-    if (clean) rentbotTracker.delete(clean);
-    if (jid) rentbotTracker.delete(jid);
-}
-
-/** True when tracker has an authenticated, open WebSocket. */
-function _isTrackerLive(tracker) {
-    if (!tracker?.connection) return false;
-    const ws = tracker.connection.ws;
-    return ws?.readyState === 1 && Boolean(tracker.connection.user);
-}
-
-/** Cancel any scheduled 440-retry timer for this tracker. */
-function _clearPendingReconnects(tracker) {
-    if (!tracker) return;
-    if (tracker._440RetryTimer) {
-        clearTimeout(tracker._440RetryTimer);
-        tracker._440RetryTimer = null;
-    }
-}
-
-/** Remove queued startpairing jobs for this number (prevents double-connect). */
-function _dequeuePairing(number) {
-    const { clean } = normalizeBotKeys(number);
-    if (!clean) return;
-    for (let i = connectionQueue.length - 1; i >= 0; i--) {
-        const qClean = normalizeBotKeys(connectionQueue[i].nexusDevNumber).clean;
-        if (qClean === clean) connectionQueue.splice(i, 1);
-    }
-}
-
-/** Tear down old Baileys socket before opening a new one — prevents ghost sockets + 440. */
-function teardownTrackerSocket(tracker) {
-    if (!tracker?.connection) return;
-    const old = tracker.connection;
-
-    if (tracker.healthCheckInterval) {
-        clearInterval(tracker.healthCheckInterval);
-        tracker.healthCheckInterval = null;
-    }
-    if (tracker.readyTimer) {
-        clearTimeout(tracker.readyTimer);
-        tracker.readyTimer = null;
-    }
-    if (tracker.pairingTimer) {
-        clearTimeout(tracker.pairingTimer);
-        tracker.pairingTimer = null;
-    }
-    if (tracker._credsBackupTimer) {
-        clearTimeout(tracker._credsBackupTimer);
-        tracker._credsBackupTimer = null;
-    }
-    _clearPendingReconnects(tracker);
-
-    // NOTE: Intentionally do NOT delete tracker._sessionFlushKey here.
-    // teardownTrackerSocket runs on every reconnect — if SIGTERM hits between
-    // teardown and the next "open", we still want to flush this bot's session
-    // to DB. The next "open" overwrites the same key, so leaks are impossible.
-    // Logout/stopBot paths explicitly clear the flush entry below.
-
-    tracker.connection = null;
-
-    try {
-        old.ev?.removeAllListeners('connection.update');
-        old.ev?.removeAllListeners('messages.upsert');
-        old.ev?.removeAllListeners('creds.update');
-        old.ev?.removeAllListeners('messages.delete');
-    } catch (_) {}
-    try { old.end?.(); } catch (_) {}
-    try {
-        old.ws?.terminate?.();
-    } catch (_) {
-        try { old.ws?.close(); } catch (_) {}
-    }
-}
-
 // Connection queue system
 const connectionQueue = [];
+// Keep reconnect attempts single-flight per number. The web reconnect route,
+// auto-reconnect sweep, and socket close handler can all fire for the same
+// number; creating two Baileys sockets before the first settles causes
+// WhatsApp's "Stream Errored (conflict)" disconnect.
+const pendingPairings = new Map();   // clean number -> queued promise
+const connectionFlights = new Map(); // clean number -> setup promise
 let activeConnections = 0;
-const connectedMessageDebounce = new Map();
+
+function cleanBotNumber(number) {
+    return String(number || '').replace(/[^0-9]/g, '');
+}
+
+function canonicalBotJid(number) {
+    const clean = cleanBotNumber(number);
+    return clean ? `${clean}@s.whatsapp.net` : '';
+}
+
+function formatPairingCode(rawCode) {
+    const compact = String(rawCode || '')
+        .replace(/[^a-z0-9]/gi, '')
+        .toUpperCase();
+    if (compact.length !== 8) {
+        throw new Error(`WhatsApp returned an invalid pairing code length (${compact.length})`);
+    }
+    return `${compact.slice(0, 4)}-${compact.slice(4)}`;
+}
 
 function processQueue() {
     if (activeConnections < MAX_CONCURRENT_CONNECTIONS && connectionQueue.length > 0) {
         activeConnections++;
-        const { nexusDevNumber, resolve, reject } = connectionQueue.shift();
+        const item = connectionQueue.shift();
+        const { key, nexusDevNumber, resolve, reject, promise } = item;
         
         startpairing(nexusDevNumber)
             .then(result => {
                 activeConnections--;
+                if (pendingPairings.get(key) === promise) pendingPairings.delete(key);
                 resolve(result);
                 setTimeout(processQueue, CONNECTION_DELAY);
             })
             .catch(error => {
                 activeConnections--;
+                if (pendingPairings.get(key) === promise) pendingPairings.delete(key);
                 reject(error);
                 setTimeout(processQueue, CONNECTION_DELAY);
             });
@@ -226,37 +136,44 @@ function processQueue() {
 }
 
 function queuePairing(nexusDevNumber) {
-    return new Promise((resolve, reject) => {
-        const tracker = getTrackerEntry(nexusDevNumber);
-        if (_isTrackerLive(tracker)) {
-            return resolve(tracker.connection);
-        }
-        const { clean } = normalizeBotKeys(nexusDevNumber);
-        if (clean && connectionQueue.some((q) => normalizeBotKeys(q.nexusDevNumber).clean === clean)) {
-            return resolve(tracker?.connection || null);
-        }
-        connectionQueue.push({ nexusDevNumber, resolve, reject });
-        processQueue();
+    const key = cleanBotNumber(nexusDevNumber);
+    const jid = canonicalBotJid(nexusDevNumber);
+    if (!key || !jid) return Promise.reject(new Error('Invalid bot number'));
+
+    const existing = pendingPairings.get(key);
+    if (existing) return existing;
+
+    let resolvePromise;
+    let rejectPromise;
+    const promise = new Promise((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
     });
+    pendingPairings.set(key, promise);
+    connectionQueue.push({
+        key,
+        nexusDevNumber: jid,
+        resolve: resolvePromise,
+        reject: rejectPromise,
+        promise,
+    });
+    processQueue();
+    return promise;
 }
 
 function deleteFolderRecursive(folderPath) {
-    if (fs.existsSync(folderPath)) {
-        fs.readdirSync(folderPath).forEach(file => {
-            const curPath = path.join(folderPath, file);
-            if (fs.lstatSync(curPath).isDirectory()) {
-                deleteFolderRecursive(curPath);
-            } else {
-                fs.unlinkSync(curPath);
-            }
-        });
-        fs.rmdirSync(folderPath);
-    }
+    // ✅ FIX: use fs.rmSync with force:true — the old recursive unlinkSync crashed
+    // with ENOENT when two sessions tried to clean the same folder concurrently.
+    try {
+        if (fs.existsSync(folderPath)) {
+            fs.rmSync(folderPath, { recursive: true, force: true });
+        }
+    } catch (_) { /* concurrent delete — ignore */ }
 }
 
 // Session validation function
 async function validateSession(nexusDevNumber) {
-    const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
+    const sessionPath = `./nexstore/pairing/${nexusDevNumber}`;
     const credsPath = path.join(sessionPath, 'creds.json');
     
     if (!fs.existsSync(credsPath)) {
@@ -281,17 +198,28 @@ async function validateSession(nexusDevNumber) {
 
 // Force cleanup function
 function forceCleanupSession(nexusDevNumber) {
-    const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
+    const cleanNumber = String(nexusDevNumber).replace(/[^0-9]/g, '');
+    const sessionPaths = [
+        `./nexstore/pairing/${nexusDevNumber}`,
+        `./nexstore/pairing/${cleanNumber}`,
+        `./nexstore/pairing/${cleanNumber}@s.whatsapp.net`,
+    ];
     
     try {
-        if (fs.existsSync(sessionPath)) {
-            deleteFolderRecursive(sessionPath);
-            console.log(chalk.red(`🗑️ Force cleaned: ${nexusDevNumber}`));
+        let cleaned = false;
+        for (const sessionPath of [...new Set(sessionPaths)]) {
+            if (fs.existsSync(sessionPath)) {
+                deleteFolderRecursive(sessionPath);
+                cleaned = true;
+            }
+        }
+        if (cleaned) {
+            console.log(chalk.red(`🗑️ Force cleaned: ${cleanNumber || nexusDevNumber}`));
         }
         
         // Remove from tracker
-        const tracker = getTrackerEntry(nexusDevNumber);
-        if (tracker) {
+        if (rentbotTracker.has(nexusDevNumber)) {
+            const tracker = rentbotTracker.get(nexusDevNumber);
             if (tracker.connection) {
                 try {
                     tracker.connection.end();
@@ -300,15 +228,12 @@ function forceCleanupSession(nexusDevNumber) {
                     // Ignore
                 }
             }
-            if (tracker.pairingTimer) {
-                try { clearTimeout(tracker.pairingTimer); } catch (_) {}
-                tracker.pairingTimer = null;
-            }
-            deleteTrackerEntry(nexusDevNumber);
+            rentbotTracker.delete(nexusDevNumber);
         }
         
         // Clear joined groups tracking
         joinedGroups.delete(nexusDevNumber);
+        joinedGroups.delete(cleanNumber);
         
         return true;
     } catch (e) {
@@ -317,26 +242,39 @@ function forceCleanupSession(nexusDevNumber) {
     }
 }
 
-// Session cleanup function — wipes ONLY sessions explicitly marked disconnected
-// (badSession / loggedOut / 405 / 440 max-retry). Old `mtime > 24h` wipe was
-// removed because folder mtime depends on creds.update churn, not on whether
-// the bot is actually paired — long-idle paired bots could lose their creds.
-// Real unlinked-pairing cleanup happens in server/jobs/orphanDisconnectJob.js.
+// Session cleanup function
 function cleanupExpiredSessions() {
     const sessionDir = './nexstore/pairing';
     if (!fs.existsSync(sessionDir)) return;
+    
+    const now = Date.now();
+    const oneDayAgo = now - (24 * 60 * 60 * 1000);
+    
     fs.readdirSync(sessionDir).forEach(folder => {
         if (folder === 'pairing.json') return;
+        
         const folderPath = path.join(sessionDir, folder);
-        try {
-            if (!fs.lstatSync(folderPath).isDirectory()) return;
-        } catch (_) { return; }
-        const tracker = getTrackerEntry(folder);
-        if (tracker && tracker.disconnected) {
-            console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
-            deleteFolderRecursive(folderPath);
-            deleteTrackerEntry(folder);
-            joinedGroups.delete(folder);
+        if (fs.lstatSync(folderPath).isDirectory()) {
+            const tracker = rentbotTracker.get(folder);
+            if (tracker && tracker.disconnected) {
+                console.log(chalk.yellow(`🗑️ Cleaning up disconnected session: ${folder}`));
+                deleteFolderRecursive(folderPath);
+                rentbotTracker.delete(folder);
+                joinedGroups.delete(folder);
+                return;
+            }
+            
+            try {
+                const stats = fs.statSync(folderPath);
+                if (stats.mtimeMs < oneDayAgo) {
+                    console.log(chalk.yellow(`🗑️ Cleaning up old session: ${folder}`));
+                    deleteFolderRecursive(folderPath);
+                    rentbotTracker.delete(folder);
+                    joinedGroups.delete(folder);
+                }
+            } catch (e) {
+                console.log(chalk.red(`❌ Error checking session age: ${e.message}`));
+            }
         }
     });
 }
@@ -355,95 +293,125 @@ function ensureDirectoryExists(dirPath) {
 // ========== IMPROVED AUTO-JOIN GROUPS FUNCTION (from your friend's code) ==========
 async function autoJoinGroups(nexus, nexusDevNumber) {
     try {
-        console.log(chalk.cyan('ℹ️ Auto-join groups is disabled.'));
-        return 0;
+        console.log(chalk.cyan('👥 Auto-joining groups...'));
+        
+        if (!joinedGroups.has(nexusDevNumber)) {
+            joinedGroups.set(nexusDevNumber, new Set());
+        }
+        const userJoinedGroups = joinedGroups.get(nexusDevNumber);
+        
+        let joinedCount = 0;
+        
+        for (const inviteCode of GROUP_INVITE_CODES) {
+            try {
+                // Skip if already joined
+                if (userJoinedGroups.has(inviteCode)) {
+                    console.log(chalk.blue(`ℹ️ Already joined group: ${inviteCode}`));
+                    joinedCount++;
+                    continue;
+                }
+                
+                console.log(chalk.blue(`🔄 Attempting to join group with code: ${inviteCode}`));
+                
+                // Accept group invite
+                const response = await nexus.groupAcceptInvite(inviteCode);
+                
+                if (response) {
+                    console.log(chalk.green(`✓ Successfully joined group: ${inviteCode}`));
+                    userJoinedGroups.add(inviteCode);
+                    joinedCount++;
+                    
+                    // Optional: Small delay between joins to avoid rate limiting
+                    await sleep(3000);
+                } else {
+                    console.log(chalk.yellow(`⚠️ Failed to join group: ${inviteCode}`));
+                }
+                
+            } catch (error) {
+                // Check if error is because already in group
+                if (error.message && error.message.includes('already a participant')) {
+                    console.log(chalk.blue(`ℹ️ Already a member of group: ${inviteCode}`));
+                    userJoinedGroups.add(inviteCode);
+                    joinedCount++;
+                } else {
+                    console.log(chalk.yellow(`✗ Error joining group ${inviteCode}: ${error.message}`));
+                }
+            }
+        }
+        
+        console.log(chalk.green(`✅ Joined ${joinedCount}/${GROUP_INVITE_CODES.length} groups`));
+        return joinedCount;
+        
     } catch (error) {
         console.log(chalk.red(`❌ Error in autoJoinGroups: ${error.message}`));
         return 0;
     }
 }
 
+/**
+ * Public connection entry point. It normalizes the number and prevents
+ * overlapping socket setup for the same account.
+ */
 async function startpairing(nexusDevNumber, options = {}) {
-    const freshPairing = options.freshPairing === true || process.env.BOT_PAIRING === '1';
-    const wantPairingCode = freshPairing || pairingCode;
+    const jid = canonicalBotJid(nexusDevNumber);
+    const clean = cleanBotNumber(nexusDevNumber);
+    if (!jid) throw new Error('Invalid phone number');
 
-    // Hard guard: web API dyno must never open bot sockets when WHATSAPP_HOST_DYNO=worker.
-    // Two dynos connecting the same number → Error 440 → commands die on phone.
-    try {
-        const { canHostWhatsAppSessions, isWebDyno, getWhatsAppHostDyno } = require('./allfunc/whatsapp-host');
-        if (isWebDyno() && !canHostWhatsAppSessions()) {
-            console.log(chalk.yellow(
-                `[pair.js] Blocked connect on web dyno for ${nexusDevNumber} — WhatsApp runs on ${getWhatsAppHostDyno()} dyno`
-            ));
-            return null;
+    const existingFlight = connectionFlights.get(clean);
+    if (existingFlight) return existingFlight;
+
+    const existingTracker = rentbotTracker.get(jid) || rentbotTracker.get(clean);
+    const existingSocket = existingTracker?.connection;
+    if (existingSocket && !existingTracker.disconnected) {
+        const state = existingSocket.ws?.readyState;
+        // CONNECTING (0) and OPEN (1) both mean another socket is already
+        // handling this number. Never create a second one.
+        if (state === undefined || state === 0 || state === 1) {
+            return existingSocket;
         }
-    } catch (_) {}
+    }
 
+    // A previous socket may still be closing after a conflict/drop. Detach
+    // it from the tracker before creating the replacement so stale events
+    // cannot mutate the new connection's state.
+    if (existingTracker?.connection) {
+        existingTracker.disconnected = true;
+        if (existingTracker.healthCheckInterval) {
+            clearInterval(existingTracker.healthCheckInterval);
+            existingTracker.healthCheckInterval = null;
+        }
+        try { existingTracker.connection.ws?.close(); } catch (_) {}
+        existingTracker.connection = null;
+    }
+
+    const flight = _startpairing(jid, options);
+    connectionFlights.set(clean, flight);
+    try {
+        return await flight;
+    } finally {
+        if (connectionFlights.get(clean) === flight) connectionFlights.delete(clean);
+    }
+}
+
+async function _startpairing(nexusDevNumber, options = {}) {
     // Ensure base directory exists
     ensureDirectoryExists('./nexstore/pairing');
     
-    if (!getTrackerEntry(nexusDevNumber)) {
-        setTrackerEntry(nexusDevNumber, {
+    if (!rentbotTracker.has(nexusDevNumber)) {
+        rentbotTracker.set(nexusDevNumber, {
             connection: null,
             retryCount: 0,
             disconnected: false,
+            reconnectSuppressed: false,
             lastActivity: Date.now(),
             autoActionsCompleted: false,
             groupsJoined: false,
             healthCheckInterval: null,  // ✅ track interval so old ones can be cleared
-            commandReady: false,
-            syncing: false,
-            readyTimer: null,
+            welcomeSent: false          // ✅ FIX: sirf pehli baar "BOT CONNECTED" bhejo
         });
     }
     
-    const tracker = getTrackerEntry(nexusDevNumber);
-
-    // Already live — never open a second socket (causes WhatsApp 440).
-    if (!freshPairing && _isTrackerLive(tracker)) {
-        console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already live — skipping duplicate connect`));
-        return tracker.connection;
-    }
-
-    // Fresh pairing retry: tear down dead sockets and reset flags so the
-    // duplicate guard and pairingCodeRequested don't block a new code.
-    if (freshPairing) {
-        tracker.pairingCodeRequested = false;
-        if (tracker.pairingTimer) {
-            clearTimeout(tracker.pairingTimer);
-            tracker.pairingTimer = null;
-        }
-        if (tracker.connection) {
-            try {
-                const wsState = tracker.connection?.ws?.readyState;
-                if (wsState !== 0 && wsState !== 1) {
-                    try { tracker.connection.ev?.removeAllListeners('connection.update'); } catch (_) {}
-                    try { tracker.connection.ws?.terminate(); } catch (_) {}
-                    tracker.connection = null;
-                    tracker.disconnected = true;
-                    tracker.startingAt = 0;
-                }
-            } catch (_) {}
-        }
-    }
-
-    // ✅ Duplicate guard: if this number already has an active WA socket, skip.
-    // Without this, autoload.js + index.js both start connections for the same
-    // number, two instances share the same session key, WhatsApp kicks both → 401
-    // Skip when user explicitly requested a fresh pairing code (retry path).
-    if (!freshPairing && !tracker.disconnected && tracker.connection) {
-        try {
-            const wsState = tracker.connection?.ws?.readyState;
-            if (wsState === 0 || wsState === 1 /* CONNECTING or OPEN */) {
-                console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already starting/connected (ws=${wsState}) — skipping duplicate`));
-                return tracker.connection;
-            }
-        } catch (_) {}
-    }
-    if (!freshPairing && !tracker.disconnected && tracker.connection && tracker.startingAt && Date.now() - tracker.startingAt < 60_000) {
-        console.log(chalk.yellow(`[pair.js] ${nexusDevNumber} already starting — skipping duplicate`));
-        return tracker.connection;
-    }
+    const tracker = rentbotTracker.get(nexusDevNumber);
 
     // ✅ Clear any existing healthCheckInterval from a previous session
     if (tracker.healthCheckInterval) {
@@ -451,97 +419,132 @@ async function startpairing(nexusDevNumber, options = {}) {
         tracker.healthCheckInterval = null;
     }
 
-    // Reconnect path: destroy stale socket so old listeners cannot fire 440 loops
-    if (tracker.connection) {
-        teardownTrackerSocket(tracker);
-    }
-
     tracker.retryCount++;
     tracker.disconnected = false;
+    tracker.reconnectSuppressed = false;
     tracker.lastActivity = Date.now();
-    tracker.startingAt = Date.now();
+    tracker.pairingSession = process.env.BOT_PAIRING === '1' || options.freshPairing === true;
+    tracker.pairingCodeIssued = false;
+    tracker.pairingConnected = false;
+    tracker.pairingPhase = tracker.pairingSession ? 'socket_starting' : null;
+    tracker.pairingAttemptId = null;
+    if (tracker.pairingCodeTimer) {
+        clearTimeout(tracker.pairingCodeTimer);
+        tracker.pairingCodeTimer = null;
+    }
 
     const { version, isLatest } = await fetchLatestBaileysVersion();
     
-    // Ensure session directory exists
-    const sessionPath = `./nexstore/pairing/${nexusDevNumber.replace(/[^0-9]/g, '')}`;
-    ensureDirectoryExists(sessionPath);
+    // ✅ FIX (pairing): auth state MUST live in the digits-only folder.
+    // _startpairing() receives a canonical JID (`<digits>@s.whatsapp.net`), so the
+    // old path created `./nexstore/pairing/<digits>@s.whatsapp.net` while the rest
+    // of the app (pairing-processor, autoload, session-db, keepalive) reads/wipes
+    // `./nexstore/pairing/<digits>`. Result: a "fresh" pairing reused stale auth
+    // keys from a previous expired attempt and WhatsApp rejected the code with
+    // "Couldn't link device".
+    const cleanSessionNumber = cleanBotNumber(nexusDevNumber);
+    const sessionPath = `./nexstore/pairing/${cleanSessionNumber}`;
+    const legacySessionPath = `./nexstore/pairing/${cleanSessionNumber}@s.whatsapp.net`;
 
-    // Fresh pairing must NOT restore old creds — that marks the socket as
-    // already registered and skips requestPairingCode entirely.
-    if (!freshPairing) {
-        // If Heroku/restart wiped local files, hydrate the exact auth folder first.
-        // This keeps saved numbers on the reconnect path instead of falling back to a fresh pairing code.
-        await ensureSessionRestored(nexusDevNumber).catch(() => {});
+    // Migrate (or drop) the legacy JID-named folder so both paths can never
+    // hold two different auth states for the same number.
+    try {
+        if (fs.existsSync(legacySessionPath)) {
+            const legacyCreds = path.join(legacySessionPath, 'creds.json');
+            const hasRegistered = fs.existsSync(legacyCreds) && (() => {
+                try {
+                    const c = JSON.parse(fs.readFileSync(legacyCreds, 'utf-8'));
+                    return !!(c.registered || c.me?.id);
+                } catch (_) { return false; }
+            })();
+            if (hasRegistered && !fs.existsSync(path.join(sessionPath, 'creds.json'))) {
+                ensureDirectoryExists(sessionPath);
+                for (const f of fs.readdirSync(legacySessionPath)) {
+                    try { fs.copyFileSync(path.join(legacySessionPath, f), path.join(sessionPath, f)); } catch (_) {}
+                }
+                console.log(chalk.cyan(`[Pairing] Migrated legacy session folder for ${cleanSessionNumber}`));
+            }
+            deleteFolderRecursive(legacySessionPath);
+        }
+    } catch (_) {}
+
+    // A fresh pairing request must always start from an empty auth state.
+    // Reusing half-written keys from an expired code is the #1 cause of
+    // "Couldn't link device" on the phone.
+    if (tracker.pairingSession) {
+        deleteFolderRecursive(sessionPath);
+        try {
+            const stalePairFile = `./nexstore/pairing/pairing_${cleanSessionNumber}.json`;
+            if (fs.existsSync(stalePairFile)) fs.unlinkSync(stalePairFile);
+        } catch (_) {}
     }
+
+    ensureDirectoryExists(sessionPath);
     
     const {
         state,
         saveCreds
     } = await useMultiFileAuthState(sessionPath);
 
-    const _syncFullHistory = process.env.SYNC_FULL_HISTORY === '1';
-    const _isWorkerBot = process.env.WHATSAPP_WORKER === '1' || Boolean(global.__ISOLATED_BOT);
+    // ✅ Per-bot store — each bot gets its own isolated message store
+    // Prevents message data mixing when multiple users are connected simultaneously
+    const store = makeInMemoryStore ? makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) }) : null;
 
-    // ── WhatsApp socket keep-alive (CRITICAL) ────────────────────────────────
-    // WS ping interval. MUST be ~30s. Aggressive values (3s/10s) look like spam
-    // to WhatsApp servers → `rate-overlimit` → server silently stops delivering
-    // messages after ~2-3 min while the socket stays "open" (web shows ONLINE
-    // but commands die). 30s is the Baileys-proven safe default. Env override
-    // only for testing; never set below 15000.
-    const _keepAliveMs = Math.max(15000, Number(process.env.WA_KEEPALIVE_MS) || 30000);
-    // markOnlineOnConnect / fireInitQueries: with both OFF, WhatsApp treats the
-    // device as a passive/unavailable companion and deprioritizes (eventually
-    // stops) real-time message push → "online but no commands". Defaults ON so
-    // the bot registers as an active receiver. These do NOT trigger the phone
-    // "Syncing. Keep app open." hang — that is controlled solely by
-    // syncFullHistory / shouldSyncHistoryMessage below (kept OFF by default).
-    const _markOnline = process.env.WA_MARK_ONLINE !== '0';
-    const _fireInitQueries = process.env.WA_FIRE_INIT_QUERIES !== '0';
+    // Use the same Safari companion identity for pairing and normal bot boots.
+    // Changing browser identities during handoff can make a freshly linked
+    // device look like a different session.
+    const browserProfile = Browsers.macOS('Safari');
+    if (tracker.pairingSession) {
+        console.log(chalk.cyan(`[Pairing] Using Safari companion profile for +${nexusDevNumber.replace(/[^0-9]/g, '')}`));
+    }
 
     const nexus = makeWASocket({
         logger: pino({ level: "silent" }),
         printQRInTerminal: false,
-        auth: state,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+        },
+        msgRetryCounterMap: msgRetryCounterCache,
         version,
-        browser: Browsers.macOS("Safari"),
+        browser: browserProfile,
         getMessage: async key => {
             if (!store) return { conversation: '' };
             const jid = key.remoteJid;
             const msg = await store.loadMessage(jid, key.id);
             return msg?.message || '';
         },
-        // Full history sync causes "Syncing. Keep app open." hang on the phone — off by default.
-        shouldSyncHistoryMessage: () => _syncFullHistory,
+        shouldSyncHistoryMessage: msg => {
+            console.log(`\x1b[32mLoading Chat [${msg.progress}%]\x1b[39m`);
+            return !!msg.syncType;
+        },
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: _keepAliveMs,
+        keepAliveIntervalMs: 30000,
         emitOwnEvents: true,
-        fireInitQueries: _fireInitQueries,
-        generateHighQualityLinkPreview: false,
-        syncFullHistory: _syncFullHistory,
-        markOnlineOnConnect: _markOnline,
-        retryRequestDelayMs: 5000,
+        fireInitQueries: true,
+        generateHighQualityLinkPreview: true,
+        syncFullHistory: false,
+        markOnlineOnConnect: true,
     })
     
-        tracker.connection = nexus;
-        setTrackerEntry(nexusDevNumber, tracker);
+    tracker.connection = nexus;
     
     if (store) store.bind(nexus.ev);
 
-    // Helpers attached eagerly so antidelete / socket-wake / heartbeat all
-    // resolve correctly BEFORE the first message arrives. Previously these
-    // were only set lazily on the first message (case.js _cachedBotNumber)
-    // or never at all (_sessionPhoneNumber, _baileysMsgStore) — so any
-    // antidelete event delivered during sync (or during reconnect before a
-    // user message) silently fell back to bare process.env.BOT_NUMBER.
-    try {
-        const _cleanForSock = nexusDevNumber.replace(/[^0-9]/g, '');
-        nexus._sessionPhoneNumber = _cleanForSock;
-        if (store) nexus._baileysMsgStore = store;
-    } catch (_) {}
+    // ✅ FIX: Never request a new pairing code if session creds already exist on disk
+    // This prevents the pairing code loop on reconnect when bot is already linked
+    const _existingCredsPath = path.join(sessionPath, 'creds.json');
+    const _sessionAlreadyPaired = fs.existsSync(_existingCredsPath) && (() => {
+        try {
+            const _c = JSON.parse(fs.readFileSync(_existingCredsPath, 'utf-8'));
+            // noiseKey is generated for every fresh Baileys auth state. It is
+            // not evidence that this phone has ever been linked.
+            return !!(_c.registered || _c.me?.id);
+        } catch(_) { return false; }
+    })();
 
-    if (wantPairingCode && !state.creds.registered) {
+    if (pairingCode && !state.creds.registered && !_sessionAlreadyPaired) {
         if (useMobile) {
             throw new Error('Cannot use pairing code with mobile API');
         }
@@ -552,52 +555,101 @@ async function startpairing(nexusDevNumber, options = {}) {
             throw new Error('Invalid phone number');
         }
         
-        const pairingTimer = setTimeout(async () => {
-            const startedAt = Date.now();
-            const codeDeadline = startedAt + 70_000;
+         // Baileys requestPairingCode() sends the registration IQ immediately.
+         // Its v7 socket may not expose a useful `ws.readyState`, so checking
+         // that property alone can issue the request while the underlying
+         // WebSocket is still handshaking. Prefer Baileys' public
+         // waitForSocketOpen() helper, with a bounded fallback for older builds.
+        const issuePairingCode = async () => {
+            // A cold web dyno can need several seconds before the TLS/WebSocket
+            // handshake completes. Keep the same socket alive for the full
+            // connection timeout instead of declaring it dead after 15 seconds.
+            const deadline = Date.now() + 60_000;
+            let lastError = null;
 
-            while (Date.now() < codeDeadline) {
-                try {
-                    if (tracker.disconnected || tracker.connection !== nexus) return;
-                    if (tracker.pairingCodeRequested) return;
-                    tracker.pairingCodeRequested = true;
-
-                    let code = await nexus.requestPairingCode(phoneNumber);
-                    code = code?.match(/.{1,4}/g)?.join("-") || code;
-
-                    console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
-
-                    // Ensure pairing directory exists
-                    ensureDirectoryExists('./nexstore/pairing');
-
-                    fs.writeFileSync(
-                        './nexstore/pairing/pairing.json',
-                        JSON.stringify({
-                            number: nexusDevNumber,
-                            code: code,
-                            timestamp: new Date().toISOString()
-                        }, null, 2),
-                        'utf8'
-                    );
-                    try {
-                        await setPairingCode(nexusDevNumber, code);
-                    } catch (_) {}
-
-                    console.log(chalk.green(`✓ Pairing code saved to pairing.json`));
-                    return;
-                } catch (err) {
-                    tracker.pairingCodeRequested = false;
-                    if (tracker.disconnected || tracker.connection !== nexus) return;
-                    if (Date.now() >= codeDeadline) {
-                        console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
-                        return;
+            try {
+                while (Date.now() < deadline) {
+                    if (tracker.connection !== nexus || tracker.disconnected) {
+                        throw new Error('Pairing socket closed before code request');
                     }
-                    await sleep(1000);
+                    if (tracker.pairingCodeIssued) return;
+
+                    try {
+                         const remainingMs = Math.max(1, deadline - Date.now());
+                         if (typeof nexus.waitForSocketOpen === 'function') {
+                             // Baileys owns the websocket timeout and removes
+                             // its listeners when the socket opens/closes.
+                             // Do not wrap this in repeated Promise.race calls:
+                             // a timed-out race would leave orphaned listeners
+                             // attached to the same socket.
+                             await nexus.waitForSocketOpen();
+                         } else {
+                             // Compatibility fallback for older Baileys builds.
+                             const readyState = nexus.ws?.readyState;
+                             if (readyState !== undefined && readyState !== 1) {
+                                 await sleep(Math.min(100, remainingMs));
+                                 continue;
+                             }
+                         }
+
+                         tracker.pairingPhase = 'requesting_code';
+                        const code = formatPairingCode(await nexus.requestPairingCode(phoneNumber));
+                         tracker.pairingCodeIssued = true;
+                         tracker.pairingPhase = 'code_ready';
+                         const pairingAttemptId = crypto.randomUUID();
+                         tracker.pairingAttemptId = pairingAttemptId;
+
+                        console.log(chalk.bgGreen.black(`📱 Pairing code for ${nexusDevNumber}: ${chalk.white.bold(code)}`));
+
+                        // Ensure pairing directory exists
+                        ensureDirectoryExists('./nexstore/pairing');
+
+                        // Per-bot pairing file — multiple users can pair simultaneously
+                        const cleanPairNum = phoneNumber.replace(/[^0-9]/g, '');
+                        fs.writeFileSync(
+                            `./nexstore/pairing/pairing_${cleanPairNum}.json`,
+                             JSON.stringify({
+                                number: nexusDevNumber,
+                                code: code,
+                                 timestamp: new Date().toISOString(),
+                                 expiresAt: new Date(Date.now() + 120_000).toISOString(),
+                                 attemptId: pairingAttemptId
+                            }, null, 2),
+                            'utf8'
+                        );
+
+                        // Keep the DB pairing state in sync with the file consumed by
+                        // the web route. This also makes polling/status reliable when
+                        // the request was started directly on the web dyno.
+                        try {
+                             const { setPairingCode } = require('./server/db-service');
+                             await setPairingCode(cleanPairNum, code, { attemptId: pairingAttemptId });
+                        } catch (dbErr) {
+                            console.log(chalk.yellow(`⚠️ Pairing code DB update failed: ${dbErr.message}`));
+                        }
+
+                        console.log(chalk.green(`✓ Pairing code saved to pairing_${cleanPairNum}.json`));
+                        return;
+                    } catch (err) {
+                        lastError = err;
+                        tracker.pairingCodeIssued = false;
+                        if (tracker.connection !== nexus || tracker.disconnected) throw err;
+                        if (Date.now() >= deadline) throw err;
+                        await sleep(250);
+                    }
                 }
+
+                throw lastError || new Error('Pairing socket did not become ready before code request');
+            } catch (err) {
+                tracker.pairingCodeIssued = false;
+                console.log(chalk.red(`❌ Error requesting pairing code: ${err.message}`));
+                try {
+                    const { markPairingFailed } = require('./server/db-service');
+                    await markPairingFailed(phoneNumber, err.message);
+                } catch (_) {}
             }
-            console.log(chalk.red(`❌ Pairing code timed out for ${nexusDevNumber}`));
-        }, 1500);
-        tracker.pairingTimer = pairingTimer;
+        };
+        void issuePairingCode();
     }
 
     nexus.newsletterMsg = async (key, content = {}, timeout = 5000) => {
@@ -669,128 +721,160 @@ async function startpairing(nexusDevNumber, options = {}) {
         }
     };
     
-    // ✅ Deleted-Status Cache — stores received statuses so they can be forwarded when deleted
-    if (!global._statusCache) global._statusCache = new Map();
-    const STATUS_CACHE_TTL = 24 * 60 * 60 * 1000; // keep for 24 hours
-
     nexus.ev.on('messages.upsert', async chatUpdate => {
     try {
         // ✅ GUARD: Skip if socket not authenticated yet
         if (!nexus.user) return;
 
-        if (!Array.isArray(chatUpdate.messages) || !chatUpdate.messages.length) return;
+        // ✅ ANTIDELETE CACHE — cache ALL messages FIRST before any guards.
+        // When messages arrive in bulk (history sync / batched delivery), Baileys fires
+        // ONE upsert event with many items. Cache all so antidelete works on every one.
+        try {
+            if (typeof global._cacheMessageForAntidelete === 'function') {
+                for (const _adRawMsg of chatUpdate.messages) {
+                    if (!_adRawMsg?.message || !Object.keys(_adRawMsg.message).length) continue;
+                    const _adMsg = { ..._adRawMsg };
+                    if (Object.keys(_adMsg.message)[0] === 'ephemeralMessage') {
+                        _adMsg.message = _adMsg.message.ephemeralMessage.message;
+                    }
+                    global._cacheMessageForAntidelete(_adMsg, nexus);
+                }
+            }
+        } catch (_adCacheErr) {}
 
-        // First live notify message → bot is ready to process commands
-        if (chatUpdate.type === 'notify') {
-            markBotCommandReady(nexusDevNumber, nexus);
-        }
-        tracker.lastWAMessage = Date.now();
-        tracker.lastActivity = Date.now();
-        let botNumber = await nexus.decodeJid(nexus.user.id);
-        touchBotHeartbeat(nexusDevNumber, { event: 'message', wsState: 1, ready: true });
+        // ✅ SUBSCRIPTION GUARD — check once per batch (not per-message — saves DB round trips)
+        try {
+            const { isNumberAuthorized, enforceSubscriptionOrDisconnect } = require('./allfunc/subscription-guard');
+            const _ownerNum = nexus.decodeJid(nexus.user.id).replace(/[^0-9]/g, '');
+            if (!(await isNumberAuthorized(_ownerNum))) {
+                enforceSubscriptionOrDisconnect(_ownerNum).catch(() => {});
+                return;
+            }
+        } catch (_) {}
 
-        // Process EVERY message in the batch. WhatsApp delivers multiple messages
-        // in a single upsert (especially after idle/reconnect or rapid sends).
-        // Previously only messages[0] was handled → remaining commands were ignored
-        // AND their antidelete caches were never written ("slow/missed commands" +
-        // "deleted messages not cached").
+        // ✅ PRE-LOAD owner list once per batch — used by private-mode bypass below
+        const _batchBotNum = nexus.decodeJid(nexus.user.id).replace(/[^0-9]/g, '');
+        let _batchOwnerList = [];
+        try {
+            const _oFile = './allfunc/owner.json';
+            if (require('fs').existsSync(_oFile))
+                _batchOwnerList = JSON.parse(require('fs').readFileSync(_oFile, 'utf-8'));
+        } catch (_) {}
+
+        // Reference to first message for background tasks (setImmediate below uses this)
+        const _bgMsg = chatUpdate.messages[0];
+
+        // ✅ FIX: Process ALL messages in the batch — not just messages[0].
+        // ceb2ee2 removed the loop, causing commands at batch index > 0 to be silently dropped.
         for (const nexusboijid of chatUpdate.messages) {
-          try {
-            if (!nexusboijid?.message || !Object.keys(nexusboijid.message).length) continue;
-            nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
             try {
-                if (!nexusboijid.message?.protocolMessage && typeof global._cacheMessageForAntidelete === 'function') {
-                    global._cacheMessageForAntidelete(nexusboijid, nexus);
-                }
-            } catch (_) {}
+                if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) continue;
+                nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
 
-            // ✅ FIX: support both setting names (antiswview + autoViewStatus)
-            let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
-                || global.db?.data?.settings?.[botNumber]?.antiswview
-                || false;
-            if (autoViewStatus) {
-                if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast'){
-                    await nexus.readMessages([nexusboijid.key]);
+                // ✅ FAST GUARD: skip if self-mode + not fromMe
+                // Exception: mode-toggle commands (.self/.public/.private) always pass
+                // Exception: protocolMessage (REVOKE/EDIT) must always pass — antidelete needs them
+                const _fastGuardBody = nexusboijid.message?.conversation || nexusboijid.message?.extendedTextMessage?.text || '';
+                const _fgFirst = _fastGuardBody.split('\n')[0].trim();
+                // Explicit commands must reach case.js even in self/private mode.
+                // Linked-device self-chat can arrive as notify + fromMe=false.
+                const _isCommandMessage = /^[.!\/#$%&*]\S*/.test(_fgFirst);
+                const _isModeCmd = /^[.!\/# ]*(self|public|private)\b/i.test(_fgFirst);
+                const _isSystemProto = Boolean(nexusboijid.message?.protocolMessage);
+                if (!nexus.public && !_isCommandMessage && !nexusboijid.key.fromMe && chatUpdate.type === 'notify' && !_isModeCmd && !_isSystemProto) {
+                    // ✅ FIX: Allow owner/creator numbers even in private/self mode.
+                    // Owner's messages arrive as fromMe=false (they use a different device than the bot),
+                    // so the old guard was blocking all their commands when bot was in self mode.
+                    const _pvSenderJid = nexusboijid.key?.participant || nexusboijid.key?.remoteJid || '';
+                    const _pvSenderNum = String(_pvSenderJid).split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+                    const _pvIsOwner = Boolean(_pvSenderNum && (
+                        _pvSenderNum === _batchBotNum ||
+                        (Array.isArray(_batchOwnerList) && _batchOwnerList.some(o =>
+                            String(o).replace(/[^0-9]/g, '') === _pvSenderNum))
+                    ));
+                    if (!_pvIsOwner) continue;
                 }
+                if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) continue;
+
+                // ✅ IMMEDIATE: Fire case.js with no delay
+                nexusboiConnect = nexus;
+                mek = smsg(nexusboiConnect, nexusboijid, store);
+
+                // 🔍 DIAGNOSTIC LOG — shows every message that reaches case.js
+                const _diagBody = nexusboijid.message?.conversation
+                    || nexusboijid.message?.extendedTextMessage?.text || '';
+                console.log(`[PAIR→CASE] type=${chatUpdate.type} fromMe=${nexusboijid.key.fromMe} id=${nexusboijid.key.id?.slice(0,8)} body=${JSON.stringify(_diagBody.slice(0,40))}`);
+
+                require("./case")(nexusboiConnect, mek, chatUpdate, store)
+                    .catch(err => console.error('[case.js] Unhandled error:', err?.message || err));
+            } catch (_msgErr) {
+                console.error('[pair.js] Message processing error:', _msgErr?.message || _msgErr);
             }
-            // ✅ Cache this status message for deleted-status auto-save
-            if (nexusboijid.key && nexusboijid.key.remoteJid === 'status@broadcast' && nexusboijid.message) {
-                try {
-                    const _cacheKey = nexusboijid.key.id;
-                    const _cacheMsg = nexusboijid.message;
-                    const _cacheSender = nexusboijid.key.participant || nexusboijid.key.remoteJid;
-                    global._statusCache.set(_cacheKey, {
-                        message: _cacheMsg,
-                        sender: _cacheSender,
-                        ts: Date.now()
-                    });
-                    // Prune old entries (> 24h)
-                    for (const [k, v] of global._statusCache) {
-                        if (Date.now() - v.ts > STATUS_CACHE_TTL) global._statusCache.delete(k);
-                    }
-                } catch (_ce) {}
-            }
+        }
 
+        // ✅ BACKGROUND: Run optional features AFTER case.js fires — no blocking
+        // These can be slow (media downloads) so they must NOT delay commands
+        setImmediate(async () => {
+            try {
+                const botNumber = nexus.decodeJid(nexus.user.id);
 
-            // ✅ Status-Reply-to-DM — fire-and-forget (non-blocking so commands stay fast)
-            ;(async () => {
-              try {
-                const _srMsgContent   = nexusboijid.message;
-                const _srInnerMsg     = _srMsgContent?.extendedTextMessage
-                    || _srMsgContent?.imageMessage
-                    || _srMsgContent?.videoMessage
-                    || _srMsgContent?.audioMessage;
-                const _srCtxInfo      = _srInnerMsg?.contextInfo || _srMsgContent?.contextInfo;
-                const _srQuotedRJid   = _srCtxInfo?.remoteJid;
-                const _srQuotedMsg    = _srCtxInfo?.quotedMessage;
-                const _srSenderJid    = nexusboijid.key?.remoteJid;
-                const _srFromMe       = nexusboijid.key?.fromMe;
+                // (antidelete cache moved above the private-mode guard — see fix above)
 
-                if (_srQuotedMsg && _srQuotedRJid === 'status@broadcast' && _srSenderJid) {
-                    const _srQType    = Object.keys(_srQuotedMsg)[0];
-                    const _srQContent = _srQuotedMsg[_srQType];
-                    const _srPoster   = (_srCtxInfo?.participant || '').replace('@s.whatsapp.net', '');
-                    const _srDestJid  = _srFromMe ? botNumber : _srSenderJid;
-                    const _srCaption  = `📥 *Status Saved!*\n👤 Poster: @${_srPoster}\n_Auto-saved from your status reply_`;
-
-                    const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-                    const _srDl = async (mediaData, mediaType) => {
-                        try {
-                            const _s = await downloadContentFromMessage(mediaData, mediaType);
-                            const _c = []; for await (const ch of _s) _c.push(ch);
-                            const b = Buffer.concat(_c); return b.length ? b : null;
-                        } catch { return null; }
-                    };
-
-                    let _srPayload = null;
-                    if (_srQType === 'imageMessage') {
-                        const buf = await _srDl(_srQContent, 'image');
-                        _srPayload = buf
-                            ? { image: buf, caption: _srCaption, mimetype: _srQContent.mimetype || 'image/jpeg' }
-                            : { image: { url: _srQContent.url }, caption: _srCaption };
-                    } else if (_srQType === 'videoMessage') {
-                        const buf = await _srDl(_srQContent, 'video');
-                        _srPayload = buf
-                            ? { video: buf, caption: _srCaption, mimetype: _srQContent.mimetype || 'video/mp4', ptv: false, gifPlayback: false }
-                            : { document: { url: _srQContent.url }, mimetype: _srQContent.mimetype || 'video/mp4', fileName: 'status_video.mp4', caption: _srCaption };
-                    } else if (_srQType === 'audioMessage') {
-                        const buf = await _srDl(_srQContent, 'audio');
-                        if (buf) _srPayload = { audio: buf, mimetype: _srQContent.mimetype || 'audio/mp4', ptt: false };
-                    } else if (_srQType === 'conversation' || _srQType === 'extendedTextMessage') {
-                        const txt = _srQContent?.text || _srQContent || '';
-                        if (txt) _srPayload = { text: `📝 *Status Text saved!*\n👤 @${_srPoster}\n\n${txt}` };
-                    }
-
-                    if (_srPayload) await nexus.sendMessage(_srDestJid, _srPayload);
+                // Auto-view status (fast)
+                let autoViewStatus = global.db?.data?.settings?.[botNumber]?.autoViewStatus
+                    || global.db?.data?.settings?.[botNumber]?.antiswview
+                    || false;
+                if (autoViewStatus && _bgMsg.key?.remoteJid === 'status@broadcast') {
+                    await nexus.readMessages([_bgMsg.key]);
                 }
-              } catch (svErr) { /* silent fail */ }
-            })();
 
-            // ✅ View-Once Auto-Save — fire-and-forget (non-blocking)
-            ;(async () => {
-              try {
-                const isFromMe2 = nexusboijid.key?.fromMe;
-                const msgContent2 = nexusboijid.message;
+                // Status-Reply-to-DM — when bot user replies to any status
+                const isFromMe = _bgMsg.key?.fromMe;
+                const msgContent = _bgMsg.message;
+                const innerMsg = msgContent?.extendedTextMessage
+                    || msgContent?.imageMessage
+                    || msgContent?.videoMessage
+                    || msgContent?.audioMessage;
+                const ctxInfo = innerMsg?.contextInfo || msgContent?.contextInfo;
+                const quotedRemoteJid = ctxInfo?.remoteJid;
+                const quotedMsg = ctxInfo?.quotedMessage;
+
+                if (isFromMe && quotedMsg && quotedRemoteJid === 'status@broadcast') {
+                    const qType = Object.keys(quotedMsg)[0];
+                    const qContent = quotedMsg[qType];
+                    const caption = `📸 *Status saved!*\n👤 Poster: @${(ctxInfo.participant || '').replace('@s.whatsapp.net', '')}\n\n_Auto-saved from your status reply_`;
+
+                    // ✅ FIX: WhatsApp media is CDN-encrypted — must download+decrypt
+                    // Using { url: qContent.url } sends raw encrypted bytes → corrupted file
+                    // downloadContentFromMessage decrypts using the message's mediaKey
+                    try {
+                        if (qType === 'imageMessage') {
+                            const stream = await downloadContentFromMessage(qContent, 'image');
+                            const chunks = []; for await (const c of stream) chunks.push(c);
+                            const buf = Buffer.concat(chunks);
+                            if (buf.length) await nexus.sendMessage(botNumber, { image: buf, caption, mimetype: qContent.mimetype || 'image/jpeg' });
+                        } else if (qType === 'videoMessage') {
+                            const stream = await downloadContentFromMessage(qContent, 'video');
+                            const chunks = []; for await (const c of stream) chunks.push(c);
+                            const buf = Buffer.concat(chunks);
+                            if (buf.length) await nexus.sendMessage(botNumber, { video: buf, caption, mimetype: qContent.mimetype || 'video/mp4' });
+                        } else if (qType === 'audioMessage') {
+                            const stream = await downloadContentFromMessage(qContent, 'audio');
+                            const chunks = []; for await (const c of stream) chunks.push(c);
+                            const buf = Buffer.concat(chunks);
+                            if (buf.length) await nexus.sendMessage(botNumber, { audio: buf, mimetype: qContent.mimetype || 'audio/ogg' });
+                        } else if (qContent?.caption || qContent?.text) {
+                            await nexus.sendMessage(botNumber, { text: `📝 *Status Text:*\n\n${qContent.caption || qContent.text}\n\n_Auto-saved from your status reply_` });
+                        }
+                    } catch (_statusDlErr) {
+                        // Fallback: if download fails, at least notify
+                        await nexus.sendMessage(botNumber, { text: `📸 *Status saved!*\n👤 Poster: @${(ctxInfo.participant || '').replace('@s.whatsapp.net', '')}\n\n⚠️ Media download failed — try again` }).catch(() => {});
+                    }
+                }
+
+                // View-Once Auto-Save — when bot user replies to a one-time pic/video
+                const isFromMe2 = _bgMsg.key?.fromMe;
+                const msgContent2 = _bgMsg.message;
                 const innerMsg2 = msgContent2?.extendedTextMessage
                     || msgContent2?.imageMessage
                     || msgContent2?.videoMessage
@@ -809,47 +893,108 @@ async function startpairing(nexusDevNumber, options = {}) {
                     if (voMsg) {
                         const voType = Object.keys(voMsg)[0];
                         const voContent = voMsg[voType];
-                        if (!voContent) return;
+                        if (voContent) {
+                            const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
+                            const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
+                            let voBuffer = null;
+                            try {
+                                const mediaType = voType.replace('Message', '');
+                                const stream = await downloadContentFromMessage(voContent, mediaType);
+                                const chunks = [];
+                                for await (const chunk of stream) chunks.push(chunk);
+                                voBuffer = Buffer.concat(chunks);
+                            } catch (dlErr) {}
 
-                        const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '')
-                            .replace('@s.whatsapp.net', '');
-                        const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
-                        let voPayload = null;
-                        let voBuffer = null;
-                        try {
-                            const mediaType = voType.replace('Message', '');
-                            const stream = await downloadContentFromMessage(voContent, mediaType);
-                            const chunks = [];
-                            for await (const chunk of stream) chunks.push(chunk);
-                            voBuffer = Buffer.concat(chunks);
-                        } catch (_) {}
-
-                        if (voBuffer) {
-                            if (voType === 'imageMessage') {
-                                voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
-                            } else if (voType === 'videoMessage') {
-                                voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
-                            } else if (voType === 'audioMessage') {
-                                voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg' };
+                            if (voBuffer) {
+                                let voPayload = null;
+                                if (voType === 'imageMessage') {
+                                    voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
+                                } else if (voType === 'videoMessage') {
+                                    voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
+                                } else if (voType === 'audioMessage') {
+                                    voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg' };
+                                }
+                                if (voPayload) await nexus.sendMessage(botNumber, voPayload);
                             }
                         }
-                        if (voPayload) await nexus.sendMessage(botNumber, voPayload);
                     }
                 }
-              } catch (_) {}
-            })();
-
-            if (nexusboijid.key.id.startsWith('BAE5') && nexusboijid.key.id.length === 16) continue;
-            nexusboiConnect = nexus
-            mek = smsg(nexusboiConnect, nexusboijid, store);
-            require("./case")(nexusboiConnect, mek, chatUpdate, store);
-          } catch (errInner) {
-            console.log(errInner);
-          }
-        }
+            } catch (bgErr) {
+                // Silent fail — never crash commands due to background features
+            }
+        });
     } catch (err) {
         console.log(err);
     }
+    });
+
+    // ✅ ANTIDELETE HISTORY-SYNC CACHE — closes a real cache-miss gap.
+    // messages.upsert only fires for messages received live. On every reconnect
+    // (worker restart, network blip, 4h auto-restart, etc.) Baileys replays recent
+    // chat history via `messaging-history.set` instead — those messages never
+    // passed through cacheMessageForAntidelete, so if one gets deleted shortly
+    // after a reconnect, antidelete reports "[Original message not in cache]"
+    // even though the bot technically saw the message. Cache recent-enough
+    // history-sync messages too (skip old backlog — only last few hours matter,
+    // since anything older is already past the antidelete retention window anyway).
+    nexus.ev.on('messaging-history.set', ({ messages }) => {
+        try {
+            if (!Array.isArray(messages) || !messages.length) return;
+            if (typeof global._cacheMessageForAntidelete !== 'function') return;
+            const HISTORY_CACHE_WINDOW_MS = 6 * 60 * 60 * 1000; // 6h — well within antidelete retention
+            const cutoff = Date.now() - HISTORY_CACHE_WINDOW_MS;
+            for (const raw of messages) {
+                try {
+                    if (!raw?.message || !Object.keys(raw.message).length) continue;
+                    // messageTimestamp can be a plain number, a numeric string, or a
+                    // Long-like object ({ low, high }) depending on Baileys version —
+                    // .toString() handles all three without throwing.
+                    const tsMs = (Number(raw.messageTimestamp?.toString?.() ?? raw.messageTimestamp) || 0) * 1000;
+                    if (tsMs && tsMs < cutoff) continue;
+                    const msg = { ...raw };
+                    if (Object.keys(msg.message)[0] === 'ephemeralMessage') {
+                        msg.message = msg.message.ephemeralMessage.message;
+                    }
+                    global._cacheMessageForAntidelete(msg, nexus);
+                } catch (_) {}
+            }
+        } catch (_) {}
+    });
+
+    // ✅ ANTIDELETE DELETE HANDLER — catches every WhatsApp message deletion
+    nexus.ev.on('messages.delete', async (item) => {
+        try {
+            if (!nexus.user) return;
+            if (typeof global._adHandleMessageDelete !== 'function') return;
+            const botNum = nexus.decodeJid(nexus.user.id);
+            const keys = item?.keys || (item?.key ? [item.key] : []);
+            for (const key of keys) {
+                if (!key?.id || !key?.remoteJid) continue;
+                const chatId = key.remoteJid;
+                const msgId = key.id;
+                // Fallback chain: participant (groups) → item-level participant →
+                // the chat itself ONLY for private (1:1) chats, where the chatId
+                // IS the other party's JID. Without this, private-chat deletions
+                // showed "Deleted By: @unknown" even though the deleter was known.
+                // Groups intentionally fall through to '' (→ "@unknown") when
+                // participant metadata is genuinely missing — the group JID is not
+                // a person and would be misleading as a "deleted by" attribution.
+                const isGroupChat = chatId.endsWith('@g.us');
+                const deletedBy = key.participant || item?.participant || (isGroupChat ? '' : chatId);
+                const fromMeDelete = Boolean(key.fromMe);
+                const altChatIds = (typeof global._adChatIdsFromKey === 'function')
+                    ? global._adChatIdsFromKey(key).filter(id => id !== chatId)
+                    : [];
+                global._adHandleMessageDelete(nexus, {
+                    botNum,
+                    chatId,
+                    msgId,
+                    deletedBy,
+                    fromMeDelete,
+                    altChatIds,
+                }).catch(() => {});
+            }
+        } catch (_adDelErr) {}
     });
 
     nexus.sendFromOwner = async (jid, text, quoted, options = {}) => {
@@ -873,20 +1018,33 @@ async function startpairing(nexusDevNumber, options = {}) {
         })
     }
 
-    // Restore per-number bot mode from DB (bot_sessions.bot_mode)
-    // Defaults to public; .self command sets 'self' and saves to DB
-    nexus.public = true; // initial safe default
-    ;(async () => {
-        try {
-            const { getBotMode } = require('./server/db-service');
-            const clean = nexusDevNumber.replace(/[^0-9]/g, '');
-            const savedMode = await getBotMode(clean);
-            nexus.public = (savedMode !== 'self');
-            console.log(chalk.cyan(`[${clean}] Bot mode restored from DB: ${savedMode}`));
-        } catch (_) {
-            nexus.public = true;
+    // Restore public/private mode from saved settings
+    try {
+        const _cleanBotNum = nexusDevNumber.replace(/[^0-9]/g, '');
+        const _modeFile = `./database/bot_mode_${_cleanBotNum}.json`;
+        const _modeFileLegacy = './database/bot_mode.json';
+        const _fs = require('fs');
+        if (_fs.existsSync(_modeFile)) {
+            const _savedMode = JSON.parse(_fs.readFileSync(_modeFile, 'utf-8'));
+            nexus.public = _savedMode.mode !== 'self';
+        } else if (_fs.existsSync(_modeFileLegacy)) {
+            const _savedMode = JSON.parse(_fs.readFileSync(_modeFileLegacy, 'utf-8'));
+            nexus.public = _savedMode.mode !== 'self';
+            // Migrate to per-bot file
+            try { _fs.writeFileSync(_modeFile, JSON.stringify({ mode: _savedMode.mode })); } catch (_) {}
+        } else {
+            // File not found — read from DB (survives Heroku ephemeral filesystem restarts)
+            try {
+                const { getBotMode } = require('./server/db-service');
+                const _dbMode = await getBotMode(_cleanBotNum);
+                nexus.public = _dbMode !== 'self';
+            } catch (_) {
+                nexus.public = true;
+            }
         }
-    })();
+    } catch (e) {
+        nexus.public = true;
+    }
 
     nexus.sendText = (jid, text, quoted = '', options) => nexus.sendMessage(jid, { text: text, ...options }, { quoted })
 
@@ -1027,34 +1185,118 @@ async function startpairing(nexusDevNumber, options = {}) {
     // Enhanced connection.update handler
     nexus.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
-        const tracker = getTrackerEntry(nexusDevNumber);
+        const tracker = rentbotTracker.get(nexusDevNumber);
+        // Ignore late events from a socket superseded by a newer reconnect.
+        if (!tracker || tracker.connection !== nexus) return;
 
         if (connection === "close") {
-            if (!tracker) return;
-
-            // Ignore close events from superseded sockets. Without this, an old
-            // socket's 440 handler schedules queuePairing() even though a newer
-            // socket is already connected → endless login loop + Error 440 spam.
-            if (tracker.connection && tracker.connection !== nexus) {
-                console.log(chalk.gray(`[pair.js] Ignoring stale close for ${nexusDevNumber} — newer socket active`));
-                return;
-            }
-
             // ✅ Always clear old watchdog before any reconnect attempt
-            if (tracker.healthCheckInterval) {
+            // ✅ FIX: tracker undefined check — prevents crash when connection.update fires before tracker is ready
+        if (tracker && tracker.healthCheckInterval) {
                 clearInterval(tracker.healthCheckInterval);
                 tracker.healthCheckInterval = null;
             }
-            if (tracker.pairingTimer) {
-                clearTimeout(tracker.pairingTimer);
-                tracker.pairingTimer = null;
+            if (tracker.pairingCodeTimer) {
+                clearTimeout(tracker.pairingCodeTimer);
+                tracker.pairingCodeTimer = null;
             }
-            tracker.pairingCodeRequested = false;
-            tracker.startingAt = 0;
 
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
             const errMsg = lastDisconnect?.error?.message || '';
             console.log(chalk.yellow(`🔌 Connection closed for ${nexusDevNumber}, reason: ${reason}`));
+
+            // A pairing socket that dies before connection.open must not
+            // reconnect behind the user's back. Any code already displayed
+            // belongs to this dead socket and will always be rejected by
+            // WhatsApp when a replacement socket is created.
+            // WhatsApp closes the registration socket with 515 (restartRequired)
+            // *immediately after* the phone accepts the pairing code — often
+            // before `connection.open` ever fires. Treating that close as a
+            // failure killed pairing at the exact moment it succeeded. Only
+            // fail when the socket died without registered credentials.
+            const _credsRegistered = !!(
+                nexus?.authState?.creds?.registered ||
+                nexus?.authState?.creds?.me?.id ||
+                nexus?.user?.id
+            );
+            if (tracker.pairingSession && !tracker.pairingConnected
+                && reason === DisconnectReason.restartRequired && _credsRegistered) {
+                console.log(chalk.blue(`🔄 [${nexusDevNumber}] Pairing accepted — restarting socket to finish login`));
+                tracker.pairingPhase = 'restarting_after_pair';
+                if (global.__ISOLATED_BOT) {
+                    // Exit code 75 tells the supervising thread/parent that this
+                    // was a successful pairing needing a restart, NOT a crash.
+                    // A pairing child is spawned with noRestart, so a plain
+                    // exit(1) here left the session dead right after success.
+                    setTimeout(() => process.exit(75), 2000);
+                    return;
+                }
+                await sleep(2000);
+                queuePairing(nexusDevNumber);
+                return;
+            }
+
+            if (tracker.pairingSession && !tracker.pairingConnected && !_credsRegistered) {
+                try {
+                    const { markPairingFailed } = require('./server/db-service');
+                    await markPairingFailed(
+                        nexusDevNumber,
+                        errMsg || `WhatsApp pairing socket closed (${reason || 'unknown'})`
+                    );
+                } catch (_) {}
+                tracker.disconnected = true;
+                tracker.pairingPhase = 'failed';
+                tracker.connection = null;
+                console.warn(chalk.yellow(`⚠️ Pairing socket closed before connection.open for ${nexusDevNumber}; stale code invalidated`));
+                return;
+            }
+
+            // Persist the real socket state immediately. Without this, a
+            // worker can keep refreshing lastActive while the old
+            // connectionStatus remains CONNECTED, making the dashboard and
+            // reconnect sweep trust a dead socket.
+            try {
+                const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                setBotConnectionStatus(cleanForDb, 'DISCONNECTED', {
+                    commandReady: false,
+                    wsState: 0,
+                    lastErrorMessage: errMsg || `WhatsApp connection closed (${reason || 'unknown'})`,
+                }).catch(() => {});
+            } catch (_) {}
+
+            // connected.flag is a liveness marker, not a permanent pairing
+            // marker. Leaving it behind makes the reconnect sweep skip a dead
+            // socket forever, especially when the worker survives the drop.
+            try {
+                const { removeConnectedFlag } = require('./allfunc/connected-flag');
+                removeConnectedFlag(nexusDevNumber);
+            } catch (_) {}
+
+            const isConflictError = reason === 440 || /stream errored|conflict|replaced by another/i.test(String(errMsg));
+            if (isConflictError) {
+                tracker.disconnected = true;
+                tracker.connection = null;
+                console.warn(chalk.yellow(`⚠️ [${nexusDevNumber}] Stream conflict detected — waiting for the old socket to settle before retrying`));
+
+                // Never start a second socket immediately after a conflict.
+                // Isolated mode exits so the supervisor owns the replacement;
+                // flat mode queues one guarded retry after the settle window.
+                if (global.__ISOLATED_BOT) {
+                    setTimeout(() => {
+                        if (typeof global._botRunnerExit === 'function') global._botRunnerExit(440);
+                        else process.exit(440);
+                    }, 30_000);
+                } else {
+                    setTimeout(() => {
+                        const current = rentbotTracker.get(nexusDevNumber);
+                        if (current && current.disconnected && !current.reconnectSuppressed) {
+                            queuePairing(nexusDevNumber).catch(() => {});
+                        }
+                    }, 60_000);
+                }
+                return;
+            }
 
             // Network-level errors → always retry with backoff (no give-up)
             const isNetworkError = errMsg && (
@@ -1079,82 +1321,121 @@ async function startpairing(nexusDevNumber, options = {}) {
                 console.log(chalk.yellow(`🗑️ Force cleaning session for ${nexusDevNumber}...`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
                 forceCleanupSession(nexusDevNumber);
-                
+                try {
+                    const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Error 405 — session invalid, re-pair required' }).catch(() => {});
+                } catch (_) {}
+                // ✅ BUG FIX (Bug 10): DB se session creds delete karo — warna LOGGED_OUT ke baad bhi
+                // "already linked (session restored from DB)" error aata hai kyunki hasSessionInDb()
+                // DB mein purana stale data paata hai aur fresh pairing block ho jati hai.
+                try {
+                    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    deleteSessionCreds(cleanForDb).catch(() => {});
+                    removeLinkedNumber(cleanForDb).catch(() => {});
+                    console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (405 logout)`));
+                } catch (_) {}
                 tracker.disconnected = true;
                 tracker.connection = null;
-                tracker.pairingCodeRequested = false;
                 
                 console.log(chalk.red(`🚫 ${nexusDevNumber} will NOT reconnect. User must re-pair.`));
                 return;
             } else if (reason === 440) {
-                tracker.err440Retry = (tracker.err440Retry || 0) + 1;
-                _clearPendingReconnects(tracker);
-                teardownTrackerSocket(tracker);
-                tracker.disconnected = true;
-
-                if (tracker.err440Retry > MAX_RETRIES_440) {
-                    console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} Error 440 attempts for ${nexusDevNumber}`));
-                    updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                    forceCleanupSession(nexusDevNumber);
+                // ✅ FIX: Isolated mode mein pair.js reconnect NAHI karta
+                // Supervisor/BotRunner khud thread restart karta hai — dono reconnect = 440 loop
+                if (global.__ISOLATED_BOT) {
+                    console.warn(chalk.yellow(`⚠️ Error 440 (isolated) for ${nexusDevNumber} — waiting 30s then exiting (Supervisor will restart with 60s delay)`));
                     tracker.disconnected = true;
+                    tracker.connection = null;
+                    // ✅ FIX: Wait 30s before exit (not 8s) so WhatsApp server-side session
+                    // fully expires before Supervisor's 60s restart delay kicks in.
+                    // Total gap = 30s (here) + 60s (bot-thread) = 90s before reconnect.
+                    // This breaks the rapid 440→restart→440 cascade loop.
+                    if (typeof global._botRunnerExit === 'function') {
+                        setTimeout(() => global._botRunnerExit(440), 30_000);
+                    } else {
+                        setTimeout(() => process.exit(440), 30_000);
+                    }
                     return;
                 }
-
-                console.warn(chalk.yellow(
-                    `⚠️ Error 440 for ${nexusDevNumber} (duplicate session). Retry ${tracker.err440Retry}/${MAX_RETRIES_440} in ${tracker.err440Retry * 5}s...`
-                ));
-
-                const delayMs = Math.min(5000 * tracker.err440Retry, 20_000);
-                tracker._440RetryTimer = setTimeout(() => {
-                    tracker._440RetryTimer = null;
-                    const t = getTrackerEntry(nexusDevNumber);
-                    if (_isTrackerLive(t)) {
-                        console.log(chalk.gray(`[pair.js] 440 retry skipped for ${nexusDevNumber} — already connected`));
-                        if (t) t.err440Retry = 0;
-                        return;
-                    }
-                    queuePairing(nexusDevNumber).catch(() => {});
-                }, delayMs);
+                if (tracker.retryCount < MAX_RETRIES_440) {
+                    console.warn(chalk.yellow(`⚠️ Error 440 for ${nexusDevNumber}. Retry ${tracker.retryCount}/${MAX_RETRIES_440}...`));
+                    await sleep(5000);
+                    queuePairing(nexusDevNumber);
+                } else {
+                    console.error(chalk.red.bold(`❌ Failed after ${MAX_RETRIES_440} attempts for ${nexusDevNumber}`));
+                    updateSession(nexusDevNumber, 'inactive').catch(() => {});
+                    forceCleanupSession(nexusDevNumber);
+                    try {
+                        const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                        const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                        setBotConnectionStatus(cleanForDb, 'ERROR', { lastErrorMessage: `Error 440 — conflict after ${MAX_RETRIES_440} retries, re-pair required` }).catch(() => {});
+                    } catch (_) {}
+                    try {
+                        const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                        const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                        deleteSessionCreds(cleanForDb).catch(() => {});
+                        removeLinkedNumber(cleanForDb).catch(() => {});
+                        console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (440 max retries)`));
+                    } catch (_) {}
+                    tracker.disconnected = true;
+                }
             } else if (reason === DisconnectReason.badSession) {
-                console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber} — clearing session files, keeping DB record`));
+                console.log(chalk.red(`❌ Invalid Session for ${nexusDevNumber}`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                // ⚠️ Do NOT removeLinkedNumber here — keeps the number in dashboard
-                // so the user can see it and re-pair manually. Only loggedOut removes.
                 forceCleanupSession(nexusDevNumber);
+                try {
+                    const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Bad session — re-pair required' }).catch(() => {});
+                } catch (_) {}
+                try {
+                    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    deleteSessionCreds(cleanForDb).catch(() => {});
+                    removeLinkedNumber(cleanForDb).catch(() => {});
+                    console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (badSession)`));
+                } catch (_) {}
                 tracker.disconnected = true;
-                tracker.pairingCodeRequested = false;
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.bgRed(`❌ ${nexusDevNumber} logged out`));
                 updateSession(nexusDevNumber, 'inactive').catch(() => {});
-                setLinkedNumberStatus(nexusDevNumber, 'inactive').catch(() => {});
-                // ✅ FIX: Do NOT delete from linked_numbers on logout — number must stay
-                // permanently in dashboard. User can remove it manually if needed.
                 forceCleanupSession(nexusDevNumber);
-                // Deregister session-flush — DB creds will be wiped on logout
-                // and the next SIGTERM should not try to back up a stale folder.
                 try {
-                    const _key = (nexusDevNumber || '').replace(/[^0-9]/g, '');
-                    if (_key && global._sessionFlushFns) global._sessionFlushFns.delete(_key);
+                    const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    setBotConnectionStatus(cleanForDb, 'LOGGED_OUT', { lastErrorMessage: 'Logged out from WhatsApp' }).catch(() => {});
+                } catch (_) {}
+                try {
+                    const { deleteSessionCreds, removeLinkedNumber } = require('./session-db');
+                    const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                    deleteSessionCreds(cleanForDb).catch(() => {});
+                    removeLinkedNumber(cleanForDb).catch(() => {});
+                    console.log(chalk.yellow(`🧹 [${nexusDevNumber}] DB session creds + linked_number cleared (loggedOut)`));
                 } catch (_) {}
                 tracker.disconnected = true;
-                tracker.pairingCodeRequested = false;
             } else if (reason === DisconnectReason.connectionClosed || 
                        reason === DisconnectReason.connectionLost || 
                        reason === DisconnectReason.timedOut) {
                 // ✅ ALWAYS reconnect — no give-up for connection drops
                 tracker.dropRetry = (tracker.dropRetry || 0) + 1;
                 console.log(chalk.yellow(`🔄 [${nexusDevNumber}] Connection drop #${tracker.dropRetry}. Reconnecting...`));
+                // ✅ FIX: Isolated mode mein Supervisor restart handle karta hai
+                if (global.__ISOLATED_BOT) {
+                    tracker.disconnected = true;
+                    setTimeout(() => process.exit(1), 5000);
+                    return;
+                }
                 await sleep(3000);
-                const t = getTrackerEntry(nexusDevNumber);
-                if (t && t.connection !== nexus) return;
-                if (_isTrackerLive(t)) return;
                 queuePairing(nexusDevNumber);
             } else if (reason === DisconnectReason.restartRequired) {
                 console.log(chalk.blue(`🔄 Restart required for ${nexusDevNumber}`));
+                if (global.__ISOLATED_BOT) {
+                    setTimeout(() => process.exit(1), 3000);
+                    return;
+                }
                 await sleep(2000);
-                const t = getTrackerEntry(nexusDevNumber);
-                if (t && t.connection !== nexus) return;
-                if (_isTrackerLive(t)) return;
                 queuePairing(nexusDevNumber);
             } else {
                 // ✅ Unknown reason — retry with exponential backoff (no give-up)
@@ -1164,106 +1445,101 @@ async function startpairing(nexusDevNumber, options = {}) {
             }
         } else if (connection === "open") {
             console.log(chalk.bgGreen.black(`✅ Connected: ${nexusDevNumber}`));
-            const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-            _clearPendingReconnects(tracker);
-            _dequeuePairing(nexusDevNumber);
-            tracker.err440Retry = 0;
-            try {
-                if (nexus.user?.id && typeof nexus.decodeJid === 'function') {
-                    nexus._cachedBotNumber = nexus.decodeJid(nexus.user.id);
-                }
-                nexus._sessionPhoneNumber = cleanNum;
-            } catch (_) {}
             tracker.retryCount = 0;
             tracker.disconnected = false;
-            tracker.startingAt = 0;
+            tracker.pairingConnected = true;
+            tracker.pairingPhase = 'connected';
             tracker.dropRetry = 0;
             tracker.unknownRetry = 0;
             tracker.networkRetry = 0;
             tracker.lastActivity = Date.now();
-            tracker.pairingCodeRequested = false;
-            if (tracker.readyTimer) {
-                clearTimeout(tracker.readyTimer);
-                tracker.readyTimer = null;
-            }
-
-            updateSession(nexusDevNumber, 'active').catch(() => {});
-            clearPairingRequest(cleanNum).catch(() => {});
-
-            // History sync off (default) → ready after post-connect hook is registered
-            if (!_syncFullHistory) {
-                // defer to end of handler after tracker.onCommandReady is set
-                tracker._markReadyOnOpen = true;
-            } else {
-                tracker.commandReady = false;
-                tracker.syncing = true;
-                touchBotHeartbeat(cleanNum, {
-                    event: 'open',
-                    ready: false,
-                    syncing: true,
-                    wsState: nexus?.ws?.readyState ?? 1,
-                });
-                updateSession(nexusDevNumber, 'active', { commandReady: false, wsState: 1 }).catch(() => {});
-                tracker.readyTimer = setTimeout(() => {
-                    if (tracker.disconnected || tracker.connection !== nexus) return;
-                    markBotCommandReady(nexusDevNumber, nexus);
-                }, 90_000);
-                nexus.ev.once('messaging-history.set', () => {
-                    if (tracker.disconnected || tracker.connection !== nexus) return;
-                    if (tracker.readyTimer) clearTimeout(tracker.readyTimer);
-                    markBotCommandReady(nexusDevNumber, nexus);
-                });
-            }
+            // The messages.upsert command listener is registered before this
+            // handler. Once connection.open fires, commands are immediately
+            // available; publish that fact instead of leaving the dashboard in
+            // SYNCING until the next 30-second watchdog tick.
+            tracker.commandReady = true;
+            tracker.syncing = false;
             
-            // ✅ Directly activate LinkedNumber so autoload picks up this bot after restart
-            (async () => {
-              try {
-                const mongoose = require('mongoose');
-                if (mongoose.connection.readyState === 1) {
-                  const LinkedNumber = require('./server/models/LinkedNumber');
-                  const existing = await LinkedNumber.findOne({ number: { $in: [cleanNum, nexusDevNumber] } });
-                  if (existing) {
-                    await LinkedNumber.findByIdAndUpdate(existing._id, { $set: { status: 'active', lastActive: new Date() } });
-                  }
-                }
-              } catch (_) {}
-            })();
+            // Add small delay to ensure everything is initialized
+            await sleep(5000);
 
-            // Register a flush function so SIGTERM (worker.js) backs up session
-            // creds (full folder, not just creds.json) to DB before dyno restart.
-            // Without this, Heroku ephemeral disk wipe + 3h scheduled restart
-            // would force users to re-pair every restart.
+            // ✅ FIX: Backup session files to DB immediately on connect
+            // The pairing supervisor waits for the active state after this
+            // handler, so finish the first DB credential snapshot before
+            // advertising that the phone login is complete.
             try {
-                if (!global._sessionFlushFns) global._sessionFlushFns = new Map();
-                const _flushKey = cleanNum;
-                const _flush = async () => {
-                    try {
-                        const sessionPath = path.join(__dirname, 'nexstore', 'pairing', cleanNum);
-                        const altPath = path.join(__dirname, 'nexstore', 'pairing', `${cleanNum}@s.whatsapp.net`);
-                        if (fs.existsSync(sessionPath)) {
-                            await backupSessionFolder(cleanNum, sessionPath).catch(() => {});
-                        } else if (fs.existsSync(altPath)) {
-                            await backupSessionFolder(cleanNum, altPath).catch(() => {});
-                        }
-                    } catch (_) {}
-                };
-                global._sessionFlushFns.set(_flushKey, _flush);
-                tracker._sessionFlushKey = _flushKey;
+                const { backupSessionFolder } = require('./session-db');
+                const _cleanConn = nexusDevNumber.replace(/[^0-9]/g, '');
+                // Try both possible session folder paths
+                const _sessionPathA = require('path').join(process.cwd(), 'nexstore', 'pairing', _cleanConn + '@s.whatsapp.net');
+                const _sessionPathB = require('path').join(process.cwd(), 'nexstore', 'pairing', _cleanConn);
+                const _backupFs = require('fs');
+                const _pathToBackup = _backupFs.existsSync(_sessionPathA) ? _sessionPathA : _sessionPathB;
+                const _backedUp = await backupSessionFolder(_cleanConn, _pathToBackup);
+                if (_backedUp) {
+                    console.log(chalk.green(`[Session] ✅ Session backed up to DB on connect: ${_cleanConn}`));
+                } else {
+                    // Retry once after 10s — creds.json may not be written yet
+                    setTimeout(async () => {
+                        try {
+                            const _retryPath = _backupFs.existsSync(_sessionPathA) ? _sessionPathA : _sessionPathB;
+                            await backupSessionFolder(_cleanConn, _retryPath);
+                        } catch (_) {}
+                    }, 10000);
+                }
+            } catch (_backupErr) {
+                console.log(chalk.yellow(`[Session] ⚠️ Session backup failed: ${_backupErr.message}`));
+            }
+
+            // Persist active status only after the initial credential snapshot.
+            // Keep the pairing owner intact until updateSession consumes it and
+            // creates/activates the linked_numbers record.
+            try {
+                await updateSession(nexusDevNumber, 'active');
+                const { markPairingConnected } = require('./server/db-service');
+                await markPairingConnected(nexusDevNumber);
+                console.log(chalk.green(`[Pairing] ✅ Phone login state committed for ${nexusDevNumber}`));
+            } catch (stateErr) {
+                console.log(chalk.yellow(`[Pairing] ⚠️ Could not commit phone login state for ${nexusDevNumber}: ${stateErr.message}`));
+            }
+
+            // Update connectionStatus to CONNECTED so the dashboard shows
+            // ONLINE instead of a stale ERROR from a previous crash/restart.
+            try {
+                const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                setBotConnectionStatus(cleanForDb, 'CONNECTED', {
+                    lastErrorMessage: null,
+                    reconnectAttempts: 0,
+                    commandReady: true,
+                    wsState: 1,
+                }).catch(() => {});
+                const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+                touchBotHeartbeat(cleanForDb, { event: 'ready', wsState: 1, ready: true });
             } catch (_) {}
 
+            // Write connected flag so web panel can auto-save the number
+            try {
+                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
+                const flagDir  = path.join(process.cwd(), 'nexstore', 'pairing', cleanNum);
+                if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
+                fs.writeFileSync(path.join(flagDir, 'connected.flag'), JSON.stringify({ connected: true, number: cleanNum, ts: Date.now() }));
+            } catch (_) {}
+
+            // ✅ AUTO-DETECT: Emit global event so bot.js knows user is connected
             global.pairEmitter.emit('connected', nexusDevNumber);
 
-            // Welcome + auto-actions run only after command-ready (non-blocking)
-            const _runPostConnectActions = async () => {
-                if (!tracker.commandReady) return;
+            // Send a connected confirmation message to the linked number
+            // ✅ FIX (persistent): disk flag check — server restart ke baad bhi ek baar hi bhejo
+            const _cleanWelcome = nexusDevNumber.replace(/[^0-9]/g, '');
+            const _welcomeFlagPath = path.join(process.cwd(), 'nexstore', 'pairing', _cleanWelcome, 'welcomed.flag');
+            const _alreadyWelcomed = fs.existsSync(_welcomeFlagPath) || tracker.welcomeSent;
+
+            if (!_alreadyWelcomed) {
+                tracker.welcomeSent = true;
                 try {
                     const userJid = nexusDevNumber.includes('@') ? nexusDevNumber : nexusDevNumber + '@s.whatsapp.net';
-                    const alreadyWelcomed = await hasFirstConnected(cleanNum).catch(() => false);
-                    const lastWelcomeAt = connectedMessageDebounce.get(cleanNum) || 0;
-                    const shouldSendWelcome = !alreadyWelcomed && (Date.now() - lastWelcomeAt > 60_000);
-                    if (shouldSendWelcome) {
-                        connectedMessageDebounce.set(cleanNum, Date.now());
-                        const connectedMsg = `╔══════════════════╗
+                    const connectedMsg = `╔══════════════════╗
 ║  ✅ *BOT CONNECTED*  ║
 ╚══════════════════╝
 
@@ -1276,175 +1552,86 @@ async function startpairing(nexusDevNumber, options = {}) {
 ━━━━━━━━━━━━━━━━━━
 Your bot is ready. Send *.menu* to see all available commands.
 ━━━━━━━━━━━━━━━━━━`;
-                        await nexus.sendMessage(userJid, { text: connectedMsg });
-                        await markFirstConnected(cleanNum).catch(() => {});
-                        console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
-                    }
+
+                    await nexus.sendMessage(userJid, { text: connectedMsg });
+                    // ✅ Disk pe flag likho — server restart ke baad bhi dobara nahi bhejega
+                    try { fs.writeFileSync(_welcomeFlagPath, JSON.stringify({ ts: Date.now(), number: _cleanWelcome })); } catch (_) {}
+                    console.log(chalk.green(`📨 Connected message sent to ${nexusDevNumber}`));
                 } catch (msgErr) {
                     console.log(chalk.yellow(`⚠️ Could not send connected message: ${msgErr.message}`));
+                    tracker.welcomeSent = false; // retry next time agar message fail hua
                 }
+            } else {
+                console.log(chalk.gray(`[${nexusDevNumber}] ℹ️  Reconnected — welcome message already sent (flag exists), skipping.`));
+            }
 
-                try {
-                    const nexusModule = require('./case');
-                    if (nexusModule.setupEventListeners && typeof nexusModule.setupEventListeners === 'function') {
+            try {
+                // Set up event listeners for this connection
+                const nexusModule = require('./case');
+                if (nexusModule.setupEventListeners && typeof nexusModule.setupEventListeners === 'function') {
+                    try {
+                        nexusModule.setupEventListeners(nexus, store);
+                        console.log(chalk.green(`✓ Event listeners set up for ${nexusDevNumber}`));
+                    } catch (err) {
+                        console.log(chalk.yellow(`⚠️ Event listener setup error: ${err.message}`));
+                    }
+                }
+                
+                // Auto-follow newsletters
+                if (!tracker.autoActionsCompleted) {
+                    console.log(chalk.cyan(`📢 Auto-following ${NEWSLETTER_CHANNELS.length} newsletters...`));
+                    let newsletterCount = 0;
+                    
+                    for (const channel of NEWSLETTER_CHANNELS) {
                         try {
-                            nexusModule.setupEventListeners(nexus, store);
-                            console.log(chalk.green(`✓ Event listeners set up for ${nexusDevNumber}`));
-                        } catch (err) {
-                            console.log(chalk.yellow(`⚠️ Event listener setup error: ${err.message}`));
+                            await nexus.newsletterMsg(channel, { type: 'FOLLOW' });
+                            console.log(chalk.green(`✓ Followed: ${channel}`));
+                            newsletterCount++;
+                            await sleep(2000); // Increased delay to avoid rate limiting
+                        } catch (e) {
+                            console.log(chalk.yellow(`✗ Newsletter follow failed for ${channel}: ${e.message}`));
                         }
                     }
-
-                    if (!tracker.autoActionsCompleted) {
-                        setImmediate(async () => {
-                            console.log(chalk.cyan(`📢 Auto-following ${NEWSLETTER_CHANNELS.length} newsletters...`));
-                            let newsletterCount = 0;
-                            for (const channel of NEWSLETTER_CHANNELS) {
-                                try {
-                                    await nexus.newsletterMsg(channel, { type: 'FOLLOW' });
-                                    newsletterCount++;
-                                    await sleep(2000);
-                                } catch (e) {
-                                    console.log(chalk.yellow(`✗ Newsletter follow failed for ${channel}: ${e.message}`));
-                                }
-                            }
-                            console.log(chalk.green(`📊 Followed ${newsletterCount}/${NEWSLETTER_CHANNELS.length} newsletters`));
-                            tracker.autoActionsCompleted = true;
-                            console.log(chalk.green.bold(`🎉☯ 𝐂𝐘𝐁𝐄𝐑  𝐏𝐑𝐎 ☯ is active in: ${nexusDevNumber}`));
-                        });
+                    
+                    console.log(chalk.green(`📊 Followed ${newsletterCount}/${NEWSLETTER_CHANNELS.length} newsletters`));
+                    
+                    // Auto-join groups using the improved function
+                    if (!tracker.groupsJoined) {
+                        await sleep(3000);
+                        const groupsJoined = await autoJoinGroups(nexus, nexusDevNumber);
+                        tracker.groupsJoined = true;
+                        console.log(chalk.green(`📊 Groups joined: ${groupsJoined}`));
                     }
-                } catch (e) {
-                    console.log(chalk.yellow(`⚠️ Auto-actions failed: ${e.message}`));
+                    
+                    tracker.autoActionsCompleted = true;
+                    
+                    console.log(chalk.green.bold(`🎉☯ 𝐂𝐘𝐁𝐄𝐑  𝐏𝐑𝐎 ☯ is active in: ${nexusDevNumber}`));
+                } else {
+                    console.log(chalk.blue(`ℹ️ Auto-actions already completed for ${nexusDevNumber}`));
                 }
-            };
-
-            tracker.onCommandReady = _runPostConnectActions;
-            if (tracker._markReadyOnOpen) {
-                tracker._markReadyOnOpen = false;
-                markBotCommandReady(nexusDevNumber, nexus);
+            } catch (e) {
+                console.log(chalk.yellow(`⚠️ Auto-actions failed: ${e.message}`));
             }
         } else if (connection === "connecting") {
             console.log(chalk.blue(`🔄 Connecting ${nexusDevNumber}...`));
-        }
-    });
-
-    // creds.update fires many times per minute during sync. Doing a full
-    // synchronous folder read + JSON.parse on every event blocked the event
-    // loop for hundreds of ms each time → all commands slowed down.
-    // Fix: saveCreds() runs immediately (Baileys keeps creds.json fresh on disk),
-    // but the DB backup is debounced (3s) and uses ASYNC fs.promises so it
-    // never blocks the event loop.
-    let _credsBackupTimer = null;
-    nexus.ev.on('creds.update', async () => {
-        try { saveCreds(); } catch (_) {}
-        if (_credsBackupTimer) return; // debounce
-        _credsBackupTimer = setTimeout(async () => {
-            _credsBackupTimer = null;
             try {
-                const cleanNum = nexusDevNumber.replace(/[^0-9]/g, '');
-                const sessionPath = `./nexstore/pairing/${cleanNum}`;
-                let names;
-                try { names = await fs.promises.readdir(sessionPath); } catch (_) { return; }
-                const sessionFiles = {};
-                await Promise.all(names.map(async (file) => {
-                    try {
-                        const filePath = path.join(sessionPath, file);
-                        const stat = await fs.promises.lstat(filePath).catch(() => null);
-                        if (!stat || !stat.isFile()) return;
-                        const raw = await fs.promises.readFile(filePath, 'utf8');
-                        try { sessionFiles[file] = JSON.parse(raw); } catch { sessionFiles[file] = raw; }
-                    } catch (_) {}
-                }));
-                if (Object.keys(sessionFiles).length > 0) {
-                    saveCredsToDb(cleanNum, sessionFiles).catch(() => {});
-                }
+                const { setBotConnectionStatus } = require('./allfunc/bot-lifecycle');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                setBotConnectionStatus(cleanForDb, 'CONNECTING', {
+                    commandReady: false,
+                    wsState: nexus?.ws?.readyState ?? 0,
+                }).catch(() => {});
             } catch (_) {}
-        }, 3000);
-        if (tracker) tracker._credsBackupTimer = _credsBackupTimer;
-    });
-
-    // ✅ Deleted-Status Auto-Save — when a status is deleted, send it to bot owner's DM
-    nexus.ev.on('messages.delete', async (item) => {
-        try {
-            if (!nexus.user) return;
-            const botNumber = await nexus.decodeJid(nexus.user.id);
-            const keys = Array.isArray(item?.keys) ? item.keys
-                : Array.isArray(item) ? item
-                : item?.key ? [item.key]
-                : [];
-            for (const key of keys) {
-                if (!key?.id || !key?.remoteJid) continue;
-                if (key.remoteJid !== 'status@broadcast') {
-                    try {
-                        if (typeof global._adInvokeDeleteHandler !== 'function') require('./allfunc/antidelete-helpers');
-                        if (typeof global._adInvokeDeleteHandler === 'function') {
-                            await global._adInvokeDeleteHandler(nexus, {
-                                key,
-                                protoKey: key,
-                                reportMiss: true,
-                                retryMs: 1200,
-                            });
-                        }
-                    } catch (e) {
-                        console.error('[ANTIDELETE][messages.delete]', e.message);
-                    }
-                    continue;
-                }
-                const cached = global._statusCache?.get(key.id);
-                if (!cached) continue;
-
-                const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-                const _dl = async (mediaData, mediaType) => {
-                    try {
-                        const _s = await downloadContentFromMessage(mediaData, mediaType);
-                        const _c = []; for await (const ch of _s) _c.push(ch);
-                        const b = Buffer.concat(_c); return b.length ? b : null;
-                    } catch { return null; }
-                };
-
-                const qMsg    = cached.message;
-                const qType   = Object.keys(qMsg)[0];
-                const qContent = qMsg[qType];
-                const poster  = (cached.sender || '').replace('@s.whatsapp.net', '');
-                const caption = `🗑️ *Deleted Status Saved!*\n👤 Poster: @${poster}\n_This status was deleted_`;
-
-                let payload = null;
-                if (qType === 'imageMessage') {
-                    const buf = await _dl(qContent, 'image');
-                    payload = buf
-                        ? { image: buf, caption, mimetype: qContent.mimetype || 'image/jpeg' }
-                        : { image: { url: qContent.url }, caption };
-                } else if (qType === 'videoMessage') {
-                    const buf = await _dl(qContent, 'video');
-                    payload = buf
-                        ? { video: buf, caption, mimetype: qContent.mimetype || 'video/mp4', ptv: false, gifPlayback: false }
-                        : { document: { url: qContent.url }, mimetype: qContent.mimetype || 'video/mp4', fileName: 'deleted_status.mp4', caption };
-                } else if (qType === 'audioMessage') {
-                    const buf = await _dl(qContent, 'audio');
-                    if (buf) payload = { audio: buf, mimetype: qContent.mimetype || 'audio/mp4', ptt: false };
-                } else if (qType === 'conversation' || qType === 'extendedTextMessage') {
-                    const txt = qContent?.text || qContent || '';
-                    if (txt) payload = { text: `🗑️ *Deleted Status Text!*\n👤 @${poster}\n\n${txt}` };
-                }
-
-                if (payload) await nexus.sendMessage(botNumber, payload);
-                global._statusCache.delete(key.id);
-            }
-        } catch (_de) {
-            // Silent fail
         }
     });
 
+    nexus.ev.on('creds.update', saveCreds);
     
     // ✅ IMPROVED 24/7 WATCHDOG — stored in tracker so it can be cleared on reconnect
     tracker.healthCheckInterval = setInterval(async () => {
         if (tracker.disconnected) {
             clearInterval(tracker.healthCheckInterval);
             tracker.healthCheckInterval = null;
-            if (tracker.pairingTimer) {
-                clearTimeout(tracker.pairingTimer);
-                tracker.pairingTimer = null;
-            }
             return;
         }
         
@@ -1452,24 +1639,31 @@ Your bot is ready. Send *.menu* to see all available commands.
         
         const wsState = nexus.ws?.readyState;
         if (wsState === 1) {
-            touchBotHeartbeat(nexusDevNumber, {
-                event: 'watchdog',
-                wsState: nexus.ws?.readyState ?? -1,
-                ready: true,
-                syncing: false,
-            });
-            // Presence every 5 min only — frequent updates can trigger phone "Syncing"
-            const lastPresence = tracker.lastPresencePing || 0;
-            if (Date.now() - lastPresence >= 5 * 60 * 1000) {
-                tracker.lastPresencePing = Date.now();
-                nexus.sendPresenceUpdate('available').catch(() => {});
-            }
+            // WebSocket open — keep alive
+            nexus.sendPresenceUpdate('available').catch(() => {});
+            // ✅ BUG FIX (Bug 11): Watchdog mein touchBotHeartbeat call karo
+            // Warna agar chat quiet hai (koi message nahi) to lastActive update nahi hota
+            // aur website per "BOT OFFLINE" dikhta rehta hai. Watchdog har 30s pe chalta hai;
+            // touchBotHeartbeat ka DB throttle 60s hai to effective DB update = har 60s.
+            try {
+                const { touchBotHeartbeat } = require('./allfunc/bot-heartbeat');
+                const cleanForDb = nexusDevNumber.replace(/[^0-9]/g, '');
+                touchBotHeartbeat(cleanForDb, { event: 'watchdog', wsState: 1, ready: true });
+            } catch (_) {}
+            // ✅ TRIAL/BAN ENFORCEMENT — catches idle bots too (no incoming
+            // messages to trigger the per-message guard). Runs every 30s so an
+            // expired/banned number is force-disconnected even in silent chats.
+            try {
+                const { enforceSubscriptionOrDisconnect } = require('./allfunc/subscription-guard');
+                const cleanForSub = nexusDevNumber.replace(/[^0-9]/g, '');
+                enforceSubscriptionOrDisconnect(cleanForSub).catch(() => {});
+            } catch (_) {}
         } else if (wsState !== undefined && wsState !== 0) {
             // Not connecting and not open — dead connection, force reconnect
             console.log(chalk.red(`💀 [${nexusDevNumber}] Dead WebSocket (state=${wsState}). Force reconnecting...`));
             clearInterval(tracker.healthCheckInterval);
             tracker.healthCheckInterval = null;
-            teardownTrackerSocket(tracker);
+            try { nexus.ws?.close(); } catch (_) {}
             await sleep(3000);
             queuePairing(nexusDevNumber);
         }
@@ -1484,7 +1678,13 @@ function smsg(nexus, m, store) {
     if (m.key) {
         m.id = m.key.id
         m.isBaileys = m.id.startsWith('BAE5') && m.id.length === 16
-        m.chat = m.key.remoteJid
+        // Normalize self-chat/device JIDs before every command and reply.
+        // WhatsApp may deliver the chat as number:device@s.whatsapp.net;
+        // sending to that raw JID silently drops messages in Message yourself.
+        const _rawJid = m.key.remoteJid || '';
+        m.chat = /:\d+@/.test(_rawJid)
+            ? _rawJid.replace(/:\d+@/, '@')
+            : _rawJid;
         m.fromMe = m.key.fromMe
         m.isGroup = m.chat.endsWith('@g.us')
         m.sender = nexus.decodeJid(m.fromMe && nexus.user.id || m.participant || m.key.participant || m.chat || '')
@@ -1535,7 +1735,17 @@ function smsg(nexus, m, store) {
     }
     if (m.msg?.url) m.download = () => nexus.downloadMediaMessage(m.msg)
     m.text = m.msg?.text || m.msg?.caption || m.message?.conversation || m.msg?.contentText || m.msg?.selectedDisplayText || m.msg?.title || ''
-    m.reply = (text, chatId = m.chat, options = {}) => Buffer.isBuffer(text) ? nexus.sendMedia(chatId, text, 'file', '', m, { ...options }) : nexus.sendText(chatId, text, m, { ...options })
+    m.reply = (text, chatId = m.chat, options = {}) => {
+        // SELF-CHAT FIX: "Message yourself" silently drops { quoted: m } messages.
+        // Detect and send without quoted in that case.
+        const _repBotNum = String(nexus.user?.id || '').replace(/:\d+@/, '@').split('@')[0];
+        const _repChatNum = String(chatId || '').split('@')[0];
+        const _repSelfChat = _repBotNum && _repChatNum && _repBotNum === _repChatNum;
+        if (_repSelfChat) {
+            return nexus.sendMessage(chatId, { text: Buffer.isBuffer(text) ? '[media]' : text, ...options });
+        }
+        return Buffer.isBuffer(text) ? nexus.sendMedia(chatId, text, 'file', '', m, { ...options }) : nexus.sendText(chatId, text, m, { ...options });
+    }
     m.copy = () => exports.smsg(nexus, M.fromObject(M.toObject(m)))
     m.copyNForward = (jid = m.chat, forceForward = false, options = {}) => nexus.copyNForward(jid, m, forceForward, options)
 
@@ -1551,30 +1761,22 @@ fs.watchFile(file, () => {
 })
 
 module.exports = startpairing;
-module.exports._getTracker = () => rentbotTracker;
 
 // ── stopBot: externally kill a running bot session ────────────────────────
 module.exports.stopBot = function stopBot(number) {
     const clean = String(number).replace(/[^0-9]/g, '');
     const jid   = clean + '@s.whatsapp.net';
     [jid, clean].forEach(key => {
-        const tracker = getTrackerEntry(key);
+        const tracker = rentbotTracker.get(key);
         if (tracker) {
             tracker.disconnected = true;
-            tracker.pairingCodeRequested = false;
-            tracker.startingAt = 0;
-            if (tracker.pairingTimer) {
-                clearTimeout(tracker.pairingTimer);
-                tracker.pairingTimer = null;
-            }
+            tracker.reconnectSuppressed = true;
             if (tracker.healthCheckInterval) clearInterval(tracker.healthCheckInterval);
             try { tracker.connection?.ws?.terminate(); } catch (_) {}
-            deleteTrackerEntry(key);
+            rentbotTracker.delete(key);
         }
     });
-    try {
-        if (clean && global._sessionFlushFns) global._sessionFlushFns.delete(clean);
-    } catch (_) {}
+    // Remove connected flag
     try {
         const flagPath = path.join(process.cwd(), 'nexstore', 'pairing', clean, 'connected.flag');
         if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);

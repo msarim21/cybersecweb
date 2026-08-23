@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="0" y="0" width="64" height="64" rx="12" fill="#0f172a"/>
+  <!-- Shield icon -->
+  <path d="M32 8 L48 16 L48 32 C48 44.8 32 56 32 56 C32 56 16 44.8 16 32 L16 16 Z"
+        fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linejoin="round"/>
+  <!-- Lock icon -->
+  <rect x="26" y="28" width="12" height="10" rx="2" fill="#22d3ee"/>
+  <path d="M26 28 L26 24 C26 20.7 28.7 18 32 18 C35.3 18 38 20.7 38 24 L38 28"
+        fill="none" stroke="#0f172a" stroke-width="2"/>
+  <!-- Checkmark inside -->
+  <path d="M29 33 L31 35 L35 31" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- CSP text -->
+  <text x="32" y="56" font-family="Arial, sans-serif" font-size="6" font-weight="bold"
+        fill="#8b5cf6" text-anchor="middle">CSP</text>
+</svg>

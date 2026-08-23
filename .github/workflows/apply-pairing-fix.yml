@@ -1,0 +1,32 @@
+name: Apply pairing fix patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch:
+        description: Patch file under .lovable-patches
+        required: true
+        default: .lovable-patches/pairing-restart.patch
+      branch:
+        description: Branch to create
+        required: true
+        default: fix/pairing-restart-after-accept
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply patch
+        run: |
+          git config user.name "lovable-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout -b "${{ github.event.inputs.branch }}"
+          git apply "${{ github.event.inputs.patch }}"
+          node --check pair.js
+          node --check worker/bot-thread.js
+          node --check worker/pairing-processor.js
+          git commit -am "fix(pairing): restart pairing child after WhatsApp 515 accept"
+          git push origin "${{ github.event.inputs.branch }}"

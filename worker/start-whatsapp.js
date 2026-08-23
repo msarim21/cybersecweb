@@ -27,6 +27,32 @@ function startWhatsAppStack() {
     const { startOrphanDisconnectJob } = require('../server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
 
+    // ✅ FIX: Auto-restarter — har BOT_RESTART_HOURS ghante mein graceful restart
+    // Session DB mein flush hoti hai restart se pehle — no data loss
+    try {
+        const { startAutoRestarter } = require('./auto-restarter');
+        startAutoRestarter();
+        const hours = Number(process.env.BOT_RESTART_HOURS);
+        const restartHours = Number.isFinite(hours) && hours > 0 ? hours : 4;
+        console.log(chalk.gray(`[WhatsApp] ⏰ Auto-restarter armed — restarts every ${restartHours} hours`));
+    } catch (e) {
+        console.log(chalk.yellow('[WhatsApp] Auto-restarter warning:', e.message));
+    }
+
+    // ── Auto-reconnect sweep ──────────────────────────────────────────────
+    // Har 5 minute mein check karta hai koi bot offline to nahi gaya.
+    // Agar offline hai, DB mein session hai, aur user ne manually disconnect
+    // nahi kiya — to automatically reconnect karta hai.
+    // User ko website pe ja ke RECONNECT button nahi dabaana parta.
+    try {
+        const { startAutoReconnectSweep, triggerBootReconnectSweep } = require('../allfunc/auto-reconnect-sweep');
+        startAutoReconnectSweep();
+        triggerBootReconnectSweep();
+        console.log(chalk.green('[WhatsApp] ✅ Auto-reconnect sweep armed — offline bots will reconnect automatically'));
+    } catch (e) {
+        console.log(chalk.yellow('[WhatsApp] Auto-reconnect sweep warning:', e.message));
+    }
+
     return true;
 }
 

@@ -28,19 +28,23 @@ router.get('/profile', protect, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found.' });
     const linkedCount = await getUserLinkedCount(user.id);
     res.json({
-      id:               user.id,
-      username:         user.username,
-      email:            user.email,
-      role:             user.role,
-      subscriptionPlan: user.subscription_plan,
-      planExpiresAt:    user.plan_expires_at || null,
-      planExpired:      isPlanExpired(user),
-      licenseKey:       user.license_key || null,
-      trialExpiresAt:   user.trial_expires_at || null,
-      upgradeRequest:   user.upgrade_request || 'none',
-      banned:           user.banned,
-      createdAt:        user.created_at,
-      lastActive:       user.last_active,
+      id:                 user.id,
+      username:           user.username,
+      email:              user.email,
+      role:               user.role,
+      subscriptionPlan:   user.subscription_plan,
+      subscriptionStatus: user.subscription_status || 'trial',
+      trialStart:         user.trial_start || null,
+      trialExpiresAt:     user.trial_expires_at || null,
+      subscriptionExpiry: user.subscription_expiry || null,
+      planExpiresAt:      user.plan_expires_at || null,
+      planExpired:        isPlanExpired(user),
+      activatedByAdmin:   user.activated_by_admin || false,
+      licenseKey:         user.license_key || null,
+      upgradeRequest:     user.upgrade_request || 'none',
+      banned:             user.banned,
+      createdAt:          user.created_at,
+      lastActive:         user.last_active,
       linkedCount,
     });
   } catch (err) {
@@ -73,8 +77,11 @@ router.get('/stats', protect, async (req, res) => {
     const plan   = user.subscription_plan;
     const limit  = getPlanLimit(plan);
 
-    const trialExpiresAt = user.trial_expires_at || null;
-    const trialExpired   = trialExpiresAt && new Date(trialExpiresAt) < new Date() && plan === 'free';
+    const trialExpiresAt    = user.trial_expires_at || null;
+    const subscriptionStatus = user.subscription_status || 'trial';
+    const activatedByAdmin   = user.activated_by_admin || false;
+    // Use isPlanExpired which now checks subscriptionStatus first (paid users never expire)
+    const trialExpired       = isPlanExpired(user);
 
     const numbers = await getNumbersByOwner(userId, null);
     const total   = numbers.length;
@@ -82,11 +89,15 @@ router.get('/stats', protect, async (req, res) => {
 
     res.json({
       total, active, inactive: total - active, plan, limit,
-      planExpiresAt: user.plan_expires_at || null,
-      planExpired:   isPlanExpired(user),
+      planExpiresAt:      user.plan_expires_at || null,
+      planExpired:        isPlanExpired(user),
       trialExpiresAt,
-      trialExpired: !!trialExpired,
-      upgradeRequest: user.upgrade_request || 'none',
+      trialExpired:       !!trialExpired,
+      subscriptionStatus,
+      activatedByAdmin,
+      trialStart:         user.trial_start || null,
+      subscriptionExpiry: user.subscription_expiry || null,
+      upgradeRequest:     user.upgrade_request || 'none',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

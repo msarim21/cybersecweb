@@ -54,7 +54,14 @@ function touchBotHeartbeat(botNum, extra = {}) {
             const meta = {};
             if (extra.ready === true) meta.commandReady = true;
             if (extra.wsState !== undefined) meta.wsState = extra.wsState;
-            if (extra.ready === false) return;
+            // NOTE: Do NOT return early when ready===false.
+            // On Heroku the web dyno and worker dyno have separate ephemeral
+            // filesystems — heartbeat FILES written by the worker are invisible
+            // to the web dyno. The only cross-dyno liveness signal is the DB
+            // `lastActive` timestamp (checked against BOT_ONLINE_MAX_AGE_MS=15min
+            // in server/routes/numbers.js). If we skip upsertBotSession when
+            // ready===false the bot's lastActive goes stale and the dashboard
+            // shows "BOT OFFLINE" even though the connection is alive.
             await upsertBotSession(clean, 'active', meta);
         } catch (_) {}
     });

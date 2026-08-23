@@ -42,19 +42,10 @@ class AntideleteSessionStore {
         this.memory = new Map();
         /** msgId → primary chatId (fallback when JID format differs, e.g. @lid vs @s.whatsapp.net) */
         this.msgIdIndex = new Map();
-        let diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
-        try {
-            const { isBotIsolated, getBotConfigPaths } = require('./bot-workspace');
-            if (isBotIsolated()) {
-                const isolated = getBotConfigPaths(this.botNum);
-                if (isolated?.antideleteStore) diskPath = isolated.antideleteStore;
-            }
-        } catch (_) {}
-        this.diskPath = diskPath;
+        this.diskPath = path.join('database', `antidelete_store_${this.botNum}.json`);
         this.mediaDir = path.join('tmp', 'antidelete_media', this.botNum);
         this._diskTimer = null;
         this._loaded = false;
-        this._diskMtimeMs = 0;
     }
 
     /** Session-local key — unique within this bot only */
@@ -72,20 +63,7 @@ class AntideleteSessionStore {
         if (!fs.existsSync(this.mediaDir)) fs.mkdirSync(this.mediaDir, { recursive: true });
     }
 
-    /**
-     * Re-read disk ONLY if the file changed since last read (mtime check).
-     * Antidelete delete-handling calls this repeatedly in a retry loop; without
-     * the mtime guard each call did a full sync readFileSync + JSON.parse of a
-     * store that can be many MB (inline media base64) → event-loop stalls that
-     * slowed every command. The guard makes repeat refreshes near-free.
-     */
     refreshFromDisk() {
-        try {
-            const st = fs.statSync(this.diskPath);
-            if (this._loaded && st.mtimeMs === this._diskMtimeMs) return;
-        } catch (_) {
-            if (this._loaded) return; // file missing — keep RAM cache
-        }
         this._loaded = false;
         this.loadFromDisk();
     }
@@ -96,7 +74,6 @@ class AntideleteSessionStore {
         this.ensureDirs();
         try {
             if (!fs.existsSync(this.diskPath)) return;
-            try { this._diskMtimeMs = fs.statSync(this.diskPath).mtimeMs; } catch (_) {}
             const entries = JSON.parse(fs.readFileSync(this.diskPath, 'utf-8'));
             if (!Array.isArray(entries)) return;
             const now = Date.now();
@@ -212,11 +189,30 @@ class AntideleteSessionStore {
                 };
                 if (row.mediaBufferB64 && row.mediaBufferB64.length > B64_MAX * 1.4) {
                     delete row.mediaBufferB64;
-                }
+            }
                 entries.push([key, row]);
             }
-            fs.writeFileSync(this.diskPath, JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES)), 'utf-8');
-            try { this._diskMtimeMs = fs.statSync(this.diskPath).mtimeMs; } catch (_) {}
+            const payload = JSON.stringify(entries.slice(-ANTIDELETE_MAX_ENTRIES));
+            // Async write + atomic rename — sync writes here were blocking the
+            // event loop on every cached message, freezing the bot.
+            const tmp = `${this.diskPath}.tmp`;
+            if (this._writing) { this._pendingPayload = payload; return; }
+            this._writing = true;
+            fs.promises.writeFile(tmp, payload, 'utf-8')
+                .then(() => fs.promises.rename(tmp, this.diskPath))
+                .catch(() => {})
+                .finally(() => {
+                    this._writing = false;
+                    if (this._pendingPayload) {
+                        const p = this._pendingPayload;
+                        this._pendingPayload = null;
+                        this._writing = true;
+                        fs.promises.writeFile(tmp, p, 'utf-8')
+                            .then(() => fs.promises.rename(tmp, this.diskPath))
+                            .catch(() => {})
+                            .finally(() => { this._writing = false; });
+                    }
+                });
         } catch (_) {}
     }
 
@@ -226,9 +222,14 @@ class AntideleteSessionStore {
     }
 
     sweep(cutoffTs) {
+        let changed = false;
         for (const [k, v] of this.memory) {
-            if (v?._ts && v._ts < cutoffTs) this.memory.delete(k);
+            if (v?._ts && v._ts < cutoffTs) {
+                this.memory.delete(k);
+                changed = true;
+            }
         }
+        if (changed) this.scheduleDiskSave();
     }
 
     sweepMediaFiles(cutoffTs) {
@@ -339,6 +340,6 @@ module.exports = {
     cleanBotNum,
     migrateLegacyAntideleteStore,
     DISK_DEBOUNCE_MS,
-    ANTIDELETE_MAX_ENTRIES,
-    ANTIDELETE_RETENTION_MS,
+   ANTIDELETE_MAX_ENTRIES,
+   ANTIDELETE_RETENTION_MS,
 };

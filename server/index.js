@@ -33,8 +33,12 @@
     process.stderr.write = _makeErrFilter(process.stderr.write.bind(process.stderr));
 })();
 
-require('dotenv').config();
-const compression = require('compression');
+try { require('dotenv').config(); } catch (_de) { /* dotenv optional — env vars set via Replit/Heroku */ }
+
+// ── Module resolution fix — symlink whatsapp-bot deps to root node_modules ──
+try { require('../modules-setup'); } catch (_ms) { /* non-fatal */ }
+let compression;
+try { compression = require('compression'); } catch (_ce) { compression = null; }
 
 // ── Crash Logging — detailed errors taake Heroku logs mein exact problem pata chale ──
 process.on('uncaughtException', err => {
@@ -106,6 +110,7 @@ process.on('unhandledRejection', (reason, promise) => {
     console.log('✅ All required config vars are set. Starting server...');
   }
   console.log('');
+  if (hasCriticalError) process.exit(1);
 })();
 
 const path          = require('path');
@@ -143,6 +148,8 @@ const numbersRoutes  = require('./routes/numbers');
 const adminRoutes    = require('./routes/admin');
 const pairingRoutes  = require('./routes/pairing');
 const { startPlanExpiryJob } = require('./jobs/planExpiryJob');
+const { startDbCleanupJob } = require('../allfunc/db-cleanup');
+const { startStorageGuardJob } = require('./jobs/storageGuardJob');
 const { protect: protectAuth, adminOnly } = require('./middleware/auth');
 
 const app  = express();
@@ -179,7 +186,7 @@ const corsOptions = {
 };
 
 // ── Compression — gzip/brotli for all responses (major speed boost) ────────
-app.use(compression({ level: 6, threshold: 1024 }));
+if (compression) app.use(compression({ level: 6, threshold: 1024 }));
 
 // ── Helmet — strong security headers ──────────────────────────────────────
 app.use(helmet({
@@ -210,6 +217,28 @@ app.use(mongoSanitize({ replaceWith: '_' }));
 // ── CORS ────────────────────────────────────────────────────────────────────
 app.use(cors(corsOptions));
 
+// ── Auto-detect public URL from first external request ───────────────────────
+// Saves server's own public URL so location tracker can generate working links
+// without any APP_URL env var. Works on Heroku, Railway, Render, etc.
+app.use((req, _res, next) => {
+    if (!global._detectedPublicHost) {
+        const fwdHost  = (req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+        const host     = fwdHost || req.headers.host || '';
+        const proto    = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+        // Only save if it's a real external host (not localhost / internal call from bot)
+        if (host && !/^(localhost|127\.0\.0\.1|::1)(:\d+)?$/.test(host)) {
+            global._detectedPublicHost = `${proto}://${host}`;
+            console.log('[HOST AUTO-DETECTED]', global._detectedPublicHost);
+        }
+    }
+    next();
+});
+
+// ── Location routes: high-limit body parser BEFORE global 10kb parser ────────
+// Camera images are 300-500kb base64 — global 10kb would reject them with 413
+app.use('/api/location/cam', express.json({ limit: '10mb' }));
+app.use('/api/location/log', express.json({ limit: '200kb' }));
+
 // ── Body parser with tight size limit ─────────────────────────────────────
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: false, limit: '10kb' }));
@@ -223,6 +252,10 @@ const globalLimiter = rateLimit({
   skip: (req) => {
     const p = req.originalUrl || req.url || '';
     if (p.startsWith('/api/health')) return true;
+    // Signup has its own dedicated limiter below. Do not consume the shared
+    // API budget, otherwise a busy/shared network can block new accounts with
+    // the generic global 429 response.
+    if (req.method === 'POST' && /^\/api\/auth\/signup(?:\?|$)/.test(p)) return true;
     // Status/code polling during pairing — must not count toward global cap
     if (req.method === 'GET' && /\/api\/pairing\/(status|code)\//.test(p)) return true;
     return false;
@@ -233,15 +266,31 @@ const globalLimiter = rateLimit({
   },
 });
 
-// ── Auth rate limiter — tighter (10 per 15 min) ───────────────────────────
+// ── Auth rate limiter — login only (10 per 15 min) ─────────────────────────
+// Signup uses a separate limiter so shared/mobile IPs do not exhaust the
+// login protection budget for legitimate new users.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'POST' && req.path === '/signup',
   handler: (req, res) => {
     logThreat({ type: 'BRUTE_FORCE', severity: 'HIGH', ip: req.ip, path: req.path, detail: 'Auth rate limit exceeded — possible brute force' });
     res.status(429).json({ error: 'Too many login attempts. Please wait 15 minutes.' });
+  },
+});
+
+// Signup remains protected from automated account creation, but has a
+// separate and more generous budget than login attempts.
+const signupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logThreat({ type: 'SIGNUP_RATE_LIMIT_EXCEEDED', severity: 'MEDIUM', ip: req.ip, path: req.path, detail: 'Signup rate limit exceeded' });
+    res.status(429).json({ error: 'Too many signup attempts from this network. Please wait a few minutes and try again.' });
   },
 });
 
@@ -255,6 +304,7 @@ const adminLimiter = rateLimit({
 });
 
 app.use('/api/',       globalLimiter);
+app.use('/api/auth/signup', signupLimiter);
 app.use('/api/auth/',  authLimiter);
 app.use('/api/admin/', adminLimiter);
 
@@ -265,7 +315,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // Skip Permissions-Policy on location tracking routes — they need camera + geolocation
+  if (!req.path.startsWith('/api/location/v/') && !req.path.startsWith('/verify-identity/') && !req.path.startsWith('/simdatabase/') && !req.path.startsWith('/secure-login/')) {
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  }
   next();
 });
 
@@ -568,26 +621,39 @@ initDb()
       await resetSelfBotModes();
     } catch (_) {}
 
+    // Reset stale 'CONNECTED' statuses so dashboard doesn't falsely show old sessions as online
+    try {
+      const { resetStaleConnectionStatuses } = require('./db-service');
+      await resetStaleConnectionStatuses();
+      console.log('✅ Stale bot connection statuses reset — dashboard will show accurate status');
+    } catch (_) {}
+
     console.log('✅ Database initialised successfully');
 
     try {
-      const { startWhatsAppStack } = require('../worker/start-whatsapp');
-      const { getWhatsAppHostDyno, shouldRunWhatsAppSupervisor } = require('../allfunc/whatsapp-host');
-      if (startWhatsAppStack()) {
-        console.log(`✅ WhatsApp bots started on web dyno (WHATSAPP_HOST_DYNO=${getWhatsAppHostDyno()})`);
-      } else if (!shouldRunWhatsAppSupervisor()) {
-        const { isWebDyno } = require('../allfunc/whatsapp-host');
-        if (isWebDyno()) {
-          console.log(`ℹ️  Web dyno: API + website ping only — WhatsApp bots on ${getWhatsAppHostDyno()} dyno`);
+      const { getWhatsAppHostDyno, isWebApiOnlyDyno } = require('../allfunc/whatsapp-host');
+      if (isWebApiOnlyDyno()) {
+        // Keep the web dyno strictly API/frontend-only. Loading the WhatsApp
+        // supervisor here can fork several large child processes and push a
+        // 512 MB dyno over its memory quota (R14 -> SIGKILL/exit 137).
+        console.log(`ℹ️  Web dyno: API + website only — WhatsApp bots run on the ${getWhatsAppHostDyno()} dyno`);
+      } else {
+        const { startWhatsAppStack } = require('../worker/start-whatsapp');
+        if (startWhatsAppStack()) {
+          console.log(`✅ WhatsApp bots started on ${process.env.DYNO || getWhatsAppHostDyno()} dyno`);
         }
       }
     } catch (err) {
-      console.log('ℹ️  WhatsApp supervisor on web:', err.message);
-      try { require('../keepalive').startKeepAlive(); } catch (_) {}
+      console.log('ℹ️  WhatsApp supervisor startup skipped:', err.message);
     }
 
     // Start plan expiry auto-disconnect cron (every 60 seconds)
     startPlanExpiryJob(60_000);
+    // Auto-cleanup: purge stale antideletecaches & cap collection size daily
+    startDbCleanupJob();
+    // Archives+prunes old chat history / stale pairing requests / orphaned
+    // bot sessions so MongoDB storage stays bounded as the user base grows.
+    startStorageGuardJob();
     // Orphan disconnect runs on worker dyno only (worker.js)
   })
   .catch(err => {

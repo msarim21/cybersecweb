@@ -10,6 +10,8 @@ const botSessionSchema = new mongoose.Schema({
   sessionData: { type: mongoose.Schema.Types.Mixed, default: null },
   pairingCode:      { type: String, default: null },
   pairingStatus:    { type: String, default: null },
+  pairingAttemptId: { type: String, default: null },
+  pairingError:     { type: String, default: null },
   pairingOwnerId:   { type: String, default: null },
   pairingBotName:   { type: String, default: null },
   connectedAt:      { type: Date },
@@ -24,6 +26,11 @@ const botSessionSchema = new mongoose.Schema({
   botModeLocked:    { type: Boolean, default: false },
   /** WhatsApp number that enabled self mode — that user's commands pass even if not in owner.json */
   sessionOwner:     { type: String, default: null },
+  /** CONNECTED | DISCONNECTED | LOGGED_OUT | ERROR | CONNECTING */
+  connectionStatus: { type: String, default: null },
+  lastErrorMessage: { type: String, default: null },
+  reconnectAttempts:{ type: Number, default: 0 },
+  hostDyno:         { type: String, default: null },
 });
 
 module.exports = mongoose.model('BotSession', botSessionSchema);

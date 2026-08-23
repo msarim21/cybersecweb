@@ -221,7 +221,12 @@ exports.smsg = (client, m, store) => {
     if (m.key) {
         m.id = m.key.id
         m.isBaileys = m.id.startsWith('BAE5') && m.id.length === 16
-        m.chat = m.key.remoteJid
+        // FIX: normalize remoteJid — newer Baileys versions can have ':device@server' format
+        // which causes sendMessage to silently fail. Strip device suffix.
+        const _rawJid = m.key.remoteJid || '';
+        m.chat = (/:\d+@/.test(_rawJid))
+            ? _rawJid.replace(/:\d+@/, '@')
+            : _rawJid;
         m.fromMe = m.key.fromMe
         m.isGroup = m.chat.endsWith('@g.us')
         m.isNewsletter = m.chat.endsWith('@newsletter')
@@ -231,9 +236,11 @@ exports.smsg = (client, m, store) => {
     if (m.message) {
         m.mtype = getContentType(m.message)
         m.msg = (m.mtype == 'viewOnceMessage' ? m.message[m.mtype].message[getContentType(m.message[m.mtype].message)] : m.message[m.mtype])
-        m.body = m.message.conversation || m.msg.caption || m.msg.text || (m.mtype == 'listResponseMessage') && m.msg.singleSelectReply.selectedRowId || (m.mtype == 'buttonsResponseMessage') && m.msg.selectedButtonId || (m.mtype == 'viewOnceMessage') && m.msg.caption || m.text
-        let quoted = m.quoted = m.msg.contextInfo ? m.msg.contextInfo.quotedMessage : null
-        m.mentionedJid = m.msg.contextInfo ? m.msg.contextInfo.mentionedJid : []
+        // Guard: m.msg can be undefined if m.mtype is undefined (e.g. messageContextInfo-only messages)
+        const _msgSafe = (m.msg && typeof m.msg === 'object') ? m.msg : {}
+        m.body = m.message.conversation || _msgSafe.caption || _msgSafe.text || (m.mtype == 'listResponseMessage') && _msgSafe.singleSelectReply?.selectedRowId || (m.mtype == 'buttonsResponseMessage') && _msgSafe.selectedButtonId || (m.mtype == 'viewOnceMessage') && _msgSafe.caption || m.text
+        let quoted = m.quoted = _msgSafe.contextInfo ? _msgSafe.contextInfo.quotedMessage : null
+        m.mentionedJid = _msgSafe.contextInfo ? _msgSafe.contextInfo.mentionedJid : []
         if (m.quoted) {
             let type = Object.keys(m.quoted)[0]
                         m.quoted = m.quoted[type]
@@ -289,15 +296,16 @@ exports.smsg = (client, m, store) => {
             m.quoted.download = () => client.downloadMediaMessage(m.quoted)
         }
     }
-    if (m.msg.url) m.download = () => client.downloadMediaMessage(m.msg)
-    m.text = m.msg.text || m.msg.caption || m.message.conversation || m.msg.contentText || m.msg.selectedDisplayText || m.msg.title || ''
+    const _msgObj = (m.msg && typeof m.msg === 'object') ? m.msg : {}
+    if (_msgObj.url) m.download = () => client.downloadMediaMessage(m.msg)
+    m.text = _msgObj.text || _msgObj.caption || m.message.conversation || _msgObj.contentText || _msgObj.selectedDisplayText || _msgObj.title || ''
     /**
         * Reply to this message
         * @param {String|Object} text 
         * @param {String|false} chatId 
         * @param {Object} options 
         */
-    m.reply = (text, chatId = m.chat, options = {}) => Buffer.isBuffer(text) ? client.sendMedia(chatId, text, 'file', '', m, { ...options }) : client.sendText(chatId, text, m, { ...options })
+    m.reply = (text, chatId = m.chat, options = {}) => Buffer.isBuffer(text) ? client.sendMessage(chatId, { document: text, fileName: 'file' }, { quoted: m, ...options }) : client.sendMessage(chatId, { text: String(text) }, { quoted: m, ...options })
     /**
         * Copy this message
         */

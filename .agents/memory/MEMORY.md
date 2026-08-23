@@ -1,0 +1,16 @@
+- [PrinceTech and WhatsApp constraints](prince-ai-antidelete.md) — Shared AI adapter, numbered TTS selection, and binary media-key handling are required for current client/API behavior.
+- [Module resolution fix](module-resolution.md) — root node_modules lacks runtime deps; symlink whatsapp-bot/node_modules or commands silently fail to load
+- [Config file dedup](config-dedup.md) — setting/config.js had duplicate content loaded twice, causing conflicting globals (prefa, owner, footer)
+- [Production deploy access](production-deploy-access.md) — verify Heroku app access before claiming a deploy; GitHub is the safe handoff when access is denied.
+- [Reconnect liveness](reconnect-liveness.md) — worker existence, DB freshness, and connected.flag are not sufficient; isolated recovery must require fresh WS heartbeat state.
+- [Heroku pairing topology](heroku-pairing-topology.md) — production uses one web owner for API, pairing, and bots; never run a second WhatsApp host.
+- [Pairing login handoff](pairing-login-handoff.md) — keep the pairing socket alive after code_ready until connection.open, credential flush, and active-state commit complete.
+- [Pairing state freshness](pairing-state-freshness.md) — clear prior DB and local code state before each new socket attempt or stale codes can be shown.
+- [Baileys pairing readiness](baileys-pairing-readiness.md) — an absent `socket.ws.readyState` is unknown in Baileys 7, not proof that pairing cannot start.
+- [Mobile pairing code layout](mobile-pairing-code-layout.md) — keep the full eight-character code on one visible line inside a scrollable mobile modal.
+- [Mongo quota pairing fallback](mongo-quota-pairing-fallback.md) — Atlas writes can block pairing state; web-only mode must use the local code file and connected flag as temporary handoff.
+- [Async pairing request](async-pairing-request.md) — pairing HTTP requests return immediately; the client polls the local/DB code handoff while the WhatsApp socket continues negotiating.
+- [Anti-delete storage boundary](antidelete-storage-boundary.md) — anti-delete is a disposable per-bot JSON cache; keep it out of Mongo session persistence by default.
+- [Pairing browser identity](pairing-browser-identity.md) — phone-number linking uses an Ubuntu Chrome companion profile; Safari-style identity produced rejected codes.
+- [Pairing child ownership](pairing-child-ownership.md) — supervisor noRestart must propagate through worker-thread startup or a dead pairing socket can self-respawn and invalidate its code.
+- [Pairing queue single-flight](pairing-queue-single-flight.md) — claim one registration request at a time; retry capacity blocks instead of failing queued users.

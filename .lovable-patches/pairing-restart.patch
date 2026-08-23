@@ -1,0 +1,118 @@
+diff --git a/pair.js b/pair.js
+index e8ac7f1..142f346 100644
+--- a/pair.js
++++ b/pair.js
+@@ -1226,7 +1226,11 @@ async function _startpairing(nexusDevNumber, options = {}) {
+                 console.log(chalk.blue(`🔄 [${nexusDevNumber}] Pairing accepted — restarting socket to finish login`));
+                 tracker.pairingPhase = 'restarting_after_pair';
+                 if (global.__ISOLATED_BOT) {
+-                    setTimeout(() => process.exit(1), 2000);
++                    // Exit code 75 tells the supervising thread/parent that this
++                    // was a successful pairing needing a restart, NOT a crash.
++                    // A pairing child is spawned with noRestart, so a plain
++                    // exit(1) here left the session dead right after success.
++                    setTimeout(() => process.exit(75), 2000);
+                     return;
+                 }
+                 await sleep(2000);
+diff --git a/worker/bot-thread.js b/worker/bot-thread.js
+index 8785b3f..87d3238 100644
+--- a/worker/bot-thread.js
++++ b/worker/bot-thread.js
+@@ -46,6 +46,10 @@ let _shuttingDown   = false;
+ let _pingInterval   = null;
+ let _pairingSession = Boolean(pairing);
+ let _noRestartSession = Boolean(noRestart);
++// Set after a pairing child exits with code 75 (WhatsApp 515 restart after the
++// pairing code was accepted). The replacement child must load the freshly
++// registered session instead of starting another registration handshake.
++let _forceNoPairing  = false;
+ 
+ function send(type, payload = {}) {
+     try { parentPort.postMessage({ type, botNumber, ...payload }); } catch (_) {}
+@@ -79,7 +83,7 @@ function spawnChild(opts = {}) {
+     const childEnv = {
+         ...env,
+         BOT_NUMBER  : botNumber,
+-        BOT_PAIRING : opts.pairing ? '1' : (env.BOT_PAIRING === '1' ? '1' : '0'),
++        BOT_PAIRING : (!_forceNoPairing && (opts.pairing || env.BOT_PAIRING === '1')) ? '1' : '0',
+         WHATSAPP_WORKER: '1',
+         BOT_ISOLATION  : '1',
+     };
+@@ -102,6 +106,19 @@ function spawnChild(opts = {}) {
+         updateSlot();
+         send('exit', { code, signal, restarts: _totalRestarts });
+ 
++        // Exit code 75 = pairing accepted, WhatsApp asked for a socket restart
++        // (515). Credentials are already registered, so restart exactly once as
++        // a normal session even for noRestart pairing children — otherwise the
++        // bot dies at the moment pairing succeeds.
++        if (!_shuttingDown && code === 75) {
++            _pairingSession   = false;
++            _noRestartSession = false;
++            _forceNoPairing   = true;
++            send('pairRestart', { reason: 'restartRequired after pairing accepted' });
++            setTimeout(() => { if (!_shuttingDown) spawnChild(); }, 3000);
++            return;
++        }
++
+         if (_shuttingDown || opts.noRestart) return;
+ 
+         // ✅ FIX: code=0 = intentional clean exit (no session, bot stopped, or manual disconnect)
+diff --git a/worker/pairing-processor.js b/worker/pairing-processor.js
+index 000f556..efc45d0 100644
+--- a/worker/pairing-processor.js
++++ b/worker/pairing-processor.js
+@@ -226,7 +226,31 @@ async function processPairingQueue() {
+                     });
+                     if (!global._pairingChildPids) global._pairingChildPids = new Map();
+                     global._pairingChildPids.set(clean, child);
+-                    child.on('exit', () => global._pairingChildPids?.delete(clean));
++                    child.on('exit', (code) => {
++                        global._pairingChildPids?.delete(clean);
++                        // Exit code 75 = pairing accepted but WhatsApp closed the
++                        // socket with 515 (restartRequired). Nothing else restarts
++                        // this fork, so relaunch once WITHOUT pairing mode to
++                        // finish login with the freshly registered credentials.
++                        if (code !== 75) return;
++                        try {
++                            const restarted = fork(runner, [clean], {
++                                env: {
++                                    ...process.env,
++                                    WHATSAPP_WORKER: '1',
++                                    BOT_ISOLATION: '1',
++                                    BOT_NUMBER: clean,
++                                    BOT_PAIRING: '0',
++                                },
++                                stdio: 'inherit',
++                                cwd: path.join(__dirname, '..'),
++                            });
++                            global._pairingChildPids.set(clean, restarted);
++                            restarted.on('exit', () => global._pairingChildPids?.delete(clean));
++                        } catch (e) {
++                            console.error(`[PairingQueue] Restart after pairing failed for ${clean}:`, e.message);
++                        }
++                    });
+ 
+                     // Phase 1: Wait for pairing code (max 90s)
+                     const codeDeadline = Date.now() + 90_000;
+@@ -272,6 +296,19 @@ async function processPairingQueue() {
+                         if (st?.status === 'failed' || !st) break;
+                         await new Promise((r) => setTimeout(r, 1000));
+                     }
++
++                    // Never leave the UI spinning: if the number never went
++                    // active within the window, record a real failure.
++                    try {
++                        const finalSt = await getPairingState(clean).catch(() => null);
++                        if (finalSt && finalSt.status !== 'active' && finalSt.status !== 'failed') {
++                            try { child.kill('SIGKILL'); } catch (_) {}
++                            await markPairingFailed(
++                                clean,
++                                'Pairing not completed in time — please request a new code'
++                            ).catch(() => {});
++                        }
++                    } catch (_) {}
+                 } catch (err) {
+                     console.error(`[PairingQueue] Failed for ${clean}:`, err.message);
+                     try {

@@ -284,12 +284,35 @@ async function startWorker() {
     startPairingProcessor(150);
     const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
     startOrphanDisconnectJob(30_000);
+
+    // ✅ FIX: Auto-restarter — isolated mode mein bhi 4 ghante restart
+    try {
+      const { startAutoRestarter } = require('./worker/auto-restarter');
+      startAutoRestarter();
+      const _rh = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+      console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed (isolated) — every ${_rh}h`));
+    } catch (e) {
+      console.log(chalk.yellow('[Worker] Auto-restarter (isolated) warning:', e.message));
+    }
+
     let sweepCount = 0;
     const startupSweep = setInterval(async () => {
       sweepCount += 1;
       if (sweepCount > 8) { clearInterval(startupSweep); return; }
       try { const { syncBots } = require('./worker/supervisor'); await syncBots(); } catch (_) {}
     }, 2 * 60 * 1000);
+
+    // ── Auto-reconnect sweep (isolated mode) ──────────────────────────────
+    // Supervisor handles restarts but can pause bots for 30 min (_noSessionBots).
+    // This sweep overrides that and forces reconnect for offline bots that have
+    // a valid session in DB and were not manually stopped by the user.
+    try {
+      const { startAutoReconnectSweep } = require('./allfunc/auto-reconnect-sweep');
+      startAutoReconnectSweep();
+    } catch (e) {
+      console.log(chalk.yellow('[Worker] Auto-reconnect sweep (isolated) warning:', e.message));
+    }
+
     return;
   }
 
@@ -312,6 +335,29 @@ async function startWorker() {
     await runAutoLoadWithRetries(5);
   } catch (e) {
     console.log(chalk.red('[Worker] Auto-load error:', e.message));
+  }
+
+  // ── Boot-time reconnect sweep ───────────────────────────────────────────
+  // Autoload may have missed some bots (DB slow, session restore timeout).
+  // This aggressively sweeps offline bots every 30s for the first 5 minutes
+  // with a reduced grace period (30s) so they reconnect FAST after restart.
+  try {
+    const { triggerBootReconnectSweep } = require('./allfunc/auto-reconnect-sweep');
+    triggerBootReconnectSweep();
+    console.log(chalk.cyan('[Worker] 🔄 Boot reconnect sweep armed (aggressive: 30s grace, every 30s for 5 min)'));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Boot reconnect sweep warning:', e.message));
+  }
+
+  // ✅ FIX: Start auto-restarter BEFORE keepalive so global._autoRestarterScheduled
+  // is set when keepalive.startKeepAlive() runs — prevents the duplicate-timer race
+  try {
+    const { startAutoRestarter } = require('./worker/auto-restarter');
+    startAutoRestarter();
+    const _restartHoursEarly = parseInt(process.env.BOT_RESTART_HOURS || '4', 10);
+    console.log(chalk.gray(`[Worker] ⏰ Auto-restarter armed (flat, pre-keepalive) — every ${_restartHoursEarly}h`));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Auto-restarter (pre-keepalive) warning:', e.message));
   }
 
   startKeepAlive();
@@ -354,6 +400,21 @@ async function startWorker() {
   const { startOrphanDisconnectJob } = require('./server/jobs/orphanDisconnectJob');
   startOrphanDisconnectJob(30_000);
 
+  // auto-restarter already started above (before startKeepAlive) — no-op here
+  // (startAutoRestarter has a _started guard so this is safe but unnecessary)
+
+  // ── Auto-reconnect sweep (flat mode) ────────────────────────────────────
+  // Detects offline bots that have a valid session in DB but are not running.
+  // Automatically calls startpairing() for them — no manual RECONNECT click needed.
+  // Skips bots that the user manually disconnected (stopped_bots list).
+  try {
+    const { startAutoReconnectSweep } = require('./allfunc/auto-reconnect-sweep');
+    startAutoReconnectSweep();
+    console.log(chalk.green('[Worker] ✅ Auto-reconnect sweep armed (flat mode)'));
+  } catch (e) {
+    console.log(chalk.yellow('[Worker] Auto-reconnect sweep warning:', e.message));
+  }
+
   // Reconnect sweep: first 15 min after restart (every 2 min), picks up any missed bots
   let sweepCount = 0;
   const startupSweep = setInterval(async () => {
@@ -366,7 +427,10 @@ async function startWorker() {
       const { syncStoppedWithLinkedNumbers } = require('./allfunc/stopped-bots');
       await syncStoppedWithLinkedNumbers();
       const { isRunning } = require('./autoload');
-      if (!isRunning() && getUniqueTrackerCount() === 0) {
+      // Skip autoload if bots are running in pairing child processes (prevents Error 440)
+      const hasPairingChildren = global._pairingChildPids && global._pairingChildPids.size > 0
+        && [...global._pairingChildPids.values()].some(c => c && c.exitCode === null);
+      if (!isRunning() && getUniqueTrackerCount() === 0 && !hasPairingChildren) {
         await autoLoadPairs({ concurrent: true });
       }
     } catch (_) {}

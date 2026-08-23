@@ -46,14 +46,14 @@
       "description": "Runtime environment.",
       "value": "production"
     },
-    "TOTAL_WORKER_DYNOS": {
-      "description": "Number of worker dynos running in parallel. Must match 'heroku ps:scale worker=N'. Each dyno manages an equal share of bots. Default: 1 (no sharding).",
-      "value": "1",
+    "WHATSAPP_HOST_DYNO": {
+      "description": "Run the WhatsApp pairing socket and bots on the single web dyno together with the dashboard API.",
+      "value": "web",
       "required": false
     },
-    "WHATSAPP_HOST_DYNO": {
-      "description": "Which dyno type runs WhatsApp bots. Set to 'worker' for paid worker dynos (recommended for 1GB Standard-2X). Default on Heroku: 'web'.",
-      "value": "worker",
+    "WEB_API_ONLY": {
+      "description": "Set to 0 so the web dyno owns the WhatsApp supervisor, pairing processor, and bot sessions.",
+      "value": "0",
       "required": false
     },
     "BOT_ISOLATION": {
@@ -62,12 +62,32 @@
       "required": false
     },
     "DYNO_TOTAL_RAM_MB": {
-      "description": "Actual RAM ceiling of the worker dyno. Use 1024 for a Standard-2X worker.",
-      "value": "1024",
+      "description": "Actual RAM ceiling of the single web dyno hosting the API and WhatsApp bot.",
+      "value": "512",
+      "required": false
+    },
+    "MAX_CONCURRENT_BOTS": {
+      "description": "Maximum active WhatsApp bot processes on the single web dyno.",
+      "value": "1",
+      "required": false
+    },
+    "PRIMARY_BOT_NUMBER": {
+      "description": "Phone number that stays active for commands and self-chat on the single web dyno.",
+      "value": "923137140784",
+      "required": false
+    },
+    "BOT_ROTATION_ENABLED": {
+      "description": "Disable account rotation so the command bot keeps a stable WhatsApp socket.",
+      "value": "0",
+      "required": false
+    },
+    "TOTAL_WEB_DYNOS": {
+      "description": "Number of web dynos used for WhatsApp bot sharding. Keep at 1 so only one web process owns each socket.",
+      "value": "1",
       "required": false
     },
     "BOT_CHILD_HEAP_MB": {
-      "description": "V8 heap limit for each bot child process. Keep this lean on 1GB worker dynos.",
+      "description": "V8 heap limit for each bot child process. Keep this lean on Eco dynos.",
       "value": "128",
       "required": false
     },
@@ -76,8 +96,13 @@
       "value": "80",
       "required": false
     },
+    "BOT_RESTART_HOURS": {
+      "description": "Graceful WhatsApp bot/dyno restart interval in hours. Decimal values are supported, such as 2.5 for 2 hours 30 minutes.",
+      "value": "2.5",
+      "required": false
+    },
     "MAX_BOTS_PER_DYNO": {
-      "description": "Hard cap on bots per dyno. Leave empty for no limit (recommended with TOTAL_WORKER_DYNOS sharding).",
+      "description": "Hard cap on bots per dyno. Leave empty for no limit.",
       "required": false
     }
   },
@@ -90,10 +115,6 @@
     "web": {
       "quantity": 1,
       "size": "eco"
-    },
-    "worker": {
-      "quantity": 1,
-      "size": "standard-2x"
     }
   },
   "scripts": {

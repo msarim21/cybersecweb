@@ -68,11 +68,53 @@ function getMinRotationUptimeMs() {
     return Math.max(60_000, _numEnv('BOT_MIN_UPTIME_MS', fallback));
 }
 
+function getPrimaryBotNumber() {
+    return cleanBotNum(
+        process.env.PRIMARY_BOT_NUMBER
+        || process.env.BOT_PRIMARY_NUMBER
+        || ''
+    );
+}
+
 /** Only time-share bots when there are more linked numbers than RAM allows live at once. */
 function _shouldUseRotation(myBots, runningNow) {
+    if (process.env.BOT_ROTATION_ENABLED === '0') return false;
     const maxConcurrent = getMaxConcurrentBots();
     if (!myBots || myBots.size <= maxConcurrent) return false;
     return runningNow >= maxConcurrent;
+}
+
+/**
+ * On a single Eco dyno, one stable command bot is more useful than rotating
+ * several linked accounts. If an older/non-primary thread survived a restart,
+ * reclaim its slot before the normal sleeping-bot queue is evaluated.
+ */
+async function _ensurePrimaryBotActive(myBots) {
+    const primary = getPrimaryBotNumber();
+    if (!primary || !myBots?.has(primary)) return false;
+    if (threads.has(primary) || global._pairingInFlight?.has(primary)) return true;
+
+    const current = [...threads.entries()].find(([clean, entry]) =>
+        myBots.has(clean) && !entry?.pairing && !global._pairingInFlight?.has(clean)
+    );
+    if (current) {
+        console.log(chalk.cyan(
+            `[Supervisor] ⭐ Promoting primary +${primary} — replacing active +${current[0]}`
+        ));
+        killBot(current[0], 'SIGTERM');
+        await new Promise((resolve) => setTimeout(resolve, getRotationSwapMs()));
+    }
+
+    if (_isBotPaused(primary)) {
+        console.log(chalk.yellow(
+            `[Supervisor] ⚠️ Primary +${primary} is paused — keeping current queue unchanged`
+        ));
+        return false;
+    }
+
+    const ready = await _ensureBotSessionReady(primary);
+    if (!ready) return false;
+    return Boolean(spawnBot(primary));
 }
 
 const THREAD_RESTART_DELAY  = 5_000;
@@ -82,15 +124,49 @@ const BOT_RUNNER_SCRIPT     = path.join(__dirname, 'bot-runner.js');
 // ── Shared memory (zero-copy metrics from all threads) ───────────────────────
 const sharedBuffer = createSharedBuffer();
 
+function getLocalPairingState(number) {
+    const clean = cleanBotNum(number);
+    if (!clean) return { code: null, connected: false };
+    const base = path.join(__dirname, '..', 'nexstore', 'pairing');
+    const codeFile = path.join(base, `pairing_${clean}.json`);
+    const connectedFile = path.join(base, clean, 'connected.flag');
+    let code = null;
+    try {
+        const saved = JSON.parse(fs.readFileSync(codeFile, 'utf8'));
+        if (cleanBotNum(saved.number) === clean) code = saved.code || null;
+    } catch (_) {}
+    return { code, connected: fs.existsSync(connectedFile) };
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 /** @type {Map<string, { thread: Worker, slotIndex: number, pairing: boolean, spawnedAt: number, restartTimes: number[] }>} */
 const threads     = new Map();
 const lastActivity = new Map();
+// Persistent restart-time log — survives thread object replacement so the
+// MAX_RESTARTS_PER_HOUR circuit-breaker actually works (wasEntry.restartTimes
+// resets to [] on every new _spawnThread call, making the old check useless).
+const _restartHistory = new Map(); // clean → number[]
 
 let _slotCounter = 0;
 let _active      = false;
 let _syncTimer   = null;
 let _lastRotationAt = Date.now();
+
+// ── Crash-loop protection ─────────────────────────────────────────────────────
+// Tracks bots that should NOT be spawned right now:
+//   _noSessionBots  — exited code=0 (no session / stopped). Pause 30 min.
+//   _restartLimitBots — hit MAX_RESTARTS_PER_HOUR. Pause 30 min then retry.
+const _noSessionBots    = new Map(); // clean → timestamp of last clean exit
+const _restartLimitBots = new Map(); // clean → timestamp when limit was hit
+const _unhealthyStreak  = new Map(); // clean → consecutive unhealthy sync-tick count (debounce before recovery)
+const _lastUnhealthyRecovery = new Map(); // clean → timestamp of latest confirmed recovery
+const _intentionalStops = new Set(); // clean → worker termination requested by supervisor
+const _recoveryInFlight = new Map(); // clean → supervisor-owned recovery promise
+const _restartJitterMs  = new Map(); // clean → random 0-30min jitter so scheduled memory restarts never bunch up
+let _syncInFlight = false;
+let _syncQueued = false;
+const NO_SESSION_PAUSE_MS    = 30 * 60 * 1000; // 30 minutes
+const RESTART_LIMIT_PAUSE_MS = 30 * 60 * 1000; // 30 minutes
 
 // ── Global error handlers (Master process) ───────────────────────────────────
 const IGNORED_ERRORS = [
@@ -150,14 +226,17 @@ function _isThreadAlive(entry) {
 
 function _isThreadHealthy(clean, entry) {
     if (!entry?.thread) return false;
-    const gracePeriod = 10 * 60 * 1000;
+    // A child can take a few seconds to boot and write its first heartbeat,
+    // but ten minutes is long enough to leave a dead socket invisible.
+    const gracePeriod = 2 * 60 * 1000;
     if (Date.now() - (entry.spawnedAt || 0) < gracePeriod) return true;
 
     try {
-        const { isBotHeartbeatFresh, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
+        const { getBotHeartbeatAgeMs, readBotHeartbeat } = require('../allfunc/bot-heartbeat');
         const hb = readBotHeartbeat(clean);
-        if (hb?.wsState === 1) return true;
-        if (isBotHeartbeatFresh(clean, 20 * 60 * 1000)) return true;
+        // A fresh heartbeat with wsState=0/-1 means the process is alive but
+        // the WhatsApp socket is not. Treat only an open WS as healthy.
+        if (hb?.wsState === 1 && getBotHeartbeatAgeMs(clean) <= 2 * 60 * 1000) return true;
     } catch (_) {}
 
     return false;
@@ -224,6 +303,10 @@ function _updateActiveBotCount() {
     setActiveBotCount(sharedBuffer, count);
 }
 
+function _activeThreadCount() {
+    return [...threads.values()].filter((entry) => entry?.thread).length;
+}
+
 // ── Thread management ─────────────────────────────────────────────────────────
 function _onThreadMessage(clean, msg) {
     if (!msg?.type) return;
@@ -231,6 +314,8 @@ function _onThreadMessage(clean, msg) {
         case 'heartbeat':
         case 'spawned':
             lastActivity.set(clean, Date.now());
+            // If bot is back up after being paused, clear pause flags
+            _noSessionBots.delete(clean);
             _updateActiveBotCount();
             break;
         case 'exit':
@@ -239,8 +324,18 @@ function _onThreadMessage(clean, msg) {
             ));
             _updateActiveBotCount();
             break;
+        case 'cleanExit':
+            // ✅ FIX: code=0 exit = no session or manually stopped
+            // Mark as "no session" so syncBots step 5 skips respawning for 30 min
+            console.log(chalk.yellow(`[Supervisor] +${clean} clean exit (no session/stopped) — pausing spawn for 30min`));
+            _noSessionBots.set(clean, Date.now());
+            _updateActiveBotCount();
+            break;
         case 'restartLimitReached':
-            console.log(chalk.red(`[Supervisor] +${clean} hit restart limit (${msg.recent}/hr) — pausing`));
+            // ✅ FIX: Bot hit crash-restart limit. Pause spawning to prevent OOM loops.
+            console.log(chalk.red(`[Supervisor] +${clean} hit restart limit (${msg.recent}/hr) — pausing 30min`));
+            _restartLimitBots.set(clean, Date.now());
+            _updateActiveBotCount();
             break;
         case 'threadError':
             console.log(chalk.red(`[Supervisor] Thread error for +${clean}: ${msg.message}`));
@@ -252,9 +347,40 @@ function _onThreadMessage(clean, msg) {
     }
 }
 
+/** Check if a bot is currently in a crash-loop pause. Returns reason string or null. */
+function _isBotPaused(clean) {
+    const now = Date.now();
+    // Check no-session pause — BUT clear if session now exists (user re-paired)
+    if (_noSessionBots.has(clean)) {
+        if (now - _noSessionBots.get(clean) < NO_SESSION_PAUSE_MS) {
+            if (!_hasRegisteredCreds(clean)) return 'no-session';
+            // Session appeared (re-paired) — clear pause
+            _noSessionBots.delete(clean);
+        } else {
+            _noSessionBots.delete(clean); // Pause expired, try again
+        }
+    }
+    // Check restart-limit pause
+    if (_restartLimitBots.has(clean)) {
+        if (now - _restartLimitBots.get(clean) < RESTART_LIMIT_PAUSE_MS) {
+            return 'restart-limit';
+        }
+        _restartLimitBots.delete(clean); // Pause expired, try again
+    }
+    return null;
+}
+
 function _spawnThread(clean, opts = {}) {
     if (!clean) return null;
     if (threads.has(clean) && !opts.force) return threads.get(clean).thread;
+    const maxConcurrent = getMaxConcurrentBots();
+    const activeThreads = _activeThreadCount();
+    if (activeThreads >= maxConcurrent) {
+        console.log(chalk.gray(
+            `[Supervisor] ⏸ Spawn blocked at hard cap (${activeThreads}/${maxConcurrent}) — +${clean} queued`
+        ));
+        return null;
+    }
 
     ensureBotWorkspace(clean);
 
@@ -269,6 +395,8 @@ function _spawnThread(clean, opts = {}) {
             env             : _buildThreadEnv({ BOT_PAIRING: opts.pairing ? '1' : '0' }),
             maxRestartsPerHour: MAX_RESTARTS_PER_HOUR,
             restartDelayMs  : 10_000,
+            pairing         : Boolean(opts.pairing),
+            noRestart       : Boolean(opts.noRestart),
         },
     });
 
@@ -294,13 +422,24 @@ function _spawnThread(clean, opts = {}) {
         wrapSlot(sharedBuffer, slotIndex).clear();
         _updateActiveBotCount();
 
-        if (opts.noRestart || !_active) return;
+        // killBot() marks intentional shutdowns so terminating a stale worker
+        // cannot trigger the old thread's delayed hidden respawn.
+        const intentionallyStopped = _intentionalStops.delete(clean);
+        if (opts.noRestart || wasEntry?.noRestart || intentionallyStopped || !_active) return;
         if (code === 0) return;
 
-        const hourAgo = Date.now() - 60 * 60 * 1000;
-        const recentRestarts = (wasEntry?.restartTimes || []).filter((t) => t > hourAgo);
+        // Track restart times in a persistent Map so the circuit-breaker works
+        // across successive _spawnThread calls (wasEntry.restartTimes always
+        // resets to [] on each new spawn, so the old check was always 0).
+        const now = Date.now();
+        const hourAgo = now - 60 * 60 * 1000;
+        const history = (_restartHistory.get(clean) || [])
+        .filter(t => t > Date.now() - 3600_000); // prune entries older than 1h (memory leak fix)
+    history.push(now);
+        const recentRestarts = history.filter((t) => t > hourAgo);
+        _restartHistory.set(clean, recentRestarts); // prune entries older than 1h
         if (recentRestarts.length >= MAX_RESTARTS_PER_HOUR) {
-            console.log(chalk.red(`[Supervisor] +${clean} thread restart limit — skip`));
+            console.log(chalk.red(`[Supervisor] +${clean} thread restart limit (${recentRestarts.length}/${MAX_RESTARTS_PER_HOUR}/hr) — pausing`));
             return;
         }
 
@@ -320,6 +459,8 @@ function killBot(botNum, signal = 'SIGTERM') {
     const clean = cleanBotNum(botNum);
     const entry = threads.get(clean);
     if (!entry?.thread) return false;
+    entry.noRestart = true;
+    _intentionalStops.add(clean);
     try { entry.thread.postMessage({ cmd: signal === 'SIGKILL' ? 'kill' : 'stop' }); } catch (_) {}
     try { entry.thread.terminate(); } catch (_) {}
     threads.delete(clean);
@@ -332,9 +473,160 @@ function killBot(botNum, signal = 'SIGTERM') {
 function spawnBot(botNum, opts = {}) {
     const clean = cleanBotNum(botNum);
     if (!clean) return null;
+    // Pairing owns the only WhatsApp registration socket. Normal recovery,
+    // autoload, and rotation must not start an old bot while that socket is
+    // waiting for the phone to finish linking.
+    if (global._pairingOwner && !opts.pairing && clean !== global._pairingOwner) {
+        console.log(chalk.gray(
+            `[Supervisor] ⏸ Normal spawn suppressed during pairing +${global._pairingOwner}: +${clean}`
+        ));
+        return null;
+    }
     if (threads.has(clean) && !opts.force) return threads.get(clean).thread;
     if (opts.force) killBot(clean);
     return _spawnThread(clean, opts);
+}
+
+/**
+ * Stop a normal bot and wait for its nested bot-runner/Baileys child to exit.
+ * Worker.terminate() only stops the worker_thread; without this handshake the
+ * child socket can remain alive long enough to commit the old account after
+ * the new pairing socket has already displayed its code.
+ */
+async function stopBotAndWait(botNum, timeoutMs = 25_000) {
+    const clean = cleanBotNum(botNum);
+    const entry = threads.get(clean);
+    if (!entry?.thread) return true;
+
+    entry.noRestart = true;
+    _intentionalStops.add(clean);
+
+    const exited = new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            resolve(ok);
+        };
+        entry.thread.once('exit', () => finish(true));
+        try {
+            entry.thread.postMessage({ cmd: 'stop' });
+        } catch (_) {
+            finish(false);
+        }
+        setTimeout(() => finish(false), timeoutMs);
+    });
+
+    const cleanExit = await exited;
+    if (!cleanExit) {
+        try { entry.thread.terminate(); } catch (_) {}
+        if (threads.get(clean) === entry) {
+            threads.delete(clean);
+            wrapSlot(sharedBuffer, entry.slotIndex).clear();
+            _updateActiveBotCount();
+        }
+        console.log(chalk.red(`[Supervisor] ⚠️ Forced stop for +${clean}: child did not exit cleanly`));
+        return false;
+    }
+    console.log(chalk.yellow(`[Supervisor] Stopped +${clean} after child socket exit`));
+    return true;
+}
+
+/**
+ * Pairing needs a real WhatsApp socket, even when the dyno is already at its
+ * normal bot cap. Reserve one supervisor slot for the pairing child by
+ * intentionally stopping the least-recently-active normal bot first.
+ *
+ * This is deliberately supervisor-owned rather than a second ad-hoc socket:
+ * killBot() marks the old thread intentional, clears its slot, and prevents a
+ * delayed crash handler from respawning it while the pairing handshake runs.
+ */
+async function preparePairingSlot(botNum, waitMs = 15_000) {
+    const clean = cleanBotNum(botNum);
+    if (!clean) return false;
+
+    const deadline = Date.now() + waitMs;
+    const maxConcurrent = getMaxConcurrentBots();
+
+    while (Date.now() < deadline) {
+        const activeEntries = [...threads.entries()]
+            .filter(([number, entry]) => number !== clean && entry?.thread);
+        const normalEntries = activeEntries
+            .filter(([, entry]) => !entry?.pairing && !entry?.noRestart)
+            .sort(([a], [b]) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
+
+        // _spawnThread counts pairing entries too, so wait until the previous
+        // pairing child has actually left before trying to claim its slot.
+        if (threads.size < maxConcurrent && !activeEntries.some(([, entry]) => entry?.pairing)) {
+            return true;
+        }
+
+        const victim = normalEntries.find(([number]) =>
+            !global._pairingInFlight?.has(number)
+        );
+        if (victim) {
+            const [victimNumber] = victim;
+            console.log(chalk.yellow(
+                `[Supervisor] 🔗 Reserving slot for pairing +${clean} — rotating out +${victimNumber}`
+            ));
+            // Wait for the nested bot-runner to finish closing its actual
+            // Baileys socket. A worker-thread terminate alone can orphan that
+            // child and let its old connection.open handler commit later.
+            await stopBotAndWait(victimNumber);
+            continue;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    console.log(chalk.yellow(
+        `[Supervisor] ⏸ Pairing slot unavailable for +${clean} after ${waitMs}ms`
+    ));
+    return false;
+}
+
+/**
+ * Single supervisor owner for replacing a dead or conflicted bot worker.
+ * The health sync, auto-reconnect sweep, and reconnect endpoint all use this
+ * path so they cannot kill/spawn the same number concurrently.
+ */
+function recoverBotExternal(botNum, reason = 'auto-reconnect') {
+    const clean = cleanBotNum(botNum);
+    if (!clean || !_active) return Promise.resolve(false);
+
+    const existing = _recoveryInFlight.get(clean);
+    if (existing) return existing;
+
+    let recovery;
+    recovery = (async () => {
+        try {
+            _clearNoSessionBot(clean);
+            const stopped = killBot(clean, 'SIGTERM');
+            if (stopped) await new Promise((resolve) => setTimeout(resolve, 1500));
+
+            const ready = await _ensureBotSessionReady(clean);
+            if (!ready) {
+                console.log(chalk.yellow(`[Supervisor] ⏸ Recovery deferred for +${clean} (${reason}) — no valid session`));
+                return false;
+            }
+
+            const thread = spawnBot(clean);
+            if (!thread) {
+                console.log(chalk.yellow(`[Supervisor] ⏸ Recovery deferred for +${clean} (${reason}) — concurrent-bot cap`));
+                return false;
+            }
+
+            console.log(chalk.green(`[Supervisor] 🔁 Recovery started for +${clean} (${reason})`));
+            return true;
+        } finally {
+            if (_recoveryInFlight.get(clean) === recovery) {
+                _recoveryInFlight.delete(clean);
+            }
+        }
+    })();
+
+    _recoveryInFlight.set(clean, recovery);
+    return recovery;
 }
 
 // ── Promotion: pairing complete → full bot ────────────────────────────────────
@@ -350,17 +642,22 @@ function promotePairingToNormal(botNum) {
     if (!entry?.pairing) return false;
     if (!_hasRegisteredCreds(clean)) return false;
 
-    console.log(chalk.cyan(`[Supervisor] 🔄 Promoting +${clean}: pairing → full bot`));
-    killBot(clean, 'SIGTERM');
-    setTimeout(() => {
-        if (!_active || threads.has(clean)) return;
-        spawnBot(clean);
-    }, 2500);
+    console.log(chalk.cyan(`[Supervisor] 🔄 Promoting +${clean}: pairing → full bot (same socket)`));
+    entry.pairing = false;
+    entry.noRestart = false;
+    try { entry.thread.postMessage({ cmd: 'promote' }); } catch (_) {}
     return true;
 }
 
 // ── syncBots ─────────────────────────────────────────────────────────────────
 async function syncBots() {
+    if (global._pairingOwner) {
+        console.log(chalk.gray(
+            `[Supervisor] ⏸ Sync/recovery paused while pairing +${global._pairingOwner} owns the WhatsApp socket`
+        ));
+        return false;
+    }
+
     try {
         const { syncStoppedWithLinkedNumbers } = require('../allfunc/stopped-bots');
         await syncStoppedWithLinkedNumbers();
@@ -405,20 +702,68 @@ async function syncBots() {
         if (_hasRegisteredCreds(clean) && isConnected(clean)) promotePairingToNormal(clean);
     }
 
-    // 2. Restart unhealthy threads
+    // 2. Restart unhealthy threads — debounced, staggered, and rate-limited.
+    // A single stale heartbeat read is often just a slow-network moment, not a
+    // dead socket, so we require 2 consecutive unhealthy sync ticks (~16s+)
+    // before acting, and try a light wake first. Each bot is isolated in its
+    // own worker_thread, so healing/restarting one never touches the others,
+    // and we cap full restarts to 1 per sync tick so a network blip that makes
+    // several bots look stale at once can never mass-restart the fleet.
+    const { canFullyRestartBot, recordBotRestart } = require('../allfunc/bot-lifecycle');
+    let unhealthyRestarts = 0;
     for (const [clean, entry] of [...threads]) {
         if (entry?.pairing) continue;
         if (global._pairingInFlight?.has(clean)) continue;
+        if (_recoveryInFlight.has(clean)) continue;
         if (!myBots.has(clean)) continue;
-        if (_isThreadHealthy(clean, entry)) continue;
 
-        console.log(chalk.red(`[Supervisor] 💀 +${clean} unhealthy — restarting thread`));
-        killBot(clean, 'SIGTERM');
-        const ready = await _ensureBotSessionReady(clean);
-        if (ready) spawnBot(clean);
+        if (_isThreadHealthy(clean, entry)) {
+            _unhealthyStreak.delete(clean);
+            continue;
+        }
+
+        const streak = (_unhealthyStreak.get(clean) || 0) + 1;
+        _unhealthyStreak.set(clean, streak);
+        if (streak < 2) {
+            console.log(chalk.yellow(`[Supervisor] ⚠️ +${clean} looks unstable — light wake attempt (streak ${streak}, no restart yet)`));
+            // child self-heals its own idle/stale socket via startBotChildKeepAlive() sweep — just wait
+            continue;
+        }
+
+        // ✅ FIX: Don't restart a paused bot — it would just re-enter the crash loop
+        const pauseReason = _isBotPaused(clean);
+        if (pauseReason) {
+            console.log(chalk.gray(`[Supervisor] ⏸ +${clean} unhealthy but paused (${pauseReason}) — skipping restart`));
+            killBot(clean, 'SIGTERM'); // Clean up dead thread, but don't respawn
+            _unhealthyStreak.delete(clean);
+            continue;
+        }
+
+        // Reconnect recovery is separate from the scheduled memory-restart
+        // guard. A dead socket must not wait 2.5h after an earlier restart.
+        const lastRecovery = _lastUnhealthyRecovery.get(clean) || 0;
+        if (Date.now() - lastRecovery < 60_000) {
+            console.log(chalk.gray(`[Supervisor] ⏳ +${clean} recovery recently attempted — waiting before another restart`));
+            continue;
+        }
+
+        if (unhealthyRestarts >= 1) {
+            console.log(chalk.gray(`[Supervisor] ⏭ +${clean} unhealthy too, but deferring restart to next sync (max 1/tick)`));
+            continue;
+        }
+        unhealthyRestarts += 1;
+
+        console.log(chalk.red(`[Supervisor] 💀 +${clean} confirmed unhealthy — restarting thread (isolated; other bots unaffected)`));
+        _lastUnhealthyRecovery.set(clean, Date.now());
+        recordBotRestart(clean);
+        _unhealthyStreak.delete(clean);
+        await recoverBotExternal(clean, 'unhealthy-sync');
     }
 
-    // 3. Scheduled memory restart
+    // 3. Scheduled memory restart — staggered + configurable-interval guarded so bots spawned
+    // around the same time (e.g. dyno boot) never all cross maxAgeMs and get
+    // killed in the same sync tick. Each bot gets a random 0-30min jitter added
+    // to its threshold, and only 1 bot per sync tick actually gets restarted.
     let maxAgeMs = 0;
     try {
         const { getBotRestartHours } = require('../keepalive');
@@ -426,15 +771,40 @@ async function syncBots() {
         if (hrs > 0) maxAgeMs = hrs * 60 * 60 * 1000;
     } catch (_) {}
     if (maxAgeMs > 0) {
+        const { canFullyRestartBot: canFullyRestart3, recordBotRestart: recordRestart3 } = require('../allfunc/bot-lifecycle');
+        let memRestarts = 0;
         for (const [clean, entry] of [...threads]) {
             if (entry?.pairing) continue;
             if (!myBots.has(clean)) continue;
-            if (!entry.spawnedAt || Date.now() - entry.spawnedAt < maxAgeMs) continue;
-            console.log(chalk.cyan(`[Supervisor] 🔄 +${clean} memory restart (${Math.round((Date.now()-entry.spawnedAt)/3600000)}h uptime)`));
+            if (!entry.spawnedAt) continue;
+
+            if (!_restartJitterMs.has(clean)) {
+                _restartJitterMs.set(clean, Math.floor(Math.random() * 30 * 60 * 1000));
+            }
+            const jitter = _restartJitterMs.get(clean);
+            if (Date.now() - entry.spawnedAt < maxAgeMs + jitter) continue;
+
+            // Respect the configured full-restart interval so a bot is not
+            // restarted more often than BOT_RESTART_HOURS allows.
+            if (!canFullyRestart3(clean)) continue;
+
+            if (memRestarts >= 1) break; // max 1 scheduled memory restart per sync tick
+            memRestarts += 1;
+
+            console.log(chalk.cyan(`[Supervisor] 🔄 +${clean} memory restart (${Math.round((Date.now()-entry.spawnedAt)/3600000)}h uptime) — isolated, other bots unaffected`));
+            recordRestart3(clean);
+            _restartJitterMs.delete(clean);
             killBot(clean, 'SIGTERM');
             const ready = await _ensureBotSessionReady(clean);
             if (ready) spawnBot(clean);
         }
+    }
+
+    // Keep the configured command/self-chat account in the sole live slot.
+    // This is intentionally before the regular queue so a restart cannot
+    // leave a different linked number active indefinitely.
+    if (process.env.BOT_ROTATION_ENABLED === '0') {
+        await _ensurePrimaryBotActive(myBots);
     }
 
     // 4. Update lastActivity from heartbeat files
@@ -448,8 +818,32 @@ async function syncBots() {
 
     // 5. Start sleeping bots (memory-aware + LRU eviction)
     const sleepingBots = [...myBots]
-        .filter((c) => !threads.has(c) && !global._pairingInFlight?.has(c))
-        .sort((a, b) => (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0));
+        .filter((c) => {
+            if (threads.has(c)) return false;
+            if (global._pairingInFlight?.has(c)) return false;
+            // ✅ FIX: Skip paused bots (no-session loop or restart-limit loop)
+            // This prevents the infinite spawn→exit(0)→spawn cycle that caused R14 OOM
+            const pauseReason = _isBotPaused(c);
+            if (pauseReason) {
+                // Only log occasionally (not every 8s sync) to avoid log spam
+                if (!_isBotPaused._loggedAt) _isBotPaused._loggedAt = {};
+                const lastLog = _isBotPaused._loggedAt[c] || 0;
+                if (Date.now() - lastLog > 5 * 60 * 1000) {
+                    console.log(chalk.gray(`[Supervisor] ⏸ +${c} sleeping but paused (${pauseReason}) — skipping spawn`));
+                    _isBotPaused._loggedAt[c] = Date.now();
+                }
+                return false;
+            }
+            return true;
+        })
+        .sort((a, b) => {
+            const primary = getPrimaryBotNumber();
+            if (primary) {
+                if (a === primary && b !== primary) return -1;
+                if (b === primary && a !== primary) return 1;
+            }
+            return (lastActivity.get(a) || 0) - (lastActivity.get(b) || 0);
+        });
 
     let runningNow = [...threads.values()].filter((e) => !e?.pairing).length;
     const maxConcurrent = getMaxConcurrentBots();
@@ -561,8 +955,23 @@ async function handlePairingRequest(clean) {
     const num = cleanBotNum(clean);
     if (!num) return;
     if (!global._pairingInFlight) global._pairingInFlight = new Set();
-    if (global._pairingInFlight.has(num)) return;
+    if (global._pairingOwner && global._pairingOwner !== num) {
+        console.log(chalk.gray(
+            `[Supervisor] Pairing +${num} remains queued while +${global._pairingOwner} owns the socket`
+        ));
+        await require('../server/db-service').resetPairingRequest(num).catch(() => {});
+        return;
+    }
+
+    // User requested a fresh code — supersede any in-flight pairing child.
+    if (global._pairingInFlight.has(num)) {
+        console.log(chalk.yellow(`[Supervisor] Superseding in-flight pairing for +${num}`));
+        killBot(num, 'SIGKILL');
+        global._pairingInFlight.delete(num);
+        await new Promise((r) => setTimeout(r, 800));
+    }
     global._pairingInFlight.add(num);
+    global._pairingOwner = num;
 
     console.log(chalk.cyan(`[Supervisor] 🔗 Pairing +${num} — spawning isolated thread`));
 
@@ -570,6 +979,17 @@ async function handlePairingRequest(clean) {
         const { removeFromStoppedBots } = require('../allfunc/stopped-bots');
         removeFromStoppedBots(num);
         killBot(num, 'SIGKILL');
+
+        // The route/queue claim already reset this attempt to `requested` and
+        // atomically claimed it as `in_progress`. Do not reset it here:
+        // the web-owned pairing processor polls every 150ms, so changing it
+        // back to `requested` makes the same request get claimed again and
+        // kills the live socket before it can generate a code.
+        //
+        // Do not clear the pairing record here. It contains the owner and bot
+        // name that session-db uses when connection.open saves linked_numbers.
+        // Clearing it before the phone accepts the code loses that ownership
+        // and leaves the phone spinning at "Logging in...".
 
         // pair.js writes auth to nexstore/pairing/<digits>; some legacy paths
         // also created <digits>@s.whatsapp.net. Wipe both so the new pairing
@@ -581,31 +1001,96 @@ async function handlePairingRequest(clean) {
 
         try { const { deleteSessionCreds } = require('../session-db'); await deleteSessionCreds(num); } catch (_) {}
         try {
-            const pjson = path.join(__dirname, '..', 'nexstore', 'pairing', 'pairing.json');
-            if (fs.existsSync(pjson)) fs.unlinkSync(pjson);
+            // Remove both the legacy shared handoff and the current
+            // per-number handoff. The API prefers the local per-number file,
+            // so leaving it behind could expose the previous attempt's code
+            // even after the Mongo pairing state was reset.
+            const pairingDir = path.join(__dirname, '..', 'nexstore', 'pairing');
+            for (const pjson of [
+                path.join(pairingDir, 'pairing.json'),
+                path.join(pairingDir, `pairing_${num}.json`),
+            ]) {
+                if (fs.existsSync(pjson)) fs.unlinkSync(pjson);
+            }
         } catch (_) {}
         try { const { removeConnectedFlag } = require('../allfunc/connected-flag'); removeConnectedFlag(num); } catch (_) {}
 
         ensureBotWorkspace(num);
-        spawnBot(num, { pairing: true, force: true, noRestart: true });
+        const slotReady = await preparePairingSlot(num);
+        if (!slotReady) {
+            // A different pairing socket may still be finishing its login
+            // handoff. This is a capacity condition, not a bad phone number
+            // or a rejected code. Return the request to the durable queue so
+            // the single pairing processor retries it after that socket exits.
+            console.log(chalk.yellow(`[Supervisor] Pairing queued for +${num}: worker slot is still in use`));
+            await require('../server/db-service').resetPairingRequest(num).catch(() => {});
+            return;
+        }
+
+        const pairingThread = spawnBot(num, { pairing: true, force: true, noRestart: true });
+        if (!pairingThread) {
+            console.log(chalk.red(`[Supervisor] Pairing aborted for +${num}: pairing thread did not start`));
+            await require('../server/db-service').markPairingFailed(
+                num,
+                'The WhatsApp pairing worker could not be started'
+            ).catch(() => {});
+            return;
+        }
 
         const { getPairingState, markPairingFailed } = require('../server/db-service');
         const deadline = Date.now() + 120_000;
         let gotCode = false;
         while (Date.now() < deadline) {
             const st = await getPairingState(num).catch(() => null);
-            if (st?.code) { gotCode = true; break; }
+            const local = getLocalPairingState(num);
+            if (st?.code || local.code) { gotCode = true; break; }
             await new Promise((r) => setTimeout(r, 200));
         }
         if (!gotCode) {
             console.log(chalk.red(`[Supervisor] Pairing timeout for +${num}`));
-            await require('../server/db-service').markPairingFailed(num).catch(() => {});
+            await require('../server/db-service').markPairingFailed(
+                num,
+                'WhatsApp WebSocket did not become ready or no pairing code was returned within 60 seconds'
+            ).catch(() => {});
             killBot(num, 'SIGTERM');
         } else {
             console.log(chalk.green(`[Supervisor] ✅ Pairing code ready for +${num}`));
+
+            // Code generation is only phase one. Keep the pairing socket alive
+            // while the user enters the code on the phone. Promoting/killing
+            // the child immediately after code_ready interrupts the WhatsApp
+            // login handshake and leaves the phone on "Logging in...".
+            const connectDeadline = Date.now() + 180_000;
+            let connected = false;
+            while (Date.now() < connectDeadline) {
+                const state = await getPairingState(num).catch(() => null);
+                const local = getLocalPairingState(num);
+                if (state?.status === 'active' || local.connected) {
+                    connected = true;
+                    break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 1_000));
+            }
+
+            if (!connected) {
+                console.log(chalk.red(`[Supervisor] Pairing login timeout for +${num} — phone did not reach connection.open`));
+                await require('../server/db-service').markPairingFailed(
+                    num,
+                    'Phone did not complete device linking before the 3-minute login window expired'
+                ).catch(() => {});
+                killBot(num, 'SIGTERM');
+                return;
+            }
+
+            // Give creds.update/session backup and linked_numbers ownership
+            // time to finish before handing the socket to normal bot mode.
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+            console.log(chalk.green(`[Supervisor] ✅ Phone login confirmed for +${num}; promoting after session flush`));
+            promotePairingToNormal(num);
         }
     } finally {
         global._pairingInFlight.delete(num);
+        if (global._pairingOwner === num) delete global._pairingOwner;
     }
 }
 
@@ -708,9 +1193,24 @@ function startSupervisor() {
         `  Rotation: sync=${getSyncIntervalMs()}ms swap=${getRotationSwapMs()}ms interval=${getRotationIntervalMs()}ms ×${getRotationsPerSync()}${process.env.BOT_TURBO_ROTATION === '1' ? ' [TURBO]' : ''}\n`
     ));
 
-    const runSync = () => syncBots().catch((e) => {
-        console.log(chalk.yellow(`[Supervisor] syncBots error: ${e.message}`));
-    });
+    const runSync = async () => {
+        if (_syncInFlight) {
+            _syncQueued = true;
+            return;
+        }
+        _syncInFlight = true;
+        try {
+            await syncBots();
+        } catch (e) {
+            console.log(chalk.yellow(`[Supervisor] syncBots error: ${e.message}`));
+        } finally {
+            _syncInFlight = false;
+            if (_syncQueued) {
+                _syncQueued = false;
+                setImmediate(runSync);
+            }
+        }
+    };
 
     const syncMs = getSyncIntervalMs();
 
@@ -770,6 +1270,39 @@ function stopSupervisor() {
 }
 
 /**
+ * Return the actual runtime health for a bot. The auto-reconnect sweep must
+ * use this instead of treating a surviving worker_thread as an online bot.
+ */
+function getBotRuntimeStatus(botNum) {
+    const clean = cleanBotNum(botNum);
+    const entry = threads.get(clean);
+    if (!entry?.thread) return { thread: false, healthy: false };
+
+    let heartbeat = null;
+    try {
+        heartbeat = require('../allfunc/bot-heartbeat').readBotHeartbeat(clean);
+    } catch (_) {}
+
+    const heartbeatAge = heartbeat?.ts ? Date.now() - Number(heartbeat.ts) : Infinity;
+    const childRunning = wrapSlot(sharedBuffer, entry.slotIndex).isRunning();
+    const withinStartupGrace = Date.now() - (entry.spawnedAt || 0) < 2 * 60 * 1000;
+    const healthy = !entry.pairing && childRunning && (
+        withinStartupGrace ||
+        (heartbeat?.wsState === 1 && heartbeatAge <= 2 * 60 * 1000)
+    );
+
+    return {
+        thread: true,
+        childRunning,
+        heartbeatFresh: heartbeatAge <= 2 * 60 * 1000,
+        withinStartupGrace,
+        wsState: heartbeat?.wsState ?? -1,
+        ready: heartbeat?.ready === true,
+        healthy,
+    };
+}
+
+/**
  * Graceful shutdown — sends 'shutdown' message to each worker_thread so it can
  * SIGTERM its bot-runner child and let it flush session creds to DB before
  * exit. Used by worker.js on SIGTERM (Heroku dyno restart, scheduled
@@ -808,6 +1341,19 @@ async function stopSupervisorGraceful(timeoutMs = 9000) {
     console.log(chalk.green('[Supervisor] ✅ All threads exited.'));
 }
 
+/**
+ * Clear a bot from the _noSessionBots / _restartLimitBots pause maps
+ * so the next syncBots() cycle will attempt to spawn it again.
+ * Used by the auto-reconnect sweep to override the 30-min hold.
+ */
+function _clearNoSessionBot(clean) {
+    const c = cleanBotNum(clean);
+    if (c) {
+        _noSessionBots.delete(c);
+        _restartLimitBots.delete(c);
+    }
+}
+
 module.exports = {
     startSupervisor,
     stopSupervisor,
@@ -817,10 +1363,14 @@ module.exports = {
     spawnBot,
     killBot,
     stopBotExternal,
+    recoverBotExternal,
+    stopBotAndWait,
     handlePairingRequest,
     markBotPromoted,
     promotePairingToNormal,
     bootReconnectReport,
+    _clearNoSessionBot,
+    getBotRuntimeStatus,
     getSharedBuffer  : () => sharedBuffer,
     getActiveBotCount: () => getActiveBotCount(sharedBuffer),
 };
