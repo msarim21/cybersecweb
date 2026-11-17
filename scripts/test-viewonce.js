@@ -187,12 +187,48 @@ console.log('\n=== View-once capture / reply tests ===\n');
         assert.strictEqual(sent[0].ptt, true);
     });
 
-    await ok('a reply with no captured buffer sends nothing', async () => {
+    await ok('a reply with no media found sends a clear notice, not media', async () => {
         resetGlobals();
         await vo.captureViewOnce(rawMsg('VO11', CHAT, voImageMessage()), { download: failingDownload });
         const sent = [];
         const sock = { sendMessage: async (jid, p) => sent.push(p) };
-        const done = await vo.deliverViewOnceOnReply(sock, { key: { id: 'R11' }, chat: CHAT, quoted: { id: 'VO11' } }, BOT);
+        const done = await vo.deliverViewOnceOnReply(sock, { key: { id: 'R11' }, chat: CHAT, quoted: { id: 'VO11' } }, BOT, { download: failingDownload });
+        assert.strictEqual(done, false);
+        assert.strictEqual(sent.length, 1);
+        assert.ok(!sent[0].image && sent[0].text.includes('View-Once'));
+    });
+
+    await ok('after a bot restart, a reply still delivers from the stored copy', async () => {
+        resetGlobals(); // memory empty, like a fresh deploy
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push({ jid, p }) };
+        const lookupStored = async (id) => id === 'OLD1'
+            ? { isViewOnce: true, type: 'imageMessage', mime: 'image/jpeg', buffer: Buffer.from('DISK') } : null;
+        const done = await vo.deliverViewOnceOnReply(sock, { key: { id: 'R13' }, chat: CHAT, quoted: { id: 'OLD1' } }, BOT, { lookupStored });
+        assert.strictEqual(done, true);
+        assert.strictEqual(sent[0].jid, BOT);
+        assert.strictEqual(sent[0].p.image.toString(), 'DISK');
+    });
+
+    await ok('reply downloads from the quoted view-once keys when nothing was stored', async () => {
+        resetGlobals();
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        const m = { key: { id: 'R14' }, chat: CHAT, quoted: { id: 'Q14' },
+            msg: { contextInfo: { stanzaId: 'Q14', quotedMessage: { imageMessage: { viewOnce: true, mediaKey: 'k', mimetype: 'image/jpeg' } } } } };
+        const done = await vo.deliverViewOnceOnReply(sock, m, BOT, { download: fakeDownload(Buffer.from('QIMG')) });
+        assert.strictEqual(done, true);
+        assert.strictEqual(sent[0].image.toString(), 'QIMG');
+    });
+
+    await ok('a reply under a normal (not one-time) photo is ignored', async () => {
+        resetGlobals();
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        const lookupStored = async () => ({ isViewOnce: false, type: 'imageMessage', buffer: Buffer.from('X') });
+        const m = { key: { id: 'R15' }, chat: CHAT, quoted: { id: 'N15' },
+            msg: { contextInfo: { stanzaId: 'N15', quotedMessage: { imageMessage: { mediaKey: 'k' } } } } };
+        const done = await vo.deliverViewOnceOnReply(sock, m, BOT, { lookupStored, download: fakeDownload(Buffer.from('X')) });
         assert.strictEqual(done, false);
         assert.strictEqual(sent.length, 0);
     });

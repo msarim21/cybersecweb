@@ -1159,6 +1159,7 @@ module.exports = {
     cacheMessageForAntidelete,
     unwrapWaMessage,
     _adRemoveCachedMessage,
+    _adRedownloadMedia,
     _adMongoDelete,
     getAntideleteSession,
 };

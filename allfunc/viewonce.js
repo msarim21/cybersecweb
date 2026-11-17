@@ -121,55 +121,126 @@ function buildPayload(entry, caption) {
     return null;
 }
 
-// The reply that must be served: any message quoting a captured view-once id.
-// Returns the entry, or null when this reply is not one to deliver.
+// Quoted message id of a reply, or null.
+function _quotedId(m) {
+    return m?.quoted?.id || m?.msg?.contextInfo?.stanzaId || null;
+}
+
+// Raw quoted message object (the WhatsApp proto the reply carries), or null.
+function _quotedRaw(m) {
+    return m?.msg?.contextInfo?.quotedMessage || null;
+}
+
+// The reply that must be served from the in-memory capture map.
 function pendingViewOnceReply(m) {
-    if (!m?.quoted || !m?.key?.id) return null;
-    if (!global._viewOnceBufferMap?.size) return null;
-    const quotedId = m.quoted.id || m.msg?.contextInfo?.stanzaId || null;
-    if (!quotedId || !global._viewOnceBufferMap.has(quotedId)) return null;
+    if (!m?.key?.id) return null;
+    const quotedId = _quotedId(m);
+    if (!quotedId || !global._viewOnceBufferMap?.has(quotedId)) return null;
     if (global._viewOnceHandledIds?.has(m.key.id)) return null;
     return global._viewOnceBufferMap.get(quotedId);
 }
 
-// Deliver a captured view-once to the bot's own chat. Returns true when sent.
-async function deliverViewOnceOnReply(devtrust, m, botNumber, opts = {}) {
-    const entry = pendingViewOnceReply(m);
-    if (!entry) return false;
+async function _readStream(stream) {
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks);
+}
 
-    const { download } = opts;
-    try {
-        // The capture may have failed (revoked too fast) — retry once from the
-        // stored message reference before giving up.
-        if (!entry.buffer?.length && entry.type && entry.msg?.[entry.type] && typeof download === 'function') {
-            const stream = await download(entry.msg[entry.type], entry.type.replace('Message', ''));
-            const chunks = [];
-            for await (const chunk of stream) chunks.push(chunk);
-            const buf = Buffer.concat(chunks);
-            if (buf.length) entry.buffer = buf;
+// Find the media for a reply. Order: in-memory capture -> stored copy (antidelete
+// cache, survives restarts) -> the media keys the phone puts in the quoted reply.
+// Returns { entry, source } or null when the quoted message is not view-once.
+async function resolveViewOnceForReply(m, opts = {}) {
+    const { download, lookupStored, getContentType } = opts;
+    if (!m?.key?.id) return null;
+    const quotedId = _quotedId(m);
+    if (!quotedId) return null;
+    if (global._viewOnceHandledIds?.has(m.key.id)) return null;
+
+    const memEntry = global._viewOnceBufferMap?.get(quotedId) || null;
+    const quotedVo = unwrapViewOnce(_quotedRaw(m), getContentType);
+    let stored = null;
+    if (typeof lookupStored === 'function') {
+        try { stored = await lookupStored(quotedId); } catch (_) { stored = null; }
+    }
+    const isViewOnce = Boolean(memEntry || quotedVo || stored?.isViewOnce);
+    if (!isViewOnce) return null;
+
+    const base = memEntry || {
+        type: quotedVo?.type || stored?.type || 'imageMessage',
+        mime: quotedVo?.inner?.mimetype || stored?.mime || '',
+        caption: quotedVo?.inner?.caption || stored?.caption || '',
+        isPtt: Boolean(quotedVo?.inner?.ptt || stored?.isPtt),
+        sender: String(m.quoted?.sender || '').split('@')[0],
+        chat: m.chat,
+        msg: quotedVo ? { [quotedVo.type]: quotedVo.inner } : null,
+        buffer: null,
+        ts: Date.now()
+    };
+    if (base.buffer?.length) return { entry: base, source: 'memory' };
+
+    if (stored?.buffer?.length) {
+        base.buffer = stored.buffer;
+        if (stored.type) base.type = stored.type;
+        if (!base.mime && stored.mime) base.mime = stored.mime;
+        return { entry: base, source: 'stored' };
+    }
+
+    const candidates = [];
+    if (base.msg?.[base.type]) candidates.push({ type: base.type, inner: base.msg[base.type] });
+    if (quotedVo && quotedVo.inner !== base.msg?.[base.type]) candidates.push(quotedVo);
+    if (typeof download === 'function') {
+        for (const c of candidates) {
+            if (!c.inner?.mediaKey && !c.inner?.directPath && !c.inner?.url) continue;
+            try {
+                const buf = await _readStream(await download(c.inner, c.type.replace('Message', '')));
+                if (buf.length && buf.length <= MAX_BYTES) {
+                    base.buffer = buf;
+                    base.type = c.type;
+                    if (!base.mime) base.mime = c.inner.mimetype || '';
+                    return { entry: base, source: 'quoted' };
+                }
+            } catch (err) {
+                console.log('[viewonce] quoted download failed:', err?.message);
+            }
         }
+    }
+    console.log(`[viewonce] reply ${m.key.id} quotes view-once ${quotedId} but no media found (mem=${Boolean(memEntry)} stored=${Boolean(stored)} quotedKeys=${Boolean(quotedVo?.inner?.mediaKey)})`);
+    return { entry: base, source: 'none' };
+}
 
-        const time = new Date().toLocaleString('en-US', {
-            timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
-            hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
-        });
-        const from = entry.sender || String(m.quoted?.sender || m.sender || '').split('@')[0];
-        const chatLabel = String(entry.chat || m.chat).includes('g.us') ? 'Group' : 'Private';
-        const caption = `🔐 *View-Once Saved!*\n👤 From: @${from}\n💬 Chat: ${chatLabel}\n🕒 ${time}`
-            + (entry.caption ? `\n\n📝 ${entry.caption}` : '');
+// Deliver a view-once to the bot's own chat when the user replies under it.
+// Returns true when sent.
+async function deliverViewOnceOnReply(devtrust, m, botNumber, opts = {}) {
+    const found = await resolveViewOnceForReply(m, opts);
+    if (!found) return false;
+    const { entry } = found;
+    _ensureGlobals();
+    // Mark early so the .vv / emoji handlers in the same message don't send it twice.
+    global._viewOnceHandledIds.set(m.key.id, Date.now());
 
-        const payload = buildPayload(entry, caption);
+    const time = new Date().toLocaleString('en-US', {
+        timeZone: process.env.TIMEZONE || 'Asia/Karachi', hour12: true,
+        hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+    });
+    const from = entry.sender || String(m.quoted?.sender || m.sender || '').split('@')[0];
+    const chatLabel = String(entry.chat || m.chat).includes('g.us') ? 'Group' : 'Private';
+    const caption = `🔐 *View-Once Saved!*\n👤 From: @${from}\n💬 Chat: ${chatLabel}\n🕒 ${time}`
+        + (entry.caption ? `\n\n📝 ${entry.caption}` : '');
+
+    const payload = buildPayload(entry, caption);
+    try {
         if (!payload) {
-            console.log('[viewonce] reply matched a view-once but no buffer was captured');
+            await devtrust.sendMessage(botNumber, {
+                text: `⚠️ *View-Once download nahi ho saka*\n👤 From: @${from}\n\nYe photo bot ke online hone se pehle aayi thi ya WhatsApp ne media hata diya. Agli one-time photo aate hi bot use save kar lega.`
+            });
+            global._viewOnceHandledIds.delete(m.key.id);
             return false;
         }
-
         await devtrust.sendMessage(botNumber, payload);
-        // Mark only after a real send so .vv / the emoji path can still retry a failure.
-        global._viewOnceHandledIds.set(m.key.id, Date.now());
-        console.log(`[viewonce] delivered ${entry.type} on reply ${m.key.id}`);
+        console.log(`[viewonce] delivered ${entry.type} (${found.source}) on reply ${m.key.id}`);
         return true;
     } catch (err) {
+        global._viewOnceHandledIds.delete(m.key.id);
         console.error('[viewonce] reply delivery failed:', err?.message);
         return false;
     }
@@ -181,6 +252,7 @@ module.exports = {
     buildPayload,
     pendingViewOnceReply,
     deliverViewOnceOnReply,
+    resolveViewOnceForReply,
     MAX_ENTRIES,
     TTL_MS,
     MAX_BYTES

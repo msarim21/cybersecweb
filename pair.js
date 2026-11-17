@@ -911,54 +911,7 @@ async function _startpairing(nexusDevNumber, options = {}) {
                     }
                 }
 
-                // View-Once Auto-Save — when bot user replies to a one-time pic/video
-                const isFromMe2 = _bgMsg.key?.fromMe;
-                const msgContent2 = _bgMsg.message;
-                const innerMsg2 = msgContent2?.extendedTextMessage
-                    || msgContent2?.imageMessage
-                    || msgContent2?.videoMessage
-                    || msgContent2?.audioMessage
-                    || msgContent2?.reactionMessage;
-                const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
-                const quotedMsg2 = ctxInfo2?.quotedMessage;
-
-                // Same reply may already be served by the case.js reply path — never send twice.
-                if (isFromMe2 && quotedMsg2 && !global._viewOnceHandledIds?.has(_bgMsg?.key?.id)) {
-                    const voMsg = quotedMsg2?.viewOnceMessage?.message
-                        || quotedMsg2?.viewOnceMessageV2?.message
-                        || quotedMsg2?.viewOnceMessageV2Extension?.message
-                        || (quotedMsg2?.imageMessage?.viewOnce ? quotedMsg2 : null)
-                        || (quotedMsg2?.videoMessage?.viewOnce ? quotedMsg2 : null);
-
-                    if (voMsg) {
-                        const voType = Object.keys(voMsg)[0];
-                        const voContent = voMsg[voType];
-                        if (voContent) {
-                            const senderNum = (ctxInfo2?.participant || ctxInfo2?.remoteJid || '').replace('@s.whatsapp.net', '');
-                            const voCaption = `🔐 *View-Once saved!*\n👤 From: @${senderNum}\n\n_Auto-saved from your reply_`;
-                            let voBuffer = null;
-                            try {
-                                const mediaType = voType.replace('Message', '');
-                                const stream = await downloadContentFromMessage(voContent, mediaType);
-                                const chunks = [];
-                                for await (const chunk of stream) chunks.push(chunk);
-                                voBuffer = Buffer.concat(chunks);
-                            } catch (dlErr) {}
-
-                            if (voBuffer) {
-                                let voPayload = null;
-                                if (voType === 'imageMessage') {
-                                    voPayload = { image: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'image/jpeg' };
-                                } else if (voType === 'videoMessage') {
-                                    voPayload = { video: voBuffer, caption: voContent.caption ? `${voCaption}\n📝 ${voContent.caption}` : voCaption, mimetype: voContent.mimetype || 'video/mp4' };
-                                } else if (voType === 'audioMessage') {
-                                    voPayload = { audio: voBuffer, mimetype: voContent.mimetype || 'audio/ogg' };
-                                }
-                                if (voPayload) await nexus.sendMessage(botNumber, voPayload);
-                            }
-                        }
-                    }
-                }
+                // View-once replies are served only by case.js (deliverViewOnceOnReply) — no double send.
             } catch (bgErr) {
                 // Silent fail — never crash commands due to background features
             }

@@ -3,6 +3,7 @@ require('./setting/config')
 require('./allfunc/antidelete-session');
 require('./allfunc/antidelete-helpers');
 const { deliverViewOnceOnReply } = require('./allfunc/viewonce');
+const { makeStoredLookup } = require('./allfunc/viewonce-store');
 const { 
   default: baileys, proto, jidNormalizedUser, generateWAMessage, 
   generateWAMessageFromContent, getContentType, prepareWAMessageMedia 
@@ -1063,7 +1064,7 @@ const botNumber = devtrust._cachedBotNumber;
 // the emoji whitelist. The buffer comes from pair.js, which grabs it at delivery
 // time; WhatsApp never lets a quoted view-once be re-downloaded afterwards.
 try {
-    await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage });
+    await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage, lookupStored: makeStoredLookup(devtrust) });
 } catch (_voReplyErr) {
     console.error('[viewonce] reply path error:', _voReplyErr?.message);
 }
