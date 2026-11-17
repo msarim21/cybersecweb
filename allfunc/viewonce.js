@@ -13,6 +13,8 @@
 const MAX_ENTRIES = 20;
 const TTL_MS = 30 * 60 * 1000;
 const MAX_BYTES = 25 * 1024 * 1024;
+const NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
+const VIEWONCE_BLOCKED_NOTICE = (from) => `⚠️ *One-time photo save nahi ho sakti*\n👤 From: @${from}\n\nWhatsApp ab one-time photo/video sirf phone par bhejta hai — bot (linked device) ko sirf khali nishaan milta hai, photo nahi. Ye WhatsApp ki taraf se band hai, bot is ko nahi khol sakta.`;
 
 function _defaultType(obj) {
     return obj && typeof obj === 'object' ? Object.keys(obj)[0] : null;
@@ -230,10 +232,17 @@ async function deliverViewOnceOnReply(devtrust, m, botNumber, opts = {}) {
     const payload = buildPayload(entry, caption);
     try {
         if (!payload) {
-            await devtrust.sendMessage(botNumber, {
-                text: `⚠️ *View-Once download nahi ho saka*\n👤 From: @${from}\n\nYe photo bot ke online hone se pehle aayi thi ya WhatsApp ne media hata diya. Agli one-time photo aate hi bot use save kar lega.`
-            });
-            global._viewOnceHandledIds.delete(m.key.id);
+            // WhatsApp no longer delivers view-once media to linked devices (the bot only
+            // gets a stub, and the quoted copy has an empty media key). Say so ONCE per
+            // photo — never spam the owner's chat on every emoji/text reply.
+            if (!global._viewOnceNoticeIds) global._viewOnceNoticeIds = new Map();
+            const qid = _quotedId(m);
+            const now = Date.now();
+            for (const [k, t] of global._viewOnceNoticeIds) if (now - t > NOTICE_TTL_MS) global._viewOnceNoticeIds.delete(k);
+            if (qid && !global._viewOnceNoticeIds.has(qid)) {
+                global._viewOnceNoticeIds.set(qid, now);
+                await devtrust.sendMessage(botNumber, { text: VIEWONCE_BLOCKED_NOTICE(from) });
+            }
             return false;
         }
         await devtrust.sendMessage(botNumber, payload);
@@ -255,5 +264,6 @@ module.exports = {
     resolveViewOnceForReply,
     MAX_ENTRIES,
     TTL_MS,
-    MAX_BYTES
+    MAX_BYTES,
+    NOTICE_TTL_MS
 };

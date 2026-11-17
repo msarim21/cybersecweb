@@ -26,6 +26,7 @@ function resetGlobals() {
     global._viewOnceBufferMap = undefined;
     global._lastViewOnce = undefined;
     global._viewOnceHandledIds = undefined;
+    global._viewOnceNoticeIds = undefined;
 }
 
 // A fake Baileys downloader: returns the given bytes as one async-iterable chunk.
@@ -195,7 +196,7 @@ console.log('\n=== View-once capture / reply tests ===\n');
         const done = await vo.deliverViewOnceOnReply(sock, { key: { id: 'R11' }, chat: CHAT, quoted: { id: 'VO11' } }, BOT, { download: failingDownload });
         assert.strictEqual(done, false);
         assert.strictEqual(sent.length, 1);
-        assert.ok(!sent[0].image && sent[0].text.includes('View-Once'));
+        assert.ok(!sent[0].image && sent[0].text.includes('One-time photo'));
     });
 
     await ok('after a bot restart, a reply still delivers from the stored copy', async () => {
@@ -241,6 +242,19 @@ console.log('\n=== View-once capture / reply tests ===\n');
         const sock = { sendMessage: async (jid, p) => sent.push(p) };
         await vo.deliverViewOnceOnReply(sock, { key: { id: 'R12' }, chat: g, quoted: { id: 'VO12' } }, BOT);
         assert.ok(sent[0].caption.includes('Chat: Group'), `caption was: ${sent[0].caption}`);
+    });
+
+    await ok('many replies under the same blocked photo send the notice only once', async () => {
+        resetGlobals();
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        const quotedMessage = { imageMessage: { viewOnce: true, mimetype: 'image/jpeg' } };
+        for (const id of ['RA', 'RB', 'RC']) {
+            await vo.deliverViewOnceOnReply(sock, { key: { id }, chat: CHAT, quoted: { id: 'BLK1' },
+                msg: { contextInfo: { stanzaId: 'BLK1', quotedMessage } } }, BOT, { download: failingDownload });
+        }
+        assert.strictEqual(sent.length, 1);
+        assert.ok(sent[0].text.includes('WhatsApp'));
     });
 
     console.log(failed ? `\n${failed} test(s) FAILED\n` : '\nAll view-once tests passed\n');
