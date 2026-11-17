@@ -9,10 +9,16 @@ ENV NODE_ENV=production \
     WEB_API_ONLY=0 \
     BOT_ISOLATION=1
 
-# ffmpeg: stickers/audio/video commands · python3: yt helpers · git: some npm deps
+# ffmpeg: stickers/audio/video commands · python3: yt-dlp helper · git: some npm deps
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg python3 git ca-certificates webp imagemagick \
+ && apt-get install -y --no-install-recommends ffmpeg python3 git ca-certificates webp imagemagick curl \
  && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp: standalone binary (no pip needed) — powers .play/.ytmp3/.ytvideo/.ytdown/.facebook/.xdl
+RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+      -o /usr/local/bin/yt-dlp \
+ && chmod +x /usr/local/bin/yt-dlp \
+ && yt-dlp --version
 
 WORKDIR /app
 

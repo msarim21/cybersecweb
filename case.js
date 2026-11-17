@@ -681,12 +681,14 @@ if (!global._chatScannerStarted) {
     })();
 }
 
-// ─── ANIME IMAGE HELPER (prexzyvilla API was dead, replaced with nekos.best) ───
+// ─── ANIME IMAGE HELPER (nekos.best 403 ho gaya tha → nekos.life chain) ───
 // ─────────────────────────────────────────────────────────────────────────────
 // getAnimeImageUrl: multi-source fallback chain so .animemenu commands work.
 //
-//   Tier 1  nekos.best       — 4 base categories (husbando, kitsune, neko, waifu)
-//   Tier 2  nekos.life       — ~30 working SFW/NSFW endpoints
+//   Tier 1  nekos.life       — confirmed working: neko, waifu, meow, hug, feed,
+//                              slap, pat, kiss, fox_girl, gecg, ngif, woof,
+//                              tickle, cuddle, lizard
+//   Tier 2  generic nekos.life waifu/neko/meow fallbacks
 //   Tier 3  pic.re           — random anime art, always-on, returns image binary
 //
 // Each tier is retried twice. The function NEVER returns null — it always
@@ -763,25 +765,22 @@ async function getAnimeImageUrl(category) {
         ngif: 'ngif', gecg: 'gecg',
     };
 
-    // ── Try Tier 1 ──
-    const t1Cat = nekosBestMap[lc] || (lc === 'waifu' ? 'waifu' : null);
-    if (t1Cat) {
-        const u = await _animeTryJson('https://nekos.best/api/v2/' + t1Cat + '?amount=1');
-        if (u) return u;
-    }
+    // ── Try Tier 1: nekos.life ──
+    // nekos.best ab 403 (blocked) deta hai, is liye wo chain se hata diya gaya.
+    // Confirmed working nekos.life endpoints: neko, waifu, meow, hug, feed,
+    // slap, pat, kiss, fox_girl, gecg, ngif, woof, tickle, cuddle, lizard.
+    // Male-character ('husbando') categories ka koi free source nahi hai, is
+    // liye wo 'waifu' par map ho jate hain — image phir bhi mil jati hai.
+    const lifeCat = nekosLifeMap[lc]
+        || (nekosBestMap[lc] === 'neko' ? 'neko' : 'waifu');
+    const u1 = await _animeTryJson('https://nekos.life/api/v2/img/' + lifeCat);
+    if (u1) return u1;
 
-    // ── Try Tier 2 (nekos.life) ──
-    const t2Cat = nekosLifeMap[lc] || (t1Cat ? null : 'waifu');
-    if (t2Cat) {
-        const u = await _animeTryJson('https://nekos.life/api/v2/img/' + t2Cat);
-        if (u) return u;
-    }
-
-    // ── Final fallback: generic waifu on either API ──
+    // ── Try Tier 2: generic fallbacks ──
     for (const fb of [
-        'https://nekos.best/api/v2/waifu?amount=1',
         'https://nekos.life/api/v2/img/waifu',
         'https://nekos.life/api/v2/img/neko',
+        'https://nekos.life/api/v2/img/meow',
     ]) {
         const u = await _animeTryJson(fb);
         if (u) return u;
@@ -8331,6 +8330,7 @@ break;
 
 
 
+case 'mathematicsfact':
 case "mathfact": {
     const facts = [
         "0 is the only number that cannot be represented in Roman numerals.",
@@ -8469,17 +8469,22 @@ case 'paptt': {
 }
 break;
 
+case 'asciiart':
 case "ascii": {
     if (!text) return reply("✏️ *Example:* ascii Hello World");
-    
+
     try {
-        // artii.herokuapp.com is dead, use simple text fallback
-        const ascii = text.toUpperCase();
-        
-        await devtrust.sendMessage(m.chat, 
+        // Built-in block font (artii.herokuapp.com dead tha, is liye ab
+        // ASCII art poori tarah local banti hai — koi API nahi chahiye)
+        const { asciiArt } = require('./allfunc/ascii-art');
+        const art = asciiArt(text.substring(0, 14));
+
+        if (!art) return reply("❌ *Koi drawable character nahi mila*\n\nSirf A-Z, 0-9 aur ! ? . - + * & @ chalte hain");
+
+        await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                text: `🎨 *CYBER ASCII*\n\n\`\`\`${ascii}\`\`\``
-            }), 
+                text: `🎨 *CYBER ASCII*\n\n\`\`\`${art}\`\`\``
+            }),
             { quoted: m }
         );
     } catch (e) {
@@ -8512,36 +8517,6 @@ case 'compliment': {
     }
 }
 break;
-case "advice": {
-    try {
-        const res = await axios.get("https://api.adviceslip.com/advice");
-        const advice = res.data?.slip?.advice || "Keep going!";
-        reply(`💭 *CYBER Advice*\n\n"${advice}"`);
-    } catch (e) {
-        console.error("ADVICE ERROR:", e);
-        reply("❌ *Advice machine is sleeping* • Try again later");
-    }
-}
-break;
-
-case "urban": {
-    if (!text) return reply("📚 *Example:* urban sus");
-    
-    try {
-        const res = await axios.get(`https://api.urbandictionary.com/v0/define?term=${encodeURIComponent(text)}`);
-        const defs = res.data?.list;
-        if (!defs || !defs.length) return reply(`🔍 No definitions found for "${text}"`);
-        
-        const top = defs[0];
-        const msg = `📖 *CYBER Urban*\n\n📌 *${top.word}*\n\n${top.definition}\n\n💬 *Example:* ${top.example}`;
-        reply(msg);
-    } catch (e) {
-        console.error("URBAN ERROR:", e);
-        reply("❌ *Dictionary is offline* • Try again later");
-    }
-}
-break;
-
 case 'ship': {
     if (!text) return reply(`💘 *Usage:* ${command} name1 & name2`);
     
@@ -8664,18 +8639,6 @@ case 'advice': {
 break;
 
 // ── ascii — ASCII art text ──
-case 'ascii':
-case 'asciiart': {
-    if (!text) return reply(`✏️ *Usage:* ${prefix}ascii <text>\n\nExample: ${prefix}ascii CYBER`);
-    try {
-        const { data } = await axios.get(`http://artii.herokuapp.com/make?text=${encodeURIComponent(text)}`, { timeout: 8000 });
-        reply(`\`\`\`${data}\`\`\``);
-    } catch (e) {
-        reply(`❌ *ASCII generator failed* • Try again later`);
-    }
-}
-break;
-
 // ── dadjoke — Get a dad joke ──
 case 'dadjoke':
 case 'dadjokes': {
@@ -8820,17 +8783,6 @@ case 'poem': {
 }
 break;
 
-case 'metabcn-ai':
-case 'metaai': {
-    if (!text) return reply(`🤖 *Usage:* ${command} your question`);
-    try {
-        const answer = await askPrinceAI('openai', text);
-        reply(`🤖 *CYBER AI*\n\n${answer}`);
-    } catch (e) {
-        console.error('Meta AI error:', e.message);
-        reply("⚠️ *AI unavailable* • Try again later");
-    }
-}
 break;
 
 case 'codeai': {
@@ -9421,22 +9373,6 @@ case "antibadword": {
 }
 break;
 
-case "antibot": {
-    if (!isCreator && !isSudo)
-        return reply('🔒 *Owner/Sudo only*');
-
-    if (!args[0]) return reply("⚙️ *Usage:* antibot on/off");
-
-    if (args[0].toLowerCase() === "on") {
-        setSetting(m.chat, "feature.antibot", true);
-        reply("✅ *Anti bot enabled* • Bot prefixes blocked");
-    } else if (args[0].toLowerCase() === "off") {
-        setSetting(m.chat, "feature.antibot", false);
-        reply("❌ *Anti bot disabled*");
-    } else reply("⚙️ *Usage:* antibot on/off");
-}
-break;
-
 case "chatbot": {
     if (!isCreator) return reply('🔒 *Owner only*');
 
@@ -9785,23 +9721,28 @@ case 'apkdl': {
 
     await devtrust.sendMessage(m.chat, { react: { text: '🔍', key: m.key } });
     try {
-        const searchRes = await axios.get(`https://api.princetechn.com/api/search/happymod?apikey=prince&query=${encodeURIComponent(text.trim())}`, { timeout: 20000 });
-        const sData = searchRes.data;
-
-        if (!sData.success || !sData.results?.data?.length) {
+        // F-Droid ka koi public search API nahi hai (403/404), is liye yahan
+        // seedha package ID se download hota hai — e.g. org.videolan.vlc.
+        const input = text.trim();
+        const isPkg = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/i.test(input);
+        if (!isPkg) {
             await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            return reply(`❌ *"${text}"* ke liye koi app nahi mila. Koi aur naam try karo.`);
+            return reply(`📱 *APK Download (F-Droid)*\n\n` +
+                `Naam se search available nahi — F-Droid ka public search API nahi hai.\n` +
+                `Package ID se download karo:\n\n` +
+                `• ${prefix}apkdl org.videolan.vlc\n` +
+                `• ${prefix}apkdl app.organicmaps\n` +
+                `• ${prefix}apkdl de.danoeh.antennapod\n` +
+                `• ${prefix}apkdl org.wikipedia\n\n` +
+                `Poora list: https://f-droid.org/packages/`);
         }
 
-        const apps = sData.results.data.slice(0, 8);
-        const menuText = apps.map((a, i) =>
-            `*${i + 1}.* ${a.name}\n    📝 ${(a.summary || '').substring(0, 55)}`
-        ).join('\n\n');
+        const pkgId = input;
+        const apps = [{ name: pkgId, summary: 'F-Droid package', url: 'https://f-droid.org/packages/' + pkgId + '/', icon: null }];
 
         const sentMsg = await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                image: { url: apps[0].icon },
-                caption: `📱 *APK Search Results*\n🔎 Query: *${text}*\n📦 Source: F-Droid (Free & Open Source)\n\n${menuText}\n\n📌 *Number reply karo download ke liye*`
+                text: `📱 *APK Download*\n📦 Package: *${pkgId}*\n📌 Source: F-Droid (Free & Open Source)\n\n*1* reply karo download ke liye`
             }),
             { quoted: m }
         );
@@ -9826,33 +9767,20 @@ case 'apkdl': {
 
                 await devtrust.sendMessage(m.chat, { text: `⬇️ *${chosen.name}*\nDownload preparing...` }, { quoted: msg });
 
-                let apkBuf;
+                let apkBuf = null;
                 let downloadSource = 'F-Droid';
 
-                // Primary: Try PrinceTech APK Download API
-                try {
-                    const ptRes = await axios.get(`https://api.princetechn.com/api/download/apkdl?apikey=prince&appName=${encodeURIComponent(chosen.name)}`, { timeout: 25000 });
-                    if (ptRes.data?.success && ptRes.data?.result?.download_url) {
-                        const dlUrl = ptRes.data.result.download_url;
-                        apkBuf = Buffer.from((await axios.get(dlUrl, {
-                            responseType: 'arraybuffer',
-                            headers: { 'User-Agent': 'Mozilla/5.0' },
-                            timeout: 180000,
-                            maxContentLength: 200 * 1024 * 1024
-                        })).data);
-                        downloadSource = 'PrinceTech';
-                    }
-                } catch (_ptErr) {
-                    console.warn('[APK] PrinceTech API failed, trying F-Droid:', _ptErr.message);
-                }
+                // F-Droid package page se latest .apk link nikalo
+                // (PrinceTech apkdl API dead hai, aur /suggested endpoint 404 deta hai)
+                if (pkgId) {
+                    const fdPage = await axios.get(`https://f-droid.org/en/packages/${pkgId}/`, {
+                        timeout: 25000,
+                        headers: { 'User-Agent': 'Mozilla/5.0' },
+                    });
+                    const apkMatch = String(fdPage.data).match(/https:\/\/f-droid\.org\/repo\/[^"']+\.apk/);
+                    if (!apkMatch) throw new Error('APK download link nahi mila (package ID check karo)');
 
-                // Fallback: Try F-Droid API
-                if (!apkBuf?.length && pkgId) {
-                    const fdRes = await axios.get(`https://f-droid.org/api/v1/packages/${pkgId}/suggested`, { timeout: 15000 });
-                    const fdData = fdRes.data;
-                    if (!fdData || !fdData.apkName) throw new Error('APK download link nahi mila');
-                    const apkUrl = `https://f-droid.org/repo/${fdData.apkName}`;
-                    apkBuf = Buffer.from((await axios.get(apkUrl, {
+                    apkBuf = Buffer.from((await axios.get(apkMatch[0], {
                         responseType: 'arraybuffer',
                         headers: { 'User-Agent': 'Mozilla/5.0' },
                         timeout: 180000,
@@ -10486,82 +10414,9 @@ case 'wikipedia': {
 break;
 
 // ============ HANGMAN GAME ============
-case "hangman": {
-    const chatId = m.chat;
-    const args = text?.split(" ") || [];
-    let game = hangmanGames[chatId];
-
-    // Start new game
-    if (!game) {
-        if (!args[0]) return reply("🎮 *Start:* hangman banana");
-        
-        const word = args[0].toLowerCase();
-        const display = "_".repeat(word.length).split("");
-        hangmanGames[chatId] = { 
-            word, 
-            display, 
-            attempts: 6, 
-            guessed: [],
-            wrongGuesses: 0
-        };
-        
-        const visual = hangmanVisual[0]; // First visual (6 attempts left)
-        
-        reply(`🎮 *Hangman Started*\n\n` +
-              `${visual}\n\n` +
-              `Word: ${display.join(" ")}\n` +
-              `Attempts: 6\n` +
-              `Guess: hangman [letter]`);
-        return;
-    }
-
-    // Make a guess
-    if (!args[0]) return reply("🔤 *Guess a letter* • Example: hangman a");
-    
-    const letter = args[0].toLowerCase();
-    if (letter.length !== 1) return reply("❌ *One letter at a time*");
-    if (!/[a-z]/.test(letter)) return reply("❌ *Letters only*");
-    if (game.guessed.includes(letter)) return reply("⚠️ *Already guessed*");
-
-    game.guessed.push(letter);
-    
-    if (game.word.includes(letter)) {
-        // Correct guess
-        game.display = game.display.map((c, i) => (game.word[i] === letter ? letter : c));
-    } else {
-        // Wrong guess
-        game.wrongGuesses += 1;
-        game.attempts -= 1;
-    }
-
-    // Get current hangman visual
-    const visualIndex = Math.min(game.wrongGuesses, hangmanVisual.length - 1);
-    const visual = hangmanVisual[visualIndex];
-
-    // Check win condition
-    if (!game.display.includes("_")) {
-        reply(`🎉 *You won!*\n\nWord: ${game.word}\n\n${visual}`);
-        delete hangmanGames[chatId];
-        return;
-    }
-
-    // Check lose condition
-    if (game.attempts <= 0) {
-        reply(`💀 *Game over!*\n\nWord: ${game.word}\n\n${visual}`);
-        delete hangmanGames[chatId];
-        return;
-    }
-
-    // Game continues
-    reply(`🎮 *Hangman*\n\n` +
-          `${visual}\n\n` +
-          `Word: ${game.display.join(" ")}\n` +
-          `Attempts: ${game.attempts}\n` +
-          `Guessed: ${game.guessed.join(", ")}`);
-}
-break;
 // ======================================
 
+case 'numberbattle':
 case "numbattle": {
     const userRoll = Math.floor(Math.random() * 100) + 1;
     const botRoll = Math.floor(Math.random() * 100) + 1;
@@ -10573,6 +10428,7 @@ case "numbattle": {
 }
 break;
 
+case 'coinflipbattle':
 case "coinbattle": {
     const userFlip = Math.random() < 0.5 ? "Heads" : "Tails";
     const botFlip = Math.random() < 0.5 ? "Heads" : "Tails";
@@ -10583,47 +10439,15 @@ case "coinbattle": {
 }
 break;
 
-case "numberbattle": {
-    if (!text) return reply("🎯 *Usage:* numberbattle 25");
-    
-    const number = Math.floor(Math.random() * 50) + 1;
-    const guess = parseInt(text);
-    
-    let result = guess === number ? "🎉 *Perfect guess!*" : 
-                 guess > number ? "⬇️ *Too high!*" : "⬆️ *Too low!*";
-    
-    reply(`🎯 *Number Battle*\n\nYour guess: ${guess}\nTarget: ${number}\n\n${result}`);
-}
-break;
-
-case "math": {
-    const a = Math.floor(Math.random() * 50) + 1;
-    const b = Math.floor(Math.random() * 50) + 1;
-    
-    reply(`➕ *Math Quiz*\n\n${a} + ${b} = ?\nReply: mathanswer number`);
-}
-break;
-
-case "emojiquiz": {
-    const quizzes = [
-        { emoji: "🐍", answer: "snake" },
-        { emoji: "🍎", answer: "apple" },
-        { emoji: "🏎️", answer: "car" },
-        { emoji: "🎸", answer: "guitar" },
-        { emoji: "☕", answer: "coffee" }
-    ];
-    
-    const quiz = quizzes[Math.floor(Math.random() * quizzes.length)];
-    reply(`🧩 *Emoji Quiz*\n\n${quiz.emoji}\nReply: emojianswer your guess`);
-}
-break;
-
+case 'diceroll':
+case 'rolldice':
 case "dice": {
     const roll = Math.floor(Math.random() * 6) + 1;
     reply(`🎲 *You rolled a ${roll}!*`);
 }
 break;
 
+case 'rpslizardspock':
 case "rpsls": {
     if (!text) return reply("🪨 *Choose:* rock, paper, scissors, lizard, spock");
     
@@ -10649,11 +10473,14 @@ case "rpsls": {
     reply(`🪨 *RPSLS*\n\nYou: ${userChoice}\nBot: ${botChoice}\n\n${result}`);
 }
 break;
+case 'coinflip':
+case 'flipcoin':
 case "coin": {
     const result = Math.random() < 0.5 ? "🪙 Heads" : "🪙 Tails";
     await devtrust.sendMessage(m.chat, { text: `🎲 Coin Flip Result: ${result}` }, { quoted: m });
 }
 break;
+case 'gamingfact':
 case "gamefact": {
     try {
         const res = await axios.get("https://www.freetogame.com/api/games");
@@ -10747,18 +10574,6 @@ case "panda": {
 }
 break;
 
-case "funfact": {
-    try {
-        const res = await axios.get("https://uselessfacts.jsph.pl/random.json?language=en");
-        const fact = res.data?.text || "Bots are awesome!";
-        reply(`💡 *Fun Fact*\n\n${fact}`);
-    } catch (e) {
-        console.error("FUNFACT ERROR:", e);
-        reply("❌ *Fact machine broke* • Try again later");
-    }
-}
-break;
-
 case "vkfkk": {
     try {
         const res = await axios.get("https://zenquotes.io/api/random", { timeout: 8000 });
@@ -10780,18 +10595,6 @@ case "prog": {
     } catch (e) {
         console.error("PROG JOKE ERROR:", e);
         reply("❌ *Joke compiler error* • Try again");
-    }
-}
-break;
-
-case "dadjoke": {
-    try {
-        const res = await axios.get("https://icanhazdadjoke.com/", { headers: { Accept: "application/json" } });
-        const joke = res.data?.joke || "I'm still working on it!";
-        reply(`👴 *Dad Joke*\n\n${joke}`);
-    } catch (e) {
-        console.error("DAD JOKE ERROR:", e);
-        reply("❌ *Dad left for milk* • Try later");
     }
 }
 break;
@@ -10828,19 +10631,6 @@ case "asciivjxnd": {
         console.error("ASCII ERROR:", e);
         reply("❌ *ASCII generator failed*");
     }
-}
-break;
-
-case "guess": {
-    const number = Math.floor(Math.random() * 10) + 1;
-    if (!text) return reply("🎲 *Usage:* guess 7");
-    
-    const guess = parseInt(text);
-    if (isNaN(guess) || guess < 1 || guess > 10) 
-        return reply("❌ *Choose 1-10*");
-    
-    const result = guess === number ? "🎉 *Correct!*" : "😢 *Wrong guess*";
-    reply(`🎯 *Guess Game*\n\nYou: ${guess}\nBot: ${number}\n${result}`);
 }
 break;
 
@@ -10887,18 +10677,6 @@ case "cbhcchhcx": {
     } catch (e) {
         console.error("INSPIRE ERROR:", e);
         reply("❌ *Inspiration unavailable*");
-    }
-}
-break;
-
-case "compliment": {
-    try {
-        const res = await axios.get("https://complimentr.com/api");
-        const compliment = res.data?.compliment || "You are awesome!";
-        reply(`💖 *${compliment}*`);
-    } catch (e) {
-        console.error("COMPLIMENT ERROR:", e);
-        reply("❌ *Compliment machine is shy* • Try later");
     }
 }
 break;
@@ -10993,8 +10771,97 @@ case 'korean-girl': {
 }
 break;
 
+case 'akiyama':
+case 'ana':
+case 'art':
+case 'asuna':
+case 'ayuzawa':
+case 'boruto':
+case 'bts':
+case 'cecan':
+case 'chiho':
+case 'chitoge':
+case 'cogan':
+case 'cosplay':
+case 'cosplayloli':
+case 'cosplaysagiri':
+case 'cyber':
+case 'deidara':
+case 'doraemon':
+case 'elaina':
+case 'emilia':
+case 'erza':
+case 'exo':
+case 'femdom':
+case 'freefire':
+case 'gamewallpaper':
+case 'glasses':
+case 'gremory':
+case 'hacker':
+case 'hestia':
+case 'husbu':
+case 'inori':
+case 'islamic':
+case 'isuzu':
+case 'itachi':
+case 'itori':
+case 'jennie':
+case 'jiso':
+case 'justina':
+case 'kaga':
+case 'kagura':
+case 'kakashi':
+case 'kaori':
+case 'cartoon':
+case 'shortquote':
+case 'keneki':
+case 'kotori':
+case 'kpop':
+case 'kucing':
+case 'kurumi':
+case 'lisa':
+case 'madara':
+case 'megumin':
+case 'mikasa':
+case 'mikey':
+case 'miku':
+case 'minato':
+case 'mobile':
+case 'motor':
+case 'mountain':
+case 'naruto':
+case 'neko':
+case 'neko2':
+case 'nekonime':
+case 'nezuko':
+case 'onepiece':
+case 'pentol':
+case 'pokemon':
+case 'profil':
+case 'programming':
+case 'pubg':
+case 'randblackpink':
+case 'randomnime':
+case 'randomnime2':
+case 'rize':
+case 'rose':
+case 'ryujin':
+case 'sagiri':
+case 'sakura':
+case 'sasuke':
+case 'satanic':
+case 'shina':
+case 'shinka':
+case 'shinomiya':
+case 'shizuka':
+case 'shota':
+case 'space':
+case 'technology':
+case 'tejina':
 case 'loli': {
-    try { const _u = await getAnimeImageUrl('loli'); if (!_u) throw new Error('No image'); const _b = await getBuffer(_u); await devtrust.sendMessage(m.chat, { image: _b, caption: "🎀 *CYBER*" }, { quoted: m }); } catch { reply('\u274c *Failed to fetch loli image*'); }
+    // `command` = jo user ne type kiya (.naruto, .pokemon, .loli ...), is liye
+    // har alias apna hi category image lata hai instead of always 'loli'.
+    try { const _u = await getAnimeImageUrl(command); if (!_u) throw new Error('No image'); const _b = await getBuffer(_u); await devtrust.sendMessage(m.chat, { image: _b, caption: `🎀 *CYBER — ${command}*` }, { quoted: m }); } catch { reply('\u274c *Failed to fetch image*'); }
 }
 break;
 
@@ -11043,6 +10910,7 @@ case "cat": {
 }
 break;
 
+case 'rockpaperscissors':
 case "rps": {
     if (!text) return reply("🪨 *Choose:* rock, paper, scissors");
     
@@ -11063,18 +10931,6 @@ case "rps": {
 }
 break;
 
-case "8ball": {
-    const answers = [
-        "It is certain ✅", "Without a doubt ✅", "Ask again later 🤔",
-        "Cannot predict now 🤷", "CYBER't count on it ❌", "Very doubtful ❌"
-    ];
-    if (!text) return reply("🎱 *Ask me a question*");
-    
-    const answer = answers[Math.floor(Math.random() * answers.length)];
-    reply(`🎱 *Question:* ${text}\n\n${answer}`);
-}
-break;
-
 case "trivia": {
     try {
         const res = await axios.get("https://opentdb.com/api.php?amount=1&type=multiple");
@@ -11086,26 +10942,6 @@ case "trivia": {
     } catch (e) {
         console.error("TRIVIA ERROR:", e);
         reply("❌ *Trivia unavailable*");
-    }
-}
-break;
-
-case "meme": {
-    try {
-        const res = await axios.get("https://meme-api.com/gimme");
-        const meme = res.data;
-        if (!meme?.url) return reply("❌ *Meme ran away*");
-        
-        await devtrust.sendMessage(m.chat, 
-            addNewsletterContext({
-                image: { url: meme.url },
-                caption: `😂 *${meme.title}*`
-            }), 
-            { quoted: m }
-        );
-    } catch (e) {
-        console.error("MEME ERROR:", e);
-        reply("❌ *Meme factory closed*");
     }
 }
 break;
@@ -11124,19 +10960,53 @@ case 'gfx11':
 case 'gfx12': {
     const [text1, text2] = text.split('|').map(v => v.trim());
     if (!text1 || !text2) {
-        return reply(`🎨 *Usage:* ${prefix + command} text1 | text2`);
+        return reply(`🎨 *Usage:* ${prefix + command} text1 | text2\n\nExample: ${prefix + command} CYBER | SEC`);
     }
 
-    reply(`⏳ *Generating GFX...*`);
+    await devtrust.sendMessage(m.chat, { react: { text: '🎨', key: m.key } });
+    reply(`⏳ *${command.toUpperCase()} generating...*`);
 
     try {
-        reply(`⚠️ *${command.toUpperCase()} temporarily unavailable*\n\nThe text-to-image GFX API is currently down.\n\n*Try these working commands instead:*\n• .glitchtext <text>\n• .writetext <text>\n• .oogway <text>\n• .pikachu <text>`);
+        // 12 alag styles — pollinations.ai (free, no API key, no signup)
+        const gfxStyles = {
+            'gfx':   'neon 3D logo, glowing cyan and magenta, dark studio background',
+            'gfx2':  'golden luxury 3D text, black background, cinematic rim light',
+            'gfx3':  'cyberpunk glitch logo, holographic, rain and neon reflections',
+            'gfx4':  'esports mascot logo badge, bold outlines, vibrant colors',
+            'gfx5':  'galaxy nebula background, silver chrome 3D letters',
+            'gfx6':  'paper cut layered craft style, soft shadows, pastel tones',
+            'gfx7':  'watercolor painting logo, ink splashes, white background',
+            'gfx8':  'pixel art retro game logo, 8-bit, dark grid background',
+            'gfx9':  'underwater bioluminescent logo, bubbles, deep blue tones',
+            'gfx10': 'fire and ember text logo, molten lava glow, black background',
+            'gfx11': 'ice and frost 3D logo, frozen crystals, cold blue light',
+            'gfx12': 'minimalist flat vector logo, clean lines, single accent color'
+        };
+        const style = gfxStyles[command] || gfxStyles['gfx'];
+        const prompt = `${text1} ${text2}, ${style}, high detail, sharp readable text, 4k`;
+        const gfxUrl = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt)
+            + '?width=1024&height=1024&nologo=true&seed=' + Math.floor(Math.random() * 100000);
+
+        const gfxImg = await axios.get(gfxUrl, {
+            responseType: 'arraybuffer',
+            timeout: 120000,
+            maxContentLength: 20 * 1024 * 1024
+        });
+
+        await devtrust.sendMessage(m.chat,
+            addNewsletterContext({
+                image: Buffer.from(gfxImg.data),
+                caption: `🎨 *${command.toUpperCase()}*\n\n${text1} | ${text2}\n⚙️ Powered by CYBER SEC PRO`
+            }),
+            { quoted: m }
+        );
+        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     } catch (err) {
-        console.error(err);
-        reply(`❌ *GFX generation failed*`);
+        console.error('GFX error:', err.message);
+        reply(`❌ *GFX generation failed:* ${err.message}`);
     }
-    break;
 }
+break;
 
 
 
@@ -11383,9 +11253,10 @@ case 'animewlp': {
         );
     } catch (err) {
         try {
-            // Fallback: nekos.best
-            const res = await axios.get(`https://nekos.best/api/v2/waifu?amount=1`);
-            const imgUrl = res.data?.results?.[0]?.url;
+            // Fallback: nekos.life (nekos.best 403 deta hai)
+            const res = await axios.get(`https://nekos.life/api/v2/img/waifu`, { timeout: 15000 });
+            const imgUrl = res.data?.url;
+            if (!imgUrl) throw new Error('image URL nahi mila');
             await devtrust.sendMessage(m.chat,
                 addNewsletterContext({ image: { url: imgUrl }, caption: "🖼️ *Anime Wallpaper*" }),
                 { quoted: m }
@@ -11633,6 +11504,7 @@ case 'opentime': {
 }
 break;
 
+case 'funfact':
 case 'fact': {
     if (!isCreator) return reply("🔒 *Owner only*");
     
@@ -11931,10 +11803,13 @@ break;
 
 case 'waifu': {
     try {
-        const waifudd = await axios.get(`https://nekos.best/api/v2/waifu?amount=1`);
+        // nekos.best ab 403 deta hai — nekos.life use ho raha hai
+        const waifudd = await axios.get(`https://nekos.life/api/v2/img/waifu`, { timeout: 15000 });
+        const waifuUrl = waifudd.data?.url;
+        if (!waifuUrl) throw new Error('image URL nahi mila');
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                image: { url: waifudd.data.results[0].url },
+                image: { url: waifuUrl },
                 caption: "✨ *Waifu*"
             }),
             { quoted: m }
@@ -12385,10 +12260,13 @@ break;
 case 'tgstickers': {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '🎭', key: m.key } });
-        const categories = ['hug','pat','kiss','cuddle','wave','smile','dance'];
+        // Sirf wo categories jo nekos.life par sach mein 200 deti hain
+        const categories = ['hug','pat','kiss','cuddle','slap','tickle','meow','feed','woof','gecg','ngif'];
         const randomCat = categories[Math.floor(Math.random() * categories.length)];
-        const { data } = await axios.get('https://nekos.best/api/v2/' + randomCat + '?amount=1');
-        await sendImageAsSticker(m.chat, data.results[0].url, m, {
+        const { data } = await axios.get('https://nekos.life/api/v2/img/' + randomCat, { timeout: 15000 });
+        const stickerUrl = data?.url;
+        if (!stickerUrl) throw new Error('sticker URL nahi mila');
+        await sendImageAsSticker(m.chat, stickerUrl, m, {
             packname: 'CYBER Stickers',
             author: 'GAME CHANGER'
         });
@@ -12535,34 +12413,25 @@ case 'ytmp3': {
             videoUrl = videoInfo.url;
         }
 
-        // ── PrinceTech YTDL API (returns audio_url + video_url) ──────────────
-        const apiRes = await axios.get(
-            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`,
-            { timeout: 60000 }
-        );
-        const apiData = apiRes.data?.result;
-        if (!apiData?.audio_url) throw new Error('API ne audio URL nahi diya');
+        // ── yt-dlp (local downloader, no third-party API) ────────────────────
+        const { ytAudio, available: _ytdlOk } = require('./allfunc/ytdl-local');
+        if (!_ytdlOk()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .play/.ytmp3 us par chalte hain.`);
 
-        const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
-        const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
-        const quality   = apiData.audio_quality || '320kbps';
-        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
+        const track = await ytAudio(videoUrl, { maxBytes: 25 * 1024 * 1024 });
+
+        const titleStr  = track.title || videoInfo?.title || 'Unknown';
+        const thumb     = track.thumbnail || videoInfo?.thumbnail || null;
+        const quality   = track.quality || 'MP3 192kbps';
+        const dur       = track.duration ? Math.round(track.duration / 60) + ' min' : (videoInfo?.timestamp || 'N/A');
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const caption   = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
         if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
 
-        const audioBuf = await axios.get(apiData.audio_url, {
-            responseType: 'arraybuffer',
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            timeout: 180000,
-            maxContentLength: 200 * 1024 * 1024
-        }).then(r => Buffer.from(r.data));
-
         await devtrust.sendMessage(m.chat, {
-            audio: audioBuf,
+            audio: track.buffer,
             mimetype: 'audio/mpeg',
-            fileName: `${safeTitle}.mp3`
+            fileName: track.fileName || `${safeTitle}.mp3`
         }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
@@ -12814,36 +12683,26 @@ case 'play2': {
             videoUrl = videoInfo.url;
         }
 
-        // ── PrinceTech YTDL API ───────────────────────────────────────────────
-        const p2Res = await axios.get(
-            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`,
-            { timeout: 60000 }
-        );
-        const p2Data = p2Res.data?.result;
-        if (!p2Data?.audio_url) throw new Error('API ne audio URL nahi diya');
+        // ── yt-dlp (local downloader, no third-party API) ────────────────────
+        const { ytAudio, available: _p2Ok } = require('./allfunc/ytdl-local');
+        if (!_p2Ok()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .play2 us par chalta hai.`);
 
-        const titleStr = p2Data.title || videoInfo?.title || 'Unknown';
-        const thumb    = p2Data.thumbnail || videoInfo?.thumbnail || null;
-        const dur      = p2Data.duration || videoInfo?.timestamp || 'N/A';
-        const quality  = p2Data.audio_quality || '320kbps';
+        const p2Track = await ytAudio(videoUrl, { maxBytes: 25 * 1024 * 1024 });
+
+        const titleStr = p2Track.title || videoInfo?.title || 'Unknown';
+        const thumb    = p2Track.thumbnail || videoInfo?.thumbnail || null;
+        const dur      = p2Track.duration ? Math.round(p2Track.duration / 60) + ' min' : (videoInfo?.timestamp || 'N/A');
+        const quality  = p2Track.quality || 'MP3 192kbps';
 
         const safeTitle2    = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const audioCaption2 = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
-        const [audioBuf2] = await Promise.all([
-            axios.get(p2Data.audio_url, {
-                responseType: 'arraybuffer',
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-                timeout: 180000,
-                maxContentLength: 200 * 1024 * 1024
-            }).then(r => Buffer.from(r.data)),
-            thumb ? devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption2 }, { quoted: m }) : Promise.resolve()
-        ]);
+        if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption: audioCaption2 }, { quoted: m });
 
         await devtrust.sendMessage(m.chat, {
-            audio: audioBuf2,
+            audio: p2Track.buffer,
             mimetype: 'audio/mpeg',
-            fileName: `${safeTitle2}.mp3`
+            fileName: p2Track.fileName || `${safeTitle2}.mp3`
         }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
@@ -12878,33 +12737,27 @@ case 'ytvideo': {
             videoUrl = videoInfo.url;
         }
 
-        // ── Use PrinceTech YTDL API ───────────────────────────────────────────
-        const apiRes = await axios.get(`https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(videoUrl)}`, { timeout: 60000 });
-        const apiData = apiRes.data?.result;
-        if (!apiData?.video_url) throw new Error('API did not return video URL');
+        // ── yt-dlp (local downloader, no third-party API) ────────────────────
+        const { ytVideo, available: _yvOk } = require('./allfunc/ytdl-local');
+        if (!_yvOk()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .ytvideo us par chalta hai.`);
 
-        const titleStr  = apiData.title || videoInfo?.title || 'Unknown';
-        const thumb     = apiData.thumbnail || videoInfo?.thumbnail || null;
-        const dur       = apiData.duration || videoInfo?.timestamp || 'N/A';
-        const quality   = apiData.video_quality || '720p';
+        const clip = await ytVideo(videoUrl, { maxBytes: 65 * 1024 * 1024, maxHeight: 720 });
+
+        const titleStr  = clip.title || videoInfo?.title || 'Unknown';
+        const thumb     = clip.thumbnail || videoInfo?.thumbnail || null;
+        const dur       = clip.duration ? Math.round(clip.duration / 60) + ' min' : (videoInfo?.timestamp || 'N/A');
+        const quality   = '720p';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const caption   = `🎬 *${titleStr}*\n⏱️ Duration: ${dur}\n🎚️ Quality: ${quality}\n\n⬇️ Downloading...`;
 
         if (thumb) await devtrust.sendMessage(m.chat, { image: { url: thumb }, caption }, { quoted: m });
 
-        const videoBuf = await axios.get(apiData.video_url, {
-            responseType: 'arraybuffer',
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            timeout: 300000,
-            maxContentLength: 500 * 1024 * 1024
-        }).then(r => Buffer.from(r.data));
-
-        const sizeMB = (videoBuf.length / 1024 / 1024).toFixed(2);
+        const sizeMB = (clip.filesize / 1024 / 1024).toFixed(2);
         await devtrust.sendMessage(m.chat, {
-            video: videoBuf,
+            video: clip.buffer,
             caption: `🎬 *${titleStr}*\n🎚️ Quality: ${quality}\n📦 Size: ${sizeMB} MB`,
             mimetype: 'video/mp4',
-            fileName: `${safeTitle}.mp4`
+            fileName: clip.fileName || `${safeTitle}.mp4`
         }, { quoted: m });
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
@@ -12935,20 +12788,20 @@ case 'ytdown': {
             _ydUrl  = _ydInfo.url;
         }
 
-        // ── PrinceTech YTDL API ───────────────────────────────────────────────
-        const _ydRes  = await axios.get(
-            `https://api.princetechn.com/api/download/ytdl?apikey=prince&url=${encodeURIComponent(_ydUrl)}`,
-            { timeout: 60000 }
-        );
-        const _yd = _ydRes.data?.result;
-        if (!_yd?.audio_url || !_yd?.video_url) throw new Error('API ne download URLs nahi diye');
+        // ── yt-dlp (local downloader, no third-party API) ────────────────────
+        const { ytInfo, ytAudio, ytVideo, available: _ydOk } = require('./allfunc/ytdl-local');
+        if (!_ydOk()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .ytdown us par chalta hai.`);
+
+        let _yd = null;
+        try { _yd = await ytInfo(_ydUrl); } catch (e) { _yd = {}; }
 
         const _ydTitle  = _yd.title || _ydInfo?.title || 'Unknown';
         const _ydThumb  = _yd.thumbnail || _ydInfo?.thumbnail || null;
-        const _ydDur    = _yd.duration || _ydInfo?.timestamp || 'N/A';
-        const _ydVQ     = _yd.video_quality || '720p';
-        const _ydAQ     = _yd.audio_quality || '320kbps';
+        const _ydDur    = _yd.duration ? Math.round(_yd.duration / 60) + ' min' : (_ydInfo?.timestamp || 'N/A');
+        const _ydVQ     = '720p';
+        const _ydAQ     = 'MP3 192kbps';
         const _ydSafe   = _ydTitle.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
+        const _ydSrcUrl = _ydUrl;
 
         const _ydMenu = `🎬 *${_ydTitle}*\n⏱️ *Duration:* ${_ydDur}\n\n*1️⃣  Video* — ${_ydVQ} (MP4)\n*2️⃣  Audio* — ${_ydAQ} (MP3)\n\n📌 *Reply 1 ya 2 karo download ke liye* (3 min mein)`
 
@@ -12971,15 +12824,11 @@ case 'ytdown': {
                 await devtrust.sendMessage(m.chat, { react: { text: '⬇️', key: msg.key } })
                 await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${isVid ? 'Video' : 'Audio'}...` }, { quoted: msg })
 
-                const dlUrl   = isVid ? _yd.video_url : _yd.audio_url;
-                const dlBuf   = await axios.get(dlUrl, {
-                    responseType: 'arraybuffer',
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-                    timeout: 300000,
-                    maxContentLength: 500 * 1024 * 1024
-                });
-                const fileBuf = Buffer.from(dlBuf.data);
-                const sizeMB  = (fileBuf.length / 1024 / 1024).toFixed(2);
+                const _ydDl = isVid
+                    ? await ytVideo(_ydSrcUrl, { maxBytes: 65 * 1024 * 1024, maxHeight: 720 })
+                    : await ytAudio(_ydSrcUrl, { maxBytes: 25 * 1024 * 1024 });
+                const fileBuf = _ydDl.buffer;
+                const sizeMB  = (_ydDl.filesize / 1024 / 1024).toFixed(2);
 
                 if (isVid) {
                     await devtrust.sendMessage(m.chat, {
@@ -13923,20 +13772,22 @@ case 'checkapis': {
     await reply("🔍 *Checking all APIs... please wait*");
 
     const _apis = [
-        { name: 'nekos.best (anime images)',  url: 'https://nekos.best/api/v2/waifu?amount=1' },
-        { name: 'nekos.best (fallback)',       url: 'https://nekos.best/api/v2/waifu?amount=1' },
-        { name: 'ryzendesu.vip (AI/tools)',    url: 'https://api.ryzendesu.vip/api/ai/chatgpt?text=hi' },
+        { name: 'nekos.life (anime images)',   url: 'https://nekos.life/api/v2/img/waifu' },
+        { name: 'nekos.life (neko)',           url: 'https://nekos.life/api/v2/img/neko' },
+        { name: 'pollinations (GFX images)',   url: 'https://image.pollinations.ai/prompt/cyber?width=256&height=256&nologo=true' },
+        { name: 'pollinations (AI text)',      url: 'https://text.pollinations.ai/hello' },
+        { name: 'popcat (text effects)',       url: 'https://api.popcat.xyz/pikachu?text=hi' },
         { name: 'catapi (cat images)',         url: 'https://api.thecatapi.com/v1/images/search' },
         { name: 'dogapi (dog images)',         url: 'https://dog.ceo/api/breeds/image/random' },
-        { name: 'openweather (weather)',       url: 'https://wttr.in/Karachi?format=j1' },
-        { name: 'nekos.best GIF (animekill)',  url: 'https://nekos.best/api/v2/shoot?amount=1' },
-        { name: 'nekos.best (anime alt)',      url: 'https://nekos.best/api/v2/neko?amount=1' },
+        { name: 'wttr.in (weather)',           url: 'https://wttr.in/Karachi?format=j1' },
+        { name: 'mail.tm (temp mail)',         url: 'https://api.mail.tm/domains' },
+        { name: 'iptv-org (TV channels)',      url: 'https://iptv-org.github.io/iptv/countries/pk.m3u' },
     ];
 
     const _results = await Promise.all(_apis.map(async ({ name, url }) => {
         const _start = Date.now();
         try {
-            const _res = await axios.get(url, { timeout: 7000 });
+            const _res = await axios.get(url, { timeout: 15000 });
             const _ms = Date.now() - _start;
             const _ok = _res.status >= 200 && _res.status < 300;
             return `${_ok ? '✅' : '⚠️'} *${name}*\n   └ ${_res.status} • ${_ms}ms`;
@@ -13946,9 +13797,20 @@ case 'checkapis': {
         }
     }));
 
+    // yt-dlp (local downloader for .play/.ytmp3/.ytvideo/.ytdown/.fb/.twitter)
+    let _ytdlLine;
+    try {
+        const _ytdl = require('./allfunc/ytdl-local');
+        _ytdlLine = _ytdl.available()
+            ? `✅ *yt-dlp (local downloads)*\n   └ installed`
+            : `❌ *yt-dlp (local downloads)*\n   └ NOT INSTALLED — Dockerfile se rebuild karo`;
+    } catch (_e) {
+        _ytdlLine = `❌ *yt-dlp (local downloads)*\n   └ ${_e.message}`;
+    }
+
     const _report = `🛰️ *CYBER API Status Report*\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        _results.join('\n') +
+        _results.join('\n') + '\n' + _ytdlLine +
         `\n━━━━━━━━━━━━━━━━━━━━\n` +
         `🕒 Checked at ${new Date().toLocaleTimeString('en-PK', { timeZone: 'Asia/Karachi' })}`;
 
@@ -14095,18 +13957,6 @@ case 'gitclone': {
             document: { url: url },
             fileName: filename + '.zip',
             mimetype: 'application/zip'
-        }),
-        { quoted: m }
-    );
-} 
-break;
-
-case 'coffee': 
-case 'kopi': {
-    devtrust.sendMessage(m.chat,
-        addNewsletterContext({
-            image: { url: 'https://coffee.alexflipnote.dev/random' },
-            caption: "☕ *Fresh Coffee*"
         }),
         { quoted: m }
     );
@@ -14535,7 +14385,14 @@ break;
 
 case 'imnxmxg':
 case 'pinterest': {
-    reply("⚠️ *Pinterest command temporarily disabled*\n\nThe Pinterest image search API is currently down.\n\n*Alternative:* Use Google Images and share the link directly, or try other image commands.");
+    reply(`⚠️ *Pinterest search available nahi*\n\n` +
+        `Pinterest ka koi public search API nahi hai (bina app-token ke 403 aata hai), ` +
+        `is liye ye command band kiya gaya hai.\n\n` +
+        `*Kaam karne wale alternatives:*\n` +
+        `• ${prefix}gfx CYBER | SEC — naya logo/design banata hai\n` +
+        `• ${prefix}anime / ${prefix}waifu — anime images\n` +
+        `• ${prefix}animewlp — anime wallpaper\n` +
+        `• ${prefix}wallpaper <topic> — HD wallpaper`);
 }
 break;
 
@@ -15164,41 +15021,6 @@ case "nsfw": {
 break;
 
 // Bulk anime image commands - all follow same pattern
-case 'akiyama': case 'ana': case 'art': case 'asuna': case 'ayuzawa':
-case 'boruto': case 'bts': case 'cecan': case 'chiho': case 'chitoge':
-case 'cogan': case 'cosplay': case 'cosplayloli': case 'cosplaysagiri':
-case 'cyber': case 'deidara': case 'doraemon': case 'elaina': case 'emilia':
-case 'erza': case 'exo': case 'femdom': case 'freefire': case 'gamewallpaper':
-case 'glasses': case 'gremory': case 'hacker': case 'hestia': case 'husbu':
-case 'inori': case 'islamic': case 'isuzu': case 'itachi': case 'itori':
-case 'jennie': case 'jiso': case 'justina': case 'kaga': case 'kagura':
-case 'kakashi': case 'kaori': case 'cartoon': case 'shortquote': case 'keneki':
-case 'kotori': case 'kpop': case 'kucing': case 'kurumi': case 'lisa':
-case 'loli': case 'madara': case 'megumin': case 'mikasa': case 'mikey':
-case 'miku': case 'minato': case 'mobile': case 'motor': case 'mountain':
-case 'naruto': case 'neko': case 'neko2': case 'nekonime': case 'nezuko':
-case 'onepiece': case 'pentol': case 'pokemon': case 'profil': case 'programming':
-case 'pubg': case 'randblackpink': case 'randomnime': case 'randomnime2':
-case 'rize': case 'rose': case 'ryujin': case 'sagiri': case 'sakura':
-case 'sasuke': case 'satanic': case 'shina': case 'shinka': case 'shinomiya':
-case 'shizuka': case 'shota': case 'space': case 'technology': case 'tejina': {
-    try {
-        const _animeUrl = await getAnimeImageUrl(command);
-        if (!_animeUrl) throw new Error('No image URL');
-        const imgBuffer = await getBuffer(_animeUrl);
-        await devtrust.sendMessage(m.chat,
-            {
-                image: imgBuffer,
-                caption: '🎌 *' + (command.charAt(0).toUpperCase() + command.slice(1)) + '*'
-            },
-            { quoted: m }
-        );
-    } catch (err) {
-        reply('❌ *Failed to fetch ' + command + ' image*');
-    }
-}
-break;
-
 case 'toukachan': {
     try {
         const _u = await getAnimeImageUrl('toukachan');
@@ -15630,6 +15452,7 @@ case 'gaycheck': case 'waifucheck': {
 }
 break;
 
+case 'metaai':
 case "metabcn-ai": {
     const chatId = m.key.remoteJid;
     let query = args.join(" ").trim();
@@ -15699,30 +15522,20 @@ case 'facebook': {
     await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
 
     try {
-        const fbRes = await axios.get(`https://api.princetechn.com/api/download/facebook?apikey=prince&url=${encodeURIComponent(fbUrl)}`);
-        const fbData = fbRes.data;
+        const { ytVideo, available: _fbOk } = require('./allfunc/ytdl-local');
+        if (!_fbOk()) return reply("❌ *yt-dlp installed nahi hai* — Dockerfile se dobara build karo.");
 
-        if (!fbData || fbData.status !== 200 || !fbData.result) {
-            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            return reply("❌ *Failed to fetch Facebook video*");
-        }
-
-        const fbResult = fbData.result;
-        const fbVidUrl = fbResult.hd_video || fbResult.sd_video;
-        if (!fbVidUrl) {
-            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            return reply("❌ *No downloadable video found*");
-        }
-
-        const fbCaption = `📹 *Facebook Video*\n${fbResult.title ? `\n📌 ${fbResult.title}` : ''}${fbResult.duration ? `\n⏱️ Duration: ${fbResult.duration}` : ''}`;
+        const fbClip = await ytVideo(fbUrl, { maxBytes: 65 * 1024 * 1024, maxHeight: 720, timeoutMs: 300000 });
+        const fbCaption = `📹 *Facebook Video*\n\n📦 Size: ${(fbClip.filesize / 1024 / 1024).toFixed(2)} MB`;
 
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                video: { url: fbVidUrl },
+                video: fbClip.buffer,
                 mimetype: "video/mp4",
-                caption: fbCaption
+                caption: fbCaption,
+                fileName: fbClip.fileName
             }),
             { quoted: m }
         );
@@ -15745,31 +15558,20 @@ case 'xdl': {
     await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
 
     try {
-        const twRes = await axios.get(`https://api.princetechn.com/api/download/twitter?apikey=prince&url=${encodeURIComponent(twUrl)}`);
-        const twData = twRes.data;
+        const { ytVideo, available: _twOk } = require('./allfunc/ytdl-local');
+        if (!_twOk()) return reply("❌ *yt-dlp installed nahi hai* — Dockerfile se dobara build karo.");
 
-        if (!twData || twData.status !== 200 || !twData.result) {
-            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            return reply("❌ *Failed to fetch Twitter/X video*");
-        }
-
-        const twResult = twData.result;
-        const twVideos = twResult.videoUrls;
-        if (!twVideos || twVideos.length === 0) {
-            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            return reply("❌ *No downloadable video found in this tweet*");
-        }
-
-        const bestVideo = twVideos[0];
-        const twCaption = `🐦 *Twitter/X Video*\n\n📊 Quality: ${bestVideo.quality}`;
+        const twClip = await ytVideo(twUrl, { maxBytes: 65 * 1024 * 1024, maxHeight: 720, timeoutMs: 300000 });
+        const twCaption = `🐦 *Twitter/X Video*\n\n📦 Size: ${(twClip.filesize / 1024 / 1024).toFixed(2)} MB`;
 
         await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
         await devtrust.sendMessage(m.chat,
             addNewsletterContext({
-                video: { url: bestVideo.url },
+                video: twClip.buffer,
                 mimetype: "video/mp4",
-                caption: twCaption
+                caption: twCaption,
+                fileName: twClip.fileName
             }),
             { quoted: m }
         );
@@ -15850,17 +15652,17 @@ case "newmail": {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '📧', key: m.key } });
         
-        // Generate new email
-        const response = await axios.get('https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1');
-        const email = response.data[0];
-
-        if (!email) return reply("❌ *Failed to generate email*");
+        // Generate new email (mail.tm — 1secmail band ho gaya tha)
+        const { createMailbox } = require('./allfunc/tempmail');
+        const mb = await createMailbox();
 
         // Store email for this user
         tempMailData[m.sender] = { 
-            email: email,
-            login: email.split('@')[0],
-            domain: email.split('@')[1],
+            email: mb.address,
+            login: mb.address.split('@')[0],
+            domain: mb.address.split('@')[1],
+            token: mb.token,
+            accountId: mb.accountId,
             createdAt: Date.now()
         };
 
@@ -15894,11 +15696,8 @@ case "inbox": {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '📬', key: m.key } });
         
-        const response = await axios.get(
-            `https://www.1secmail.com/api/v1/?action=getMessages&login=${userMail.login}&domain=${userMail.domain}`
-        );
-        
-        const messages = response.data;
+        const { getInbox } = require('./allfunc/tempmail');
+        const messages = await getInbox(userMail.token);
         
         if (!messages || messages.length === 0) {
             return reply(`📭 *Inbox Empty*\n\nYour inbox for ${userMail.email} has no messages.`);
@@ -15945,12 +15744,14 @@ case "reademail": {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '📖', key: m.key } });
         
-        const response = await axios.get(
-            `https://www.1secmail.com/api/v1/?action=readMessage&login=${userMail.login}&domain=${userMail.domain}&id=${messageId}`
-        );
-        
-        const message = response.data;
-        
+        const { readMessage } = require('./allfunc/tempmail');
+        let message;
+        try {
+            message = await readMessage(userMail.token, messageId);
+        } catch (e) {
+            return reply(`❌ *Message with ID ${messageId} not found*`);
+        }
+
         if (!message || !message.id) {
             return reply(`❌ *Message with ID ${messageId} not found*`);
         }
@@ -15960,11 +15761,10 @@ case "reademail": {
         messageText += `*Date:* ${message.date}\n`;
         messageText += `*Subject:* ${message.subject}\n\n`;
         
-        if (message.textBody) {
-            messageText += `*Content:*\n${message.textBody.substring(0, 1000)}`;
-            if (message.textBody.length > 1000) messageText += `...\n\n_(Message truncated)_`;
-        } else if (message.htmlBody) {
-            messageText += `*Content:* [HTML Content - Cannot display]`;
+        const body = message.text || (message.html ? String(message.html).replace(/<[^>]+>/g, ' ').trim() : '');
+        if (body) {
+            messageText += `*Content:*\n${body.substring(0, 1000)}`;
+            if (body.length > 1000) messageText += `...\n\n_(Message truncated)_`;
         } else {
             messageText += `*Content:* No text content`;
         }
@@ -15998,11 +15798,10 @@ case "deltmp": {
         
         const userMail = tempMailData[m.sender];
         
-        // Optional: Actually delete from 1secmail
-        if (userMail.login && userMail.domain) {
-            await axios.get(
-                `https://www.1secmail.com/api/v1/?action=deleteMailbox&login=${userMail.login}&domain=${userMail.domain}`
-            );
+        // mail.tm mailbox delete karo (best effort)
+        if (userMail.token && userMail.accountId) {
+            const { deleteMailbox } = require('./allfunc/tempmail');
+            await deleteMailbox(userMail.token, userMail.accountId);
         }
         
         // Remove from local storage
@@ -16023,47 +15822,53 @@ case "deltmp": {
 // ============================================
 
 case 'tempmail2': {
+    // mail.tm (apis.HansTz.my.id band ho gaya tha)
     try {
-        const res = await axios.get(`https://apis.HansTz.my.id/temp-mail`);
-        const data = res.data;
+        const { createMailbox } = require('./allfunc/tempmail');
+        const mb = await createMailbox();
 
-        if (!data.success) return reply(`❌ *Failed to generate*`);
-
-        global.tempMailSession = data.session_id;
+        tempMailData[m.sender] = {
+            email: mb.address,
+            login: mb.address.split('@')[0],
+            domain: mb.address.split('@')[1],
+            token: mb.token,
+            accountId: mb.accountId,
+            createdAt: Date.now()
+        };
+        global.tempMailSession = mb.token;
 
         reply(`📧 *Temp Mail*\n\n` +
-            `Email: ${data.email}\n` +
-            `Session: ${data.session_id}\n\n` +
-            `Use *tempmail-inbox ${data.session_id}* to check`);
+            `Email: ${mb.address}\n\n` +
+            `Inbox check karne ke liye *tempmail-inbox* ya *checkmail* use karo`);
     } catch (err) {
-        console.error(err);
-        reply(`❌ *Error*`);
+        console.error('tempmail2 error:', err.message);
+        reply(`❌ *Temp mail banane mein masla:* ${err.message}`);
     }
 }
 break;
 
 case 'tempmail-inbox': {
-    if (!args[0]) return reply(`❌ *Provide session ID*`);
+    const userMail = tempMailData[m.sender];
+    if (!userMail || !userMail.token) return reply(`❌ *Pehle tempmail banayo*\n\nUse *${prefix}tempmail* or *${prefix}tempmail2*`);
 
     try {
-        const sessionId = args[0];
-        const res = await axios.get(`https://apis.HansTz.my.id/temp-mail/inbox?id=${sessionId}`);
-        const data = res.data;
+        const { getInbox } = require('./allfunc/tempmail');
+        const messages = await getInbox(userMail.token);
 
-        if (!data.success) return reply(`❌ *Failed to fetch inbox*`);
+        if (!messages || messages.length === 0) return reply(`📭 *Inbox empty*\n\n${userMail.email}`);
 
-        if (data.messages.length === 0) return reply(`📭 *Inbox empty*`);
+        let inboxText = `📬 *Inbox - ${userMail.email}*\n\n`;
+        messages.forEach((msg, i) => {
+            inboxText += `📧 *Message ${i + 1}*\n` +
+                `From: ${msg.from}\n` +
+                `Subject: ${msg.subject}\n` +
+                `ID: ${msg.id}\n\n`;
+        });
+        inboxText += `_readmail [id] se message parho_`;
 
-        let inboxText = data.messages.map((msg, i) =>
-            `📧 *Message ${i + 1}*\n` +
-            `From: ${msg.fromAddr}\n` +
-            `To: ${msg.toAddr}\n` +
-            `Text: ${msg.text ? msg.text.substring(0, 200) + '...' : 'No preview'}`
-        ).join('\n\n');
-
-        reply(`📬 *Inbox*\n\n${inboxText}`);
+        reply(inboxText);
     } catch (err) {
-        console.error(err);
+        console.error('tempmail-inbox error:', err.message);
         reply(`❌ *Error*`);
     }
 }
@@ -16876,297 +16681,6 @@ _Dobara attack karne ke liye naya command use karo_`);
 }
 break;
 
-// ✨ TEXT MAKER COMMANDS
-
-case "glitchtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* glitchtext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "⚡ *Glitch Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "writetext": {
-    if (args.length < 1) return reply("✏️ *Usage:* writetext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/pikachu?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "✍️ *Write Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "advancedglow": {
-    if (args.length < 1) return reply("✏️ *Usage:* advancedglow CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/oogway?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "💡 *Advanced Glow*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "typographytext": {
-    if (args.length < 1) return reply("✏️ *Usage:* typographytext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/sadcat?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🖋️ *Typography*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "pixelglitch": {
-    if (args.length < 1) return reply("✏️ *Usage:* pixelglitch CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🧩 *Pixel Glitch*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "neonglitch": {
-    if (args.length < 1) return reply("✏️ *Usage:* neonglitch CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/unforgivable?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "💥 *Neon Glitch*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "flagtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* flagtext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/pikachu?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🇳🇬 *Flag Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "flag3dtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* flag3dtext CYBER");
-    
-    try {
-        let url = `https://api.popcat.xyz/oogway?text=${encodeURIComponent(args.join(" "))}`;
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🇺🇸 *3D Flag Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        reply("⚠️ *Error generating*");
-    }
-}
-break;
-
-case "deletingtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* deletingtext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "blackpinkstyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* blackpinkstyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "glowingtext": {
-    if (args.length < 1) return reply("✏️ *Usage:* glowingtext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "underwatertext": {
-    if (args.length < 1) return reply("✏️ *Usage:* underwatertext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "logomaker": {
-    if (args.length < 1) return reply("✏️ *Usage:* logomaker CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "cartoonstyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* cartoonstyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "papercutstyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* papercutstyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "watercolortext": {
-    if (args.length < 1) return reply("✏️ *Usage:* watercolortext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "effectclouds": {
-    if (args.length < 1) return reply("✏️ *Usage:* effectclouds CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "blackpinklogo": {
-    if (args.length < 1) return reply("✏️ *Usage:* blackpinklogo CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "gradienttext": {
-    if (args.length < 1) return reply("✏️ *Usage:* gradienttext Robin");
-    
-    try {
-        return reply("⚠️ *Text effect API is currently unavailable*");
-        await devtrust.sendMessage(from,
-            addNewsletterContext({
-                image: { url },
-                caption: "🌈 *Gradient Text*"
-            }),
-            { quoted: m }
-        );
-    } catch (e) {
-        console.error(e);
-        reply("⚠️ *Error generating Gradient Text*");
-    }
-}
-break;
-
-case "summerbeach": {
-    if (args.length < 1) return reply("✏️ *Usage:* summerbeach CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "luxurygold": {
-    if (args.length < 1) return reply("✏️ *Usage:* luxurygold CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "multicoloredneon": {
-    if (args.length < 1) return reply("✏️ *Usage:* multicoloredneon CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "sandsummer": {
-    if (args.length < 1) return reply("✏️ *Usage:* sandsummer CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "galaxywallpaper": {
-    if (args.length < 1) return reply("✏️ *Usage:* galaxywallpaper CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "style1917": {
-    if (args.length < 1) return reply("✏️ *Usage:* style1917 CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "makingneon": {
-    if (args.length < 1) return reply("✏️ *Usage:* makingneon CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "royaltext": {
-    if (args.length < 1) return reply("✏️ *Usage:* royaltext CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "freecreate": {
-    if (args.length < 1) return reply("✏️ *Usage:* freecreate CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "galaxystyle": {
-    if (args.length < 1) return reply("✏️ *Usage:* galaxystyle CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
-case "lighteffects": {
-    if (args.length < 1) return reply("✏️ *Usage:* lighteffects CYBER");
-        return reply("⚠️ *Text effect API is currently unavailable*");
-}
-break;
-
 // ======================[ 🔗 ANTILINKKICK ]======================
 case 'antilinkkick': {
     if (!m.isGroup) return reply("👥 *Groups only*");
@@ -17855,46 +17369,9 @@ break;
 // ═══════════════════════════════════════════════════════
 // 🎯 DARE — Quick dare without truth
 // ═══════════════════════════════════════════════════════
-case 'dare': {
-    const dares = [
-        "Apne best friend ko abhi call karo aur kehna 'I miss you' aur call kaat do",
-        "Apna phone kisi ko do aur woh koi bhi message bhej sakta hai jisko chahey",
-        "Agle 3 messages mein sirf caps mein likhna hoga",
-        "Apni voice mein koi bhi gaana record karke is chat mein bhejo",
-        "Apna embarrassing childhood story batao",
-        "Kisi random contact ko 'Happy Birthday' bhejo chahe unka birthday ho ya na ho",
-        "Next message mein apni duniya ki best selfie bhejo",
-        "1 minute mein 15 star bhi karo aur video send karo"
-    ];
-    reply(`🎯 *CYBER DARE*\n\n${dares[Math.floor(Math.random() * dares.length)]}`);
-}
-break;
-
 // ═══════════════════════════════════════════════════════
 // 💡 FACT — Random fun fact
 // ═══════════════════════════════════════════════════════
-case 'fact':
-case 'funfact': {
-    try {
-        const res = await axios.get('https://uselessfacts.jsph.pl/api/v2/facts/random?language=en', { timeout: 10000 });
-        const fact = res.data?.text;
-        if (!fact) throw new Error('No fact');
-        reply(`💡 *Random Fact*\n\n${fact}`);
-    } catch {
-        const facts = [
-            "Honey never spoils — 3000-year-old honey found in Egyptian tombs was still edible!",
-            "A day on Venus is longer than a year on Venus.",
-            "Cleopatra lived closer in time to the Moon landing than to the building of the Great Pyramid.",
-            "Bananas are slightly radioactive due to their potassium content.",
-            "Octopuses have three hearts and blue blood.",
-            "The human brain uses about 20% of the body's total energy.",
-            "Sharks are older than trees — they've been around for 450 million years.",
-        ];
-        reply(`💡 *Random Fact*\n\n${facts[Math.floor(Math.random() * facts.length)]}`);
-    }
-}
-break;
-
 // ═══════════════════════════════════════════════════════
 // 🧠 RIDDLE — Random riddle
 // ═══════════════════════════════════════════════════════
@@ -18049,39 +17526,8 @@ case 'ttt': {
 break;
 
 // ── coin — Flip a coin ──
-case 'coin':
-case 'coinflip':
-case 'flipcoin': {
-    const outcomes = ['Heads 🪙', 'Tails 🪙'];
-    reply(`🪙 *Coin Flip*\n\nResult: *${outcomes[Math.floor(Math.random() * outcomes.length)]}*`);
-}
-break;
-
 // ── coinbattle — Coin flip battle ──
-case 'coinbattle':
-case 'coinflipbattle': {
-    const txt = text?.trim() || '';
-    if (!txt && !m.quoted) return reply(`🎮 *Usage:* ${prefix}coinbattle <name>\nOr reply to someone's message\n\nExample: ${prefix}coinbattle @user`);
-    const opponent = m.quoted?.sender || m.mentionedJid?.[0] || null;
-    const oppName = opponent ? `@${opponent.split('@')[0]}` : txt;
-    if (opponent === m.sender) return reply(`❌ You can't battle yourself!`);
-    const result = Math.floor(Math.random() * 2) ? m.sender : opponent;
-    const resultName = result === m.sender ? 'YOU' : oppName;
-    reply(`⚔️ *Coin Battle* ⚔️\n\n${pushname} vs ${oppName}\n\n*Winner:* ${resultName} 🏆\n*Result:* ${Math.random() > 0.5 ? 'Heads 🪙' : 'Tails 🪙'}`);
-}
-break;
-
 // ── dice — Roll a dice ──
-case 'dice':
-case 'diceroll':
-case 'rolldice': {
-    const sides = parseInt(text?.trim()) || 6;
-    if (sides < 2 || sides > 100) return reply(`🎲 *Usage:* ${prefix}dice [sides]\n\nDefault is 6, max 100.`);
-    const roll = Math.floor(Math.random() * sides) + 1;
-    reply(`🎲 *Dice Roll* (d${sides})\n\nResult: *${roll}*`);
-}
-break;
-
 // ── emojiquiz — Emoji Quiz ──
 case 'emojiquiz':
 case 'emojiq':
@@ -18109,24 +17555,6 @@ case 'emojigame': {
 break;
 
 // ── gamefact — Random game fact ──
-case 'gamefact':
-case 'gamingfact': {
-    const facts = [
-        "The first video game ever created was 'Tennis for Two' in 1958.",
-        "Mario was originally called 'Jumpman' in the Donkey Kong arcade game.",
-        "The most expensive game to develop is Grand Theft Auto V at $265 million.",
-        "The original PAC-MAN was called 'Puck-Man' in Japan.",
-        "Tetris was created by a Russian programmer in 1984.",
-        "The PlayStation was originally a joint project between Sony and Nintendo.",
-        "Pikachu was originally going to be named 'Pikachu' as a combination of two Japanese words.",
-        "The longest video game marathon is 138 hours playing Sonic the Hedgehog.",
-        "There are over 1 million games on the App Store.",
-        "The best-selling game of all time is Minecraft with over 238 million copies."
-    ];
-    reply(`🎮 *Game Fact*\n\n${facts[Math.floor(Math.random() * facts.length)]}`);
-}
-break;
-
 // ── guess — Number guessing game ──
 case 'guess':
 case 'guessnumber':
@@ -18141,7 +17569,7 @@ case 'numberguess': {
     const target = Math.floor(Math.random() * (max - min + 1)) + min;
     if (!global.guessGames) global.guessGames = {};
     global.guessGames[m.chat] = { target, min, max, attempts: 0, over: false };
-    reply(`🔢 *Number Guess Game*\n\nI'm thinking of a number between *${min}* and *${max}*.\nType *${prefix}guess <number>* to guess!\n\n_You have 5 attempts._`);
+    reply(`🔢 *Number Guess Game*\n\nI'm thinking of a number between *${min}* and *${max}*.\nType *${prefix}guessans <number>* to guess!\n\n_You have 5 attempts._`);
     // Auto-cleanup after 2 minutes
     setTimeout(() => { if (global.guessGames?.[m.chat]) delete global.guessGames[m.chat]; }, 120000);
 }
@@ -18189,86 +17617,9 @@ case 'mathquiz': {
 break;
 
 // ── mathfact — Random math fact ──
-case 'mathfact':
-case 'mathematicsfact': {
-    try {
-        const { data } = await axios.get(`http://numbersapi.com/${Math.floor(Math.random() * 1000) + 1}/math`, { timeout: 5000 });
-        reply(`🔢 *Math Fact*\n\n${data}`);
-    } catch (e) {
-        const fallbacks = [
-            "Zero is the only number that can't be represented in Roman numerals.",
-            "A 'jiffy' is an actual unit of time: 1/100th of a second.",
-            "The number Pi (π) has been calculated to over 100 trillion digits.",
-            "The sum of all numbers from 1 to 100 is 5050.",
-            "There are 6! (720) ways to arrange 6 people around a table."
-        ];
-        reply(`🔢 *Math Fact*\n\n${fallbacks[Math.floor(Math.random() * fallbacks.length)]}`);
-    }
-}
-break;
-
 // ── numbattle / numberbattle — Number battle game ──
-case 'numbattle':
-case 'numberbattle': {
-    if (!m.isGroup) return reply(`👥 *Groups only!*`);
-    const target = m.mentionedJid?.[0] || m.quoted?.sender;
-    if (!target) return reply(`🎮 *Usage:* ${prefix}numbattle @user\n\nTag someone to battle!`);
-    if (target === m.sender) return reply(`❌ You can't battle yourself!`);
-    const myNum = Math.floor(Math.random() * 100) + 1;
-    const theirNum = Math.floor(Math.random() * 100) + 1;
-    let result;
-    if (myNum > theirNum) result = `${pushname} 🏆`;
-    else if (theirNum > myNum) result = `@${target.split('@')[0]} 🏆`;
-    else result = "It's a tie! 🤝";
-    reply(`⚔️ *Number Battle* ⚔️\n\n${pushname} → ${myNum}\n@${target.split('@')[0]} → ${theirNum}\n\n🏆 *Winner:* ${result}`);
-}
-break;
-
 // ── rps — Rock Paper Scissors ──
-case 'rps':
-case 'rockpaperscissors': {
-    const choices = ['rock 🪨', 'paper 📄', 'scissors ✂️'];
-    const userChoice = text?.trim().toLowerCase();
-    if (!userChoice || !['rock', 'paper', 'scissors'].includes(userChoice)) {
-        return reply(`🎮 *RPS*\n\nUsage: ${prefix}rps <rock|paper|scissors>\n\nExample: ${prefix}rps rock`);
-    }
-    const botChoice = choices[Math.floor(Math.random() * 3)];
-    let result;
-    const u = userChoice[0];
-    const b = botChoice[0];
-    if (u === b) result = "It's a tie! 🤝";
-    else if ((u === 'r' && b === 's') || (u === 'p' && b === 'r') || (u === 's' && b === 'p'))
-        result = "You win! 🎉";
-    else
-        result = "You lose! 😢";
-    reply(`🪨 📄 ✂️ *Rock Paper Scissors*\n\nYou: ${userChoice} ${result === 'You win! 🎉' ? '👑' : ''}\nBot: ${botChoice} ${result === 'You lose! 😢' ? '👑' : ''}\n\n*${result}*`);
-}
-break;
-
 // ── rpsls — Rock Paper Scissors Lizard Spock ──
-case 'rpsls':
-case 'rpslizardspock': {
-    const choices = ['rock 🪨', 'paper 📄', 'scissors ✂️', 'lizard 🦎', 'spock 🖖'];
-    const userChoice = text?.trim().toLowerCase();
-    if (!userChoice || !['rock', 'paper', 'scissors', 'lizard', 'spock'].includes(userChoice)) {
-        return reply(`🎮 *RPSLS*\n\nUsage: ${prefix}rpsls <rock|paper|scissors|lizard|spock>\n\nExample: ${prefix}rpsls spock`);
-    }
-    const botChoice = choices[Math.floor(Math.random() * 5)];
-    const rules = {
-        'rock': ['scissors', 'lizard'],
-        'paper': ['rock', 'spock'],
-        'scissors': ['paper', 'lizard'],
-        'lizard': ['spock', 'paper'],
-        'spock': ['scissors', 'rock']
-    };
-    let result;
-    if (userChoice === botChoice.split(' ')[0]) result = "It's a tie! 🤝";
-    else if (rules[userChoice].includes(botChoice.split(' ')[0])) result = "You win! 🎉";
-    else result = "You lose! 😢";
-    reply(`🪨 📄 ✂️ 🦎 🖖 *RPSLS*\n\nYou: ${userChoice} ${result === 'You win! 🎉' ? '👑' : ''}\nBot: ${botChoice} ${result === 'You lose! 😢' ? '👑' : ''}\n\n*${result}*`);
-}
-break;
-
 // ── hangguess — Guess a letter in Hangman ──
 case 'hangguess':
 case 'hangmanguess': {
