@@ -63,6 +63,23 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // ── Startup Diagnostics — Heroku logs mein dikh jaega kya set hai kya nahi ──
+// ── Env aliases (Railway / Render / Atlas use different variable names) ──
+if (!process.env.MONGO_URL) {
+  process.env.MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URI
+    || process.env.MONGO_PUBLIC_URL || process.env.MONGODB_URL || '';
+  if (!process.env.MONGO_URL) delete process.env.MONGO_URL;
+}
+if (!process.env.DATABASE_URL && process.env.DATABASE_PUBLIC_URL) {
+  process.env.DATABASE_URL = process.env.DATABASE_PUBLIC_URL;
+}
+// Missing JWT_SECRET used to crash the app. Derive a stable secret from the
+// (already secret) database URL so logins survive restarts; warn loudly.
+if (!process.env.JWT_SECRET && (process.env.MONGO_URL || process.env.DATABASE_URL)) {
+  process.env.JWT_SECRET = require('crypto').createHash('sha256')
+    .update('cybersecpro-jwt:' + (process.env.MONGO_URL || process.env.DATABASE_URL)).digest('hex');
+  console.warn('⚠️  JWT_SECRET not set — using a secret derived from the database URL. Set JWT_SECRET for best security.');
+}
+
 (function printStartupDiagnostics() {
   console.log('');
   console.log('╔══════════════════════════════════════════════════╗');
@@ -98,14 +115,15 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 
   if (!hasDatabase) {
-    console.error('  ❌ Database URL         MISSING — set MONGO_URL or DATABASE_URL in Heroku config vars!');
+    console.error('  ❌ Database URL         MISSING — set MONGO_URL (MongoDB) or DATABASE_URL (PostgreSQL) in your hosting Variables!');
     hasCriticalError = true;
   }
 
   console.log('');
   if (hasCriticalError) {
-    console.error('💥 Critical config missing — please set the above vars in Heroku Dashboard → Settings → Config Vars');
-    console.error('   Then restart dynos.');
+    console.error('💥 Critical config missing — set the vars marked ❌ above:');
+    console.error('   Railway: Service → Variables → New Variable, then Redeploy');
+    console.error('   Heroku : Dashboard → Settings → Config Vars, then restart dynos');
   } else {
     console.log('✅ All required config vars are set. Starting server...');
   }
