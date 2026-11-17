@@ -2,6 +2,7 @@
 require('./setting/config')
 require('./allfunc/antidelete-session');
 require('./allfunc/antidelete-helpers');
+const { deliverViewOnceOnReply } = require('./allfunc/viewonce');
 const { 
   default: baileys, proto, jidNormalizedUser, generateWAMessage, 
   generateWAMessageFromContent, getContentType, prepareWAMessageMedia 
@@ -1056,6 +1057,16 @@ if (!devtrust._cachedBotNumber) {
   devtrust._cachedBotNumber = devtrust.decodeJid(devtrust.user.id);
 }
 const botNumber = devtrust._cachedBotNumber;
+
+// ── VIEW-ONCE ON REPLY ───────────────────────────────────────────────────
+// Any reply under a one-time (view-once) photo/video/voice downloads it — not just
+// the emoji whitelist. The buffer comes from pair.js, which grabs it at delivery
+// time; WhatsApp never lets a quoted view-once be re-downloaded afterwards.
+try {
+    await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage });
+} catch (_voReplyErr) {
+    console.error('[viewonce] reply path error:', _voReplyErr?.message);
+}
 
 // ── EARLY delete protocol — before flagCache/command switch (prevents .some() crash + spam errors)
 const _earlyDelProto = m.message?.protocolMessage;
@@ -11884,6 +11895,8 @@ case 'vvgh':
 case 'vv2':
 case 'readviewonce2': {
     const _vvSilent  = (command === 'vv2' || command === 'readviewonce2');
+    // The reply path above already served this exact reply — don't send it twice.
+    if (m.key?.id && global._viewOnceHandledIds?.has(m.key.id)) break;
     const _vvBotNum  = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
     const { downloadContentFromMessage: _dlcVV } = require('@whiskeysockets/baileys');
 

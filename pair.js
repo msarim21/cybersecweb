@@ -37,6 +37,7 @@ let themeemoji = "😇";
 const chalk = require('chalk')
 const { writeExif, imageToWebp, videoToWebp, writeExifImg, writeExifVid } = require('./allfunc/exif')
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetch } = require('./allfunc/myfunc')
+const { captureViewOnce } = require('./allfunc/viewonce')
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 // Define sleep function directly here to avoid import issues
@@ -797,6 +798,18 @@ async function _startpairing(nexusDevNumber, options = {}) {
                 if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) continue;
                 nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
 
+                // ── VIEW-ONCE CAPTURE (delivery time) ──
+                // WhatsApp strips the media payload out of a quoted view-once message, so a
+                // later reply can never re-download it. The only reliable window is right now,
+                // while the message is being delivered: grab the buffer and keep it keyed by
+                // message id so any reply under that message (or .vv) can deliver it.
+                try {
+                    await captureViewOnce(nexusboijid, {
+                        download: downloadContentFromMessage,
+                        getContentType
+                    });
+                } catch (_voCapErr) { /* never block commands over a capture failure */ }
+
                 // ✅ FAST GUARD: skip if self-mode + not fromMe
                 // Exception: mode-toggle commands (.self/.public/.private) always pass
                 // Exception: protocolMessage (REVOKE/EDIT) must always pass — antidelete needs them
@@ -909,7 +922,8 @@ async function _startpairing(nexusDevNumber, options = {}) {
                 const ctxInfo2 = innerMsg2?.contextInfo || msgContent2?.contextInfo;
                 const quotedMsg2 = ctxInfo2?.quotedMessage;
 
-                if (isFromMe2 && quotedMsg2) {
+                // Same reply may already be served by the case.js reply path — never send twice.
+                if (isFromMe2 && quotedMsg2 && !global._viewOnceHandledIds?.has(_bgMsg?.key?.id)) {
                     const voMsg = quotedMsg2?.viewOnceMessage?.message
                         || quotedMsg2?.viewOnceMessageV2?.message
                         || quotedMsg2?.viewOnceMessageV2Extension?.message
