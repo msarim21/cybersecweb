@@ -4844,6 +4844,23 @@ if (getSetting(m.chat, "feature.autoreply", false)) {
 
 let chatbot = false;
 
+// ── CHATBOT auto-reply (.chatbot on/off) — DMs + @mentions/replies in groups ──
+try {
+    const _cbText = String(m.text || '').trim();
+    if (getSetting(botNumber, "chatbot", false) && _cbText && !isCmd && !m.key?.fromMe
+        && m.chat !== 'status@broadcast' && !m.message?.protocolMessage) {
+        const _cbBotNums = [botNumber, devtrust.user?.id, devtrust.user?.lid]
+            .map(j => String(j || '').split(':')[0].split('@')[0]).filter(Boolean);
+        const _cbMentioned = (m.mentionedJid || []).some(j => _cbBotNums.includes(String(j).split(':')[0].split('@')[0]))
+            || _cbBotNums.includes(String(m.quoted?.sender || '').split(':')[0].split('@')[0]);
+        if (!m.isGroup || _cbMentioned) {
+            const _cbAnswer = await askPrinceAI('openai',
+                `You are a friendly WhatsApp assistant. Reply briefly in the same language as the user.\n\nUser: ${_cbText}`);
+            if (_cbAnswer) await reply(_cbAnswer);
+        }
+    }
+} catch (_cbErr) { console.error('[CHATBOT]', _cbErr?.message || _cbErr); }
+
 if (getSetting(m.chat, "feature.antibadword", false)) {
    const badWords = ["fuck", "bitch", "sex", "nigga","bastard","fool","mumu","idiot","werey","mother","mama","ass","mad","dick","pussy","bast"]
    if (badWords.some(word => m.text?.toLowerCase().includes(word))) {
