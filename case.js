@@ -7614,8 +7614,7 @@ case 'pktv': {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '📺', key: m.key } });
 
-        const res = await axios.get('https://api.princetechn.com/api/newsstreaming/country/pk?apikey=prince', { timeout: 12000 });
-        const channels = res.data?.result?.channels;
+        const channels = await require('./allfunc/tv-channels').getPkChannels();
         if (!channels || !channels.length) throw new Error('No channels found');
 
         // Group by category
@@ -7656,13 +7655,12 @@ case 'pktv': {
 case 'tv':
 case 'livetv':
 case 'watchtv': {
-    if (!text) return reply(`📺 *CYBER Live TV*\n\nUsage: ${prefix}tv [channel name]\n\nExamples:\n• ${prefix}tv geo news\n• ${prefix}tv ary news\n• ${prefix}tv hum tv\n• ${prefix}tv ptv sports\n\nType *${prefix}tvmenu* to see all 91 channels`);
+    if (!text) return reply(`📺 *CYBER Live TV*\n\nUsage: ${prefix}tv [channel name]\n\nExamples:\n• ${prefix}tv geo news\n• ${prefix}tv ary news\n• ${prefix}tv hum tv\n• ${prefix}tv ptv sports\n\nType *${prefix}tvmenu* to see all channels`);
 
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '📺', key: m.key } });
 
-        const res = await axios.get('https://api.princetechn.com/api/newsstreaming/country/pk?apikey=prince', { timeout: 12000 });
-        const channels = res.data?.result?.channels;
+        const channels = await require('./allfunc/tv-channels').getPkChannels();
         if (!channels || !channels.length) throw new Error('No channels');
 
         const query = text.toLowerCase().trim();
@@ -11376,8 +11374,7 @@ case 'animewlp': {
     if (!isCreator) return reply(`🔒 *Owner only*`);
     
     try {
-        const waifudd = await axios.get(`https://nekos.best/api/v2/neko?amount=1`);
-        const imgUrl = waifudd.data?.results?.[0]?.url;
+        const imgUrl = await getAnimeImageUrl('waifu');
         if (!imgUrl) throw new Error('No image');
         const imgBuf = await getBuffer(imgUrl);
         await devtrust.sendMessage(m.chat, 
@@ -11518,52 +11515,10 @@ case 'animekill': {
         lick: 'nom', kill: 'shoot',
     };
     const nekosAction = nekosMap[action] || action;
-    let _agifBuf = null;
-    let _agifUrl = '';
     try {
-        const res1 = await axios.get(`https://nekos.best/api/v2/${nekosAction}?amount=1`, {
-            timeout: 10000, headers: { 'User-Agent': _ANIME_UA }
-        });
-        _agifUrl = res1.data?.results?.[0]?.url || '';
-    } catch (_) { /* fall through to nekos.life GIF */ }
-
-    // Fallback: nekos.life GIF endpoints (kiss / hug / slap / pat / smug)
-    if (!_agifUrl) {
-        const lifeGifMap = {
-            kiss: 'kiss', hug: 'hug', slap: 'slap', pat: 'pat', smug: 'smug',
-            glomp: 'hug', highfive: 'hug', wave: 'hug', smile: 'pat',
-            blush: 'pat', poke: 'pat', wink: 'pat', happy: 'pat',
-            bonk: 'slap', bully: 'slap', bite: 'slap', lick: 'kiss',
-            kill: 'slap', cringe: 'pat', dance: 'pat', yeet: 'slap',
-        };
-        const lifeKey = lifeGifMap[action] || 'pat';
-        try {
-            const res2 = await axios.get(`https://nekos.life/api/v2/img/${lifeKey}`, {
-                timeout: 10000, headers: { 'User-Agent': _ANIME_UA }
-            });
-            _agifUrl = res2.data?.url || '';
-        } catch (_) {}
-    }
-
-    if (!_agifUrl) return reply(`❌ *Anime ${action} APIs down — try again in a min*`);
-
-    try {
-        _agifBuf = await getBuffer(_agifUrl);
-        if (!_agifBuf || !Buffer.isBuffer(_agifBuf) || _agifBuf.length === 0) throw new Error('empty buffer');
-        await devtrust.sendMessage(m.chat,
-            { video: _agifBuf, gifPlayback: true, caption: `🎌 *Anime ${action}*` },
-            { quoted: m }
-        );
-    } catch (sErr) {
-        // Last-ditch: send as image URL (some GIFs play fine as image too)
-        try {
-            await devtrust.sendMessage(m.chat,
-                { image: { url: _agifUrl }, caption: `🎌 *Anime ${action}*` },
-                { quoted: m }
-            );
-        } catch (_) {
-            reply(`❌ *Anime ${action} failed — try again*`);
-        }
+        await require('./allfunc/anime-gif').sendAnimeReaction(devtrust, m, nekosAction, `🎌 *Anime ${action}*`);
+    } catch (e) {
+        reply(`❌ *Anime ${action} failed — try again*`);
     }
 }
 break;
@@ -11585,17 +11540,7 @@ case 'shinobu': case 'handhold': {
     const action = nekosActionMap[command] || command;
     
     try {
-        const { data } = await axios.get('https://nekos.best/api/v2/' + action + '?amount=1', { timeout: 15000 });
-        const gifUrl = data?.results?.[0]?.url;
-        if (!gifUrl) throw new Error('No GIF URL');
-        
-        // Download GIF buffer and send as video/GIF
-        const gifBuffer = await getBuffer(gifUrl);
-        await devtrust.sendMessage(m.chat, {
-            video: gifBuffer,
-            gifPlayback: true,
-            caption: '🎌 *Anime ' + command + '*'
-        }, { quoted: m });
+        await require('./allfunc/anime-gif').sendAnimeReaction(devtrust, m, action, '🎌 *Anime ' + command + '*');
     } catch (err) {
         reply('❌ *' + command + ' failed — try again*');
     }
@@ -18789,7 +18734,14 @@ function getAllPrivateChats(storeObj) {
 
 // ── Helper: detect media type from quoted message ─────────────────
 function getQuotedMediaType(quoted) {
-    if (!quoted || !quoted.message) return null;
+    if (!quoted) return null;
+    // smsg() gives m.quoted as the inner content (with .mtype), not { message }
+    if (!quoted.message && quoted.mtype) {
+        const t = String(quoted.mtype).replace('Message', '');
+        if (['video', 'audio', 'image', 'document'].includes(t)) return { type: t, msg: quoted };
+        return null;
+    }
+    if (!quoted.message) return null;
     const msg = quoted.message;
     if (msg.videoMessage) return { type: 'video', msg: msg.videoMessage };
     if (msg.audioMessage) return { type: 'audio', msg: msg.audioMessage };
@@ -18934,7 +18886,7 @@ case 'broadcastmenu': {
 ` +
           `🔄 ${prefix}bcrescan — Manually re-scan chats + groups
 ` +
-          `274c ${prefix}bcdel <num> 2014 Remove number from list
+          `❌ ${prefix}bcdel <num> — Remove number from list
 ` +
           `🚫 ${prefix}bcstop — Cancel active broadcast
 ` +
@@ -19233,7 +19185,13 @@ case 'bcauto': {
     if (fs.existsSync(bcFile)) {
         try { bcData = JSON.parse(fs.readFileSync(bcFile, 'utf-8')); } catch(_e) { bcData = {}; }
     }
-    const list = bcData[cleanNum];
+    let list = bcData[cleanNum];
+    if (!list || !list.length) {
+        try {
+            await require('./allfunc/broadcast-scan').autoScanBroadcastList(devtrust, cleanNum, store, { getAllGroups, getAllPrivateChats });
+            list = require('./allfunc/broadcast-scan').readAll()[cleanNum];
+        } catch (_e) {}
+    }
     if (!list || !list.length) {
         return reply('❌ *No auto-scan data found!*\n\n' +
             'Bot abhi scan nahi hua ya data nahi mila.\n' +
@@ -19285,8 +19243,7 @@ case 'bcrescan': {
     reply('🔄 *Manual Scan Shuru Ho Gaya!*\n\nApki sari chats + groups scan ho rahi hain...\nThodi der ruko (10-30 seconds).');
 
     try {
-        const pairModule = require('./pair');
-        const scanResults = await pairModule.autoScanBroadcastList(devtrust, cleanNum, store);
+        const scanResults = await require('./allfunc/broadcast-scan').autoScanBroadcastList(devtrust, cleanNum, store, { getAllGroups, getAllPrivateChats });
 
         if (scanResults && scanResults.total > 0) {
             reply('✅ *Scan Complete!*\n━━━━━━━━━━━━━━\n\n✅ Found *' + scanResults.total + '* contacts:\n• 👥 *' + scanResults.privateChats + '* Private Chats\n• 📁 *' + scanResults.groups + '* Groups\n\n*Ab use karo:*\n• *.bclist* — Apni list dekho\n• *.bcauto <msg>* — Broadcast karo');
@@ -19392,8 +19349,7 @@ case 'bcscan': {
     }, 3000);
 
     try {
-        const pairMod = require('./pair');
-        const scanRes = await pairMod.autoScanBroadcastList(devtrust, _bcNum, store);
+        const scanRes = await require('./allfunc/broadcast-scan').autoScanBroadcastList(devtrust, _bcNum, store, { getAllGroups, getAllPrivateChats });
         _scanDone = true;
         clearInterval(_progressTimer);
 
