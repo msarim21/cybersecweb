@@ -69,6 +69,24 @@ if (!process.env.MONGO_URL) {
     || process.env.MONGO_PUBLIC_URL || process.env.MONGODB_URL || '';
   if (!process.env.MONGO_URL) delete process.env.MONGO_URL;
 }
+// Clean common copy/paste mistakes in the Mongo link (spaces, quotes, <> brackets)
+// and print a SAFE summary (no password) so wrong values are easy to spot in logs.
+if (process.env.MONGO_URL) {
+  let u = String(process.env.MONGO_URL).trim().replace(/^['"`]+|['"`]+$/g, '').trim();
+  u = u.replace(/:<([^>]*)>@/, ':$1@');
+  process.env.MONGO_URL = u;
+  try {
+    const m = u.match(/^(mongodb(?:\+srv)?):\/\/([^:@\/]*)(?::(.*))?@([^\/?]+)(\/[^?]*)?/);
+    if (m) {
+      const pass = m[3] || '';
+      console.log('[mongo-check] user=' + m[2] + ' host=' + m[4] + ' db=' + ((m[5] || '/').slice(1) || '(default)')
+        + ' passwordLength=' + pass.length + (pass.includes('@') ? ' ⚠ password has @ — use %40' : '')
+        + (/\s/.test(pass) ? ' ⚠ password has spaces' : ''));
+    } else {
+      console.warn('[mongo-check] ⚠ MONGO_URL ka format sahi nahi — mongodb+srv://USER:PASS@HOST/DB hona chahiye');
+    }
+  } catch (_) {}
+}
 if (!process.env.DATABASE_URL && process.env.DATABASE_PUBLIC_URL) {
   process.env.DATABASE_URL = process.env.DATABASE_PUBLIC_URL;
 }
