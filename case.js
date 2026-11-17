@@ -5220,6 +5220,7 @@ case 'commandlist': {
 ┏━━◆ *CYBER - 𝐀𝐈* ◆━━┓
 │❖ ${prefix}ai
 │❖ ${prefix}aipic
+│❖ ${prefix}apimenu
 │❖ ${prefix}codeai
 │❖ ${prefix}deepseek
 │❖ ${prefix}gemini
@@ -5230,8 +5231,10 @@ case 'commandlist': {
 │❖ ${prefix}gpt5
 │❖ ${prefix}grok
 │❖ ${prefix}grovnnk-ai
+│❖ ${prefix}kyioai
 │❖ ${prefix}metaai
 │❖ ${prefix}metabcn-ai
+│❖ ${prefix}omegaai
 │❖ ${prefix}photoai
 │❖ ${prefix}qwen
 │❖ ${prefix}qwenxj
@@ -5431,6 +5434,7 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐁𝐔𝐆* ◆━━┓
 │❖ ${prefix}swdl
 │❖ ${prefix}tgstickers
 │❖ ${prefix}tiktok
+│❖ ${prefix}tiktoksearch
 │❖ ${prefix}tt
 │❖ ${prefix}twit
 │❖ ${prefix}twitter
@@ -5439,6 +5443,7 @@ ${_senderBugUnlocked ? `┏━━◆ *CYBER - 𝐁𝐔𝐆* ◆━━┓
 │❖ ${prefix}xdl
 ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}ytdl
+│❖ ${prefix}ytfind
 │❖ ${prefix}ytdown
 │❖ ${prefix}ytmp3
 │❖ ${prefix}ytmp4
@@ -5625,6 +5630,7 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 ┏━━◆ *CYBER - 𝐎𝐖𝐍𝐄𝐑* ◆━━┓
 │❖ .
 │❖ ${prefix}addsudo
+│❖ ${prefix}apistatus
 │❖ ${prefix}antibot
 │❖ ${prefix}antibadword
 │❖ ${prefix}antidelete
@@ -5746,8 +5752,10 @@ ${_senderAdultUnlocked ? '│❖ ' + prefix + 'xnxx' : ''}
 │❖ ${prefix}weather
 │❖ ${prefix}weather2
 │❖ ${prefix}weatherinfo
+│❖ ${prefix}weatherplus
 │❖ ${prefix}whois
 │❖ ${prefix}wiki
+│❖ ${prefix}wikifind
 │❖ ${prefix}webtoapk
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
@@ -6020,6 +6028,7 @@ case 'CYBERai': {
 ┏━━◆ *CYBER - 𝐀𝐈* ◆━━┓
 │❖ ${prefix}ai
 │❖ ${prefix}aipic
+│❖ ${prefix}apimenu
 │❖ ${prefix}codeai
 │❖ ${prefix}deepseek
 │❖ ${prefix}gemini
@@ -6030,8 +6039,10 @@ case 'CYBERai': {
 │❖ ${prefix}gpt5
 │❖ ${prefix}grok
 │❖ ${prefix}grovnnk-ai
+│❖ ${prefix}kyioai
 │❖ ${prefix}metaai
 │❖ ${prefix}metabcn-ai
+│❖ ${prefix}omegaai
 │❖ ${prefix}photoai
 │❖ ${prefix}qwen
 │❖ ${prefix}qwenxj
@@ -6502,7 +6513,9 @@ case 'CYBERdownload': {
 │❖ ${prefix}spotifydl
 │❖ ${prefix}tgstickers
 │❖ ${prefix}tiktok
+│❖ ${prefix}tiktoksearch
 │❖ ${prefix}tt
+│❖ ${prefix}ytfind
 │❖ ${prefix}ytmp3
 │❖ ${prefix}ytmp4
 │❖ ${prefix}ytsearch
@@ -7051,6 +7064,7 @@ case 'CYBERowner': {
 ┏━━◆ *CYBER - 𝐎𝐖𝐍𝐄𝐑* ◆━━┓
 │❖ .
 │❖ ${prefix}addsudo
+│❖ ${prefix}apistatus
 │❖ ${prefix}antibot
 │❖ ${prefix}antibadword
 │❖ ${prefix}antidelete
@@ -7328,8 +7342,10 @@ case 'CYBERtool': {
 │❖ ${prefix}weather
 │❖ ${prefix}weather2
 │❖ ${prefix}weatherinfo
+│❖ ${prefix}weatherplus
 │❖ ${prefix}whois
 │❖ ${prefix}wiki
+│❖ ${prefix}wikifind
 │❖ ${prefix}webtoapk
 │❖ ${prefix}wikipedia
 ┗━━━━━━━━━━━━━━━━━━━━┛
