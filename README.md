@@ -395,3 +395,15 @@ Found a security issue? Contact us privately:
 *© 2024–2026 CYBERSECPRO. All rights reserved.*
 
 </div>
+
+## 🚄 Deploy on Railway
+
+1. Railway → **New Project → Deploy from GitHub repo** → `cybersecweb`.
+2. Railway reads `railway.toml` and builds with the `Dockerfile` (Node 22 + ffmpeg + python3).
+3. **Variables** tab → add at least: `MONGO_URL` (or `DATABASE_URL`), `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`.
+   Optional: `TELEGRAM_BOT_TOKEN`, `PRIMARY_BOT_NUMBER`, `MAX_CONCURRENT_BOTS`, `NODE_HEAP_MB` (default 384).
+4. **Settings → Networking → Generate Domain**. Keep-alive auto-detects `RAILWAY_PUBLIC_DOMAIN`.
+5. Keep **1 replica** only — two replicas would open the same WhatsApp session twice (error 440).
+
+Heroku still works as before (`Procfile` + `app.json`). Both platforms now install one shared
+dependency tree from the root `package.json` (the old `server/` copy is no longer installed).

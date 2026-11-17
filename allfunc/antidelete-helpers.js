@@ -507,7 +507,7 @@ function cacheMessageForAntidelete(rawMsg, sock) {
 
         const rawMessage = rawMsg.message || {};
         const unwrapped = unwrapWaMessage(rawMessage);
-        const sender = rawMsg.key.participant || rawMsg.key.remoteJid;
+        const sender = rawMsg.key.participant || rawMsg.key.participantAlt || rawMsg.key.remoteJid;
         const existing = session.get(chatId, msgId);
 
         const state = {
@@ -572,8 +572,6 @@ async function _adLookupCachedMessage(sock, botNum, chatId, msgId, altChatIds = 
 
     const _adScanSession = (session) => {
         if (!session) return null;
-        const byId = session.findByMsgId(msgId);
-        if (byId?.entry) return byId.entry;
         for (const cid of tryIds) {
             const mem = session.get(cid, msgId);
             if (mem) return mem;
@@ -585,6 +583,10 @@ async function _adLookupCachedMessage(sock, botNum, chatId, msgId, altChatIds = 
                 return disk;
             }
         }
+        // Last resort: message IDs are random 16-32 char strings, so an ID-only
+        // match is safe enough when the chat JID changed (PN <-> LID switch).
+        const byId = session.findByMsgId(msgId);
+        if (byId?.entry) return byId.entry;
         return null;
     };
 
@@ -1008,11 +1010,8 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     // while the bot was offline. The cache is cold, so every lookup misses and
     // triggers an "[Original message not in cache]" report. Silently swallow
     // these for the first 60s after boot.
+    // Boot window: real recoveries still go through; only 'not in cache' spam is muted (see below).
     const isBootWindow = (Date.now() - global._adBootTs) < ANTI_SPAM_BOOT_WINDOW_MS;
-    if (isBootWindow) {
-        _adMarkDeleteProcessed(clean, chatId, msgId);
-        return false;
-    }
 
     let _tracker = tracker;
     if (!_tracker) {
@@ -1058,6 +1057,10 @@ async function _adHandleMessageDelete(sock, opts = {}) {
     }
 
     const target = (mode === 'chat' || mode === 'chat_groups') ? chatId : ownerJid;
+    if (!orig && isBootWindow) {
+        _adMarkDeleteProcessed(clean, chatId, msgId);
+        return false;
+    }
     if (!orig) {
         const text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${(deletedBy || 'unknown').split('@')[0]}\n` +

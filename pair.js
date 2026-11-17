@@ -742,6 +742,32 @@ async function _startpairing(nexusDevNumber, options = {}) {
             }
         } catch (_adCacheErr) {}
 
+        // ✅ ANTIEDIT CACHE — store original text BEFORE self/private guards,
+        // otherwise edits of messages that never reached case.js show "Not available".
+        try {
+            if (!global._antieditStore) global._antieditStore = new Map();
+            for (const _aeRaw of chatUpdate.messages) {
+                let _aeM = _aeRaw?.message;
+                if (!_aeM || !_aeRaw.key?.id || !_aeRaw.key?.remoteJid) continue;
+                if (_aeM.ephemeralMessage) _aeM = _aeM.ephemeralMessage.message || _aeM;
+                if (_aeM.protocolMessage || _aeM.editedMessage) continue;
+                const _aeText = _aeM.conversation || _aeM.extendedTextMessage?.text ||
+                    _aeM.imageMessage?.caption || _aeM.videoMessage?.caption ||
+                    _aeM.documentMessage?.caption || '';
+                const _aeEntry = {
+                    content: String(_aeText || ''),
+                    sender: String(_aeRaw.key.participant || _aeRaw.key.participantAlt || _aeRaw.key.remoteJid || ''),
+                    fromMe: Boolean(_aeRaw.key.fromMe),
+                    mtype: Object.keys(_aeM)[0] || '',
+                    _ts: Date.now(),
+                };
+                for (const _aeCid of [_aeRaw.key.remoteJid, _aeRaw.key.remoteJidAlt].filter(Boolean)) {
+                    if (!global._antieditStore.has(_aeCid)) global._antieditStore.set(_aeCid, new Map());
+                    if (!global._antieditStore.get(_aeCid).has(_aeRaw.key.id)) global._antieditStore.get(_aeCid).set(_aeRaw.key.id, _aeEntry);
+                }
+            }
+        } catch (_aeCacheErr) {}
+
         // ✅ SUBSCRIPTION GUARD — check once per batch (not per-message — saves DB round trips)
         try {
             const { isNumberAuthorized, enforceSubscriptionOrDisconnect } = require('./allfunc/subscription-guard');
@@ -962,6 +988,31 @@ async function _startpairing(nexusDevNumber, options = {}) {
     });
 
     // ✅ ANTIDELETE DELETE HANDLER — catches every WhatsApp message deletion
+    // ✅ ANTIEDIT via messages.update — Baileys v7 often delivers edits here
+    // instead of messages.upsert. Re-emit them as a protocol EDIT message so the
+    // single anti-edit handler in case.js processes them (it de-duplicates).
+    nexus.ev.on('messages.update', async (updates) => {
+        try {
+            if (!nexus.user || !Array.isArray(updates)) return;
+            for (const u of updates) {
+                const msg = u?.update?.message;
+                if (!msg || !u.key?.remoteJid) continue;
+                const proto = msg.protocolMessage;
+                const edited = proto?.editedMessage || msg.editedMessage?.message;
+                if (!edited) continue;
+                const origKey = proto?.key || u.key;
+                nexus.ev.emit('messages.upsert', {
+                    type: 'notify',
+                    messages: [{
+                        key: { ...u.key, id: `AEUPD${origKey.id}`.slice(0, 32) },
+                        message: { protocolMessage: { type: 14, key: origKey, editedMessage: edited } },
+                        messageTimestamp: Math.floor(Date.now() / 1000),
+                    }],
+                });
+            }
+        } catch (_aeUpdErr) {}
+    });
+
     nexus.ev.on('messages.delete', async (item) => {
         try {
             if (!nexus.user) return;
@@ -1717,7 +1768,7 @@ function smsg(nexus, m, store) {
             m.getQuotedObj = m.getQuotedMessage = async () => {
                 if (!m.quoted.id) return false
                 let q = await store.loadMessage(m.chat, m.quoted.id, nexus)
-                return exports.smsg(nexus, q, store)
+                return smsg(nexus, q, store)
             }
             let vM = m.quoted.fakeObj = M.fromObject({
                 key: {
@@ -1746,7 +1797,7 @@ function smsg(nexus, m, store) {
         }
         return Buffer.isBuffer(text) ? nexus.sendMedia(chatId, text, 'file', '', m, { ...options }) : nexus.sendText(chatId, text, m, { ...options });
     }
-    m.copy = () => exports.smsg(nexus, M.fromObject(M.toObject(m)))
+    m.copy = () => smsg(nexus, M.fromObject(M.toObject(m)))
     m.copyNForward = (jid = m.chat, forceForward = false, options = {}) => nexus.copyNForward(jid, m, forceForward, options)
 
     return m

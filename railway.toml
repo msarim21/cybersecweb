@@ -1,12 +1,11 @@
+# Railway deployment — uses the Dockerfile (Node 22 + ffmpeg + python3)
 [build]
-builder = "nixpacks"
-buildCommand = "npm install --legacy-peer-deps && npm run build"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "node server/index.js"
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 10
-
-[environment]
-NODE_ENV = "production"
-NPM_CONFIG_LEGACY_PEER_DEPS = "true"
+healthcheckPath = "/api/ping"
+healthcheckTimeout = 120
+restartPolicyType = "ALWAYS"
+# Only ONE replica: two processes would open the same WhatsApp session (440 conflict)
+numReplicas = 1

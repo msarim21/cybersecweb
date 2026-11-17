@@ -1,0 +1,12 @@
+# Fallback if the Railway builder is switched to Nixpacks
+[phases.setup]
+nixPkgs = ["nodejs_22", "ffmpeg", "python3", "libwebp", "imagemagick"]
+
+[phases.install]
+cmds = ["npm install --omit=dev --legacy-peer-deps"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node --max-old-space-size=384 server/index.js"

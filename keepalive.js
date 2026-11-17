@@ -11,10 +11,11 @@ let _started = false;
 
 function getAppUrl() {
     if (process.env.APP_URL)                       return process.env.APP_URL;
+    if (process.env.RAILWAY_PUBLIC_DOMAIN)          return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+    if (process.env.RAILWAY_STATIC_URL)             return `https://${process.env.RAILWAY_STATIC_URL}`;
     if (process.env.HEROKU_APP_NAME)               return `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
     if (process.env.HEROKU_APP_DEFAULT_DOMAIN_NAME) return `https://${process.env.HEROKU_APP_DEFAULT_DOMAIN_NAME}`;
     if (process.env.RENDER_EXTERNAL_URL)            return process.env.RENDER_EXTERNAL_URL;
-    if (process.env.RAILWAY_PUBLIC_DOMAIN)          return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
     if (process.env.REPLIT_DEV_DOMAIN)             return `https://${process.env.REPLIT_DEV_DOMAIN}`;
     if (process.env.REPL_SLUG && process.env.REPL_OWNER) {
         return `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;

@@ -425,33 +425,10 @@ function _antideleteCfgFile(botNum) {
     return ANTIDELETE_CONFIG_FILE;
 }
 function loadAntideleteCfg(botNum) {
-    // 1. Check per-bot in-memory cache first (fastest)
-    if (!global._antideleteConfigs) global._antideleteConfigs = {};
-    if (botNum && global._antideleteConfigs[botNum]) return global._antideleteConfigs[botNum];
-
-    // 2. Read per-bot file only (NO global fallback — prevents cross-session contamination)
-    const filesToTry = botNum
-        ? [`./database/antidelete_config_${botNum}.json`]
-        : [ANTIDELETE_CONFIG_FILE]; // only used if botNum is empty (edge case)
-    for (const f of filesToTry) {
-        try {
-            if (fs.existsSync(f)) {
-                const d = JSON.parse(fs.readFileSync(f, 'utf-8'));
-                // migrate old format { enabled: true/false }
-                const result = d.mode ? d : (d.enabled === true ? { mode: 'private' } : null);
-                if (result) {
-                    if (botNum) global._antideleteConfigs[botNum] = result; // cache it
-                    return result;
-                }
-            }
-        } catch (e) {}
-    }
-    // AUTO-ENABLE: default to 'private' instead of 'off' so antidelete works out-of-the-box.
-    // If user explicitly runs ".antidelete off", saveAntideleteCfg writes 'off' to disk+cache
-    // and that cached value is returned above — this default only fires when NO config exists at all.
-    const _default = { mode: 'private' };
-    if (botNum) global._antideleteConfigs[botNum] = _default;
-    return _default;
+    // Single source of truth shared with allfunc/antidelete-helpers.js so the
+    // command and the delete handler never disagree about on/off.
+    try { return require('./allfunc/antidelete-helpers').loadAntideleteCfg(botNum); }
+    catch (_) { return { mode: 'private', enabled: true }; }
 }
 function saveAntideleteCfg(cfg, botNum) {
     const cfgFile = _antideleteCfgFile(botNum);
@@ -603,7 +580,11 @@ if (chatUpdate && chatUpdate.type === 'append') {
             ? global.prefa.filter(p => p)
             : ['.', '!', '#', '&'];
         // Use the actual command grammar; global.prefa can be unset in multi-bot workers.
-        const _appendIsCmd = /^[.!\/#$%&*]\S*/.test(_appendBodyStr);
+        let _appendUserPrefix = '';
+        try { _appendUserPrefix = String(getUserPrefix(m.sender) || ''); } catch (_) {}
+        const _appendIsCmd = /^[.!\/#$%&*]\S*/.test(_appendBodyStr)
+            || (_appendUserPrefix && _appendBodyStr.startsWith(_appendUserPrefix))
+            || _knownPrefixes.some(p => _appendBodyStr.startsWith(String(p)));
         if (!_appendIsCmd) return;
     }
 }
@@ -1178,9 +1159,14 @@ if (_botDisabled) return;
 
 const _jidNum = (j) => String(j || '').split(':')[0].split('@')[0].replace(/[^0-9]/g, '');
 const _senderNum = _jidNum(m.sender);
+// Baileys v7: sender may be an @lid. Also compare the real phone number (PN)
+// WhatsApp sends in participantAlt / remoteJidAlt / senderPn.
+const _senderPnNums = [m.key?.participantAlt, m.key?.remoteJidAlt, m.key?.senderPn, m.key?.participantPn]
+    .filter(j => j && String(j).includes('@s.whatsapp.net')).map(_jidNum).filter(Boolean);
+const _senderAllNums = [...new Set([_senderNum, ..._senderPnNums].filter(Boolean))];
 const _ownerList = Array.isArray(owner) ? owner : [];
 const _premiumList = Array.isArray(Premium) ? Premium : [];
-const isCreator = [botNumber, ..._ownerList].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
+const isCreator = [botNumber, ..._ownerList].some((v) => _senderAllNums.includes(_jidNum(v))) || Boolean(m.key?.fromMe);
 const isDev = _ownerList.map(v => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net');
 const isOwner = isCreator;
 const isPremium = [botNumber, ..._premiumList].some((v) => _jidNum(v) === _senderNum) || Boolean(m.key?.fromMe);
@@ -1287,8 +1273,15 @@ let groupName = '';
 
 function _syncGroupFlags() {
   if (!m.isGroup) return;
-  isBotAdmins = groupAdmins.includes(botNumber);
-  isAdmins = groupAdmins.includes(m.sender);
+  // v7 participants: id may be @lid with phoneNumber holding the @s.whatsapp.net jid
+  const _adminNums = new Set();
+  for (const p of (participants || [])) {
+    if (p?.admin !== 'admin' && p?.admin !== 'superadmin') continue;
+    for (const j of [p.id, p.jid, p.lid, p.phoneNumber]) { const n = _jidNum(j); if (n) _adminNums.add(n); }
+  }
+  const _botNums = [botNumber, devtrust.user?.id, devtrust.user?.lid].map(_jidNum).filter(Boolean);
+  isBotAdmins = groupAdmins.includes(botNumber) || _botNums.some(n => _adminNums.has(n));
+  isAdmins = groupAdmins.includes(m.sender) || _senderAllNums.some(n => _adminNums.has(n));
   groupName = groupMetadata?.subject || '';
 }
 
@@ -4089,7 +4082,9 @@ if (!(isCmd && _cmdFastPath) && m.key?.id && m.key?.remoteJid && !m.message?.pro
 }
 
 // ── Detect EDIT events ──
-const _antieditProto = m.message?.protocolMessage;
+const _antieditProto = m.message?.protocolMessage
+    || m.message?.editedMessage?.message?.protocolMessage
+    || (m.message?.editedMessage?.message && m.key?.id ? { type: 14, key: m.key, editedMessage: m.message.editedMessage.message } : null);
 if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
     const _aeBotNumAE = jidToNum(getBotJid(devtrust)); const _aeCfg = loadAntieditCfg(_aeBotNumAE);
     const _aeMode = _aeCfg.mode || 'off';
@@ -4108,7 +4103,20 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                 _aeEditedMsg?.imageMessage?.caption || _aeEditedMsg?.videoMessage?.caption ||
                 _aeEditedMsg?.documentMessage?.caption || '';
             if (_aeChatId && _aeOrigId) {
-                const _aeOrigMsg = global._antieditStore.get(_aeChatId)?.get(_aeOrigId) || null;
+                const _aeAltChat = m.key?.remoteJidAlt || _antieditProto.key?.remoteJidAlt || '';
+                let _aeOrigMsg = global._antieditStore.get(_aeChatId)?.get(_aeOrigId)
+                    || (_aeAltChat && global._antieditStore.get(_aeAltChat)?.get(_aeOrigId)) || null;
+                if (!_aeOrigMsg) {
+                    for (const _aeMap of global._antieditStore.values()) {
+                        if (_aeMap.has(_aeOrigId)) { _aeOrigMsg = _aeMap.get(_aeOrigId); break; }
+                    }
+                }
+                // Same edit can arrive via messages.upsert AND messages.update — report once
+                if (!global._aeSeenEdits) global._aeSeenEdits = new Map();
+                const _aeDedupKey = `${jidToNum(getBotJid(devtrust))}|${_aeOrigId}|${_aeNewText}`;
+                if (global._aeSeenEdits.has(_aeDedupKey)) return;
+                global._aeSeenEdits.set(_aeDedupKey, Date.now());
+                if (global._aeSeenEdits.size > 500) global._aeSeenEdits.delete(global._aeSeenEdits.keys().next().value);
                 const _aeOldText = _aeOrigMsg ? (_aeOrigMsg.content || '') : '';
                 const _aeSender = _aeOrigMsg?.sender || _aeEditedBy || _aeChatId;
                 // Strip :1 device suffix for proper number comparison
@@ -4127,7 +4135,6 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                 if (_aeMode === 'private_pm' && _aeIsGroup) { return; }
                 if (_aeMode === 'private_groups' && !_aeIsGroup) { return; }
                 if (_aeMode === 'chat_groups' && !_aeIsGroup) { return; }
-                if (_aeMode === 'chat' && _aeIsGroup) { return; }
                 let _aeGroupName = '';
                 if (_aeIsGroup) { try { _aeGroupName = (await devtrust.groupMetadata(_aeChatId)).subject; } catch (e) {} }
                 const _aeMentions = [...new Set([_aeSender, _aeEditedBy].filter(j => j && j.includes('@')))];
@@ -4138,6 +4145,8 @@ if (_antieditProto?.editedMessage || _antieditProto?.type === 14) {
                     (_aeIsGroup ? `*👥 Group:* ${_aeGroupName || _aeChatId.split('@')[0]}\n` : `*💬 Chat:* Private\n`) +
                     `\n*📄 Old Message:*\n${_aeOldText || '_Not available_'}\n` +
                     `\n*📝 New (Edited) Message:*\n${_aeNewText || '_Empty_'}`;
+                // Remember the new text so a second edit shows the right "old" message
+                if (_aeOrigMsg) { _aeOrigMsg.content = _aeNewText; _aeOrigMsg._ts = Date.now(); }
                 if (_aeMode === 'chat' || _aeMode === 'chat_groups') {
                     await devtrust.sendMessage(_aeChatId, { text: _aeReport, mentions: _aeMentions });
                 } else {
@@ -4476,7 +4485,9 @@ if (getSetting(m.sender, "banned", false)) {
 if (m.isGroup && !_cmdFastPath) {
   await ensureGroupContext();
 } else if (m.isGroup && _cmdFastPath) {
-  _groupContextLoaded = true;
+  // Owner commands still need real admin/participant info (kick, promote,
+  // tagadmin, vcf...). Metadata is cached 30 min, so this stays fast.
+  await ensureGroupContext();
 }
 
 if (!_ownerFastLane && !isCmd && getSetting(m.chat, "autoReact", false)) {
