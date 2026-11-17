@@ -79,6 +79,12 @@ async function askFallback(provider, query, options) {
 async function askPrinceAI(provider, prompt, options = {}) {
     const query = String(prompt || '').trim();
     if (!query) throw new Error('AI prompt is empty');
+    // Try verified providers before the old offline service. Keep legacy fallbacks.
+    try {
+        return await require('./public-providers').askAI(query, options);
+    } catch (providerErr) {
+        console.warn(`[AI] Public providers unavailable (${providerErr.message}) — trying legacy fallbacks`);
+    }
     try {
         return await askPrinceTech(provider, query, options);
     } catch (primaryErr) {

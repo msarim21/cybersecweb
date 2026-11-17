@@ -5116,6 +5116,9 @@ if (m.message?.stickerMessage && !command) {
     } catch (e) {}
 }
 
+// Verified public-provider commands share one dispatcher.
+if (await require('./allfunc/provider-commands').handle({ command, text, prefix, reply, isCreator })) return;
+
 // ============ MENU COMMAND ============
 
 switch(command) {
@@ -5929,6 +5932,7 @@ case 'CYBER': {
 ┏━━◆ *CYBER - 𝐌𝐄𝐍𝐔 𝐂𝐀𝐓𝐄𝐆𝐎𝐑𝐈𝐄𝐒* ◆━━┓
 │❖ ${prefix}allmenu
 │❖ ${prefix}aimenu
+│❖ ${prefix}apimenu
 │❖ ${prefix}animemenu
 ${_senderBugUnlocked ? '│❖ ' + prefix + 'bugmenu' : ''}
 │❖ ${prefix}downloadmenu
@@ -9656,8 +9660,15 @@ case 'tt': {
         let audioUrl = null;
         let videoTitle = 'TikTok Video';
 
-        // PRIMARY: tikwm.com — reliable no-watermark API
+        // Verified Nexray downloader first; keep the legacy fallbacks.
         try {
+            const result = await require('./allfunc/public-providers').tiktokDownload(text);
+            videoUrl = result.video;
+            videoTitle = result.title;
+        } catch (_) {}
+
+        // Legacy fallback: tikwm.com
+        if (!videoUrl) try {
             const r1 = await axios.post('https://www.tikwm.com/api/', 
                 new URLSearchParams({ url: text, count: 12, cursor: 0, hd: 1 }),
                 { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
@@ -13810,7 +13821,7 @@ case 'checkapis': {
 
     const _report = `🛰️ *CYBER API Status Report*\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        _results.join('\n') + '\n' + _ytdlLine +
+        _results.join('\n') + '\n' + _ytdlLine + '\n' + (await require('./allfunc/public-providers').health()).join('\n') +
         `\n━━━━━━━━━━━━━━━━━━━━\n` +
         `🕒 Checked at ${new Date().toLocaleTimeString('en-PK', { timeZone: 'Asia/Karachi' })}`;
 
@@ -14344,55 +14355,25 @@ case 'imbd': {
 }
 
 case 'tiktoksearch': {
-    if (!text) return reply("🎵 *Enter a search term*");
-
+    if (!text) return reply(`Usage: ${prefix}tiktoksearch <query>`);
     try {
-        let query = text;
-        let url = `https://www.tikwm.com/api/?url=${encodeURIComponent(query)}`;
-        let response = await fetch(url);
-        let json = await response.json();
-
-        if (!json.status || !json.data || json.data.length === 0) {
-            return reply("❌ *No results found*");
-        }
-
-        let videos = json.data.slice(0, 3);
-
-        for (let i = 0; i < videos.length; i++) {
-            let vid = videos[i];
-            let date = new Date(vid.create_time * 1000);
-            let info = `🎵 *TikTok #${i+1}*\n\n` +
-                `👍 ${vid.digg_count} likes\n` +
-                `👀 ${vid.play_count} views\n` +
-                `📝 ${vid.title}\n` +
-                `📅 ${date.toDateString()}`;
-
-            await devtrust.sendMessage(m.chat,
-                addNewsletterContext({
-                    video: { url: vid.play },
-                    caption: info
-                }),
-                { quoted: m }
-            );
-        }
-    } catch (err) {
-        console.log(err);
-        reply("❌ *Error fetching TikTok data*");
-    }
+        const rows = await require('./allfunc/public-providers').tiktokSearch(text);
+        for (const row of rows) await devtrust.sendMessage(m.chat, {
+            video: { url: row.video }, caption: `${row.title}\nViews: ${row.views}`
+        }, { quoted: m });
+    } catch (e) { await reply(`TikTok search unavailable: ${e.message}`); }
 }
 break;
 
-
 case 'imnxmxg':
 case 'pinterest': {
-    reply(`⚠️ *Pinterest search available nahi*\n\n` +
-        `Pinterest ka koi public search API nahi hai (bina app-token ke 403 aata hai), ` +
-        `is liye ye command band kiya gaya hai.\n\n` +
-        `*Kaam karne wale alternatives:*\n` +
-        `• ${prefix}gfx CYBER | SEC — naya logo/design banata hai\n` +
-        `• ${prefix}anime / ${prefix}waifu — anime images\n` +
-        `• ${prefix}animewlp — anime wallpaper\n` +
-        `• ${prefix}wallpaper <topic> — HD wallpaper`);
+    if (!text) return reply(`Usage: ${prefix}pinterest <query>`);
+    try {
+        const rows = await require('./allfunc/public-providers').pinterest(text);
+        for (const row of rows) await devtrust.sendMessage(m.chat, {
+            image: { url: row.image }, caption: `${row.title}\n${row.url}`
+        }, { quoted: m });
+    } catch (e) { await reply(`Pinterest unavailable: ${e.message}`); }
 }
 break;
 
