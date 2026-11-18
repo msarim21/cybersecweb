@@ -27,6 +27,7 @@ function resetGlobals() {
     global._lastViewOnce = undefined;
     global._viewOnceHandledIds = undefined;
     global._viewOnceNoticeIds = undefined;
+    global._viewOnceCaptureInflight = undefined;
 }
 
 // A fake Baileys downloader: returns the given bytes as one async-iterable chunk.
@@ -310,6 +311,161 @@ console.log('\n=== View-once capture / reply tests ===\n');
         assert.strictEqual(sent[0].jid, BOT);
         assert.ok(sent[0].p.text.includes('One-time photo'));
         assert.ok(sent[0].p.text.includes('923001112222'));
+    });
+
+    // ── Deep-fix regression tests (offline E2E + failure reasons) ──────────
+
+    await ok('END-TO-END: realistic V2 photo captures and delivers on reply (only the network is mocked)', async () => {
+        resetGlobals();
+        // Real-shaped envelope: every field Baileys' downloader reads.
+        const real = {
+            viewOnceMessageV2: {
+                message: {
+                    imageMessage: {
+                        url: 'https://mmg.whatsapp.net/d/f/ABC123.enc',
+                        directPath: '/d/f/ABC123.enc',
+                        mediaKey: Buffer.alloc(32, 9),
+                        mimetype: 'image/jpeg',
+                        fileSha256: Buffer.alloc(32, 1),
+                        fileEncSha256: Buffer.alloc(32, 2),
+                        mediaKeyTimestamp: 1794900000,
+                        fileLength: 123456,
+                        caption: 'real photo',
+                        viewOnce: true
+                    }
+                }
+            }
+        };
+        const photoBytes = Buffer.from('REAL-PHOTO-BYTES');
+        const e = await vo.captureViewOnce(rawMsg('E2E1', CHAT, real, '923001112222@s.whatsapp.net'), { download: fakeDownload(photoBytes) });
+        assert.strictEqual(e.buffer.toString(), 'REAL-PHOTO-BYTES');
+        assert.strictEqual(e.msg.imageMessage.directPath, '/d/f/ABC123.enc', 'envelope must survive in the entry');
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push({ jid, p }) };
+        const m = { key: { id: 'R-E2E' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+            quoted: { id: 'E2E1', sender: '923001112222@s.whatsapp.net' },
+            msg: { contextInfo: { stanzaId: 'E2E1', quotedMessage: real } } };
+        const done = await vo.deliverViewOnceOnReply(sock, m, BOT, { download: fakeDownload(photoBytes) });
+        assert.strictEqual(done, true, 'delivery must succeed from the captured buffer');
+        assert.strictEqual(sent.length, 1);
+        assert.strictEqual(sent[0].jid, BOT);
+        assert.strictEqual(sent[0].p.image.toString(), 'REAL-PHOTO-BYTES');
+        assert.ok(sent[0].p.caption.includes('real photo'));
+    });
+
+    await ok('a keyless stub capture records the failure and the reply names it', async () => {
+        resetGlobals();
+        const stubMsg = { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', viewOnce: true } } } };
+        const noKeyDownload = async () => { throw new Error('Cannot derive from empty media key'); };
+        const e = await vo.captureViewOnce(rawMsg('STUB1', CHAT, stubMsg), { download: noKeyDownload });
+        assert.strictEqual(e.buffer, null);
+        assert.ok(e.captureError && e.captureError.includes('empty media key'), 'capture error must be recorded on the entry');
+        const found = await vo.resolveViewOnceForReply({ key: { id: 'R-STUB' }, chat: CHAT, quoted: { id: 'STUB1' } }, { download: noKeyDownload });
+        assert.strictEqual(found.reason, 'capture-failed');
+        assert.ok(found.detail.includes('empty media key'));
+    });
+
+    await ok('a keyless quoted media message is treated as a stripped view-once quote (no silent skip)', async () => {
+        resetGlobals();
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        // No memory entry, no stored entry, quoted image with NO keys and NO viewOnce flag.
+        const m = { key: { id: 'R-K' }, chat: CHAT, quoted: { id: 'K1', sender: '923001112222@s.whatsapp.net' },
+            msg: { contextInfo: { stanzaId: 'K1', quotedMessage: { imageMessage: { mimetype: 'image/jpeg', caption: '' } } } } };
+        const found = await vo.resolveViewOnceForReply(m, {});
+        assert.ok(found, 'resolve must not return null for a keyless media quote');
+        assert.strictEqual(found.reason, 'no-keys');
+        const done = await vo.deliverViewOnceOnReply(sock, m, BOT, {});
+        assert.strictEqual(done, false);
+        assert.strictEqual(sent.length, 1, 'the notice must be sent instead of silence');
+        assert.ok(sent[0].text.includes('media key'), 'notice must name the missing-key cause');
+    });
+
+    await ok('.vv2 silent mode sends no notice when the bytes are gone', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('VO-S', CHAT, voImageMessage()), { download: failingDownload });
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        const done = await vo.deliverViewOnceOnReply(sock, { key: { id: 'R-S' }, chat: CHAT, quoted: { id: 'VO-S' } }, BOT, { download: failingDownload, silent: true });
+        assert.strictEqual(done, false);
+        assert.strictEqual(sent.length, 0, 'silent mode must send nothing');
+    });
+
+    await ok('a 404 from the quoted download is reported as server-gone, not a generic failure', async () => {
+        resetGlobals();
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        const boom404 = async () => { const e = new Error('Failed to fetch stream'); e.output = { statusCode: 404 }; throw e; };
+        const m = { key: { id: 'R404' }, chat: CHAT, quoted: { id: 'Q404' },
+            msg: { contextInfo: { stanzaId: 'Q404', quotedMessage: { imageMessage: { viewOnce: true, mediaKey: 'k', directPath: '/d/x.enc', mimetype: 'image/jpeg' } } } } };
+        const found = await vo.resolveViewOnceForReply(m, { download: boom404 });
+        assert.ok(found, 'resolve must return an entry');
+        assert.strictEqual(found.reason, 'server-gone');
+        const done = await vo.deliverViewOnceOnReply(sock, m, BOT, { download: boom404 });
+        assert.strictEqual(done, false);
+        assert.strictEqual(sent.length, 1);
+        assert.ok(sent[0].text.includes('khul chuki'), `notice must say the media is gone from the server, got: ${sent[0].text}`);
+    });
+
+    await ok('a stale memory entry is pruned on resolve, not served', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('OLD9', CHAT, voImageMessage()), { download: fakeDownload(Buffer.from('IMG')) });
+        const e = global._viewOnceBufferMap.get('OLD9');
+        e.ts = Date.now() - vo.TTL_MS - 1000; // force-expire
+        const found = await vo.resolveViewOnceForReply({ key: { id: 'R-OLD' }, chat: CHAT, quoted: { id: 'OLD9' } }, {});
+        assert.strictEqual(found, null, 'stale entry must be pruned, not served');
+        assert.ok(!global._viewOnceBufferMap.has('OLD9'), 'stale entry must be removed from the map');
+    });
+
+    await ok('concurrent captures of the same message download only once', async () => {
+        resetGlobals();
+        let calls = 0;
+        const counting = async () => { calls++; return fakeDownload(Buffer.from('IMG'))(); };
+        const [a, b] = await Promise.all([
+            vo.captureViewOnce(rawMsg('DEDUP1', CHAT, voImageMessage()), { download: counting }),
+            vo.captureViewOnce(rawMsg('DEDUP1', CHAT, voImageMessage()), { download: counting }),
+        ]);
+        assert.strictEqual(calls, 1, `download ran ${calls} times`);
+        assert.strictEqual(a, b, 'both callers must share one capture');
+    });
+
+    await ok('group reply resolves with a @lid remoteJidAlt (key match regression)', async () => {
+        resetGlobals();
+        const g = '120363012345678@g.us';
+        await vo.captureViewOnce({ key: { id: 'GRP1', remoteJid: g, remoteJidAlt: '123456789@lid', participant: '923001112222@s.whatsapp.net' }, message: voImageMessage() }, { download: fakeDownload(Buffer.from('GIMG')) });
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push(p) };
+        const m = { key: { id: 'R-GRP', remoteJid: g }, chat: g, quoted: { id: 'GRP1' } };
+        const done = await vo.deliverViewOnceOnReply(sock, m, BOT);
+        assert.strictEqual(done, true);
+        assert.strictEqual(sent[0].image.toString(), 'GIMG');
+    });
+
+    await ok('stored lookup finds a view-once entry via the real antidelete store (boolean flag, @lid alias)', async () => {
+        resetGlobals();
+        const { getAntideleteSession } = require('../allfunc/antidelete-session');
+        const { makeStoredLookup } = require('../allfunc/viewonce-store');
+        const BOTNUM = '920000000001';
+        const session = getAntideleteSession(BOTNUM);
+        session.set('923001112222@s.whatsapp.net', 'STORE1', {
+            content: 'photo', // NOTE: no '🔒 View Once — ' prefix — the boolean must carry it
+            mediaType: 'image', mediaPath: '', mediaBufferB64: Buffer.from('STOREDBYTES').toString('base64'),
+            isViewOnce: true, rawMediaMsg: { mimetype: 'image/jpeg', caption: '' },
+        }, ['923001112222@lid']);
+        assert.ok(session.get('923001112222@lid', 'STORE1'), 'lid alias key missing');
+        const lookupStored = makeStoredLookup({ user: { id: BOTNUM + '@s.whatsapp.net' } });
+        const hit = await lookupStored('STORE1');
+        assert.ok(hit, 'stored lookup must find the entry by bare msg id');
+        assert.strictEqual(hit.isViewOnce, true, 'boolean isViewOnce must survive the lookup');
+        assert.strictEqual(hit.buffer.toString(), 'STOREDBYTES');
+        assert.strictEqual(hit.type, 'imageMessage');
+    });
+
+    await ok('every failure reason has distinct user-facing text', () => {
+        const texts = ['server-gone', 'download-failed', 'capture-failed', 'no-keys', 'expired'].map(r => vo.viewOnceReasonText(r, 'boom'));
+        assert.ok(texts.every(t => t.length > 10), 'each reason needs real text');
+        assert.strictEqual(new Set(texts).size, 5, 'reason texts must be distinct');
+        assert.strictEqual(vo.viewOnceReasonText('unknown'), '');
     });
 
     console.log(failed ? `\n${failed} test(s) FAILED\n` : '\nAll view-once tests passed\n');

@@ -424,7 +424,13 @@ function _adPrefetchMedia(botNum, chatId, msgId, mediaContent, mtype, session) {
     const job = (async () => {
         try {
             // ✅ FIX: skip download when mediaKey is empty — prevents 'Cannot derive from empty media key' log spam
-            if (!mediaContent.mediaKey && !mediaContent.url && !mediaContent.directPath) return;
+            if (!mediaContent.mediaKey && !mediaContent.url && !mediaContent.directPath) {
+                // One diagnostic line (was totally silent): a keyless media message
+                // is the linked-device view-once stub shape — this log is how live
+                // runs prove whether WhatsApp served the bytes or not.
+                console.log(`[ANTIDELETE][${botNum}] prefetch skip ${mtype} ${msgId}: no media keys`);
+                return;
+            }
             const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
             const stream = await downloadContentFromMessage(mediaContent, mtype);
             const chunks = [];
@@ -532,6 +538,10 @@ function cacheMessageForAntidelete(rawMsg, sock) {
             mediaBufferB64: state.mediaBufferB64,
             extraPayload,
             msgKind,
+            // Explicit boolean — the view-once reply path used to detect this by
+            // regex-matching a '🔒 View Once — ' text prefix on content, which
+            // breaks whenever the prefix is missing for a wrapped message.
+            isViewOnce: _adIsViewOnce(rawMessage, unwrapped) || existing?.isViewOnce || false,
             isPtt: Boolean(state.isPtt),
             fromMe: Boolean(rawMsg.key.fromMe),
             sender,

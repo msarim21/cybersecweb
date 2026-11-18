@@ -739,6 +739,16 @@ async function _startpairing(nexusDevNumber, options = {}) {
                         _adMsg.message = _adMsg.message.ephemeralMessage.message;
                     }
                     global._cacheMessageForAntidelete(_adMsg, nexus);
+                    // ✅ VIEW-ONCE CAPTURE (early) — before the subscription guard
+                    // below, so a failed subscription check can't silently disable
+                    // in-memory capture. captureViewOnce dedupes in-flight attempts,
+                    // so the awaited call in the message loop shares this download
+                    // instead of fetching the media twice.
+                    try {
+                        if (typeof captureViewOnce === 'function') {
+                            captureViewOnce(_adMsg, { download: downloadContentFromMessage, getContentType }).catch(() => {});
+                        }
+                    } catch (_) {}
                 }
             }
         } catch (_adCacheErr) {}
@@ -795,6 +805,14 @@ async function _startpairing(nexusDevNumber, options = {}) {
         // ceb2ee2 removed the loop, causing commands at batch index > 0 to be silently dropped.
         for (const nexusboijid of chatUpdate.messages) {
             try {
+                // 🔍 VIEW-ONCE STUB diagnostic: Baileys sets key.isViewOnce when the
+                // stanza carries <unavailable type="view_once"> — WhatsApp sent NO
+                // media envelope to this linked device, so there is nothing any
+                // code can download. One log line proves it live; without it the
+                // failure looks exactly like a bot bug.
+                if (nexusboijid.key?.isViewOnce && (!nexusboijid.message || !Object.keys(nexusboijid.message).length)) {
+                    console.log(`[viewonce] STUB received id=${nexusboijid.key.id} chat=${nexusboijid.key.remoteJid} — WhatsApp sent no media envelope (web-class companion gets view-once placeholders only)`);
+                }
                 if (!nexusboijid.message || !Object.keys(nexusboijid.message).length) continue;
                 nexusboijid.message = (Object.keys(nexusboijid.message)[0] === 'ephemeralMessage') ? nexusboijid.message.ephemeralMessage.message : nexusboijid.message;
 

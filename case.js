@@ -1064,7 +1064,9 @@ const botNumber = devtrust._cachedBotNumber;
 // the emoji whitelist. The buffer comes from pair.js, which grabs it at delivery
 // time; WhatsApp never lets a quoted view-once be re-downloaded afterwards.
 try {
-    await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage, lookupStored: makeStoredLookup(devtrust) });
+    // .vv2 / readviewonce2 are the SILENT variants — the reply path must not send
+    // the blocked notice for them either (it used to, defeating the silence).
+    await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage, lookupStored: makeStoredLookup(devtrust), silent: command === 'vv2' || command === 'readviewonce2' });
 } catch (_voReplyErr) {
     console.error('[viewonce] reply path error:', _voReplyErr?.message);
 }
@@ -4577,7 +4579,9 @@ if (m.key.remoteJid === "status@broadcast") {
 
 // SPEED FIX: duplicate autoTyping/autoRecording block removed (was called twice per message)
 
-if (getSetting(m.sender, "autoread", false)) {
+if (getSetting(m.sender, "autoread", false) && !unwrapViewOnce(m.message)) {
+   // Never auto-read a view-once message: marking it read can make WhatsApp
+   // invalidate the media while the antidelete prefetch is still downloading it.
    devtrust.readMessages([m.key]).catch(e => {});
 }
 } // end !_ownerFastLane (auto-react / status / presence hooks)
@@ -11818,7 +11822,9 @@ case 'readviewonce2': {
     const _vvSilent  = (command === 'vv2' || command === 'readviewonce2');
     // The reply path above already served this exact reply — don't send it twice.
     if (m.key?.id && global._viewOnceHandledIds?.has(m.key.id)) break;
-    const _vvBotNum  = devtrust.user.id.split(':')[0] + '@s.whatsapp.net';
+    // Use the shared botNumber (decodeJid) — fabricating '@s.whatsapp.net' from
+    // a LID-based user id builds a wrong JID (a LID is not a phone number).
+    const _vvBotNum  = botNumber;
     const { downloadContentFromMessage: _dlcVV } = require('@whiskeysockets/baileys');
 
     // ── Build entry from cache → quoted → last-vo ──
@@ -11861,13 +11867,13 @@ case 'readviewonce2': {
     }
     if (!_vvEntry) {
         const _cand = global._lastViewOnce?.[m.chat];
-        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) {
+        if (_cand && (Date.now() - _cand.ts) < 60 * 60 * 1000) {
             _vvEntry = _cand;
             _vvIsViewOnce = true;
         }
     }
     if (!_vvEntry) {
-        if (!_vvSilent) reply('❌ Reply to a view-once media (or send within 30 min).');
+        if (!_vvSilent) reply('❌ Reply to a view-once media (or send within 60 min).');
         break;
     }
 
@@ -12006,10 +12012,10 @@ case '🦋': {
         _voIsViewOnce = true; // the capture map only ever holds view-once
     }
 
-    // 2️⃣ Standalone emoji → last view-once in this chat (≤30 min)
+    // 2️⃣ Standalone emoji → last view-once in this chat (≤60 min)
     if (!_voEntry) {
         const _cand = global._lastViewOnce?.[m.chat];
-        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) {
+        if (_cand && (Date.now() - _cand.ts) < 60 * 60 * 1000) {
             _voEntry = _cand;
             _voIsViewOnce = true;
         }

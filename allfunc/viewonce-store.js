@@ -34,7 +34,10 @@ function makeStoredLookup(sock) {
             if (info) { try { buffer = await H._adRedownloadMedia(info.raw, info.mtype, info.protoMsg); } catch (_) {} }
         }
         return {
-            isViewOnce: /View Once/i.test(String(e.content || '')),
+            // Prefer the explicit boolean stored since the view-once fix; the
+            // content-prefix regex stays as a fallback for entries cached
+            // before the boolean existed.
+            isViewOnce: Boolean(e.isViewOnce) || /View Once/i.test(String(e.content || '')),
             type,
             mime: e.rawMediaMsg?.mimetype || '',
             caption: e.rawMediaMsg?.caption || '',
