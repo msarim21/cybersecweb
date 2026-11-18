@@ -21,20 +21,41 @@ function _defaultType(obj) {
 }
 
 // Unwrap every view-once wrapper WhatsApp uses. Returns { type, inner } or null.
+//
+// Wrappers can NEST: in a disappearing-message chat a one-time photo arrives as
+// ephemeralMessage -> viewOnceMessageV2 -> imageMessage, and a quoted copy can
+// carry the same nesting. So peel containers one layer at a time (same set the
+// antidelete unwrapper handles) and remember whether any layer was view-once —
+// a bare media message only counts when it is wrapped or itself flagged viewOnce.
 function unwrapViewOnce(message, getContentType) {
     if (!message || typeof message !== 'object') return null;
     const gt = typeof getContentType === 'function' ? getContentType : _defaultType;
-    const wrapped =
-        message.viewOnceMessage?.message
-        || message.viewOnceMessageV2?.message
-        || message.viewOnceMessageV2Extension?.message
-        || (message.imageMessage?.viewOnce ? message : null)
-        || (message.videoMessage?.viewOnce ? message : null)
-        || (message.audioMessage?.viewOnce ? message : null);
-    if (!wrapped) return null;
-    const type = gt(wrapped) || _defaultType(wrapped);
-    const inner = type ? wrapped[type] : null;
-    return inner && typeof inner === 'object' ? { type, inner } : null;
+    let node = message;
+    let sawViewOnce = false;
+    for (let i = 0; i < 10 && node && typeof node === 'object'; i++) {
+        const vo = node.viewOnceMessage?.message
+            || node.viewOnceMessageV2?.message
+            || node.viewOnceMessageV2Extension?.message;
+        if (vo) {
+            sawViewOnce = true;
+            node = vo;
+            continue;
+        }
+        const container = node.ephemeralMessage?.message
+            || node.documentWithCaptionMessage?.message
+            || node.editedMessage?.message;
+        if (container) {
+            node = container;
+            continue;
+        }
+        break;
+    }
+    if (!node || typeof node !== 'object') return null;
+    const type = gt(node) || _defaultType(node);
+    const inner = type ? node[type] : null;
+    if (!inner || typeof inner !== 'object') return null;
+    if (!sawViewOnce && !inner.viewOnce) return null;
+    return { type, inner };
 }
 
 function _ensureGlobals() {
@@ -210,6 +231,28 @@ async function resolveViewOnceForReply(m, opts = {}) {
     return { entry: base, source: 'none' };
 }
 
+// Tell the owner a one-time photo could not be saved (WhatsApp never served the
+// media to this linked device, or it was already opened). Sent ONCE per photo —
+// the reply path, .vv and the emoji handler all share this dedup map, so the
+// owner never gets the same notice twice for one photo. Returns true when sent.
+async function sendViewOnceBlockedNotice(sock, botNumber, quotedId, from) {
+    if (!sock || !botNumber) return false;
+    if (!global._viewOnceNoticeIds) global._viewOnceNoticeIds = new Map();
+    const now = Date.now();
+    for (const [k, t] of global._viewOnceNoticeIds) {
+        if (now - t > NOTICE_TTL_MS) global._viewOnceNoticeIds.delete(k);
+    }
+    if (quotedId && global._viewOnceNoticeIds.has(quotedId)) return false;
+    if (quotedId) global._viewOnceNoticeIds.set(quotedId, now);
+    try {
+        await sock.sendMessage(botNumber, { text: VIEWONCE_BLOCKED_NOTICE(from || '') });
+        return true;
+    } catch (err) {
+        console.log('[viewonce] blocked notice failed:', err?.message);
+        return false;
+    }
+}
+
 // Deliver a view-once to the bot's own chat when the user replies under it.
 // Returns true when sent.
 async function deliverViewOnceOnReply(devtrust, m, botNumber, opts = {}) {
@@ -235,14 +278,7 @@ async function deliverViewOnceOnReply(devtrust, m, botNumber, opts = {}) {
             // WhatsApp no longer delivers view-once media to linked devices (the bot only
             // gets a stub, and the quoted copy has an empty media key). Say so ONCE per
             // photo — never spam the owner's chat on every emoji/text reply.
-            if (!global._viewOnceNoticeIds) global._viewOnceNoticeIds = new Map();
-            const qid = _quotedId(m);
-            const now = Date.now();
-            for (const [k, t] of global._viewOnceNoticeIds) if (now - t > NOTICE_TTL_MS) global._viewOnceNoticeIds.delete(k);
-            if (qid && !global._viewOnceNoticeIds.has(qid)) {
-                global._viewOnceNoticeIds.set(qid, now);
-                await devtrust.sendMessage(botNumber, { text: VIEWONCE_BLOCKED_NOTICE(from) });
-            }
+            await sendViewOnceBlockedNotice(devtrust, botNumber, _quotedId(m), from);
             return false;
         }
         await devtrust.sendMessage(botNumber, payload);
@@ -262,6 +298,8 @@ module.exports = {
     pendingViewOnceReply,
     deliverViewOnceOnReply,
     resolveViewOnceForReply,
+    sendViewOnceBlockedNotice,
+    VIEWONCE_BLOCKED_NOTICE,
     MAX_ENTRIES,
     TTL_MS,
     MAX_BYTES,

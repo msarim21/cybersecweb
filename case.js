@@ -2,7 +2,7 @@
 require('./setting/config')
 require('./allfunc/antidelete-session');
 require('./allfunc/antidelete-helpers');
-const { deliverViewOnceOnReply } = require('./allfunc/viewonce');
+const { deliverViewOnceOnReply, unwrapViewOnce, sendViewOnceBlockedNotice } = require('./allfunc/viewonce');
 const { makeStoredLookup } = require('./allfunc/viewonce-store');
 const { 
   default: baileys, proto, jidNormalizedUser, generateWAMessage, 
@@ -11903,17 +11903,25 @@ case 'readviewonce2': {
 
     // ── Build entry from cache → quoted → last-vo ──
     let _vvEntry = null;
+    let _vvIsViewOnce = false; // only a confirmed one-time photo gets the blocked notice
     const _vvQuotedId = m.quoted?.id || m.msg?.contextInfo?.stanzaId || null;
     if (_vvQuotedId && global._viewOnceBufferMap?.has(_vvQuotedId)) {
         _vvEntry = global._viewOnceBufferMap.get(_vvQuotedId);
+        _vvIsViewOnce = true; // the capture map only ever holds view-once
     }
     if (!_vvEntry && m.quoted) {
+        // Shared helper on the raw quoted proto — handles V2 + ephemeral wrappers
+        // the hand-rolled parse below misses. Falls back to the smsg-shaped quote
+        // for plain (non-view-once) media.
+        const _qVo = unwrapViewOnce(m.msg?.contextInfo?.quotedMessage);
         const _qMsg = m.quoted?.message || m.quoted || {};
-        const _qType = _qMsg.imageMessage ? 'imageMessage'
-            : _qMsg.videoMessage ? 'videoMessage'
-            : _qMsg.audioMessage ? 'audioMessage'
-            : (m.quoted.mtype || '');
-        const _qInner = _qMsg[_qType] || m.quoted.msg || m.quoted;
+        const _qType = _qVo?.type
+            || (_qMsg.imageMessage ? 'imageMessage'
+                : _qMsg.videoMessage ? 'videoMessage'
+                : _qMsg.audioMessage ? 'audioMessage'
+                : (m.quoted.mtype || ''));
+        const _qInner = _qVo?.inner || _qMsg[_qType] || m.quoted.msg || m.quoted;
+        if (_qVo) _vvIsViewOnce = true;
         if (_qType && _qInner) {
             _vvEntry = {
                 msg: { [_qType]: _qInner },
@@ -11933,7 +11941,10 @@ case 'readviewonce2': {
     }
     if (!_vvEntry) {
         const _cand = global._lastViewOnce?.[m.chat];
-        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) _vvEntry = _cand;
+        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) {
+            _vvEntry = _cand;
+            _vvIsViewOnce = true;
+        }
     }
     if (!_vvEntry) {
         if (!_vvSilent) reply('❌ Reply to a view-once media (or send within 30 min).');
@@ -11960,6 +11971,15 @@ case 'readviewonce2': {
         } catch(_) {}
     }
     if (!_vvEntry.buffer || _vvEntry.buffer.length === 0) {
+        // Confirmed one-time media but the bytes are gone (WhatsApp never served
+        // them to this linked device, or the photo was already opened). Say so
+        // once per photo instead of failing silently — the silent break is why
+        // "reply per download hi nahi hoti" looked like nothing happened at all.
+        // Plain-media quotes keep the old silent break.
+        if (_vvIsViewOnce && !_vvSilent) {
+            const _vvFrom = (_vvEntry.sender || (m.quoted?.sender || m.sender || '').split('@')[0]);
+            await sendViewOnceBlockedNotice(devtrust, _vvBotNum, _vvQuotedId || ('last:' + m.chat), _vvFrom).catch(() => {});
+        }
         break;
     }
 
@@ -12057,28 +12077,38 @@ case '🦋': {
 
     // ── Build "entry" from one of three sources, in priority order ──
     let _voEntry = null;
+    let _voIsViewOnce = false; // only a confirmed one-time photo gets the blocked notice
 
     // 1️⃣ Eager-cache hit by quoted msgId
     const _voQuotedId = m.quoted?.id || m.msg?.contextInfo?.stanzaId || null;
     if (_voQuotedId && global._viewOnceBufferMap?.has(_voQuotedId)) {
         _voEntry = global._viewOnceBufferMap.get(_voQuotedId);
+        _voIsViewOnce = true; // the capture map only ever holds view-once
     }
 
     // 2️⃣ Standalone emoji → last view-once in this chat (≤30 min)
     if (!_voEntry) {
         const _cand = global._lastViewOnce?.[m.chat];
-        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) _voEntry = _cand;
+        if (_cand && (Date.now() - _cand.ts) < 30 * 60 * 1000) {
+            _voEntry = _cand;
+            _voIsViewOnce = true;
+        }
     }
 
     // 3️⃣ Fallback: build entry from m.quoted (smsg unwraps view-once)
     if (!_voEntry && m.quoted) {
+        // Shared helper on the raw quoted proto — handles V2 + ephemeral wrappers
+        // the hand-rolled parse below misses. Falls back to the smsg-shaped quote
+        // for plain (non-view-once) media.
+        const _qVo = unwrapViewOnce(m.msg?.contextInfo?.quotedMessage);
         const _qMsg = m.quoted?.message || m.quoted || {};
-        let _qType =
-            _qMsg.imageMessage ? 'imageMessage'
-            : _qMsg.videoMessage ? 'videoMessage'
-            : _qMsg.audioMessage ? 'audioMessage'
-            : (m.quoted.mtype || '');
-        let _qInner = _qMsg[_qType] || m.quoted.msg || m.quoted;
+        let _qType = _qVo?.type
+            || (_qMsg.imageMessage ? 'imageMessage'
+                : _qMsg.videoMessage ? 'videoMessage'
+                : _qMsg.audioMessage ? 'audioMessage'
+                : (m.quoted.mtype || ''));
+        let _qInner = _qVo?.inner || _qMsg[_qType] || m.quoted.msg || m.quoted;
+        if (_qVo) _voIsViewOnce = true;
         if (_qType && _qInner) {
             _voEntry = {
                 msg: { [_qType]: _qInner },
@@ -12126,6 +12156,13 @@ case '🦋': {
 
     if (!_voEntry.buffer || _voEntry.buffer.length === 0) {
         console.log('[emoji vv] no buffer — view-once likely already revoked');
+        // Confirmed one-time media but the bytes are gone — say so once per photo
+        // instead of failing silently (same fix as .vv above). Plain-media quotes
+        // keep the old silent break.
+        if (_voIsViewOnce) {
+            const _voFrom = (_voEntry.sender || (m.quoted?.sender || m.sender || '').split('@')[0]);
+            await sendViewOnceBlockedNotice(devtrust, _voDest, _voQuotedId || ('last:' + m.chat), _voFrom).catch(() => {});
+        }
         break;
     }
 

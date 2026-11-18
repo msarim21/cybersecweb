@@ -257,6 +257,61 @@ console.log('\n=== View-once capture / reply tests ===\n');
         assert.ok(sent[0].text.includes('WhatsApp'));
     });
 
+    await ok('viewOnceMessage (v1) wrapper is detected', () => {
+        const f = vo.unwrapViewOnce({ viewOnceMessage: { message: { imageMessage: { mimetype: 'image/jpeg' } } } });
+        assert.strictEqual(f.type, 'imageMessage');
+    });
+
+    await ok('viewOnceMessageV2Extension audio is detected', () => {
+        const f = vo.unwrapViewOnce({ viewOnceMessageV2Extension: { message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus' } } } });
+        assert.strictEqual(f.type, 'audioMessage');
+    });
+
+    await ok('ephemeralMessage wrapping viewOnceMessageV2 is detected (disappearing chat)', () => {
+        const f = vo.unwrapViewOnce({ ephemeralMessage: { message: voImageMessage('hi') } });
+        assert.strictEqual(f.type, 'imageMessage');
+        assert.strictEqual(f.inner.mimetype, 'image/jpeg');
+    });
+
+    await ok('viewOnceMessageV2 wrapping ephemeralMessage is detected', () => {
+        const msg = { viewOnceMessageV2: { message: { ephemeralMessage: { message: { imageMessage: { mimetype: 'image/jpeg' } } } } } };
+        assert.strictEqual(vo.unwrapViewOnce(msg).type, 'imageMessage');
+    });
+
+    await ok('documentWithCaptionMessage inside a view-once wrapper is detected', () => {
+        const msg = { viewOnceMessageV2: { message: { documentWithCaptionMessage: { message: { imageMessage: { mimetype: 'image/jpeg' } } } } } };
+        assert.strictEqual(vo.unwrapViewOnce(msg).type, 'imageMessage');
+    });
+
+    await ok('ephemeralMessage wrapping a NORMAL photo is NOT view-once', () => {
+        const f = vo.unwrapViewOnce({ ephemeralMessage: { message: { imageMessage: { mimetype: 'image/jpeg' } } } });
+        assert.strictEqual(f, null);
+    });
+
+    await ok('a reply quoting an ephemeral-wrapped view-once is recognised (was silently ignored)', async () => {
+        resetGlobals();
+        const quotedMessage = { ephemeralMessage: { message: voImageMessage() } };
+        const m = { key: { id: 'R16' }, chat: CHAT, quoted: { id: 'EPH1' },
+            msg: { contextInfo: { stanzaId: 'EPH1', quotedMessage } } };
+        const found = await vo.resolveViewOnceForReply(m, { download: failingDownload });
+        assert.ok(found, 'resolve must not return null for an ephemeral-wrapped view-once quote');
+        assert.strictEqual(found.source, 'none');
+        assert.strictEqual(found.entry.type, 'imageMessage');
+    });
+
+    await ok('the shared blocked notice sends once per photo across callers', async () => {
+        resetGlobals();
+        const sent = [];
+        const sock = { sendMessage: async (jid, p) => sent.push({ jid, p }) };
+        assert.strictEqual(await vo.sendViewOnceBlockedNotice(sock, BOT, 'PH1', '923001112222'), true);
+        assert.strictEqual(await vo.sendViewOnceBlockedNotice(sock, BOT, 'PH1', '923001112222'), false, 'same photo must not re-send');
+        assert.strictEqual(await vo.sendViewOnceBlockedNotice(sock, BOT, 'PH2', '923001112222'), true, 'a different photo must send');
+        assert.strictEqual(sent.length, 2);
+        assert.strictEqual(sent[0].jid, BOT);
+        assert.ok(sent[0].p.text.includes('One-time photo'));
+        assert.ok(sent[0].p.text.includes('923001112222'));
+    });
+
     console.log(failed ? `\n${failed} test(s) FAILED\n` : '\nAll view-once tests passed\n');
     process.exit(failed ? 1 : 0);
 })();

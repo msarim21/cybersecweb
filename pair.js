@@ -1690,6 +1690,23 @@ Your bot is ready. Send *.menu* to see all available commands.
     return nexus;
 }
 
+// Peel view-once (v1 / V2 / V2Extension) and ephemeral containers off a message
+// object until the real content is reached. Returns the innermost content object,
+// or null when a wrapper is malformed (no .message). Plain messages pass through
+// unchanged. Used by smsg so m.msg / m.quoted are the inner media message, not
+// the wrapper — otherwise m.quoted.download() gets a wrapper with no media keys.
+function _unwrapViewOnceContent(message) {
+    let node = message;
+    for (let i = 0; i < 6 && node && typeof node === 'object'; i++) {
+        const wrapped = node.viewOnceMessage || node.viewOnceMessageV2
+            || node.viewOnceMessageV2Extension || node.ephemeralMessage;
+        if (!wrapped) return node;
+        if (!wrapped.message || typeof wrapped.message !== 'object') return null;
+        node = wrapped.message;
+    }
+    return node;
+}
+
 function smsg(nexus, m, store) {
     if (!m) return m
     let M = proto.WebMessageInfo
@@ -1710,13 +1727,21 @@ function smsg(nexus, m, store) {
     }
     if (m.message) {
         m.mtype = getContentType(m.message)
-        m.msg = (m.mtype == 'viewOnceMessage' ? m.message[m.mtype]?.message?.[getContentType(m.message[m.mtype]?.message)] : m.message[m.mtype]) || {}
+        // Unwrap view-once (v1/V2/extension) + ephemeral so m.msg is the inner
+        // media message — the old code only unwrapped v1, so V2 photos left
+        // m.msg as the wrapper (no caption, no url, no contextInfo).
+        const _unwrapped = _unwrapViewOnceContent(m.message);
+        m.msg = (_unwrapped ? _unwrapped[getContentType(_unwrapped)] : null) || {}
         m.body = m.message.conversation || m.msg?.caption || m.msg?.text || (m.mtype == 'listResponseMessage' && m.msg?.singleSelectReply?.selectedRowId) || (m.mtype == 'buttonsResponseMessage' && m.msg?.selectedButtonId) || (m.mtype == 'viewOnceMessage' && m.msg?.caption) || m.text || ''
         let quoted = m.quoted = m.msg?.contextInfo?.quotedMessage || null
         m.mentionedJid = m.msg?.contextInfo?.mentionedJid || []
         if (m.quoted) {
-            let type = getContentType(quoted)
-            m.quoted = m.quoted[type]
+            // Unwrap a quoted view-once (v1/V2/extension) + ephemeral so m.quoted
+            // is the inner media message (correct .mtype, working .download()).
+            // `quoted` itself stays original — fakeObj below needs the real proto.
+            const _qContent = _unwrapViewOnceContent(quoted) || quoted;
+            let type = getContentType(_qContent)
+            m.quoted = _qContent[type]
             if (['productMessage'].includes(type)) {
                 type = getContentType(m.quoted)
                 m.quoted = m.quoted[type]
