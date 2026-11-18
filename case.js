@@ -5129,7 +5129,7 @@ if (m.message?.stickerMessage && !command) {
 }
 
 // Verified public-provider commands share one dispatcher.
-if (await require('./allfunc/provider-commands').handle({ command, text, prefix, reply, isCreator })) return;
+if (await require('./allfunc/provider-commands').handle({ command, text, prefix, reply, isCreator, send: async (content) => devtrust.sendMessage(m.chat, content, { quoted: m }) })) return;
 
 // ============ MENU COMMAND ============
 
@@ -9670,86 +9670,6 @@ case "removebg": {
         console.error('RemoveBG error:', e.message, e.response?.status);
         await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
         await reply("⚠️ *Failed to remove background.* The service might be down. Try again later.");
-    }
-}
-break;
-
-case 'tiktok':
-case 'tt': {
-    if (!text) return reply(`🎵 *Usage:* ${prefix + command} <tiktok link>\nExample: ${prefix + command} https://www.tiktok.com/@user/video/123`);
-    if (!text.includes('tiktok.com') && !text.includes('vm.tiktok') && !text.includes('vt.tiktok')) {
-        return reply(`❌ *Invalid TikTok link* • Send a valid TikTok URL`);
-    }
-
-    await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
-
-    try {
-        let videoUrl = null;
-        let audioUrl = null;
-        let videoTitle = 'TikTok Video';
-
-        // Verified Nexray downloader first; keep the legacy fallbacks.
-        try {
-            const result = await require('./allfunc/public-providers').tiktokDownload(text);
-            videoUrl = result.video;
-            videoTitle = result.title;
-        } catch (_) {}
-
-        // Legacy fallback: tikwm.com
-        if (!videoUrl) try {
-            const r1 = await axios.post('https://www.tikwm.com/api/', 
-                new URLSearchParams({ url: text, count: 12, cursor: 0, hd: 1 }),
-                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
-            );
-            const d1 = r1.data?.data;
-            if (d1?.play) {
-                videoUrl = d1.hdplay || d1.play; // No-watermark HD link
-                audioUrl = d1.music;
-                videoTitle = d1.title || 'TikTok Video';
-            }
-        } catch (_) {}
-
-        // FALLBACK: tiklydown API
-        if (!videoUrl) {
-            try {
-                const r2 = await axios.get(`https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(text)}`, { timeout: 12000 });
-                const d2 = r2.data;
-                if (d2?.video?.noWatermark) {
-                    videoUrl = d2.video.noWatermark;
-                    videoTitle = d2.title || 'TikTok Video';
-                }
-            } catch (_) {}
-        }
-
-        // FALLBACK 2: snaptiksave
-        if (!videoUrl) {
-            try {
-                const r3 = await axios.get(`https://www.tikwm.com/api/?url=${encodeURIComponent(text)}`, { timeout: 12000 });
-                // ✅ FIX: tikwm GET uses 'play' field (same as POST), not 'video'
-                if (r3.data?.data?.play || r3.data?.data?.video) {
-                    videoUrl = r3.data.data.play || r3.data.data.video;
-                }
-            } catch (_) {}
-        }
-
-        if (!videoUrl) {
-            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            return reply('❌ *Download failed* • Link expired or private video. Try again.');
-        }
-
-        await devtrust.sendMessage(m.chat,
-            {
-                video: { url: videoUrl },
-                caption: `🎵 *${videoTitle.substring(0, 100)}*\n\n✅ *No Watermark*`
-            },
-            { quoted: m }
-        );
-        await devtrust.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-
-    } catch (e) {
-        console.error('[TIKTOK]', e.message);
-        await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-        reply('❌ *TikTok download failed* • Try again later');
     }
 }
 break;
@@ -14420,29 +14340,6 @@ case 'imbd': {
     }
     break;
 }
-
-case 'tiktoksearch': {
-    if (!text) return reply(`Usage: ${prefix}tiktoksearch <query>`);
-    try {
-        const rows = await require('./allfunc/public-providers').tiktokSearch(text);
-        for (const row of rows) await devtrust.sendMessage(m.chat, {
-            video: { url: row.video }, caption: `${row.title}\nViews: ${row.views}`
-        }, { quoted: m });
-    } catch (e) { await reply(`TikTok search unavailable: ${e.message}`); }
-}
-break;
-
-case 'imnxmxg':
-case 'pinterest': {
-    if (!text) return reply(`Usage: ${prefix}pinterest <query>`);
-    try {
-        const rows = await require('./allfunc/public-providers').pinterest(text);
-        for (const row of rows) await devtrust.sendMessage(m.chat, {
-            image: { url: row.image }, caption: `${row.title}\n${row.url}`
-        }, { quoted: m });
-    } catch (e) { await reply(`Pinterest unavailable: ${e.message}`); }
-}
-break;
 
 case 'nsbxmdmfw': {
     try {
