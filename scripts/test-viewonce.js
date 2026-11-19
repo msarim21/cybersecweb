@@ -468,6 +468,228 @@ console.log('\n=== View-once capture / reply tests ===\n');
         assert.strictEqual(vo.viewOnceReasonText('unknown'), '');
     });
 
+    // ── Unified save command (.vv / .keep / .lol / .nice / .rvo / .viewonce) ──
+
+    function saveCtx(overrides = {}) {
+        const sent = [];
+        const replies = [];
+        const sock = { sendMessage: async (jid, p) => sent.push({ jid, p }) };
+        const reply = async (text) => replies.push(text);
+        const ctx = { sock, m: null, botNumber: BOT, command: 'vv', reply, ...overrides };
+        return { ctx, sent, replies, sock };
+    }
+    function reacts(sent) { return sent.filter(s => s.p.react).map(s => s.p.react.text); }
+    function mediaSends(sent) { return sent.filter(s => s.p.image || s.p.video || s.p.audio || s.p.sticker); }
+
+    await ok('save aliases: vv/keep/lol/nice/rvo/viewonce owned, save + 🔥 NOT stolen', () => {
+        for (const a of ['vv', 'vvgh', 'vv2', 'readviewonce2', 'keep', 'lol', 'nice', 'rvo', 'viewonce']) {
+            assert.ok(vo.SAVE_COMMANDS.includes(a), `SAVE_COMMANDS must include ${a}`);
+        }
+        assert.ok(!vo.SAVE_COMMANDS.includes('save'), 'save belongs to CYBER Save');
+        assert.ok(!vo.SAVE_COMMANDS.includes('🔥'), '🔥 belongs to the emoji handler');
+    });
+
+    await ok('case.js wires every save alias to handleSaveCommand and skips them in the reply path', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const src = fs.readFileSync(path.join(__dirname, '..', 'case.js'), 'utf8');
+        for (const a of vo.SAVE_COMMANDS) {
+            assert.ok(src.includes(`case '${a}':`), `case.js missing case '${a}':`);
+        }
+        assert.ok(src.includes('handleSaveCommand({'), 'switch must call handleSaveCommand');
+        assert.ok(src.includes('SAVE_COMMANDS.includes(command)'), 'reply path must skip save commands');
+        assert.ok(src.includes("case 'save':"), 'CYBER Save must still own save');
+        assert.ok(src.includes("case '🔥':"), 'emoji handler must still own 🔥');
+        assert.ok(!src.includes('_vvEntry'), 'old vv handler must be fully replaced');
+    });
+
+    await ok('buildSavePayload sends image/video/audio/sticker with NO caption key', () => {
+        const img = vo.buildSavePayload('imageMessage', Buffer.from('I'), 'image/jpeg');
+        assert.strictEqual(img.image.toString(), 'I');
+        assert.ok(!('caption' in img), 'save payload must not carry a caption');
+        const vid = vo.buildSavePayload('videoMessage', Buffer.from('V'), 'video/mp4');
+        assert.strictEqual(vid.video.toString(), 'V');
+        const aud = vo.buildSavePayload('audioMessage', Buffer.from('A'), 'audio/ogg; codecs=opus', true);
+        assert.strictEqual(aud.ptt, true);
+        const stk = vo.buildSavePayload('stickerMessage', Buffer.from('S'));
+        assert.strictEqual(stk.sticker.toString(), 'S');
+        assert.strictEqual(vo.buildSavePayload('documentMessage', Buffer.from('D')), null);
+        assert.strictEqual(vo.buildSavePayload('imageMessage', Buffer.alloc(0)), null);
+    });
+
+    await ok('save with no quote asks to reply to a media message', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({ m: { key: { id: 'S1' }, chat: CHAT, sender: '923001112222@s.whatsapp.net' } });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'no-quote');
+        assert.strictEqual(replies[0], '❗ Reply to a media message.');
+        assert.strictEqual(sent.length, 0, 'no reaction without a quote');
+    });
+
+    await ok('save quoting text rejects with the media-only message', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            m: { key: { id: 'S2' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'T2', sender: '923001112222@s.whatsapp.net', mtype: 'extendedTextMessage', text: 'hi' },
+                msg: { contextInfo: { stanzaId: 'T2', quotedMessage: { conversation: 'hi' } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'not-media');
+        assert.strictEqual(replies[0], '❗ Only images, videos, audio, or stickers.');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '❌']);
+    });
+
+    await ok('save on a regular photo downloads it and forwards it with NO caption', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            command: 'keep',
+            m: { key: { id: 'S3' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'P3', sender: '923001112222@s.whatsapp.net', mtype: 'imageMessage', mimetype: 'image/jpeg',
+                    download: async () => Buffer.from('PHOTO') },
+                msg: { contextInfo: { stanzaId: 'P3', quotedMessage: { imageMessage: { mediaKey: 'k', mimetype: 'image/jpeg' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        assert.strictEqual(r.source, 'quoted');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '❤️']);
+        const media = mediaSends(sent);
+        assert.strictEqual(media.length, 1);
+        assert.strictEqual(media[0].jid, BOT);
+        assert.strictEqual(media[0].p.image.toString(), 'PHOTO');
+        assert.ok(!('caption' in media[0].p), 'regular save must not add a caption');
+        assert.strictEqual(replies.length, 0);
+    });
+
+    await ok('save on a regular sticker forwards it as a sticker', async () => {
+        resetGlobals();
+        const { ctx, sent } = saveCtx({
+            command: 'lol',
+            m: { key: { id: 'S4' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'K4', sender: '923001112222@s.whatsapp.net', mtype: 'stickerMessage',
+                    download: async () => Buffer.from('STK') },
+                msg: { contextInfo: { stanzaId: 'K4', quotedMessage: { stickerMessage: { mediaKey: 'k' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        const media = mediaSends(sent);
+        assert.strictEqual(media.length, 1);
+        assert.strictEqual(media[0].p.sticker.toString(), 'STK');
+    });
+
+    await ok('save falls back to the injected downloader when quoted.download() fails', async () => {
+        resetGlobals();
+        const { ctx, sent } = saveCtx({
+            command: 'nice',
+            download: fakeDownload(Buffer.from('VID2')),
+            m: { key: { id: 'S5' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'V5', sender: '923001112222@s.whatsapp.net', mtype: 'videoMessage', mimetype: 'video/mp4',
+                    download: async () => { throw new Error('no keys'); } },
+                msg: { contextInfo: { stanzaId: 'V5', quotedMessage: { videoMessage: { mediaKey: 'k', mimetype: 'video/mp4' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        const media = mediaSends(sent);
+        assert.strictEqual(media[0].p.video.toString(), 'VID2');
+    });
+
+    await ok('save reports a failed download instead of failing silently', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            download: failingDownload,
+            m: { key: { id: 'S6' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'F6', sender: '923001112222@s.whatsapp.net', mtype: 'imageMessage', mimetype: 'image/jpeg',
+                    download: async () => { throw new Error('gone'); } },
+                msg: { contextInfo: { stanzaId: 'F6', quotedMessage: { imageMessage: { mediaKey: 'k', mimetype: 'image/jpeg' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'download-failed');
+        assert.strictEqual(replies[0], '❌ Failed to download media.');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '❌']);
+    });
+
+    await ok('save on a one-time photo serves the captured copy with NO caption', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('VO-S1', CHAT, voImageMessage('secret')), { download: fakeDownload(Buffer.from('ONE')) });
+        const { ctx, sent, replies } = saveCtx({
+            command: 'rvo',
+            m: { key: { id: 'S7' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'VO-S1', sender: '923001112222@s.whatsapp.net' },
+                msg: { contextInfo: { stanzaId: 'VO-S1', quotedMessage: voImageMessage('secret') } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        assert.strictEqual(r.source, 'memory');
+        const media = mediaSends(sent);
+        assert.strictEqual(media.length, 1);
+        assert.strictEqual(media[0].p.image.toString(), 'ONE');
+        assert.ok(!('caption' in media[0].p), 'view-once save must not add a caption');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '❤️']);
+        assert.strictEqual(replies.length, 0);
+    });
+
+    await ok('save on a one-time photo with no capture sends the blocked notice WITH the reason', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            command: 'viewonce',
+            m: { key: { id: 'S8' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'MISS8', sender: '923001112222@s.whatsapp.net' },
+                msg: { contextInfo: { stanzaId: 'MISS8', quotedMessage: { imageMessage: { mimetype: 'image/jpeg' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'no-keys');
+        const texts = sent.filter(s => s.p.text);
+        assert.strictEqual(texts.length, 1, 'exactly one notice');
+        assert.strictEqual(texts[0].jid, BOT, 'notice goes to the bot DM');
+        assert.ok(texts[0].p.text.includes('media key'), 'notice must name the missing-key cause');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '❌']);
+        assert.strictEqual(replies.length, 0, 'no chat spam — the notice lives in the bot DM');
+    });
+
+    await ok('.vv2 silent mode delivers with no reactions and no text', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('VO-S2', CHAT, voImageMessage()), { download: fakeDownload(Buffer.from('SIL')) });
+        const { ctx, sent, replies } = saveCtx({
+            command: 'vv2',
+            m: { key: { id: 'S9' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'VO-S2', sender: '923001112222@s.whatsapp.net' },
+                msg: { contextInfo: { stanzaId: 'VO-S2', quotedMessage: voImageMessage() } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        assert.strictEqual(mediaSends(sent).length, 1);
+        assert.strictEqual(reacts(sent).length, 0, 'silent mode must not react');
+        assert.strictEqual(replies.length, 0);
+    });
+
+    await ok('.vv2 silent mode sends nothing at all when the bytes are gone', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('VO-S3', CHAT, voImageMessage()), { download: failingDownload });
+        const { ctx, sent, replies } = saveCtx({
+            command: 'readviewonce2',
+            m: { key: { id: 'S10' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'VO-S3', sender: '923001112222@s.whatsapp.net' },
+                msg: { contextInfo: { stanzaId: 'VO-S3', quotedMessage: voImageMessage() } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'capture-failed');
+        assert.strictEqual(sent.length, 0, 'silent mode must send no notice and no reaction');
+        assert.strictEqual(replies.length, 0);
+    });
+
+    await ok('a reply the reply-path already served is not saved twice', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('VO-S4', CHAT, voImageMessage()), { download: fakeDownload(Buffer.from('DUP')) });
+        global._viewOnceHandledIds.set('S11', Date.now());
+        const { ctx, sent } = saveCtx({
+            m: { key: { id: 'S11' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'VO-S4', sender: '923001112222@s.whatsapp.net' },
+                msg: { contextInfo: { stanzaId: 'VO-S4', quotedMessage: voImageMessage() } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'already-handled');
+        assert.strictEqual(sent.length, 0);
+    });
+
     console.log(failed ? `\n${failed} test(s) FAILED\n` : '\nAll view-once tests passed\n');
     process.exit(failed ? 1 : 0);
 })();

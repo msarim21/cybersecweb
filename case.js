@@ -2,7 +2,7 @@
 require('./setting/config')
 require('./allfunc/antidelete-session');
 require('./allfunc/antidelete-helpers');
-const { deliverViewOnceOnReply, unwrapViewOnce, sendViewOnceBlockedNotice } = require('./allfunc/viewonce');
+const { deliverViewOnceOnReply, unwrapViewOnce, sendViewOnceBlockedNotice, handleSaveCommand, SAVE_COMMANDS } = require('./allfunc/viewonce');
 const { makeStoredLookup } = require('./allfunc/viewonce-store');
 const { 
   default: baileys, proto, jidNormalizedUser, generateWAMessage, 
@@ -1064,9 +1064,16 @@ const botNumber = devtrust._cachedBotNumber;
 // the emoji whitelist. The buffer comes from pair.js, which grabs it at delivery
 // time; WhatsApp never lets a quoted view-once be re-downloaded afterwards.
 try {
-    // .vv2 / readviewonce2 are the SILENT variants — the reply path must not send
-    // the blocked notice for them either (it used to, defeating the silence).
-    await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage, lookupStored: makeStoredLookup(devtrust), silent: command === 'vv2' || command === 'readviewonce2' });
+    // Save commands (.vv / .keep / ...) own their UX in the switch below
+    // (no-caption send + reactions) — the reply path must not serve them
+    // first with the captioned delivery, or the switch handler would only
+    // ever see already-handled replies. Plain text / emoji replies still
+    // flow through here.
+    if (!SAVE_COMMANDS.includes(command)) {
+        // .vv2 / readviewonce2 are the SILENT variants — the reply path must not send
+        // the blocked notice for them either (it used to, defeating the silence).
+        await deliverViewOnceOnReply(devtrust, m, botNumber, { download: downloadContentFromMessage, lookupStored: makeStoredLookup(devtrust), silent: command === 'vv2' || command === 'readviewonce2' });
+    }
 } catch (_voReplyErr) {
     console.error('[viewonce] reply path error:', _voReplyErr?.message);
 }
@@ -11818,116 +11825,28 @@ break;
 case 'vv':
 case 'vvgh':
 case 'vv2':
-case 'readviewonce2': {
-    const _vvSilent  = (command === 'vv2' || command === 'readviewonce2');
-    // The reply path above already served this exact reply — don't send it twice.
-    if (m.key?.id && global._viewOnceHandledIds?.has(m.key.id)) break;
-    // Use the shared botNumber (decodeJid) — fabricating '@s.whatsapp.net' from
-    // a LID-based user id builds a wrong JID (a LID is not a phone number).
-    const _vvBotNum  = botNumber;
-    const { downloadContentFromMessage: _dlcVV } = require('@whiskeysockets/baileys');
-
-    // ── Build entry from cache → quoted → last-vo ──
-    let _vvEntry = null;
-    let _vvIsViewOnce = false; // only a confirmed one-time photo gets the blocked notice
-    const _vvQuotedId = m.quoted?.id || m.msg?.contextInfo?.stanzaId || null;
-    if (_vvQuotedId && global._viewOnceBufferMap?.has(_vvQuotedId)) {
-        _vvEntry = global._viewOnceBufferMap.get(_vvQuotedId);
-        _vvIsViewOnce = true; // the capture map only ever holds view-once
-    }
-    if (!_vvEntry && m.quoted) {
-        // Shared helper on the raw quoted proto — handles V2 + ephemeral wrappers
-        // the hand-rolled parse below misses. Falls back to the smsg-shaped quote
-        // for plain (non-view-once) media.
-        const _qVo = unwrapViewOnce(m.msg?.contextInfo?.quotedMessage);
-        const _qMsg = m.quoted?.message || m.quoted || {};
-        const _qType = _qVo?.type
-            || (_qMsg.imageMessage ? 'imageMessage'
-                : _qMsg.videoMessage ? 'videoMessage'
-                : _qMsg.audioMessage ? 'audioMessage'
-                : (m.quoted.mtype || ''));
-        const _qInner = _qVo?.inner || _qMsg[_qType] || m.quoted.msg || m.quoted;
-        if (_qVo) _vvIsViewOnce = true;
-        if (_qType && _qInner) {
-            _vvEntry = {
-                msg: { [_qType]: _qInner },
-                type: _qType,
-                mime: _qInner?.mimetype
-                    || (_qType === 'imageMessage' ? 'image/jpeg'
-                        : _qType === 'videoMessage' ? 'video/mp4'
-                        : _qType === 'audioMessage' ? 'audio/ogg; codecs=opus' : ''),
-                caption: _qInner?.caption || '',
-                isPtt: Boolean(_qInner?.ptt),
-                sender: (m.quoted.sender || m.sender || '').split(':')[0].replace('@s.whatsapp.net', ''),
-                chat: m.chat,
-                buffer: null,
-                ts: Date.now()
-            };
-        }
-    }
-    if (!_vvEntry) {
-        const _cand = global._lastViewOnce?.[m.chat];
-        if (_cand && (Date.now() - _cand.ts) < 60 * 60 * 1000) {
-            _vvEntry = _cand;
-            _vvIsViewOnce = true;
-        }
-    }
-    if (!_vvEntry) {
-        if (!_vvSilent) reply('❌ Reply to a view-once media (or send within 60 min).');
-        break;
-    }
-
-    // ── Ensure buffer ──
-    if (!_vvEntry.buffer && _vvEntry.type) {
-        try {
-            const _mType = _vvEntry.type.replace('Message', '');
-            const _src   = _vvEntry.msg?.[_vvEntry.type];
-            if (_src) {
-                const _s = await _dlcVV(_src, _mType);
-                const _c = []; for await (const _ch of _s) _c.push(_ch);
-                const _b = Buffer.concat(_c);
-                if (_b.length > 0) _vvEntry.buffer = _b;
-            }
-        } catch (_vvDlE) { console.error('vv dl error:', _vvDlE?.message); }
-    }
-    if ((!_vvEntry.buffer || _vvEntry.buffer.length === 0) && m.quoted) {
-        try {
-            const _b = await m.quoted.download();
-            if (Buffer.isBuffer(_b) && _b.length > 0) _vvEntry.buffer = _b;
-        } catch(_) {}
-    }
-    if (!_vvEntry.buffer || _vvEntry.buffer.length === 0) {
-        // Confirmed one-time media but the bytes are gone (WhatsApp never served
-        // them to this linked device, or the photo was already opened). Say so
-        // once per photo instead of failing silently — the silent break is why
-        // "reply per download hi nahi hoti" looked like nothing happened at all.
-        // Plain-media quotes keep the old silent break.
-        if (_vvIsViewOnce && !_vvSilent) {
-            const _vvFrom = (_vvEntry.sender || (m.quoted?.sender || m.sender || '').split('@')[0]);
-            await sendViewOnceBlockedNotice(devtrust, _vvBotNum, _vvQuotedId || ('last:' + m.chat), _vvFrom).catch(() => {});
-        }
-        break;
-    }
-
-    const _vvTime = new Date().toLocaleString('en-US', {
-        timeZone: process.env.TIMEZONE || 'Africa/Harare', hour12: true,
-        hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+case 'readviewonce2':
+case 'keep':
+case 'lol':
+case 'nice':
+case 'rvo':
+case 'viewonce': {
+    // Unified save: reply to any media (regular or one-time) and it lands in
+    // the bot's own DM with NO caption. Regular media is downloaded from the
+    // quote; one-time media comes from the arrival-time capture store (a quoted
+    // view-once carries no keys, so it can never be re-downloaded). The reply
+    // path above skips these commands so this handler owns the UX (⏳/❤️/❌).
+    // NOTE: 'save' and '🔥' are NOT aliases here — 'save' is the owner-only
+    // CYBER Save command and '🔥' belongs to the emoji handler below.
+    await handleSaveCommand({
+        sock: devtrust,
+        m,
+        botNumber,
+        command,
+        download: downloadContentFromMessage,
+        lookupStored: makeStoredLookup(devtrust),
+        reply
     });
-    const _vvSenderShort = _vvEntry.sender || (m.sender || '').split('@')[0];
-    const _vvCapBase = `From: @${_vvSenderShort}\nChat: ${m.chat.includes('g.us') ? 'Group' : 'Private'}\nTime: ${_vvTime}` +
-        (_vvEntry.caption ? `\n📝 ${_vvEntry.caption}` : '');
-
-    try {
-        if (_vvEntry.type === 'imageMessage') {
-            await devtrust.sendMessage(_vvBotNum, { image: _vvEntry.buffer, caption: `📸 *View-Once Image*\n${_vvCapBase}`, mimetype: _vvEntry.mime || 'image/jpeg', mentions: [m.sender] });
-        } else if (_vvEntry.type === 'videoMessage') {
-            await devtrust.sendMessage(_vvBotNum, { video: _vvEntry.buffer, caption: `🎥 *View-Once Video*\n${_vvCapBase}`, mimetype: _vvEntry.mime || 'video/mp4', mentions: [m.sender] });
-        } else if (_vvEntry.type === 'audioMessage') {
-            await devtrust.sendMessage(_vvBotNum, { audio: _vvEntry.buffer, mimetype: _vvEntry.mime || 'audio/ogg; codecs=opus', ptt: _vvEntry.isPtt });
-        }
-    } catch (_vvSendE) {
-        console.error('vv send error:', _vvSendE?.message);
-    }
 }
 break;
 
