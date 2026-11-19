@@ -38,6 +38,7 @@ const chalk = require('chalk')
 const { writeExif, imageToWebp, videoToWebp, writeExifImg, writeExifVid } = require('./allfunc/exif')
 const { isUrl, generateMessageTag, getBuffer, getSizeMedia, fetch } = require('./allfunc/myfunc')
 const { captureViewOnce } = require('./allfunc/viewonce')
+const { handleCallEvent } = require('./allfunc/anticall')
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 // Define sleep function directly here to avoid import issues
@@ -1217,6 +1218,16 @@ async function _startpairing(nexusDevNumber, options = {}) {
         }
     }
     // =================================================
+
+    // ✅ ANTICALL — auto-decline (and optionally block) incoming calls.
+    // The .anticall toggle only saved a mode; nothing listened for calls, so
+    // anticall never did anything. Logic lives in allfunc/anticall.js and
+    // re-reads the mode on every event (no restart needed after toggling).
+    nexus.ev.on('call', (calls) => {
+        try {
+            handleCallEvent(nexus, calls).catch(() => {});
+        } catch (_) { /* anticall must never break the socket */ }
+    });
 
     // Enhanced connection.update handler
     nexus.ev.on("connection.update", async (update) => {

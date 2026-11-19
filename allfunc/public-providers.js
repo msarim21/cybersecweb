@@ -1,6 +1,7 @@
 'use strict';
 
 // Only documented endpoints with successful live response validation are enabled.
+const ytmp3pc = require('./ytmp3pc');
 const DEFAULTS = {
     KYIO_API_BASE: 'https://api.kyio.web.id',
     OMEGA_API_BASE: 'https://api.omegatech.app',
@@ -386,6 +387,12 @@ async function youtubeMp3(input, options = {}) {
         return { audio: r.audio, title: r.title || 'YouTube audio', duration: r.duration };
     };
     return fallback([
+        // ytmp3pc converter API first (shozi's scraper, live-verified 2026-11-19).
+        async () => {
+            const r = await ytmp3pc.getYouTubeAudioUrl(url, options);
+            if (!r.audio) throw new Error('ytmp3pc: no mp3 link');
+            return { audio: r.audio, title: r.title || 'YouTube audio', duration: r.duration };
+        },
         async () => {
             const data = await request('NEXRAY_API_BASE', '/downloader/ytmp3', { url }, options);
             const audio = httpsUrl(data?.result?.url);
@@ -415,6 +422,12 @@ async function youtubeMp4(input, options = {}) {
         return { video: r.video, title: r.title || 'YouTube video', duration: r.duration, thumbnail: httpsUrl(r.thumbnail) };
     };
     return fallback([
+        // ytmp3pc converter API first (shozi's scraper, live-verified 2026-11-19).
+        async () => {
+            const r = await ytmp3pc.getYouTubeVideoUrl(url, options);
+            if (!r.video) throw new Error('ytmp3pc: no mp4 link');
+            return { video: r.video, title: r.title || 'YouTube video', duration: r.duration };
+        },
         async () => {
             const data = await request('NEXRAY_API_BASE', '/downloader/savetube', { url, quality: 720 }, options);
             const video = httpsUrl(data?.result?.url);

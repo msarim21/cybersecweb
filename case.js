@@ -8922,7 +8922,9 @@ case 'welcome': {
 }
 break;
 
-// [ANTICALL] — handler is registered in pair.js (top-level) not here
+// [ANTICALL] — the 'call' listener is registered in pair.js (on the socket,
+// next to the other nexus.ev.on listeners); the logic lives in
+// allfunc/anticall.js. The toggle command below only changes the mode.
 
 // =========================================================================
 // Place this function outside of your case blocks, likely in a main handler
@@ -12322,30 +12324,14 @@ case 'ytmp3': {
         await devtrust.sendMessage(m.chat, { react: { text: '🎧', key: m.key } });
         reply(`🔍 Searching: *${text}*...`);
 
-        const yts = require('yt-search');
-        let videoUrl = text;
-        let videoInfo = null;
+        // ── ytmp3pc converter API (primary) — no local yt-dlp needed ────────
+        const { downloadYouTubeAudio } = require('./allfunc/ytmp3pc');
+        const track = await downloadYouTubeAudio(text, { maxBytes: 25 * 1024 * 1024 });
 
-        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
-            const { videos } = await yts(text);
-            if (!videos?.length) {
-                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-                return reply(`❌ *"${text}"* nahi mila. Koi aur naam try karo.`);
-            }
-            videoInfo = videos.filter(v => !v.live)[0] || videos[0];
-            videoUrl = videoInfo.url;
-        }
-
-        // ── yt-dlp (local downloader, no third-party API) ────────────────────
-        const { ytAudio, available: _ytdlOk } = require('./allfunc/ytdl-local');
-        if (!_ytdlOk()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .play/.ytmp3 us par chalte hain.`);
-
-        const track = await ytAudio(videoUrl, { maxBytes: 25 * 1024 * 1024 });
-
-        const titleStr  = track.title || videoInfo?.title || 'Unknown';
-        const thumb     = track.thumbnail || videoInfo?.thumbnail || null;
+        const titleStr  = track.title || 'Unknown';
+        const thumb     = track.thumbnail || null;
         const quality   = track.quality || 'MP3 192kbps';
-        const dur       = track.duration ? Math.round(track.duration / 60) + ' min' : (videoInfo?.timestamp || 'N/A');
+        const dur       = track.duration ? Math.round(track.duration / 60) + ' min' : 'N/A';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const caption   = `🎵 *${titleStr}*\n⏱️ ${dur}  |  🎚️ ${quality}`;
 
@@ -12590,31 +12576,13 @@ case 'play2': {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         reply(`🔍 Searching: ${text}...`);
 
-        const yts = require('yt-search');
-        let videoUrl = text;
-        let videoInfo = null;
+        // ── ytmp3pc converter API (primary) — no local yt-dlp needed ────────
+        const { downloadYouTubeAudio } = require('./allfunc/ytmp3pc');
+        const p2Track = await downloadYouTubeAudio(text, { maxBytes: 25 * 1024 * 1024 });
 
-        if (text.includes('youtube.com') || text.includes('youtu.be')) {
-            videoUrl = text;
-        } else {
-            const { videos } = await yts(text);
-            if (!videos?.length) {
-                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-                return reply(`❌ *"${text}"* nahi mila. Koi aur naam try karo.`);
-            }
-            videoInfo = videos.filter(v => !v.live)[0] || videos[0];
-            videoUrl = videoInfo.url;
-        }
-
-        // ── yt-dlp (local downloader, no third-party API) ────────────────────
-        const { ytAudio, available: _p2Ok } = require('./allfunc/ytdl-local');
-        if (!_p2Ok()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .play2 us par chalta hai.`);
-
-        const p2Track = await ytAudio(videoUrl, { maxBytes: 25 * 1024 * 1024 });
-
-        const titleStr = p2Track.title || videoInfo?.title || 'Unknown';
-        const thumb    = p2Track.thumbnail || videoInfo?.thumbnail || null;
-        const dur      = p2Track.duration ? Math.round(p2Track.duration / 60) + ' min' : (videoInfo?.timestamp || 'N/A');
+        const titleStr = p2Track.title || 'Unknown';
+        const thumb    = p2Track.thumbnail || null;
+        const dur      = p2Track.duration ? Math.round(p2Track.duration / 60) + ' min' : 'N/A';
         const quality  = p2Track.quality || 'MP3 192kbps';
 
         const safeTitle2    = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
@@ -12646,30 +12614,14 @@ case 'ytvideo': {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         reply(`🔍 Searching: *${text}*...`);
 
-        const yts = require('yt-search');
-        let videoUrl = text;
-        let videoInfo = null;
+        // ── ytmp3pc converter API (primary) — no local yt-dlp needed ────────
+        const { downloadYouTubeVideo } = require('./allfunc/ytmp3pc');
+        const clip = await downloadYouTubeVideo(text, { maxBytes: 65 * 1024 * 1024 });
 
-        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
-            const { videos } = await yts(text);
-            if (!videos?.length) {
-                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-                return reply('❌ No results found. Try a YouTube link instead.');
-            }
-            videoInfo = videos.filter(v => !v.live)[0] || videos[0];
-            videoUrl = videoInfo.url;
-        }
-
-        // ── yt-dlp (local downloader, no third-party API) ────────────────────
-        const { ytVideo, available: _yvOk } = require('./allfunc/ytdl-local');
-        if (!_yvOk()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .ytvideo us par chalta hai.`);
-
-        const clip = await ytVideo(videoUrl, { maxBytes: 65 * 1024 * 1024, maxHeight: 720 });
-
-        const titleStr  = clip.title || videoInfo?.title || 'Unknown';
-        const thumb     = clip.thumbnail || videoInfo?.thumbnail || null;
-        const dur       = clip.duration ? Math.round(clip.duration / 60) + ' min' : (videoInfo?.timestamp || 'N/A');
-        const quality   = '720p';
+        const titleStr  = clip.title || 'Unknown';
+        const thumb     = clip.thumbnail || null;
+        const dur       = clip.duration ? Math.round(clip.duration / 60) + ' min' : 'N/A';
+        const quality   = clip.quality || '720p';
         const safeTitle = titleStr.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
         const caption   = `🎬 *${titleStr}*\n⏱️ Duration: ${dur}\n🎚️ Quality: ${quality}\n\n⬇️ Downloading...`;
 
@@ -12698,29 +12650,20 @@ case 'ytdown': {
     try {
         await devtrust.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
-        const yts = require('yt-search');
-        let _ydUrl = text;
-        let _ydInfo = null;
-        if (!text.includes('youtube.com') && !text.includes('youtu.be')) {
-            const { videos } = await yts(text);
-            if (!videos?.length) {
-                await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
-                return reply(`❌ *"${text}"* nahi mila.`)
-            }
-            _ydInfo = videos.filter(v => !v.live)[0] || videos[0];
-            _ydUrl  = _ydInfo.url;
-        }
-
-        // ── yt-dlp (local downloader, no third-party API) ────────────────────
-        const { ytInfo, ytAudio, ytVideo, available: _ydOk } = require('./allfunc/ytdl-local');
-        if (!_ydOk()) return reply(`❌ *yt-dlp installed nahi hai*\n\nDockerfile se dobara build karo — .ytdown us par chalta hai.`);
-
+        // ── ytmp3pc converter API (primary) — no local yt-dlp needed ────────
+        const { getYouTubeInfo, downloadYouTubeAudio, downloadYouTubeVideo } = require('./allfunc/ytmp3pc');
         let _yd = null;
-        try { _yd = await ytInfo(_ydUrl); } catch (e) { _yd = {}; }
+        try {
+            _yd = await getYouTubeInfo(text);
+        } catch (e) {
+            await devtrust.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+            return reply(`❌ *"${text}"* nahi mila.`)
+        }
+        const _ydUrl = _yd.url;
 
-        const _ydTitle  = _yd.title || _ydInfo?.title || 'Unknown';
-        const _ydThumb  = _yd.thumbnail || _ydInfo?.thumbnail || null;
-        const _ydDur    = _yd.duration ? Math.round(_yd.duration / 60) + ' min' : (_ydInfo?.timestamp || 'N/A');
+        const _ydTitle  = _yd.title || 'Unknown';
+        const _ydThumb  = _yd.thumbnail || null;
+        const _ydDur    = _yd.duration ? Math.round(_yd.duration / 60) + ' min' : 'N/A';
         const _ydVQ     = '720p';
         const _ydAQ     = 'MP3 192kbps';
         const _ydSafe   = _ydTitle.replace(/[<>:"/\\|?*]+/g, '').substring(0, 50);
@@ -12748,8 +12691,8 @@ case 'ytdown': {
                 await devtrust.sendMessage(m.chat, { text: `⏳ Downloading ${isVid ? 'Video' : 'Audio'}...` }, { quoted: msg })
 
                 const _ydDl = isVid
-                    ? await ytVideo(_ydSrcUrl, { maxBytes: 65 * 1024 * 1024, maxHeight: 720 })
-                    : await ytAudio(_ydSrcUrl, { maxBytes: 25 * 1024 * 1024 });
+                    ? await downloadYouTubeVideo(_ydSrcUrl, { maxBytes: 65 * 1024 * 1024 })
+                    : await downloadYouTubeAudio(_ydSrcUrl, { maxBytes: 25 * 1024 * 1024 });
                 const fileBuf = _ydDl.buffer;
                 const sizeMB  = (_ydDl.filesize / 1024 / 1024).toFixed(2);
 
