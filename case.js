@@ -11832,14 +11832,24 @@ case 'keep':
 case 'lol':
 case 'nice':
 case 'rvo':
-case 'viewonce': {
-    // Unified save: reply to any media (regular or one-time) and it lands in
-    // the bot's own DM with NO caption. Regular media is downloaded from the
-    // quote; one-time media comes from the arrival-time capture store (a quoted
+case 'viewonce':
+case 'save':
+case 'vvdm': {
+    // Unified save. Two families share this handler:
+    //  • Legacy aliases (keep/lol/nice/rvo/vvgh/vv2/readviewonce2): reply to any
+    //    media and it lands in the bot's own DM with NO caption (⏳/❤️/❌).
+    //  • Pasted save.js family (save/vv/vvdm/viewonce, 26 Nov 2026, OWNER-ONLY):
+    //    vv/viewonce send to the SAME CHAT with the quoted caption, save/vvdm
+    //    send to the sender's DM; save also forwards a text quote as text.
+    //    Working react 💾 (save) / ⏳, ✅ on success.
+    // One-time media always comes from the arrival-time capture store (a quoted
     // view-once carries no keys, so it can never be re-downloaded). The reply
-    // path above skips these commands so this handler owns the UX (⏳/❤️/❌).
-    // NOTE: 'save' and '🔥' are NOT aliases here — 'save' is the owner-only
-    // CYBER Save command and '🔥' belongs to the emoji handler below.
+    // path above skips these commands so this handler owns the UX.
+    // NOTE: '🔥' is NOT an alias here — it belongs to the emoji handler below.
+    const _newSaveFamily = command === 'save' || command === 'vv' || command === 'vvdm' || command === 'viewonce';
+    if (_newSaveFamily && !isCreator) {
+        return reply(`🔒 *CYBER Save*\n\nOwner only command.`);
+    }
     await handleSaveCommand({
         sock: devtrust,
         m,
@@ -11847,7 +11857,15 @@ case 'viewonce': {
         command,
         download: downloadContentFromMessage,
         lookupStored: makeStoredLookup(devtrust),
-        reply
+        reply,
+        dest: command === 'save' || command === 'vvdm' ? 'sender' : (command === 'vv' || command === 'viewonce' ? 'chat' : 'bot'),
+        withCaption: _newSaveFamily,
+        allowText: command === 'save',
+        workingReact: command === 'save' ? '💾' : '⏳',
+        successReact: _newSaveFamily ? '✅' : '❤️',
+        noQuoteText: command === 'save'
+            ? 'Reply to a WhatsApp status to save it.'
+            : (_newSaveFamily ? 'Reply to a view-once image, video, audio, document, or sticker.' : undefined)
     });
 }
 break;
@@ -12037,9 +12055,10 @@ case '🦋': {
 }
 break;
 
-case 'save':
 case 'download':
 case 'svt': {
+    // NOTE: 'save' moved to the unified save handler above (pasted save.js
+    // family, 26 Nov 2026) — download/svt keep the old CYBER Save behaviour.
     if (!isCreator) {
         return reply(`🔒 *CYBER Save*\n\nOwner only command.`);
     }

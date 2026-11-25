@@ -481,11 +481,10 @@ console.log('\n=== View-once capture / reply tests ===\n');
     function reacts(sent) { return sent.filter(s => s.p.react).map(s => s.p.react.text); }
     function mediaSends(sent) { return sent.filter(s => s.p.image || s.p.video || s.p.audio || s.p.sticker); }
 
-    await ok('save aliases: vv/keep/lol/nice/rvo/viewonce owned, save + 🔥 NOT stolen', () => {
-        for (const a of ['vv', 'vvgh', 'vv2', 'readviewonce2', 'keep', 'lol', 'nice', 'rvo', 'viewonce']) {
+    await ok('save aliases: vv/keep/lol/nice/rvo/viewonce + save/vvdm owned, 🔥 NOT stolen', () => {
+        for (const a of ['vv', 'vvgh', 'vv2', 'readviewonce2', 'keep', 'lol', 'nice', 'rvo', 'viewonce', 'save', 'vvdm']) {
             assert.ok(vo.SAVE_COMMANDS.includes(a), `SAVE_COMMANDS must include ${a}`);
         }
-        assert.ok(!vo.SAVE_COMMANDS.includes('save'), 'save belongs to CYBER Save');
         assert.ok(!vo.SAVE_COMMANDS.includes('🔥'), '🔥 belongs to the emoji handler');
     });
 
@@ -498,22 +497,39 @@ console.log('\n=== View-once capture / reply tests ===\n');
         }
         assert.ok(src.includes('handleSaveCommand({'), 'switch must call handleSaveCommand');
         assert.ok(src.includes('SAVE_COMMANDS.includes(command)'), 'reply path must skip save commands');
-        assert.ok(src.includes("case 'save':"), 'CYBER Save must still own save');
+        assert.ok(src.includes("case 'save':"), 'save must route through handleSaveCommand');
+        assert.ok(src.includes("case 'vvdm':"), 'vvdm must be wired');
         assert.ok(src.includes("case '🔥':"), 'emoji handler must still own 🔥');
         assert.ok(!src.includes('_vvEntry'), 'old vv handler must be fully replaced');
+        // Owner gate + destination mapping for the pasted save.js family
+        const vvBlock = src.slice(src.indexOf("case 'vv':"), src.indexOf("case 'vv':") + 2600);
+        assert.ok(vvBlock.includes('isCreator'), 'new save family must be owner-gated in case.js');
+        assert.ok(vvBlock.includes('dest:'), 'new save family must pass a destination');
+        // download/svt keep the old CYBER Save block
+        assert.ok(src.includes("case 'download':"), 'download alias must keep the old CYBER Save block');
     });
 
-    await ok('buildSavePayload sends image/video/audio/sticker with NO caption key', () => {
+    await ok('buildSavePayload: legacy aliases get NO caption; new family gets caption + document', () => {
         const img = vo.buildSavePayload('imageMessage', Buffer.from('I'), 'image/jpeg');
         assert.strictEqual(img.image.toString(), 'I');
-        assert.ok(!('caption' in img), 'save payload must not carry a caption');
+        assert.ok(!('caption' in img), 'bare save must not carry a caption');
         const vid = vo.buildSavePayload('videoMessage', Buffer.from('V'), 'video/mp4');
         assert.strictEqual(vid.video.toString(), 'V');
         const aud = vo.buildSavePayload('audioMessage', Buffer.from('A'), 'audio/ogg; codecs=opus', true);
         assert.strictEqual(aud.ptt, true);
         const stk = vo.buildSavePayload('stickerMessage', Buffer.from('S'));
         assert.strictEqual(stk.sticker.toString(), 'S');
-        assert.strictEqual(vo.buildSavePayload('documentMessage', Buffer.from('D')), null);
+        // Pasted save.js: documents are supported, with fileName + caption.
+        const doc = vo.buildSavePayload('documentMessage', Buffer.from('D'), 'application/pdf', false, { fileName: 'notes.pdf', caption: 'hi' });
+        assert.strictEqual(doc.document.toString(), 'D');
+        assert.strictEqual(doc.fileName, 'notes.pdf');
+        assert.strictEqual(doc.caption, 'hi');
+        const docBare = vo.buildSavePayload('documentMessage', Buffer.from('D'));
+        assert.strictEqual(docBare.fileName, 'document');
+        assert.ok(!('caption' in docBare), 'no caption key when none given');
+        // Caption is included only when provided.
+        const imgCap = vo.buildSavePayload('imageMessage', Buffer.from('I'), 'image/jpeg', false, { caption: 'hello' });
+        assert.strictEqual(imgCap.caption, 'hello');
         assert.strictEqual(vo.buildSavePayload('imageMessage', Buffer.alloc(0)), null);
     });
 
@@ -535,7 +551,7 @@ console.log('\n=== View-once capture / reply tests ===\n');
         });
         const r = await vo.handleSaveCommand(ctx);
         assert.strictEqual(r.reason, 'not-media');
-        assert.strictEqual(replies[0], '❗ Only images, videos, audio, or stickers.');
+        assert.strictEqual(replies[0], '❗ Only images, videos, audio, stickers, or documents.');
         assert.deepStrictEqual(reacts(sent), ['⏳', '❌']);
     });
 
@@ -688,6 +704,112 @@ console.log('\n=== View-once capture / reply tests ===\n');
         const r = await vo.handleSaveCommand(ctx);
         assert.strictEqual(r.reason, 'already-handled');
         assert.strictEqual(sent.length, 0);
+    });
+
+    // ── Pasted save.js family (save / vv / vvdm / viewonce, 26 Nov 2026) ──
+
+    await ok('vv sends a regular photo to the SAME CHAT with its caption', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            command: 'vv', dest: 'chat', withCaption: true, workingReact: '⏳', successReact: '✅',
+            m: { key: { id: 'N1' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'P11', sender: '923001112222@s.whatsapp.net', mtype: 'imageMessage', mimetype: 'image/jpeg',
+                    msg: { caption: 'hello' },
+                    download: async () => Buffer.from('PHOTO2') },
+                msg: { contextInfo: { stanzaId: 'P11', quotedMessage: { imageMessage: { mediaKey: 'k', mimetype: 'image/jpeg', caption: 'hello' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        assert.strictEqual(r.source, 'quoted');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '✅']);
+        const media = mediaSends(sent);
+        assert.strictEqual(media.length, 1);
+        assert.strictEqual(media[0].jid, CHAT, 'vv must send to the same chat, not the bot DM');
+        assert.strictEqual(media[0].p.image.toString(), 'PHOTO2');
+        assert.strictEqual(media[0].p.caption, 'hello');
+        assert.strictEqual(replies.length, 0);
+    });
+
+    await ok('vvdm sends a view-once photo to the sender DM', async () => {
+        resetGlobals();
+        await vo.captureViewOnce(rawMsg('VO-N2', CHAT, voImageMessage('secret2')), { download: fakeDownload(Buffer.from('ONE2')) });
+        const { ctx, sent } = saveCtx({
+            command: 'vvdm', dest: 'sender', withCaption: true, workingReact: '⏳', successReact: '✅',
+            m: { key: { id: 'N2' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'VO-N2', sender: '923001112222@s.whatsapp.net' },
+                msg: { contextInfo: { stanzaId: 'VO-N2', quotedMessage: voImageMessage('secret2') } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        assert.strictEqual(r.source, 'memory');
+        const media = mediaSends(sent);
+        assert.strictEqual(media.length, 1);
+        assert.strictEqual(media[0].jid, '923001112222@s.whatsapp.net', 'vvdm must send to the sender DM');
+        assert.strictEqual(media[0].p.image.toString(), 'ONE2');
+        assert.strictEqual(media[0].p.caption, 'secret2');
+        assert.deepStrictEqual(reacts(sent), ['⏳', '✅']);
+    });
+
+    await ok('save with a text quote forwards the text to the sender DM', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            command: 'save', dest: 'sender', allowText: true, workingReact: '💾', successReact: '✅',
+            noQuoteText: 'Reply to a WhatsApp status to save it.',
+            m: { key: { id: 'N3' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'T3', sender: '923001112222@s.whatsapp.net', mtype: 'extendedTextMessage', text: 'hello status' },
+                msg: { contextInfo: { stanzaId: 'T3', quotedMessage: { conversation: 'hello status' } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        assert.strictEqual(r.source, 'text');
+        const texts = sent.filter(s => s.p.text && !s.p.react);
+        assert.strictEqual(texts.length, 1);
+        assert.strictEqual(texts[0].jid, '923001112222@s.whatsapp.net');
+        assert.strictEqual(texts[0].p.text, 'hello status');
+        assert.deepStrictEqual(reacts(sent), ['💾', '✅']);
+        assert.strictEqual(replies.length, 0);
+    });
+
+    await ok('save with no quote asks to reply to a status', async () => {
+        resetGlobals();
+        const { ctx, sent, replies } = saveCtx({
+            command: 'save', dest: 'sender', noQuoteText: 'Reply to a WhatsApp status to save it.',
+            m: { key: { id: 'N4' }, chat: CHAT, sender: '923001112222@s.whatsapp.net' }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.reason, 'no-quote');
+        assert.strictEqual(replies[0], 'Reply to a WhatsApp status to save it.');
+        assert.strictEqual(sent.length, 0, 'no reaction without a quote');
+    });
+
+    await ok('save on a regular document forwards it with fileName', async () => {
+        resetGlobals();
+        const { ctx, sent } = saveCtx({
+            command: 'save', dest: 'sender', withCaption: true, workingReact: '💾', successReact: '✅',
+            m: { key: { id: 'N5' }, chat: CHAT, sender: '923001112222@s.whatsapp.net',
+                quoted: { id: 'D5', sender: '923001112222@s.whatsapp.net', mtype: 'documentMessage', mimetype: 'application/pdf',
+                    msg: { fileName: 'notes.pdf', caption: 'doc cap' },
+                    download: async () => Buffer.from('PDFBYTES') },
+                msg: { contextInfo: { stanzaId: 'D5', quotedMessage: { documentMessage: { mediaKey: 'k', mimetype: 'application/pdf', fileName: 'notes.pdf' } } } } }
+        });
+        const r = await vo.handleSaveCommand(ctx);
+        assert.strictEqual(r.handled, true);
+        const docs = sent.filter(s => s.p.document);
+        assert.strictEqual(docs.length, 1);
+        assert.strictEqual(docs[0].jid, '923001112222@s.whatsapp.net');
+        assert.strictEqual(docs[0].p.document.toString(), 'PDFBYTES');
+        assert.strictEqual(docs[0].p.fileName, 'notes.pdf');
+        assert.strictEqual(docs[0].p.caption, 'doc cap');
+    });
+
+    await ok('auto-restarter skips the whole-process exit in supervisor mode', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const src = fs.readFileSync(path.join(__dirname, '..', 'worker', 'auto-restarter.js'), 'utf8');
+        assert.ok(src.includes('_supervisorActive()'), 'restarter must check the supervisor before exiting');
+        assert.ok(src.includes('_explicitRestartHours()'), 'an explicit BOT_RESTART_HOURS must still win');
+        assert.ok(src.includes('skipping whole-process restart'), 'skip path must be logged');
+        assert.ok(src.includes('_armTimer'), 'timer must re-arm after a skip');
     });
 
     console.log(failed ? `\n${failed} test(s) FAILED\n` : '\nAll view-once tests passed\n');

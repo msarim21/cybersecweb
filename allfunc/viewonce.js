@@ -400,42 +400,74 @@ async function deliverViewOnceOnReply(devtrust, m, botNumber, opts = {}) {
 }
 
 // Commands owned by the unified save handler (case.js switch). The reply path
-// (deliverViewOnceOnReply) skips these so the handler owns their UX: media to
-// the bot's own DM with NO caption, ⏳/❤️/❌ reactions. 'save' and '🔥' are
-// deliberately NOT here — 'save' is the owner-only CYBER Save command and '🔥'
-// belongs to the emoji view-once handler; stealing either would break them.
-const SAVE_COMMANDS = ['vv', 'vvgh', 'vv2', 'readviewonce2', 'keep', 'lol', 'nice', 'rvo', 'viewonce'];
+// (deliverViewOnceOnReply) skips these so the handler owns their UX.
+// Two families share the handler:
+//  • Legacy aliases (keep/lol/nice/rvo/vvgh/vv2/readviewonce2): media to the
+//    bot's own DM with NO caption, ⏳/❤️/❌ reactions (unchanged behaviour).
+//  • Pasted save.js family (save/vv/vvdm/viewonce, 26 Nov 2026 — owner-only,
+//    gated in case.js): vv/viewonce send to the SAME CHAT with the quoted
+//    caption, save/vvdm send to the sender's DM; working react 💾 (save) / ⏳,
+//    ✅ on success; save also forwards a text quote as text to the DM.
+// '🔥' is deliberately NOT here — it belongs to the emoji view-once handler.
+const SAVE_COMMANDS = ['vv', 'vvgh', 'vv2', 'readviewonce2', 'keep', 'lol', 'nice', 'rvo', 'viewonce', 'save', 'vvdm'];
 
-// Send payload for the save handler: same media types as buildPayload, but NO
-// caption (the owner asked for a bare save) and sticker support for regular
-// quoted stickers. Returns null when there is nothing sendable.
-function buildSavePayload(type, buffer, mime, isPtt) {
+// Send payload for the save handler. Legacy aliases send a bare save (NO
+// caption); the pasted save.js family passes opts.caption and it is included
+// for image/video/document. Document support (with fileName) comes from the
+// pasted code — previously documents were rejected. Returns null when there
+// is nothing sendable.
+function buildSavePayload(type, buffer, mime, isPtt, opts = {}) {
     if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
-    if (type === 'imageMessage') return { image: buffer, mimetype: mime || 'image/jpeg' };
-    if (type === 'videoMessage') return { video: buffer, mimetype: mime || 'video/mp4' };
+    const caption = typeof opts.caption === 'string' && opts.caption ? opts.caption : '';
+    if (type === 'imageMessage') return { image: buffer, mimetype: mime || 'image/jpeg', ...(caption ? { caption } : {}) };
+    if (type === 'videoMessage') return { video: buffer, mimetype: mime || 'video/mp4', ...(caption ? { caption } : {}) };
     if (type === 'audioMessage') return { audio: buffer, mimetype: mime || 'audio/ogg; codecs=opus', ptt: Boolean(isPtt) };
     if (type === 'stickerMessage') return { sticker: buffer };
+    if (type === 'documentMessage') {
+        return { document: buffer, mimetype: mime || 'application/octet-stream', fileName: opts.fileName || 'document', ...(caption ? { caption } : {}) };
+    }
     return null;
 }
 
-// Unified save command (.vv / .keep / .lol / .nice / .rvo / .viewonce / .vv2).
-// Reply to any media and it lands in the bot's own DM with NO caption.
+// Unified save command (.vv / .keep / .lol / .nice / .rvo / .viewonce / .vv2
+// + the pasted save.js family: save / vvdm).
+// Reply to any media and it is saved — WHERE depends on the command:
+//  • Legacy aliases (keep/lol/nice/rvo/vvgh/vv2/readviewonce2): the bot's own
+//    DM with NO caption (unchanged behaviour).
+//  • save/vvdm (pasted code): the sender's DM, WITH the quoted caption.
+//  • vv/viewonce (pasted code): the SAME CHAT, WITH the quoted caption.
+//  • save with a text quote: the text goes to the sender's DM.
 //
 // Two paths, because WhatsApp treats them differently:
 //  A. View-once: a quoted view-once carries NO media keys, so it can never be
 //     re-downloaded — the ONLY source is the arrival-time capture store
 //     (resolveViewOnceForReply: memory -> stored copy -> quoted keys). When no
 //     bytes exist anywhere, the shared blocked notice names the real reason.
+//     This is the part the pasted code alone cannot do: its quoted.download()
+//     + getStoredMessage fallback is exactly resolveViewOnceForReply's job here
+//     (the bot's stored lookup is the getStoredMessage equivalent), so the
+//     capture system is kept, not replaced.
 //  B. Regular media: the quote still carries keys, so download it straight
 //     from the quote (m.quoted.download(), falling back to downloadContentFromMessage)
 //     and forward it.
-// Reactions: ⏳ while working, ❤️ on success, ❌ on failure. The silent
-// variants (.vv2 / .readviewonce2) send no text and no reactions at all.
+// Reactions: ⏳ (💾 for save) while working, ❤️ (✅ for the pasted family) on
+// success, ❌ on failure. The silent variants (.vv2 / .readviewonce2) send no
+// text and no reactions at all.
+// Options (set by case.js): dest ('bot' | 'sender' | 'chat'), withCaption,
+// allowText, workingReact, successReact, noQuoteText.
 // Returns { handled, source?, reason? } so tests (and callers) can tell the
 // paths apart without parsing chat output.
 async function handleSaveCommand(ctx = {}) {
     const { sock, m, botNumber, command, download, lookupStored, reply } = ctx;
     const silent = command === 'vv2' || command === 'readviewonce2';
+    const dest = ctx.dest || 'bot';
+    const withCaption = Boolean(ctx.withCaption);
+    const allowText = Boolean(ctx.allowText);
+    const workingReact = ctx.workingReact || '⏳';
+    const successReact = ctx.successReact || '❤️';
+    const noQuoteText = ctx.noQuoteText || '❗ Reply to a media message.';
+    const destJid = dest === 'sender' ? String(m?.sender || '')
+        : dest === 'chat' ? String(m?.chat || '') : botNumber;
     const say = async (text) => {
         if (!silent && typeof reply === 'function') { try { await reply(text); } catch (_) {} }
     };
@@ -450,10 +482,10 @@ async function handleSaveCommand(ctx = {}) {
             return { handled: false, reason: 'already-handled' };
         }
         if (!m?.quoted) {
-            await say('❗ Reply to a media message.');
+            await say(noQuoteText);
             return { handled: false, reason: 'no-quote' };
         }
-        await react('⏳');
+        await react(workingReact);
         const quotedId = _quotedId(m);
         const from = String(m.quoted?.sender || m.sender || '').split('@')[0];
 
@@ -462,12 +494,13 @@ async function handleSaveCommand(ctx = {}) {
         if (found) {
             const { entry } = found;
             if (found.source !== 'none' && entry?.buffer?.length) {
-                const payload = buildSavePayload(entry.type, entry.buffer, entry.mime, entry.isPtt);
+                const payload = buildSavePayload(entry.type, entry.buffer, entry.mime, entry.isPtt,
+                    { caption: withCaption ? (entry.caption || '') : '' });
                 if (payload) {
-                    await sock.sendMessage(botNumber, payload);
+                    await sock.sendMessage(destJid, payload);
                     global._viewOnceHandledIds.set(m.key.id, Date.now());
                     console.log(`[viewonce] save delivered ${entry.type} (${found.source}) on ${command} ${m.key.id}`);
-                    await react('❤️');
+                    await react(successReact);
                     return { handled: true, source: found.source };
                 }
                 await react('❌');
@@ -487,11 +520,20 @@ async function handleSaveCommand(ctx = {}) {
             qType = peeled?.imageMessage ? 'imageMessage'
                 : peeled?.videoMessage ? 'videoMessage'
                 : peeled?.audioMessage ? 'audioMessage'
-                : peeled?.stickerMessage ? 'stickerMessage' : '';
+                : peeled?.stickerMessage ? 'stickerMessage'
+                : peeled?.documentMessage ? 'documentMessage' : '';
         }
-        if (!['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'].includes(qType)) {
+        // Pasted save.js: .save with a text quote forwards the text to the DM.
+        if (allowText && ['conversation', 'extendedTextMessage'].includes(m.quoted?.mtype) && m.quoted?.text) {
+            await sock.sendMessage(destJid, { text: m.quoted.text }, { quoted: m });
+            global._viewOnceHandledIds.set(m.key.id, Date.now());
+            console.log(`[viewonce] save delivered text on ${command} ${m.key.id}`);
+            await react(successReact);
+            return { handled: true, source: 'text' };
+        }
+        if (!['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(qType)) {
             await react('❌');
-            await say('❗ Only images, videos, audio, or stickers.');
+            await say('❗ Only images, videos, audio, stickers, or documents.');
             return { handled: false, reason: 'not-media' };
         }
         let buffer = null;
@@ -511,16 +553,18 @@ async function handleSaveCommand(ctx = {}) {
             await say('❌ Failed to download media.');
             return { handled: false, reason: 'download-failed' };
         }
-        const payload = buildSavePayload(qType, buffer, m.quoted?.mimetype || '', m.quoted?.ptt);
+        const caption = withCaption ? (m.quoted?.msg?.caption || m.quoted?.caption || '') : '';
+        const payload = buildSavePayload(qType, buffer, m.quoted?.mimetype || '', m.quoted?.ptt,
+            { caption, fileName: m.quoted?.msg?.fileName || 'document' });
         if (!payload) {
             await react('❌');
             await say('❌ Failed to download media.');
             return { handled: false, reason: 'download-failed' };
         }
-        await sock.sendMessage(botNumber, payload);
+        await sock.sendMessage(destJid, payload);
         global._viewOnceHandledIds.set(m.key.id, Date.now());
         console.log(`[viewonce] save delivered ${qType} (quoted) on ${command} ${m.key.id}`);
-        await react('❤️');
+        await react(successReact);
         return { handled: true, source: 'quoted' };
     } catch (err) {
         console.error('Save VV Error:', err?.message);

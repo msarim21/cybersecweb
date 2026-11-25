@@ -7,6 +7,16 @@
  * ║  • Gracefully flushes all bot sessions to DB                ║
  * ║  • Then exits — Heroku/Replit auto-restarts the process     ║
  * ║  • On restart: supervisor auto-reconnects from DB           ║
+ * ║                                                             ║
+ * ║  ⚠️  SUPERVISOR MODE (Railway, BOT_ISOLATION=1): the parent ║
+ * ║  process ALSO hosts the Express website. A whole-process    ║
+ * ║  exit here kills the website + every bot at once — that is  ║
+ * ║  the "3–4h ke baad sab crash" reported 26 Nov 2026. Each   ║
+ * ║  bot child already self-restarts every BOT_RESTART_HOURS   ║
+ * ║  via keepalive (scheduleBotMemoryRestart, ~10s respawn,     ║
+ * ║  website untouched), so in supervisor mode the scheduled    ║
+ * ║  whole-process restart is SKIPPED (unless the admin sets    ║
+ * ║  BOT_RESTART_HOURS explicitly — that always wins).          ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
@@ -86,6 +96,46 @@ async function performGracefulRestart(reason = 'scheduled') {
   process.exit(0);
 }
 
+// True when the admin explicitly asked for whole-process restarts via env.
+// An explicit BOT_RESTART_HOURS / AUTO_RESTART_HOURS always wins — the
+// supervisor-mode skip below only applies to the DEFAULT (unset) interval.
+function _explicitRestartHours() {
+  const bot = Number(process.env.BOT_RESTART_HOURS);
+  if (Number.isFinite(bot) && bot > 0) return true;
+  const legacy = Number(process.env.AUTO_RESTART_HOURS);
+  if (Number.isFinite(legacy) && legacy > 0) return true;
+  return false;
+}
+
+function _supervisorActive() {
+  try { return require('./supervisor').isSupervisorActive(); } catch (_) { return false; }
+}
+
+function _armTimer(ms, hours, opts) {
+  _restartTimer = setTimeout(async () => {
+    if (typeof opts.onRestart === 'function') {
+      try { await opts.onRestart(); } catch (_) {}
+    }
+    // ── Railway fix (26 Nov 2026) ──────────────────────────────────────
+    // In supervisor/isolated mode the parent process ALSO hosts the Express
+    // website. A whole-process exit here kills the website + every bot at
+    // once — that is the "3–4h ke baad sab crash" the owner reported.
+    // Each bot child already self-restarts every BOT_RESTART_HOURS via
+    // keepalive's scheduleBotMemoryRestart (~10s respawn, website untouched),
+    // so the parent must stay up. Skip the exit and re-arm the timer; an
+    // explicit BOT_RESTART_HOURS env var still forces the old behaviour.
+    if (_supervisorActive() && !_explicitRestartHours()) {
+      console.log(chalk.yellow('[AutoRestarter] ⏭️  Supervisor mode — skipping whole-process restart (bot children self-restart; website stays up). Re-arming timer.'));
+      _armTimer(ms, hours, opts);
+      return;
+    }
+    await performGracefulRestart(`${hours}h scheduled`);
+  }, ms);
+
+  // Unref so the timer doesn't keep process alive alone
+  if (_restartTimer.unref) _restartTimer.unref();
+}
+
 /**
  * Start the auto-restart timer.
  * @param {object} [opts]
@@ -104,17 +154,13 @@ function startAutoRestarter(opts = {}) {
     : (Number.isFinite(configuredHours) && configuredHours > 0 ? configuredHours : 4);
   const ms = hours * 60 * 60 * 1000;
 
-  console.log(chalk.gray(`[AutoRestarter] ⏰ Scheduled restart every ${hours} hours`));
+  if (_supervisorActive() && !_explicitRestartHours()) {
+    console.log(chalk.gray(`[AutoRestarter] ⏰ Timer armed (every ${hours}h) — supervisor mode: whole-process restarts SKIPPED, bot children self-restart instead`));
+  } else {
+    console.log(chalk.gray(`[AutoRestarter] ⏰ Scheduled restart every ${hours} hours`));
+  }
 
-  _restartTimer = setTimeout(async () => {
-    if (typeof opts.onRestart === 'function') {
-      try { await opts.onRestart(); } catch (_) {}
-    }
-    await performGracefulRestart(`${hours}h scheduled`);
-  }, ms);
-
-  // Unref so the timer doesn't keep process alive alone
-  if (_restartTimer.unref) _restartTimer.unref();
+  _armTimer(ms, hours, opts);
 }
 
 function stopAutoRestarter() {

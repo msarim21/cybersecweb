@@ -623,7 +623,7 @@ function startKeepAlive() {
         // the same interval — and this one just did cleanupBotMemory()+exit(0)
         // with no session flush. Whichever fired first won, which is why all
         // bots appeared to restart together earlier than the intended 4h.
-        console.log(`[KeepAlive] Supervisor mode — restart scheduling owned solely by worker/auto-restarter.js (every ${restartHours}h, graceful)`);
+        console.log(`[KeepAlive] Supervisor mode — no whole-process restart (bot children self-restart every ${restartHours}h; website stays up)`);
     } else if (waHost && restartHours > 0) {
         // ✅ FIX: Skip duplicate timer — worker.js already calls startAutoRestarter()
         // in both flat and isolated modes. If that ran first, global._autoRestarterScheduled
