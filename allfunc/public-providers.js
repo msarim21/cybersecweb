@@ -123,6 +123,34 @@ async function fallback(tasks) {
     }
     throw new Error(errors.join('; '));
 }
+// A provider can answer 200 with metadata and still hand back a dead file
+// link (live probe 2026-11-26: Nexray ytmp3 returned a mu.123tokyo.xyz mp3
+// that 404s on download, while FAA/Omega links downloaded fine). HEAD-check
+// a returned media link before accepting it: 404/410 means dead, move to
+// the next provider. Any other HEAD outcome (error, timeout, unexpected
+// status, HEAD-unfriendly host) trusts the link — a failed HEAD must never
+// reject a link that GET would have served.
+async function liveLink(url, options = {}) {
+    try {
+        // Pass a URL object, like request()/mediaUrl() do, so injected test
+        // mocks that read url.hostname/url.pathname keep working.
+        const res = await (options.fetch || fetch)(new URL(url), {
+            method: 'HEAD', signal: AbortSignal.timeout(options.headTimeout || 10000),
+        });
+        if (res.status === 404 || res.status === 410) {
+            throw new Error(`link is dead (HTTP ${res.status})`);
+        }
+    } catch (e) {
+        if (/link is dead/.test(e.message)) throw e;
+    }
+    return url;
+}
+async function checkMedia(result, options = {}) {
+    const url = result?.audio || result?.video;
+    if (!url) throw new Error('Provider returned no media link');
+    await liveLink(url, options);
+    return result;
+}
 async function askAI(prompt, options = {}) {
     const query = String(prompt || '').trim();
     if (!query) throw new Error('AI prompt is empty');
@@ -386,13 +414,19 @@ async function youtubeMp3(input, options = {}) {
         if (!r.audio) throw new Error(`${label}: no audio link`);
         return { audio: r.audio, title: r.title || 'YouTube audio', duration: r.duration };
     };
-    return fallback([
+    // skipYtmp3pc: the play pipeline already tried (and failed) ytmp3pc, so
+    // re-trying it here would only waste ~30 s. Live probe 2026-11-26:
+    // ytmp3pc convert now fails ("Failed to obtain and cache metadata JSON"),
+    // while Nexray/FAA/Omega/Kyio fallbacks still return links.
+    const tasks = options.skipYtmp3pc ? [] : [
         // ytmp3pc converter API first (shozi's scraper, live-verified 2026-11-19).
         async () => {
             const r = await ytmp3pc.getYouTubeAudioUrl(url, options);
             if (!r.audio) throw new Error('ytmp3pc: no mp3 link');
             return { audio: r.audio, title: r.title || 'YouTube audio', duration: r.duration };
         },
+    ];
+    return fallback(tasks.concat([
         async () => {
             const data = await request('NEXRAY_API_BASE', '/downloader/ytmp3', { url }, options);
             const audio = httpsUrl(data?.result?.url);
@@ -412,7 +446,7 @@ async function youtubeMp3(input, options = {}) {
         audioOnly('Kyio ytdl', kyioYtdl),
         audioOnly('Omega Youplay', omegaYouplay),
         audioOnly('Omega Yt-lite', omegaYtLite),
-    ]);
+    ]).map((task) => async () => checkMedia(await task(), options)));
 }
 async function youtubeMp4(input, options = {}) {
     const url = requireHost(input, ['youtube.com', 'youtu.be'], 'YouTube URL');
@@ -421,13 +455,16 @@ async function youtubeMp4(input, options = {}) {
         if (!r.video) throw new Error(`${label}: no video link`);
         return { video: r.video, title: r.title || 'YouTube video', duration: r.duration, thumbnail: httpsUrl(r.thumbnail) };
     };
-    return fallback([
+    // skipYtmp3pc: same as youtubeMp3 — the play pipeline already tried it.
+    const tasks = options.skipYtmp3pc ? [] : [
         // ytmp3pc converter API first (shozi's scraper, live-verified 2026-11-19).
         async () => {
             const r = await ytmp3pc.getYouTubeVideoUrl(url, options);
             if (!r.video) throw new Error('ytmp3pc: no mp4 link');
             return { video: r.video, title: r.title || 'YouTube video', duration: r.duration };
         },
+    ];
+    return fallback(tasks.concat([
         async () => {
             const data = await request('NEXRAY_API_BASE', '/downloader/savetube', { url, quality: 720 }, options);
             const video = httpsUrl(data?.result?.url);
@@ -448,7 +485,7 @@ async function youtubeMp4(input, options = {}) {
         videoOnly('Kyio ytdl', kyioYtdl),
         videoOnly('Omega Youplay', omegaYouplay),
         videoOnly('Omega Yt-lite', omegaYtLite),
-    ]);
+    ]).map((task) => async () => checkMedia(await task(), options)));
 }
 async function faaYtPlay(query, options = {}) {
     const q = requireQuery(query, 'Song query');

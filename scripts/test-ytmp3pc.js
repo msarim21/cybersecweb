@@ -181,6 +181,89 @@ function audioResponse(bytes) {
         assert.equal(r.fileName, 'Test Song.mp3');
     });
 
+    await ok('downloadYouTubeAudio falls back to providers when ytmp3pc convert fails', async () => {
+        // Live probe 2026-11-26: every ytmp3pc quality failed with
+        // "Failed to obtain and cache metadata JSON" while providers worked.
+        let skipFlag = null;
+        const providers = {
+            youtubeMp3: async (url, opts) => {
+                skipFlag = opts.skipYtmp3pc;
+                assert.equal(url, 'https://youtu.be/' + VID);
+                return { audio: 'https://cdn.example/fallback.mp3', title: 'Fallback Song', duration: 19 };
+            },
+        };
+        const fetch = async (url, init = {}) => {
+            const u = new URL(String(url));
+            if (u.pathname.endsWith('/available-music')) {
+                return jsonResponse({ success: true, data: { title: 'Test Song', duration: 19, detail: [{ quality: 192 }] } });
+            }
+            if (u.pathname.endsWith('/pre-progress')) {
+                return jsonResponse({ success: false, message: 'Failed to obtain and cache metadata JSON for ' + VID });
+            }
+            if (u.hostname === 'cdn.example') return audioResponse('FALLBACKAUDIO');
+            throw new Error('unexpected ' + u.href);
+        };
+        const r = await yt.downloadYouTubeAudio('https://youtu.be/' + VID, {
+            fetch, pollIntervalMs: 5, pollTimeoutMs: 5000,
+            ytdl: { available: () => false }, providers,
+        });
+        assert.equal(skipFlag, true);
+        assert.equal(r.title, 'Fallback Song');
+        assert.equal(r.quality, 'MP3 (fallback)');
+        assert.equal(r.buffer.toString(), 'FALLBACKAUDIO');
+        assert.equal(r.fileName, 'Fallback Song.mp3');
+    });
+
+    await ok('downloadYouTubeVideo falls back to providers when ytmp3pc fails', async () => {
+        const providers = {
+            youtubeMp4: async (url, opts) => {
+                assert.equal(opts.skipYtmp3pc, true);
+                return { video: 'https://cdn.example/fallback.mp4', title: 'Fallback Clip', duration: 19 };
+            },
+        };
+        const fetch = async (url, init = {}) => {
+            const u = new URL(String(url));
+            if (u.pathname.endsWith('/available-video')) {
+                return jsonResponse({ success: false, message: 'Failed to retrieve video data' });
+            }
+            if (u.pathname.endsWith('/pre-progress')) {
+                return jsonResponse({ success: false, message: 'Failed to obtain and cache metadata JSON for ' + VID });
+            }
+            if (u.hostname === 'cdn.example') return audioResponse('FALLBACKVIDEO');
+            throw new Error('unexpected ' + u.href);
+        };
+        const r = await yt.downloadYouTubeVideo('https://youtu.be/' + VID, {
+            fetch, pollIntervalMs: 5, pollTimeoutMs: 5000,
+            ytdl: { available: () => false }, providers,
+        });
+        assert.equal(r.title, 'Fallback Clip');
+        assert.equal(r.quality, 'MP4 (fallback)');
+        assert.equal(r.buffer.toString(), 'FALLBACKVIDEO');
+    });
+
+    await ok('downloadYouTubeAudio reports both failures when providers fail too', async () => {
+        const providers = {
+            youtubeMp3: async () => { throw new Error('Nexray: no mp3 link'); },
+        };
+        const fetch = async (url) => {
+            const u = new URL(String(url));
+            if (u.pathname.endsWith('/available-music')) {
+                return jsonResponse({ success: true, data: { title: 'T', duration: 19, detail: [{ quality: 192 }] } });
+            }
+            if (u.pathname.endsWith('/pre-progress')) {
+                return jsonResponse({ success: false, message: 'Failed to obtain and cache metadata JSON' });
+            }
+            throw new Error('unexpected ' + u.href);
+        };
+        await assert.rejects(
+            yt.downloadYouTubeAudio('https://youtu.be/' + VID, {
+                fetch, pollIntervalMs: 5, pollTimeoutMs: 5000,
+                ytdl: { available: () => false }, providers,
+            }),
+            /ytmp3pc:.*providers:/
+        );
+    });
+
     await ok('downloadYouTubeAudio rejects over-long videos before converting', async () => {
         let converted = false;
         const fetch = async (url) => {

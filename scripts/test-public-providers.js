@@ -419,7 +419,8 @@ test('tiktokDownload chains Nexray → Azbry → tikwm → Kyio', async () => {
 });
 test('ytaudio chain advances past failing providers to FAA, then Omega', async () => {
     const hosts = [];
-    const fetch = async url => {
+    const fetch = async (url, init = {}) => {
+        if (init.method === 'HEAD') return { status: 200 };
         hosts.push(url.hostname + url.pathname);
         // ytmp3pc is first in the chain: both ladder qualities fail here.
         if (url.hostname === 'bucketx3.ytzyar.cc') return response({ success: false, message: 'ytmp3pc down' });
@@ -441,7 +442,8 @@ test('ytaudio chain advances past failing providers to FAA, then Omega', async (
 });
 test('ytvid chain advances past failing providers to FAA, then Omega download/all', async () => {
     const hosts = [];
-    const fetch = async url => {
+    const fetch = async (url, init = {}) => {
+        if (init.method === 'HEAD') return { status: 200 };
         hosts.push(url.hostname + url.pathname);
         // ytmp3pc is first in the chain: both ladder qualities fail here.
         if (url.hostname === 'bucketx3.ytzyar.cc' && url.pathname.endsWith('/pre-progress')) return response({ success: false, message: 'ytmp3pc down' });
@@ -458,7 +460,8 @@ test('ytvid chain advances past failing providers to FAA, then Omega download/al
 });
 test('ytaudio/ytvid use ytmp3pc first when it succeeds', async () => {
     const hosts = [];
-    const fetch = async url => {
+    const fetch = async (url, init = {}) => {
+        if (init.method === 'HEAD') return { status: 200 };
         hosts.push(url.hostname + url.pathname);
         if (url.pathname.endsWith('/pre-progress')) {
             return response({ success: true, cached: true, download_url: 'https://bucketx3.ytzyar.cc/x/download?v=cached1' });
@@ -476,6 +479,43 @@ test('ytaudio/ytvid use ytmp3pc first when it succeeds', async () => {
     const r2 = await api.youtubeMp4(YT_URL, { fetch });
     assert.equal(r2.video, 'https://bucketx3.ytzyar.cc/x/download?v=cached1');
     assert.deepEqual(hosts, ['bucketx3.ytzyar.cc/video/pre-progress', 'bucketx3.ytzyar.cc/video/available-video']);
+});
+test('youtubeMp3/youtubeMp4 skipYtmp3pc goes straight to providers', async () => {
+    // The play pipeline already tried (and failed) ytmp3pc — it must not be
+    // retried here. Live probe 2026-11-26: ytmp3pc convert was down while
+    // Nexray still returned links.
+    const hosts = [];
+    const fetch = async (url, init = {}) => {
+        if (init.method === 'HEAD') return { status: 200 };
+        hosts.push(url.hostname + url.pathname);
+        if (url.hostname === 'api.nexray.eu.cc') return response({ status: true, result: { title: 'Rick Astley', duration: 212, url: 'https://gamma.123tokyo.xyz/x.mp3' } });
+        throw new Error('unexpected provider ' + url.href);
+    };
+    const r = await api.youtubeMp3(YT_URL, { fetch, skipYtmp3pc: true });
+    assert.equal(r.audio, 'https://gamma.123tokyo.xyz/x.mp3');
+    assert.deepEqual(hosts, ['api.nexray.eu.cc/downloader/ytmp3']);
+    hosts.length = 0;
+    const fetch4 = async (url, init = {}) => {
+        if (init.method === 'HEAD') return { status: 200 };
+        hosts.push(url.hostname + url.pathname);
+        if (url.hostname === 'api.nexray.eu.cc') return response({ status: true, result: { title: 'Rick Astley', duration: '3:33', url: 'https://cdn405.savetube.vip/x.mp4' } });
+        throw new Error('unexpected provider ' + url.href);
+    };
+    const r2 = await api.youtubeMp4(YT_URL, { fetch: fetch4, skipYtmp3pc: true });
+    assert.equal(r2.video, 'https://cdn405.savetube.vip/x.mp4');
+    assert.deepEqual(hosts, ['api.nexray.eu.cc/downloader/savetube']);
+});
+test('youtubeMp3 skips a provider whose link 404s on HEAD (dead Nexray link)', async () => {
+    // Live probe 2026-11-26: Nexray ytmp3 answered 200 but its mp3 link 404s.
+    const fetch = async (url, init = {}) => {
+        if (init.method === 'HEAD') {
+            return { status: String(url).includes('123tokyo') ? 404 : 200 };
+        }
+        if (url.hostname === 'api.nexray.eu.cc') return response({ status: true, result: { title: 'Rick Astley', duration: 212, url: 'https://mu.123tokyo.xyz/x.mp3' } });
+        return response({ status: true, creator: 'Faa', result: { title: 'Rick Astley', mp3: 'https://cdn.aceimg.com/x.mp3', thumbnail: 'https://i.ytimg.com/x.jpg', duration: '3:33' } });
+    };
+    const r = await api.youtubeMp3(YT_URL, { fetch, skipYtmp3pc: true });
+    assert.equal(r.audio, 'https://cdn.aceimg.com/x.mp3');
 });
 test('pinterest falls through Omega → Nexray → Azbry', async () => {
     const hosts = [];

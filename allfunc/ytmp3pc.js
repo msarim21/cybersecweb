@@ -26,6 +26,16 @@
  *    scraper threw on that shape ("Success, file ready to download" as an
  *    error); convert() below returns the cached URL directly.
  *
+ * Live-probe notes (2026-11-26, same video): ytmp3pc BROKE again — convert
+ * fails for every quality ("Failed to obtain and cache metadata JSON") and
+ * mp4 getFormats fails server-side (its yt-dlp is outdated: "Video
+ * unavailable"). The public-provider fallbacks (Nexray/FAA/Omega/Kyio in
+ * public-providers.js) still returned links the same day, so
+ * downloadYouTubeAudio/Video now fall back to them (skipYtmp3pc: true, the
+ * converter was already tried) after local yt-dlp, instead of failing
+ * outright. That is what Sarim asked for in his 2026-11-26 voice note:
+ * video + audio downloaders were both down, use the APIs as fallback.
+ *
  * All functions accept `options.fetch` (default: global fetch) so tests can
  * inject a mock. fetch is always called with a URL object (the repo's
  * provider-test mocks read url.hostname).
@@ -419,9 +429,63 @@ async function convertWithLadder(videoId, type, ladder, options = {}) {
     throw new Error(`All ${type} qualities failed — ${errors.join(' | ')}`);
 }
 
+// ── Public-provider fallback ──────────────────────────────────────────────
+// public-providers.js requires this module at the top, so require it lazily
+// here (at call time both modules are fully loaded — no circular-load risk).
+// options.providers lets tests inject a stub instead of the real module.
+function providerModule(options = {}) {
+    if (options.providers) return options.providers;
+    return require('./public-providers');
+}
+
+async function downloadViaProviderAudio(resolved, { maxBytes, options, duration }) {
+    const providers = providerModule(options);
+    const r = await providers.youtubeMp3(resolved.url, { ...options, skipYtmp3pc: true });
+    if (!r.audio) throw new Error('Provider fallback: no mp3 link');
+    const dur = parseDuration(r.duration) ?? duration ?? null;
+    if (dur != null && dur > MAX_AUDIO_SECONDS) {
+        throw new Error(`Video too long (${Math.round(dur / 60)} min). Max ${MAX_AUDIO_SECONDS / 60} min for audio.`);
+    }
+    const dl = await downloadBuffer(r.audio, { maxBytes, fetch: options.fetch });
+    const title = r.title || resolved.title || 'Unknown';
+    return {
+        buffer: dl.buffer,
+        title,
+        thumbnail: resolved.thumbnail,
+        duration: dur,
+        quality: 'MP3 (fallback)',
+        filesize: dl.bytes,
+        fileName: safeFileName(title, 'mp3'),
+    };
+}
+
+async function downloadViaProviderVideo(resolved, { maxBytes, options, duration }) {
+    const providers = providerModule(options);
+    const r = await providers.youtubeMp4(resolved.url, { ...options, skipYtmp3pc: true });
+    if (!r.video) throw new Error('Provider fallback: no mp4 link');
+    const dur = parseDuration(r.duration) ?? duration ?? null;
+    if (dur != null && dur > MAX_VIDEO_SECONDS) {
+        throw new Error(`Video too long (${Math.round(dur / 60)} min). Max ${MAX_VIDEO_SECONDS / 60} min for video.`);
+    }
+    const dl = await downloadBuffer(r.video, { maxBytes, fetch: options.fetch });
+    const title = r.title || resolved.title || 'Unknown';
+    return {
+        buffer: dl.buffer,
+        title,
+        thumbnail: r.thumbnail || resolved.thumbnail,
+        duration: dur,
+        quality: 'MP4 (fallback)',
+        filesize: dl.bytes,
+        fileName: safeFileName(title, 'mp4'),
+    };
+}
+
 /**
  * Full audio pipeline: resolve → duration guard → convert (quality ladder) →
- * download to memory. Falls back to local yt-dlp ONLY when it is installed.
+ * download to memory. Falls back to local yt-dlp when it is installed, then
+ * to the public providers (Nexray/FAA/Omega/Kyio) — the Railway/Render
+ * deploys have no yt-dlp, so without the provider step a broken ytmp3pc
+ * meant every .play/.ytmp3 failed outright.
  * Return shape matches ytdl-local ytAudio() so case.js handlers need no
  * changes beyond the backend call.
  */
@@ -453,10 +517,19 @@ async function downloadYouTubeAudio(input, options = {}) {
     } catch (apiErr) {
         const local = ytdlLocal(options);
         if (local && typeof local.available === 'function' && local.available()) {
-            console.log('[ytmp3pc] API failed, falling back to local yt-dlp:', apiErr.message);
-            return local.ytAudio(resolved.url, { maxBytes });
+            try {
+                console.log('[ytmp3pc] API failed, falling back to local yt-dlp:', apiErr.message);
+                return await local.ytAudio(resolved.url, { maxBytes });
+            } catch (localErr) {
+                console.log('[ytmp3pc] local yt-dlp failed too, trying providers:', localErr.message);
+            }
         }
-        throw apiErr;
+        try {
+            console.log('[ytmp3pc] API failed, falling back to providers:', apiErr.message);
+            return await downloadViaProviderAudio(resolved, { maxBytes, options, duration });
+        } catch (provErr) {
+            throw new Error(`YouTube audio failed — ytmp3pc: ${apiErr.message}; providers: ${provErr.message}`);
+        }
     }
 }
 
@@ -489,10 +562,19 @@ async function downloadYouTubeVideo(input, options = {}) {
     } catch (apiErr) {
         const local = ytdlLocal(options);
         if (local && typeof local.available === 'function' && local.available()) {
-            console.log('[ytmp3pc] API failed, falling back to local yt-dlp:', apiErr.message);
-            return local.ytVideo(resolved.url, { maxBytes, maxHeight: 720 });
+            try {
+                console.log('[ytmp3pc] API failed, falling back to local yt-dlp:', apiErr.message);
+                return await local.ytVideo(resolved.url, { maxBytes, maxHeight: 720 });
+            } catch (localErr) {
+                console.log('[ytmp3pc] local yt-dlp failed too, trying providers:', localErr.message);
+            }
         }
-        throw apiErr;
+        try {
+            console.log('[ytmp3pc] API failed, falling back to providers:', apiErr.message);
+            return await downloadViaProviderVideo(resolved, { maxBytes, options, duration });
+        } catch (provErr) {
+            throw new Error(`YouTube video failed — ytmp3pc: ${apiErr.message}; providers: ${provErr.message}`);
+        }
     }
 }
 
